@@ -440,7 +440,7 @@ export default function WorkdaysTab({
   return (
     <VStack align="stretch" gap={3}>
       
-      <TabExplainer storageKey="seedlings:workdaysTab:guideOpen" title="What Workdays are">
+      <TabExplainer explainerId="seedlings:workdaysTab:guideOpen">
         <ExplainerText>
           Each worker&rsquo;s daily clock — when they started, paused and finished. This is the{" "}
           <Em>payroll basis</Em>: it answers &ldquo;was this person on the clock&rdquo;, which is a
@@ -448,8 +448,9 @@ export default function WorkdaysTab({
         </ExplainerText>
         <ExplainerText>
           Workers run their own clock; you <Em>approve</Em> the day, one at a time or in bulk, and
-          can correct a forgotten stop or create a day someone never started. Mileage for the day
-          is approved alongside it.
+          can correct a forgotten stop or create a day someone never started. Approval is
+          reversible — un-approving a day puts it back in the queue — so it is a checkpoint, not
+          a commitment. Mileage for the day is approved alongside it, on its own button.
         </ExplainerText>
         <ExplainerText>
           Deliberately <Em>decoupled from job time</Em>: on a crew, one worker can break for lunch

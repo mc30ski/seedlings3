@@ -4,7 +4,7 @@
 // PreviewRoutesTab — blended-role Routes tab. Takes a `scope` prop
 // carrying {isWorker, isAdmin, isSuper} so one tab serves all three:
 // Worker plans own routes; Admin/Super get the inline worker picker
-// + on-behalf endpoints; Super also gets the team-travel Operations
+// + on-behalf endpoints; Super also gets the team-travel Insights
 // rollup at the top of the tab.
 //
 // Offline: covered by the shell's service worker (public/sw.js)
@@ -34,7 +34,7 @@ import { openEventSearch } from "@/src/lib/bus";
 import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/dates";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import { AdminWorkerPicker, RoutesOperationsPanel, SectionExpander } from "@/src/ui/tabs/PreviewRoutesTab.parts";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 
 type RouteJob = {
   id: string;
@@ -111,6 +111,11 @@ type Response = {
   routeError?: string | null;
   startedFromCurrentLocation?: boolean;
   currentLocationAddress?: string | null;
+  /** Where the day starts, in BOTH modes — home base or the device's
+   *  reverse-geocoded location. What the map link uses as its origin. */
+  startAddress?: string | null;
+  /** True when the plan ends back where it started (home-base mode). */
+  routeReturnsToStart?: boolean;
   dataIssues?: DataIssue[];
 };
 
@@ -297,7 +302,20 @@ export default function PreviewRoutesTab({ scope }: Props) {
   // pick "current" because the device location belongs to the operator, not
   // the target worker.
   const [startFrom, setStartFrom] = usePersistedState<"home" | "current">("preview_startFrom", "home");
-  const effectiveStartFrom = userId ? "home" : startFrom;
+  /** NO HOME BASE MEANS NO ORIGIN. Without one the optimizer runs with
+   *  `source=any`: it picks whatever stop order is shortest overall and the
+   *  route silently begins at one of the jobs, so there is no "get to the
+   *  first site" leg at all — the one thing a route is for.
+   *
+   *  So an unset home base falls back to the device's location rather than
+   *  leaving the day originless. Viewing ANOTHER worker's route stays on
+   *  home base regardless: this device's GPS is not where they are. */
+  const hasHomeBase = homeBaseLoaded && !!activeHomeBase.trim();
+  const effectiveStartFrom = userId
+    ? "home"
+    : hasHomeBase
+      ? startFrom
+      : "current";
 
   async function loadSuggestions() {
     setLoading(true);
@@ -487,57 +505,44 @@ export default function PreviewRoutesTab({ scope }: Props) {
           disclaimer below stays, because it has to be visible without
           opening anything. */}
         <TabExplainer
-          storageKey={`seedlings:routesTab:guideOpen:${scope.isSuper ? "super" : scope.isAdmin ? "admin" : "worker"}`}
-          title="How Routes plans a day"
+          explainerId={`seedlings:routesTab:guideOpen:${scope.isSuper ? "super" : scope.isAdmin ? "admin" : "worker"}`}
         >
-          {scope.isSuper ? (
-            <>
+          <ExplainerText>
+            Pick a day and this suggests the order to drive it, from real driving times across
+            the claimed and claimable jobs for that day. It is a suggestion — nothing changes
+            until you act on a stop.
+          </ExplainerText>
+          <ExplainerText>
+            <Em>Start from</Em> sits next to the Plan button: home base plans a round trip,
+            your current location plans one-way from where you are. From the plan you can{" "}
+            <Em>claim</Em> an unclaimed job and pull it onto the day — the usual rules still
+            apply, so a tentative or administered job cannot be claimed here either, and a
+            contractor is still held to jobs within two days.
+          </ExplainerText>
+          {scope.isAdmin && (
+            <RoleSection role="Admin">
               <ExplainerText>
-                Pick a date and a worker, and this orders their stops for that day from
-                driving distances and an AI pass, then lets you claim and move jobs onto the
-                plan. Moves made from here <Em>skip the written-reason requirement</Em> — the
-                planner records itself as the source.
+                The worker picker plans someone else&rsquo;s day; leave it on <Em>Me</Em> for
+                your own. Claim and reschedule then run on their behalf, and moves made from
+                here <Em>skip the written-reason requirement</Em> a manual reschedule needs —
+                the planner records itself as the source.
               </ExplainerText>
+            </RoleSection>
+          )}
+          {scope.isSuper && (
+            <RoleSection role="Super">
               <ExplainerText>
-                <Em>Operations</Em> above the picker is yours alone: team miles, drive time,
-                sessions, active drivers and the top drivers and vehicles for a rolling
+                <Em>Insights</Em> above the picker is yours alone: team miles, drive time,
+                sessions, active drivers, and the top drivers and vehicles for a rolling
                 period.
               </ExplainerText>
-            </>
-          ) : scope.isAdmin ? (
-            <>
-              <ExplainerText>
-                Pick a date and a worker, and this orders their stops for that day from
-                driving distances and an AI pass. Leave the picker on <Em>Me</Em> to plan your
-                own; pick a worker and the claim and reschedule actions run on their behalf.
-              </ExplainerText>
-              <ExplainerText>
-                Moves made from here skip the written-reason requirement a manual reschedule
-                needs — the planner records itself as the source. The team travel rollup at
-                the top is Super-only.
-              </ExplainerText>
-            </>
-          ) : (
-            <>
-              <ExplainerText>
-                Pick a day and this suggests the order to drive it, from real driving
-                distances plus an AI pass over your claimed and claimable jobs. It is a
-                suggestion — nothing changes until you act on a stop.
-              </ExplainerText>
-              <ExplainerText>
-                From the plan you can <Em>claim</Em> an unclaimed job and pull it onto the
-                day. The usual rules still apply: a tentative or administered job cannot be
-                claimed here either, and as a contractor you are still held to jobs within two
-                days.
-              </ExplainerText>
-            </>
+            </RoleSection>
           )}
         </TabExplainer>
-      {/* Tiny AI disclaimer — one line, muted (was previously a
-          full yellow card that dominated the first render). */}
-      <Text fontSize="xs" color="fg.muted" mb={3}>
-        Routes are optimized from driving distances + AI. Treat as a starting point, not a final plan.
-      </Text>
+      {/* No AI disclaimer here any more. It had also become untrue: the
+          model was removed from this path — see the header of
+          lib/routePlanner.ts — so the order comes from the routing
+          provider's real driving times and everything else is arithmetic. */}
 
       {/* Super capability layer — team travel rollup (miles, drive
           time, sessions, active drivers, top drivers/vehicles) for
@@ -599,6 +604,42 @@ export default function PreviewRoutesTab({ scope }: Props) {
             </Button>
           )}
         </HStack>
+        {/* WHERE THE ROUTE STARTS, next to the button that plans it.
+            This lived in Advanced settings, folded away by default — but it
+            changes the first leg of every route, which is the part a worker
+            acts on first. A setting that alters the answer does not belong
+            behind a disclosure labelled "advanced". */}
+        {!userId && (
+          <HStack gap={2} mt={3} align="center" wrap="wrap">
+            <Text fontSize="xs" fontWeight="medium" color="fg.muted">Start from:</Text>
+            <Button
+              size="xs"
+              variant={effectiveStartFrom === "home" ? "solid" : "outline"}
+              colorPalette={effectiveStartFrom === "home" ? "blue" : "gray"}
+              onClick={() => setStartFrom("home")}
+              disabled={!hasHomeBase}
+              title={hasHomeBase
+                ? "Round trip: home base → your stops → home base"
+                : "Set a home base in Advanced settings to route from there"}
+            >
+              Home base
+            </Button>
+            <Button
+              size="xs"
+              variant={effectiveStartFrom === "current" ? "solid" : "outline"}
+              colorPalette={effectiveStartFrom === "current" ? "blue" : "gray"}
+              onClick={() => setStartFrom("current")}
+              title="Geolocate this device when you plan, and route one-way from there"
+            >
+              My current location
+            </Button>
+            {!hasHomeBase && (
+              <Text fontSize="xs" color="fg.muted">
+                No home base set &mdash; routing from your current location.
+              </Text>
+            )}
+          </HStack>
+        )}
         {lastUpdatedAt && (
           <Text fontSize="xs" color="blue.fg" mt={2}>
             Last analyzed {fmtDateTime(lastUpdatedAt)}
@@ -608,8 +649,9 @@ export default function PreviewRoutesTab({ scope }: Props) {
 
       {/* Advanced settings — folded away by default so the first
           render is just "pick a date, hit Plan". Home base, mode
-          toggle, buffer, look-ahead, available hours, map provider,
-          start-from all live here. Open state is persisted so a
+          toggle, buffer, look-ahead, available hours and map provider
+          live here. START-FROM DOES NOT — it changes the first leg of
+          every route, so it sits next to the Plan button. Open state is persisted so a
           user who wants them always visible only has to expand
           once. */}
       <Box mb={3}>
@@ -657,28 +699,6 @@ export default function PreviewRoutesTab({ scope }: Props) {
                   </Button>
                 )}
               </HStack>
-              {!userId && (
-                <HStack gap={2} mt={2} align="center">
-                  <Text fontSize="xs" fontWeight="medium" color="fg.muted">Start route from:</Text>
-                  <Button
-                    size="xs"
-                    variant={effectiveStartFrom === "home" ? "solid" : "outline"}
-                    colorPalette={effectiveStartFrom === "home" ? "blue" : "gray"}
-                    onClick={() => setStartFrom("home")}
-                  >
-                    Home base
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant={effectiveStartFrom === "current" ? "solid" : "outline"}
-                    colorPalette={effectiveStartFrom === "current" ? "blue" : "gray"}
-                    onClick={() => setStartFrom("current")}
-                    title="Geolocate the device when Analyze runs and use those coords as the start (one-way, no return leg)"
-                  >
-                    My current location
-                  </Button>
-                </HStack>
-              )}
             </Box>
 
             {/* Mode toggle + map provider */}
@@ -967,14 +987,34 @@ export default function PreviewRoutesTab({ scope }: Props) {
                   onClick={() => {
                     const stops = (day.route ?? []).map((s) => s.address).filter(Boolean);
                     if (stops.length === 0) return;
-                    if (stops.length === 1) {
-                      window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(stops[0])}`, "_blank");
-                    } else {
-                      const origin = encodeURIComponent(stops[0]);
-                      const destination = encodeURIComponent(stops[stops.length - 1]);
-                      const waypoints = stops.slice(1, -1).map(encodeURIComponent).join("|");
-                      window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypoints ? `&waypoints=${waypoints}` : ""}`, "_blank");
+
+                    // THE START POINT IS THE ORIGIN — not the first job.
+                    //
+                    // This used to pass `stops[0]` as the origin, so the
+                    // launched map began AT the first site and the leg to get
+                    // there went missing. That first leg is the one you drive
+                    // before anything else.
+                    //
+                    // Falls back to the old behaviour only when the server
+                    // could not resolve a start at all (no home base, no
+                    // geolocation) — then the first stop genuinely is the
+                    // beginning of what we know.
+                    const start = data?.startAddress?.trim() || null;
+                    const ends = data?.routeReturnsToStart && start ? start : null;
+
+                    const legs = [
+                      ...(start ? [start] : []),
+                      ...stops,
+                      ...(ends ? [ends] : []),
+                    ];
+                    if (legs.length === 1) {
+                      window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(legs[0])}`, "_blank");
+                      return;
                     }
+                    const origin = encodeURIComponent(legs[0]);
+                    const destination = encodeURIComponent(legs[legs.length - 1]);
+                    const waypoints = legs.slice(1, -1).map(encodeURIComponent).join("|");
+                    window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypoints ? `&waypoints=${waypoints}` : ""}`, "_blank");
                   }}
                 >
                   Launch Route in Maps ({(day.route ?? []).length} stop{(day.route ?? []).length !== 1 ? "s" : ""})

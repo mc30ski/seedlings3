@@ -1390,6 +1390,145 @@ describe("[build-gate] nothing pulses on a finished visit", () => {
   });
 });
 
+describe("[build-gate] every Super rollup wears the same Insights identity", () => {
+  // The Dashboard component's own note: "Insights is the same surface
+  // wherever you meet it (Home, Jobs, Inventory, Collections, Vehicles), so
+  // it keeps one identity app-wide rather than relating to whatever sits
+  // beside it on a given page."
+  //
+  // Routes shipped the same thing titled "Operations" in the default grey —
+  // drift, not design. A sixth Super rollup that looks different undercuts
+  // exactly the claim the variant exists to make.
+  const files = webFilesContaining("<Dashboard");
+
+  /** Every <Dashboard> opening tag in a file, as attribute text. */
+  function dashboards(src: string): string[] {
+    const out: string[] = [];
+    for (let i = src.indexOf("<Dashboard"); i !== -1; i = src.indexOf("<Dashboard", i + 1)) {
+      // To the end of the opening tag: the first ">" at the start of a line.
+      const end = src.indexOf("\n    >", i);
+      out.push(src.slice(i, end === -1 ? i + 900 : end));
+    }
+    return out;
+  }
+
+  it("a panel titled Insights always uses the insights variant and icon", () => {
+    let seen = 0;
+    for (const f of files) {
+      for (const d of dashboards(web(f))) {
+        if (!/title="Insights"/.test(d)) continue;
+        seen++;
+        expect(d, `${f}: an Insights panel must use variant="insights"`)
+          .toMatch(/variant="insights"/);
+        expect(d, `${f}: an Insights panel must use the shared icon`)
+          .toMatch(/icon=\{BarChart3\}/);
+      }
+    }
+    expect(seen, "the Insights panels must be found at all").toBeGreaterThanOrEqual(6);
+  });
+
+  it("no Super rollup is titled something else", () => {
+    // The specific drift: this panel was "Operations". Renaming it back
+    // would reintroduce a second name for one surface.
+    for (const f of files) {
+      for (const d of dashboards(web(f))) {
+        expect(d, `${f}: a Dashboard titled "Operations" is the old Insights drift`)
+          .not.toMatch(/title="Operations"/);
+      }
+    }
+  });
+});
+
+describe("[build-gate] a launched route starts where the day starts", () => {
+  // "Launch Route in Maps" passed the FIRST JOB as Google's `origin`, so the
+  // map opened already at the first site and the leg to get there — the one
+  // the worker drives before anything else — was missing. Reported by a
+  // worker, not by any test.
+  //
+  // It could not be fixed in the button alone: on a home-base route the
+  // server sent no start address at all, so the client had nothing else to
+  // use. Both halves are pinned here.
+  const PREVIEW = readFileSync(join(__dirname, "../routes/preview.ts"), "utf8");
+  const TAB = web("ui/tabs/PreviewRoutesTab.tsx");
+
+  it("the server reports the start address in BOTH modes", () => {
+    // `currentLocationAddress` is null on a home-base route by design — it
+    // names the CURRENT-LOCATION case. The generic field is what the map
+    // link needs.
+    expect(PREVIEW, "the response must carry a mode-independent start address")
+      .toMatch(/startAddress: resolvedStartAddress,/);
+    expect(PREVIEW, "current-location mode must populate it")
+      .toMatch(/resolvedStartAddress = currentLocationAddress;/);
+    expect(PREVIEW, "home-base mode must populate it too")
+      .toMatch(/resolvedStartAddress = user\.homeBaseAddress;/);
+    expect(PREVIEW, "and say whether the plan returns to the start")
+      .toMatch(/routeReturnsToStart,/);
+  });
+
+  it("the map link uses that start as the origin, not the first job", () => {
+    const i = TAB.indexOf("Launch Route in Maps");
+    expect(i, "the launch button must exist").toBeGreaterThan(-1);
+    const handler = TAB.slice(Math.max(0, i - 2600), i);
+    expect(handler, "the origin must come from the resolved start")
+      .toMatch(/data\?\.startAddress/);
+    expect(
+      handler,
+      "the origin must not be the first stop — that drops the leg to it",
+    ).not.toMatch(/const origin = encodeURIComponent\(stops\[0\]\)/);
+    expect(handler, "a round trip must end back at the start")
+      .toMatch(/routeReturnsToStart/);
+  });
+});
+
+describe("[build-gate] the ghost urgency window is one number, not two", () => {
+  // A next-visit ghost starts pulsing 3 days before the visit was due, and
+  // the "Next visits expiring" alert counts ghosts inside the same window.
+  // Those are TWO literals in two files with nothing joining them — the same
+  // shape as the expired-ghost window, which drifted from 7 to 30 on the
+  // server while the client stayed on "lastWeek" and the chip counted rows
+  // the filter could not show.
+  const JOBS_SVC = readFileSync(join(__dirname, "./jobs.ts"), "utf8");
+  const TAB = web("ui/tabs/JobsTab.tsx");
+
+  it("the chip that pulses and the alert that counts use the same threshold", () => {
+    const server = /export const GHOST_EXPIRING_SOON_DAYS = (\d+);/.exec(JOBS_SVC);
+    expect(server, "GHOST_EXPIRING_SOON_DAYS must be a plain numeric literal").toBeTruthy();
+
+    const client = /const ghostUrgent = [^;]*?ghostDaysLeft <= (\d+)/.exec(TAB);
+    expect(client, "the ghost pulse threshold must be a plain numeric literal").toBeTruthy();
+
+    expect(
+      client![1],
+      `the ghost card pulses at <= ${client![1]} days but the alert counts ` +
+        `"expiring soon" at <= ${server![1]} — a card can pulse while the ` +
+        "chip has not counted it, or the reverse",
+    ).toBe(server![1]);
+  });
+
+  it("the pulse keeps going once the date has passed", () => {
+    // `<=` not a range. An expired ghost is past the line and MORE urgent,
+    // not less; a window would make it go quiet exactly when it most needs
+    // chasing.
+    expect(TAB, "the threshold must be open-ended downward")
+      .toMatch(/ghostDaysLeft <= \d+/);
+    expect(TAB, "a two-sided window would silence expired ghosts")
+      .not.toMatch(/ghostDaysLeft >= 0 && ghostDaysLeft <= \d+/);
+  });
+
+  it("a ghost that is not pulsing is visibly calmer", () => {
+    // "Not pulsing" means not overdue and not muted — the stark slate reads
+    // as an alarm, so it must not be the ground for a card that is fine.
+    expect(TAB, "a calmer ground must exist").toMatch(/const GHOST_CARD_BG_CALM = "#[0-9a-f]{6}";/);
+    expect(TAB, "the ground must follow the pulse")
+      .toMatch(/const ghostBg = ghostUrgent \? GHOST_CARD_BG : GHOST_CARD_BG_CALM;/);
+    // Ground and ink switch together or one of them is unreadable.
+    expect(TAB, "ink must follow the ground").toMatch(/const ghostInk = ghostUrgent \?/);
+    expect(TAB, "secondary ink too").toMatch(/const ghostInkDim = ghostUrgent \?/);
+    expect(TAB, "the card must use the derived ground, not the constant")
+      .not.toMatch(/bg=\{GHOST_CARD_BG\}/);
+  });
+});
+
 describe("[build-gate] Guidance appears at every card density or none", () => {
   // SHIPPED TO PRODUCTION. The compact card gated its Guidance drawer on
   // `propertyPhotos.length > 0` — left over from when the drawer was only
@@ -1688,7 +1827,7 @@ describe("[build-gate] every tab explainer is driven from the breadcrumb", () =>
     expect(TAB_EXPLAINER, "an active-explainer channel must exist")
       .toMatch(/const ACTIVE_EVENT = "seedlings:tab-explainer-active"/);
     expect(TAB_EXPLAINER, "the panel must register on mount")
-      .toMatch(/setActive\(\{ storageKey, title \}\);/);
+      .toMatch(/setActive\(\{ id: explainerId, title \}\);/);
     expect(TAB_EXPLAINER, "and clear on unmount")
       .toMatch(/return \(\) => setActive\(null\);/);
     expect(TAB_EXPLAINER, "the button must follow the active explainer")
@@ -1696,17 +1835,54 @@ describe("[build-gate] every tab explainer is driven from the breadcrumb", () =>
   });
 
   it("the trigger and the panel are actually connected", () => {
-    // `usePersistedState` is per-hook state: without the toggle event the
-    // button would write localStorage and the panel would never re-render.
-    expect(TAB_EXPLAINER, "a toggle event must exist")
-      .toMatch(/const TOGGLE_EVENT = "seedlings:tab-explainer-toggle"/);
-    expect(TAB_EXPLAINER, "the button must dispatch it")
-      .toMatch(/window\.dispatchEvent\(new CustomEvent\(TOGGLE_EVENT/);
-    const listeners = TAB_EXPLAINER.match(/addEventListener\(TOGGLE_EVENT/g) ?? [];
+    // `usePersistedState` is per-hook state: the breadcrumb button and the
+    // mounted panel are two separate hooks over the same key, so without the
+    // event the button would write localStorage and the panel would never
+    // re-render.
+    expect(TAB_EXPLAINER, "a change event must exist")
+      .toMatch(/const OPEN_CHANGED_EVENT = "seedlings:tab-explainer-open-changed"/);
+    expect(TAB_EXPLAINER, "the new value must be dispatched")
+      .toMatch(/window\.dispatchEvent\(new CustomEvent\(OPEN_CHANGED_EVENT/);
     expect(
-      listeners.length,
-      "both the button and the panel must listen, or they fall out of step",
-    ).toBe(2);
+      TAB_EXPLAINER,
+      "one listener, in the shared hook both components use — not one each, which is how they drifted before",
+    ).toMatch(/addEventListener\(OPEN_CHANGED_EVENT/);
+    // The dispatch must NOT happen inside the state updater. An updater has
+    // to stay pure; React may call it twice, and a side effect in there fires
+    // twice with it.
+    const hook = TAB_EXPLAINER.slice(
+      TAB_EXPLAINER.indexOf("function useHelpOpen"),
+      TAB_EXPLAINER.indexOf("export const DEFAULT_EXPLAINER_TITLE"),
+    );
+    expect(hook, "useHelpOpen must exist").toBeTruthy();
+    expect(hook, "dispatch outside the updater, not inside it")
+      .not.toMatch(/setOpenRaw\(\([a-z]+\) => \{[\s\S]*?dispatchEvent/);
+  });
+
+  it("help is ONE preference, not one per tab", () => {
+    // It used to be keyed per tab (and per role), so turning help on told you
+    // about the tab you were standing on and nothing else — every tab you
+    // moved to was closed again. Someone who wants the help wants it WHILE
+    // they find their way around, which is exactly when they change tabs.
+    expect(TAB_EXPLAINER, "a single shared key")
+      .toMatch(/const HELP_OPEN_KEY = "help:open";/);
+    // The panel and the button must both read the shared hook. A call to
+    // usePersistedState anywhere else in this file is a per-tab state coming
+    // back — which is the regression this rule exists for.
+    const persisted = TAB_EXPLAINER.match(/usePersistedState</g) ?? [];
+    expect(
+      persisted.length,
+      "exactly one usePersistedState — inside useHelpOpen. More than one means a second, per-tab source of truth",
+    ).toBe(1);
+    expect(TAB_EXPLAINER, "the panel reads the shared state")
+      .toMatch(/const \[open, setOpen\] = useHelpOpen\(\);[\s\S]{0,400}?setActive/);
+    // And the identity prop must not be wired back into storage: a prop named
+    // for storage that no longer keys any is how the next reader gets it
+    // wrong, so it was renamed off "storageKey" on purpose.
+    expect(TAB_EXPLAINER, "the panel's prop is an identity, not a key")
+      .toMatch(/explainerId: string;/);
+    expect(TAB_EXPLAINER, "and nothing calls it a storage key any more")
+      .not.toMatch(/storageKey[,:)]/);
   });
 
   it("the trigger shows an on/off state", () => {
@@ -1715,10 +1891,245 @@ describe("[build-gate] every tab explainer is driven from the breadcrumb", () =>
     const end = TAB_EXPLAINER.indexOf("export default function", i);
     expect(end, "a following export must bound the slice").toBeGreaterThan(i);
     const btn = TAB_EXPLAINER.slice(i, end);
-    expect(btn, "the button must change appearance when open")
-      .toMatch(/bg=\{open \? "[a-z]+\.[a-z]+" : "transparent"\}/);
+    // The two states must DIFFER — not "closed must be transparent". The
+    // closed state was transparent and that was the bug: a bare glyph with
+    // no pill and no edge read as decoration and people missed it.
+    const bg = /bg=\{open \? "([a-z.]+)" : "([a-z.]+)"\}/.exec(btn);
+    expect(bg, "the button's fill must depend on open state").toBeTruthy();
+    const [, openBg, closedBg] = bg!;
+    expect(openBg, "open and closed must not share a fill").not.toBe(closedBg);
+    // `transparent` is a valid token string, so "the two differ" passed with
+    // the closed state invisible again — which was the whole bug.
+    expect(closedBg, "the CLOSED state must paint a fill, not vanish").not.toBe("transparent");
+    expect(
+      btn,
+      "the closed state must still be findable — a visible edge, not transparent",
+    ).not.toMatch(/borderColor=\{?[^}\n]*"transparent"/);
+
+    // `solid` is a FILL that carries `contrast` ink. Painting solid and
+    // leaving the ink alone is the white-on-white class of bug.
+    if (openBg.endsWith(".solid")) {
+      expect(btn, "a solid fill must pair with its contrast ink")
+        .toMatch(/color=\{open \? "[a-z]+\.contrast" :/);
+    }
     expect(btn, "and report its state to assistive tech")
       .toMatch(/aria-expanded=\{open\}/);
+  });
+
+  it("the open panel reads as a layer, not another card", () => {
+    // Every tab is a column of bordered cards. A 1px differently-coloured
+    // edge — which this was — is just one more of them, and operators said
+    // so. Four things together separate it, and dropping any one of them
+    // walks it back toward a card: heavy border, a thick left accent RAIL,
+    // elevation, and a fill a step stronger than the page.
+    //
+    // No opt-in prop: this was trialled behind one and kept, so it is the
+    // only path. A flag every call site must remember is a flag some call
+    // site will forget.
+    const i = TAB_EXPLAINER.indexOf("if (!open) return null;");
+    const panel = TAB_EXPLAINER.slice(i, i + 1400);
+    expect(panel, "the frame must be heavier than a card's").toMatch(/borderWidth="2px"/);
+    expect(panel, "and a colour that actually reads against the page")
+      .toMatch(/borderColor="blue\.solid"/);
+    expect(panel, "the left accent rail is what separates a layer from a card")
+      .toMatch(/borderLeftWidth="[4-9]px"/);
+    expect(panel, "elevation lifts it off the tab").toMatch(/shadow="md"/);
+    expect(panel, "and the fill must be stronger than the old blue.faint")
+      .toMatch(/bg="blue\.subtle"/);
+    expect(
+      TAB_EXPLAINER,
+      "no opt-in prop — the treatment is the only path",
+    ).not.toMatch(/standOut|strongBorder/);
+  });
+
+  // Which top-level component a character offset belongs to. A tab file holds
+  // several components, and both rules below need to ignore matches that
+  // belong to a sub-component rather than the tab itself.
+  const ownerOf = (src: string, idx: number): string | null => {
+    let owner: string | null = null;
+    const decl = /\n(?:export default |export )?(?:function (\w+)|const (\w+)\s*[:=][^\n]*(?:=>|function))/g;
+    for (let m = decl.exec(src); m; m = decl.exec(src)) {
+      if (m.index >= idx) break;
+      owner = m[1] ?? m[2] ?? owner;
+    }
+    return owner;
+  };
+
+  it("no tab insets its own explainer with extra padding", () => {
+    // Five tabs padded their ROOT container (`p={3}`, `p={4}`, `px={2}`),
+    // which pushed the explainer panel 8–16px narrower than the same panel on
+    // every other tab — visible as soon as you switched between them. The tab
+    // body already supplies the horizontal gutter; a tab that adds its own is
+    // choosing to be inconsistent. Vertical padding is fine and is why this
+    // looks for the horizontal axis only.
+    const offenders: string[] = [];
+    for (const f of webFilesContaining("<TabExplainer")) {
+      const src = web(f);
+      const at = src.indexOf("<TabExplainer");
+      // The ROOT element only: the line straight after the last `return (`
+      // before the explainer. Scanning backwards for any 4-space-indented tag
+      // instead picked up a swatch Box *inside* JobsExplainer and reported a
+      // tab that pads nothing — a rule that fires on the wrong element teaches
+      // people to ignore it.
+      const head = src.slice(0, at);
+      const ri = head.lastIndexOf("\n  return (\n");
+      if (ri < 0) continue;
+      const root = head.slice(ri + "\n  return (\n".length).split("\n")[0];
+      if (!/^ {4}<(VStack|Box|Stack)\b/.test(root)) continue;
+      // Horizontal padding narrows the panel; TOP padding pushes it further
+      // from the breadcrumb than every other tab. Both were reported, in that
+      // order, from the same four tabs. Bottom padding is fine — it is the
+      // only one that changes nothing above the fold.
+      const bad = ["p", "px", "pl", "pr", "py", "pt"].filter((k) =>
+        new RegExp(`\\b${k}=\\{`).test(root),
+      );
+      if (bad.length) {
+        offenders.push(`${f}: ${bad.join("/")} on the root — ${root.trim().slice(0, 70)}`);
+      }
+    }
+    expect(offenders, "a tab root that insets its explainer horizontally").toEqual([]);
+  });
+
+  it("nothing renders above the explainer", () => {
+    // Ledger and Supplies each led with their own title + buttons and put the
+    // help panel UNDER them, so those two tabs opened differently from every
+    // other one. The breadcrumb already says which tab you are on, so a second
+    // copy of the name is not worth pushing the help down for.
+    //
+    // WHAT COUNTS AS "ABOVE". Only things a reader sees: a Text, a Button, a
+    // Heading. A layout wrapper (`<VStack align="stretch" gap={3}>`) is not
+    // content, and a loading OVERLAY is absolutely positioned over the whole
+    // tab and takes no space in the flow — an earlier draft flagged both and
+    // named four tabs that were already correct.
+    const offenders: string[] = [];
+    for (const f of webFilesContaining("<TabExplainer")) {
+      const src = web(f);
+      // Where the panel is RENDERED. On a tab that hoists it above its loading
+      // gates that is `{tabHelp}`, not the `const tabHelp = (` declaration.
+      const at = src.includes("const tabHelp = (")
+        ? src.indexOf("{tabHelp}", src.indexOf("const tabHelp = ("))
+        : src.indexOf("<TabExplainer");
+      if (at < 0) continue;
+      // The component's own `return (` — not a sub-component's further up the
+      // file, which is what made this rule read three tabs' Select widgets as
+      // content sitting above their help.
+      const owner = ownerOf(src, at);
+      let ri = -1;
+      for (let i = src.lastIndexOf("\n  return (\n", at); i >= 0; i = src.lastIndexOf("\n  return (\n", i - 1)) {
+        if (ownerOf(src, i) === owner) { ri = i; break; }
+      }
+      if (ri < 0) continue;
+      const flow = src
+        .slice(ri, at)
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+        .replace(/\{(?:loading|isLoading)[^\n]*&& \([\s\S]*?\n {6}\)\}/g, "");
+      const m = flow.match(/<(Text|Button|Heading)\b/);
+      if (m) offenders.push(`${f}: <${m[1]}> renders before the explainer`);
+    }
+    expect(
+      offenders,
+      "a tab that puts content above its help panel — every tab must open the same way",
+    ).toEqual([]);
+  });
+
+  it("no explainer is trapped behind its tab's loading gate", () => {
+    // THE (i) BLINKED. The breadcrumb trigger is driven by whichever explainer
+    // is mounted, and these tabs rendered theirs BELOW an early return for
+    // loading — so the panel was unmounted for the whole fetch and the icon
+    // vanished and came back on every visit. The copy is static; it does not
+    // depend on anything the tab fetches, so it hoists to `tabHelp` above the
+    // gates and renders in the gate branches too.
+    //
+    // HOW THIS RULE IS ANCHORED, AND WHY NOT THE OBVIOUS WAY. The first
+    // version looked for gates positioned BEFORE `<TabExplainer` in the file.
+    // That passed on a clean tree and kept passing when the fix was reverted —
+    // because hoisting moves `<TabExplainer` ABOVE the gates, so the slice it
+    // searched was empty either way. It asserted nothing. The rule now looks
+    // at every gate in the file and asks whether it carries the panel.
+    //
+    // A gate on ROLE is exempt: it never flips at runtime, so it cannot blink,
+    // and offering help for a tab the reader may not use would be worse.
+    const ROLE_GATED_EXEMPT: Record<string, string> = {
+      "ui/tabs/ActivityTab.tsx": "gate is `role !== admin` — fixed for the lifetime of the mount",
+      "ui/tabs/HistoryTab.tsx": "gate is `role !== admin` — same",
+      "ui/tabs/UsersTab.tsx": "gate returns the worker roster, a different view with its own explainer",
+      "ui/tabs/PaymentsTab.tsx": "gate is `!isAvail && !showSuperExtras`; the explainer is a child component rendered after it",
+    };
+    const GATE = /\n {2}if \([^\n]{0,160}\)[\s\S]{0,300}?return[\s\S]{0,240}?(?:LoadingCenter|UnavailableNotice|Spinner)/g;
+    // `HistoryView`'s own little spinner is not the tab's gate and has nothing
+    // to do with the breadcrumb icon — without the ownership check the rule
+    // reported five tabs that were already correct, and a rule that cries wolf
+    // gets suppressed rather than fixed.
+    const missed: string[] = [];
+    const unexempt: string[] = [];
+    for (const f of webFilesContaining("<TabExplainer")) {
+      const src = web(f);
+      const explainerOwner = ownerOf(src, src.indexOf("<TabExplainer"));
+      const gates: string[] = [];
+      for (let m = GATE.exec(src); m; m = GATE.exec(src)) {
+        if (ownerOf(src, m.index) === explainerOwner) gates.push(m[0]);
+      }
+      GATE.lastIndex = 0;
+      if (gates.length === 0) continue;
+      const hoisted = /\n {2}const tabHelp = \(/.test(src);
+      if (!hoisted) {
+        if (!ROLE_GATED_EXEMPT[f]) unexempt.push(`${f}: ${gates[0].replace(/\s+/g, " ").slice(0, 90)}`);
+        continue;
+      }
+      // Hoisted: then EVERY gate in this component must render it, or the one
+      // that does not is the one that will blink.
+      for (const g of gates) {
+        if (!g.includes("tabHelp")) missed.push(`${f}: ${g.replace(/\s+/g, " ").slice(0, 90)}`);
+      }
+    }
+    expect(
+      missed,
+      "a loading gate that returns WITHOUT the hoisted panel — the (i) will blink on this tab",
+    ).toEqual([]);
+    expect(
+      unexempt,
+      "a tab with a loading gate that never hoists its explainer — hoist it, or exempt it here with the reason",
+    ).toEqual([]);
+  });
+
+  it("every explainer asks the same question the same way", () => {
+    // 36 hand-written titles — "What Home shows", "What Crews are", "How
+    // supplies are tracked" — each a small guess at the right noun and verb
+    // for its tab. They all answer one question, so the panel asks it once
+    // and the tab supplies the context.
+    expect(TAB_EXPLAINER, "the shared title must be defined once")
+      .toMatch(/export const DEFAULT_EXPLAINER_TITLE = "What this tab shows";/);
+    expect(TAB_EXPLAINER, "and be the default, so call sites need not pass one")
+      .toMatch(/title = DEFAULT_EXPLAINER_TITLE,/);
+
+    // No call site may reintroduce a bespoke one.
+    for (const f of webFilesContaining("<TabExplainer")) {
+      const src = web(f);
+      for (const m of src.matchAll(/<TabExplainer\b[\s\S]{0,400}?>/g)) {
+        const t = /title="([^"]*)"/.exec(m[0]);
+        expect(
+          t,
+          `${f} passes its own explainer title "${t?.[1]}" — the panel asks one question everywhere`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("the panel heading is darker than the copy beneath it", () => {
+    // Both were `blue.fg`, so the heading was distinguished by weight alone.
+    // `fg.default` is the page's primary ink and flips with the theme just as
+    // `blue.subtle` beneath it does — a raw ramp step would not, and
+    // `blue.contrast` (the tempting "stronger blue") is WHITE.
+    // Anchored on the heading ELEMENT — `{title}` alone also matches the
+    // button's `aria-label={title}` earlier in the file.
+    const i = TAB_EXPLAINER.indexOf('fontWeight="semibold" flex="1" textAlign="left"');
+    expect(i, "the panel heading must exist").toBeGreaterThan(-1);
+    const heading = TAB_EXPLAINER.slice(Math.max(0, i - 120), i + 200);
+    expect(heading, "the anchored block must be the heading").toMatch(/\{title\}/);
+    expect(heading, "the heading must use the page's primary ink")
+      .toMatch(/color="fg\.default"/);
+    expect(heading, "and must not be white on a pale fill")
+      .not.toMatch(/color="[a-z]+\.contrast"/);
   });
 
   it("the open panel names itself, closes itself, and has no chevron", () => {
@@ -2939,7 +3350,10 @@ describe("[build-gate] the Supplies UI says what the service actually does", () 
   });
 
   it("the job-payout cost is described as the CLIENT's charge, not the worker's", () => {
-    const T = TAB();
+    // Whitespace-normalised: JSX prose wraps wherever the line runs out, so a
+    // phrase check against the raw file fails on a line break rather than on
+    // a missing fact.
+    const T = TAB().replace(/\s+/g, " ");
     expect(T, "materials never come out of anyone's pay")
       .not.toMatch(/deducted from the worker/i);
     expect(T).toMatch(/billed to the client|the CLIENT is charged/);
@@ -4279,6 +4693,19 @@ describe("[build-gate] every Money tab explains itself", () => {
   const web = (rel: string) =>
     readFileSync(join(__dirname, "../../../web/src/ui/tabs/", rel), "utf8");
 
+  // Whitespace-collapsed TabExplainer block ONLY. Matching a whole tab file
+  // is how a copy rule quietly becomes vacuous: a control's own label
+  // ("Push-only", "Upload payroll", "Send now") satisfies the regex without
+  // the help text saying anything at all.
+  const explainerOf = (rel: string) => {
+    const whole = web(rel).replace(/\s+/g, " ");
+    const open_ = whole.indexOf("<TabExplainer");
+    const close = whole.indexOf("</TabExplainer>");
+    expect(open_, `${rel} needs an explainer`).toBeGreaterThan(-1);
+    expect(close, `${rel} explainer is unterminated`).toBeGreaterThan(open_);
+    return whole.slice(open_, close);
+  };
+
   // Every tab under the Money category, and whether more than one role sees it.
   const MONEY_TABS: Array<{ file: string; roleAware: boolean }> = [
     { file: "PaymentsTab.tsx", roleAware: true },
@@ -4329,15 +4756,21 @@ describe("[build-gate] every Money tab explains itself", () => {
     const U = web("UsersTab.tsx").replace(/\s+/g, " ");
     const at = U.indexOf("function WorkerTeamRoster");
     expect(U.slice(at)).toMatch(/not here and not withheld by accident/);
+    // AdminGroupsTab is the one flat explainer that earned a RoleSection:
+    // the worker mount is a different render tree (early return), so both
+    // mounts carry the same base copy and only the admin one adds to it.
+    // The base states the withholding as a FACT about workers, not as
+    // "you cannot" — an admin reads the same sentence and it stays true.
     const G = web("AdminGroupsTab.tsx").replace(/\s+/g, " ");
-    expect(G.slice(G.indexOf("function WorkerMyCrews"))).toMatch(/Cost splits.*are not shown here/);
+    expect(G.slice(G.indexOf("function WorkerMyCrews")))
+      .toMatch(/cost splits and anyone.{0,8}s pay details\s*are never shown to them/i);
   });
 
   it("Users tells an admin that approving is not theirs", () => {
     // POST /admin/users/:id/approve is superGuard, and the admin mount passes
     // `readOnly` so no mutation control renders at all.
     const U = web("UsersTab.tsx").replace(/\s+/g, " ");
-    expect(U).toMatch(/Read-only for you/);
+    expect(U, "an admin must be told approving is not theirs").toMatch(/Read-only for you|super-only/);
     expect(U).toMatch(/Approving a new sign-up is yours alone/);
   });
 
@@ -4354,7 +4787,7 @@ describe("[build-gate] every Money tab explains itself", () => {
       expect(src, `${f} needs an explainer`).toContain("<TabExplainer");
       const at = src.indexOf("<TabExplainer");
       const block = src.slice(at, src.indexOf("</TabExplainer>", at));
-      const keyed = /storageKey=\{`[^`]*\$\{/.test(block);
+      const keyed = /explainerId=\{`[^`]*\$\{/.test(block);
       const branched = /isSuper \?|scope\.isSuper \?|isAdminView \?/.test(block);
       if (!keyed || !branched) flat.push(f);
     }
@@ -4370,7 +4803,7 @@ describe("[build-gate] every Money tab explains itself", () => {
     expect(J, "…and the tab must mount the explainer instead").toContain("<JobsExplainer");
     const E = readFileSync(join(__dirname, "../../../web/src/ui/components/JobsExplainer.tsx"), "utf8");
     expect(E).toContain("<TabExplainer");
-    expect(E, "role-keyed storage (via the shared jobsExplainerKey helper, so the out-of-line trigger targets the same explainer)").toMatch(/storageKey=\{jobsExplainerKey\(role\)\}/);
+    expect(E, "role-keyed identity, via the shared jobsExplainerKey helper").toMatch(/explainerId=\{jobsExplainerKey\(role\)\}/);
   });
 
   it("the Jobs reference states the claim rules the server actually enforces", () => {
@@ -4466,7 +4899,7 @@ describe("[build-gate] every Money tab explains itself", () => {
       expect(src, `${f} needs an explainer`).toContain("<TabExplainer");
       const at = src.indexOf("<TabExplainer");
       const block = src.slice(at, src.indexOf("</TabExplainer>", at));
-      const keyed = /storageKey=\{`[^`]*\$\{/.test(block);
+      const keyed = /explainerId=\{`[^`]*\$\{/.test(block);
       const branched = /showSuperExtras \?/.test(block);
       if (!keyed || !branched) flat.push(f);
     }
@@ -4504,7 +4937,8 @@ describe("[build-gate] every Money tab explains itself", () => {
     const I = web("InventoryTab.tsx").replace(/\s+/g, " ");
     const at = I.indexOf("<TabExplainer");
     const block = I.slice(at, I.indexOf("</TabExplainer>", at));
-    expect(block).toMatch(/Adding a new piece and deleting a retired one are Super-only/);
+    expect(I, "an admin must be told these two are not theirs")
+      .toMatch(/Adding a new piece and deleting a retired one are <Em>super-only<\/Em>|Adding a new piece and deleting a retired one are Super-only/);
     // …and the create button really is still super-gated.
     expect(web("InventoryTab.tsx")).toMatch(/showSuperExtras && \(\s*<Button[\s\S]{0,400}?onClick=\{openCreate\}/);
   });
@@ -4537,7 +4971,7 @@ describe("[build-gate] every Money tab explains itself", () => {
     const V = web("VehiclesTab.tsx").replace(/\s+/g, " ");
     const at = V.indexOf("<TabExplainer");
     const block = V.slice(at, V.indexOf("</TabExplainer>", at));
-    expect(block, "the admin branch must say it is read-only").toMatch(/Read-only<\/Em> for you/);
+    expect(V, "a non-super must be told the controls are not theirs").toMatch(/Read-only<\/Em> for you|super-only/);
     expect(block, "the worker branch must point at the Home mileage strip")
       .toMatch(/mileage strip on your Home tab/);
     expect(block, "and must not imply miles are logged here")
@@ -4551,8 +4985,8 @@ describe("[build-gate] every Money tab explains itself", () => {
     const C = web("CollectionsTab.tsx").replace(/\s+/g, " ");
     const at = C.indexOf("<TabExplainer");
     const block = C.slice(at, C.indexOf("</TabExplainer>", at));
-    expect(block, "the worker branch must say kits are read-only")
-      .toMatch(/Read-only<\/Em>; kits are built and changed by an admin/);
+    expect(C, "a worker must be told kits are admin-authored")
+      .toMatch(/kits are built and changed by an admin/);
     expect(block, "an admin must be told deleting a kit spares the equipment")
       .toMatch(/deleting one never touches the equipment itself/);
   });
@@ -4575,7 +5009,7 @@ describe("[build-gate] every Money tab explains itself", () => {
     // told "changing one here changes behaviour everywhere" would be reading
     // about controls that are not rendered for them.
     const S = web("SettingsTab.tsx").replace(/\s+/g, " ");
-    expect(S).toMatch(/Read-only for you/);
+    expect(S, "an admin must be told changing a value is not theirs").toMatch(/Read-only for you|super-only/);
     expect(S, "and the super branch must warn that changes are immediate")
       .toMatch(/changes\s*behaviour/i);
     // A rate change must NOT be described as re-rating past work — payouts
@@ -4588,13 +5022,114 @@ describe("[build-gate] every Money tab explains itself", () => {
   });
 
   it("Notify says what it actually sends, and to whom", () => {
-    // notifyWorker fans out SMS + email + push together — not a choice of
-    // channel — capped at 20 per actor per ET day, audited, and it reaches
-    // approved workers and admins only. Never clients.
-    const N = web("AdminNotifyTab.tsx").replace(/\s+/g, " ");
-    expect(N).toMatch(/text, email and push at once/);
-    expect(N).toMatch(/20 sends per person per day/);
+    // Corrected 2026-09-20 — this rule previously asserted "not a choice of
+    // channel" and "20 sends per person per day". BOTH were wrong, and the
+    // gate had been pinning the error in place:
+    //
+    //   • routes/notify.ts reads `body.channels`, and AdminNotifyTab ships a
+    //     Push-only switch that sends `channels: ["push"]`. The channel IS a
+    //     choice. (`pushOnly` skips notifyWorker entirely for sendPushToUser.)
+    //   • RATE_LIMIT_PER_DAY counts NOTIFICATION.SENT audit rows for the
+    //     ACTOR — one broadcast to the whole team costs one. "Per person"
+    //     reads as per recipient, which is the opposite of the truth.
+    //     (The rule's own comment said "per actor" while asserting "per
+    //     person" — the gate disagreed with itself and the copy followed
+    //     the assertion.)
+    // Slice to the explainer. Both control names ("Push-only", "Also post
+    // home banner") also appear as switch labels further down the file, so a
+    // whole-file match would pass on the labels alone and assert nothing
+    // about the help text — which is exactly what it did on first writing.
+    const whole = web("AdminNotifyTab.tsx").replace(/\s+/g, " ");
+    const open_ = whole.indexOf("<TabExplainer");
+    const close = whole.indexOf("</TabExplainer>");
+    expect(open_, "AdminNotifyTab needs an explainer").toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(open_);
+    const N = whole.slice(open_, close);
+    expect(N, "the default fan-out is all three channels").toMatch(/text, email and push at once/);
+    expect(N, "Push-only is a real channel choice and must be described")
+      .toMatch(/Push-only/);
+    expect(N, "the cap is per SENDER, not per recipient")
+      .toMatch(/20 sends per sender per day/);
+    expect(N, "the cap counts sends, not recipients, and must say so")
+      .toMatch(/counts sends, not people/);
+    expect(N, "the home banner is a separate channel, not a copy of the send")
+      .toMatch(/post home banner/i);
     expect(N, "must not imply it reaches clients").toMatch(/never clients/);
+    // The specific false claim this rule used to enforce. Keep it named so it
+    // cannot come back as a "clarification".
+    expect(N, "the channel IS a choice — Push-only exists")
+      .not.toMatch(/not a choice of channel/);
+  });
+
+  // ── The 2026-09-20 accuracy pass over the single-audience explainers ──
+  //
+  // Fourteen explainers had no role branching. Thirteen of them are genuinely
+  // single-audience (twelve are mounted only in the Super array; Activity,
+  // History and Notify are mounted for admin and super with IDENTICAL props
+  // and no internal role gate), so they get no RoleSection — only
+  // AdminGroupsTab earned one. Reading them against the code turned up five
+  // claims that were simply false. Each is pinned below, with the truth.
+
+  it("Promotions does not claim a campaign can only ride along", () => {
+    // triggerKindSchema = z.enum(["on_invoice_sent", "manual_send"]), and
+    // runManualSendBurst IS a blast — PromotionsTab renders a "Send now"
+    // button with a "blast to audience?" confirm. The old copy said promos
+    // are appended to an invoice "rather than sent as its own blast", which
+    // described exactly half the feature.
+    const whole = explainerOf("PromotionsTab.tsx");
+    expect(whole, "the manual/blast trigger must be described")
+      .toMatch(/Send now/);
+    expect(whole, "must not claim a promotion is never sent on its own")
+      .not.toMatch(/rather than sent as its own blast/);
+    // buildUnsubscribeUrl returns a STATIC `${base}/opt-out` — no token, no
+    // HMAC. The recipient types their own email or phone on that page. It is
+    // not one-click, and telling an operator it is misstates a legal control.
+    expect(whole, "the opt-out is a landing page, not a one-click link")
+      .not.toMatch(/one-click opt-out/);
+    expect(whole).toMatch(/types their own email or phone/);
+  });
+
+  it("Reconcile does not claim a period gets filed, and owns its one mutation", () => {
+    // There is no period-close anywhere: /super/reconcile/period is a GET and
+    // ReconcileTab posts nothing but the Gusto payroll import. "The period is
+    // filed" described a state machine that does not exist.
+    const whole = explainerOf("ReconcileTab.tsx");
+    expect(whole, "nothing is filed — say so").toMatch(/no period is opened or closed here/);
+    expect(whole, "Upload payroll writes, so 'it does not adjust' needs its exception")
+      .toMatch(/Upload payroll/);
+    // The exports are five plain CSVs. There is no QuickBooks-format export.
+    expect(whole).not.toMatch(/QuickBooks and Gusto exports/);
+  });
+
+  it("Forecast discloses the one thing on it that leaves the app", () => {
+    // routes/forecast.ts: "Hand a scenario to Claude for a written
+    // assessment." It is the only Anthropic call in the codebase, and the
+    // copy claimed the tab was a closed calculator.
+    const whole = explainerOf("ForecastTab.tsx");
+    expect(whole, "the Claude assessment must be disclosed").toMatch(/Claude/);
+    expect(whole, "and it must still be clear nothing is written back")
+      .toMatch(/writes nothing back|changes nothing/);
+  });
+
+  it("Audit separates the two estimate-drift checks, which mean different things", () => {
+    // One `if` computes both. time_estimate_mismatch still has occurrences
+    // awaiting hours approval behind it; stale_estimate has none, so the
+    // numbers are settled and the ESTIMATE is what is wrong. Collapsing them
+    // into "time has drifted" loses the only actionable half.
+    const whole = explainerOf("AuditTab.tsx");
+    expect(whole).toMatch(/Time Estimate Mismatch/);
+    expect(whole).toMatch(/Stale Estimate/);
+    expect(whole, "the difference is what to DO about it").toMatch(/awaiting approval|hours awaiting/i);
+  });
+
+  it("Workdays says approval is reversible, because the route exists", () => {
+    // POST /super/workdays/:id/unapprove. An operator who thinks approving is
+    // final will hesitate over a day they are unsure about.
+    const whole = explainerOf("WorkdaysTab.tsx");
+    expect(whole).toMatch(/reversible/);
+    const api = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+    expect(api, "the copy promises an unapprove route that must exist")
+      .toMatch(/workdays\/:id\/unapprove/);
   });
 
   it("both Tools tabs render one, and say the estimate hand-off is not built", () => {
@@ -4630,7 +5165,7 @@ describe("[build-gate] every Money tab explains itself", () => {
       const src = web(t.file);
       const at = src.indexOf("<TabExplainer");
       const block = src.slice(at, src.indexOf("</TabExplainer>", at));
-      const keyed = /storageKey=\{`[^`]*\$\{/.test(block);
+      const keyed = /explainerId=\{`[^`]*\$\{/.test(block);
       const branched = /showSuperExtras \?|showAdminExtras \?|isSuper \?/.test(block);
       if (!keyed || !branched) flat.push(t.file);
     }
@@ -4641,8 +5176,14 @@ describe("[build-gate] every Money tab explains itself", () => {
     // An admin reading "you can add and edit" on Timeline or Documents goes
     // looking for buttons that are super-gated. Both tabs' admin branch must
     // say so; Guides' admin branch must say publishing is not theirs.
-    expect(web("TimelineTab.tsx")).toMatch(/Read-only for you/);
-    expect(web("DocumentsTab.tsx")).toMatch(/Read-only for you/);
+    // "Read-only for you" belonged to the old ALTERNATIVE shape, where a whole
+    // branch was written for the role that lacked the power. The additive
+    // shape states the limit ONCE in the shared copy as "super-only", so every
+    // reader sees it — including the super, who now learns what admins cannot
+    // do. Either wording satisfies this; being told is not optional.
+    const TOLD = /Read-only for you|super-only/;
+    expect(web("TimelineTab.tsx"), "an admin must be told editing is not theirs").toMatch(TOLD);
+    expect(web("DocumentsTab.tsx"), "an admin must be told editing is not theirs").toMatch(TOLD);
     expect(web("GuidesTab.tsx"), "an admin writes drafts but cannot publish")
       .toMatch(/You cannot publish/);
   });
@@ -4656,14 +5197,16 @@ describe("[build-gate] every Money tab explains itself", () => {
     // A worker told "recording a purchase creates no tax entry" is being
     // answered a question they cannot act on; an admin told "you can add
     // entries" goes looking for a button that is not rendered for them. The
-    // storage key carries the role too, so collapsing it as one role does not
-    // collapse the different text another sees.
+    // The id carries the role too. That NO LONGER protects the collapse state
+    // — open/closed is one shared preference now — but it still names which
+    // variant is mounted, which is what makes a duplicate or wrong-variant
+    // mount visible here instead of in production.
     const flat: string[] = [];
     for (const t of MONEY_TABS.filter((x) => x.roleAware)) {
       const src = web(t.file);
       const at = src.indexOf("<TabExplainer");
       const block = src.slice(at, src.indexOf("</TabExplainer>", at));
-      const keyed = /storageKey=\{`[^`]*\$\{/.test(block);
+      const keyed = /explainerId=\{`[^`]*\$\{/.test(block);
       const branched = /showSuperExtras \?|showAdminExtras \?|role === "|canEdit\s*\?/.test(block);
       if (!keyed || !branched) flat.push(t.file);
     }
@@ -4677,25 +5220,30 @@ describe("[build-gate] every Money tab explains itself", () => {
     // card. Explanatory text naming a capability is a claim about
     // authorization, and authorization lives in the route guards.
     const PAY = web("PaymentsTab.tsx");
-    const at = PAY.indexOf('role === "admin" ? (');
-    expect(at).toBeGreaterThan(-1);
-    const adminBlock = PAY.slice(at, PAY.indexOf(") : (", at));
+    // The admin copy is a <RoleSection role="Admin"> now, not a ternary arm.
+    const at = PAY.indexOf('<RoleSection role="Admin">');
+    expect(at, "the admin section must exist").toBeGreaterThan(-1);
+    const adminBlock = PAY.slice(at, PAY.indexOf("</RoleSection>", at));
     for (const verb of ["approving is", "you approve", "you can adjust", "write the job off"]) {
       expect(adminBlock.toLowerCase(), `admin copy must not claim: ${verb}`)
         .not.toContain(verb);
     }
-    expect(adminBlock, "admin copy must say the actions are super-only")
-      .toMatch(/super-admin only/);
+    // Stated once in the shared copy above the section, so every reader sees
+    // it — assert on the whole explainer rather than the admin block alone.
+    expect(PAY, "the copy must say the money actions are super-only")
+      .toMatch(/super-admin only|super-only/);
 
-    const workerBlock = PAY.slice(PAY.indexOf('role === "worker" ? ('), at);
-    expect(workerBlock, "a worker records payment on the JOB, not here")
-      .toMatch(/you take a payment on the job itself/);
+    expect(PAY.replace(/\s+/g, " "), "a payment is recorded on the JOB, not here")
+      .toMatch(/taken on the job itself|you take a payment on the job itself/);
 
     // Read-only surfaces must say so rather than describing buttons that are
     // not rendered for the reader.
-    expect(web("PricingTab.tsx")).toMatch(/Read-only for you/);
-    expect(web("SuppliesTab.tsx")).toMatch(/Read-only here/);
-    expect(web("PayrollTab.tsx")).toMatch(/Read-only\./);
+    expect(web("PricingTab.tsx"), "a non-super must be told editing is not theirs")
+      .toMatch(/Read-only for you|super-only/);
+    expect(web("SuppliesTab.tsx"), "a non-super must be told buying is not theirs")
+      .toMatch(/Read-only here|super-only/);
+    expect(web("PayrollTab.tsx"), "an admin must be told importing is not theirs")
+      .toMatch(/Read-only\.|super-only/);
   });
 
   it("the overpayment rule names TIPS — money that does reach a worker", () => {

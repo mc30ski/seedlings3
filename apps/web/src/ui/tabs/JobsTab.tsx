@@ -158,6 +158,12 @@ import {
  * example can't drift from the real card.
  */
 const GHOST_CARD_BG = "#7c8698";
+/** A ghost that is NOT pulsing is not overdue — it is a visit still comfortably
+ *  ahead of its date, or one an admin has muted. The stark slate above reads as
+ *  an alarm, so a calm ghost gets a lighter ground and dark ink instead of
+ *  light. Two-tone rather than one colour at two opacities: white on the stark
+ *  slate is already only 3.67:1, and lightening THAT would take it to 2.19. */
+const GHOST_CARD_BG_CALM = "#c3c8d1";
 
 type OccComment = {
   id: string;
@@ -4969,6 +4975,13 @@ export default function JobsTab({
               // nagging about.
               const ghostUrgent = !ghostSuppressed
                 && typeof ghostDaysLeft === "number" && ghostDaysLeft <= 3;
+              // One switch for the whole card, so ground and ink can never
+              // disagree — dark ink on the stark slate, or light ink on the
+              // calm one, would each be unreadable.
+              const ghostBg = ghostUrgent ? GHOST_CARD_BG : GHOST_CARD_BG_CALM;
+              const ghostInk = ghostUrgent ? "white" : "gray.900";
+              const ghostInkDim = ghostUrgent ? "gray.100" : "gray.700";
+              const ghostRule = ghostUrgent ? "gray.strong" : "gray.emphasized";
               const ghostChipLabel = typeof ghostDaysLeft !== "number"
                 ? "Expiring"
                 : ghostDaysLeft < 0
@@ -4981,7 +4994,7 @@ export default function JobsTab({
               const cardStyle = {
                 borderLeft: "4px dashed var(--chakra-colors-gray-strong)",
                 borderStyle: "dashed",
-                borderColor: "var(--chakra-colors-gray-strong)",
+                borderColor: ghostUrgent ? "var(--chakra-colors-gray-strong)" : "var(--chakra-colors-gray-emphasized)",
                 borderWidth: "1px",
                 ...(ghostUrgent
                   ? { animation: "seedlings-pulse-ghost 1.8s ease-out infinite" }
@@ -5000,21 +5013,21 @@ export default function JobsTab({
                     key={`ghost-next-${occ.id}-${occIdx}`}
                     variant="outline"
                     overflow="hidden"
-                    bg={GHOST_CARD_BG}
-                    color="gray.50"
+                    bg={ghostBg}
+                    color={ghostInk}
                     cursor="pointer"
                     onClick={toggleCard}
                     style={cardStyle}
                   >
                     <HStack px="3" py="1" gap={2} h="44px" align="center" fontSize="xs">
-                      <Clock size={13} style={{ color: "var(--chakra-colors-gray-200)", flexShrink: 0 }} />
+                      <Clock size={13} style={{ color: ghostUrgent ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-700)", flexShrink: 0 }} />
                       {ghostSuppressed && (
                         <Badge
                           size="xs"
                           variant="outline"
                           colorPalette="gray"
-                          color="gray.100"
-                          borderColor="gray.strong"
+                          color={ghostInkDim}
+                          borderColor={ghostRule}
                           flexShrink={0}
                           whiteSpace="nowrap"
                           title="Warning suppressed — not counted in alerts or the expired badge"
@@ -5026,7 +5039,7 @@ export default function JobsTab({
                       <Badge size="xs" variant="solid" colorPalette="gray" bg={ghostExpired ? "gray.700" : "gray.subtle"} color={ghostExpired ? "gray.50" : "gray.fg"} flexShrink={0}>
                         {ghostChipLabel}
                       </Badge>
-                      <Text fontWeight="medium" color="white" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                      <Text fontWeight="medium" color={ghostInk} flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
                         {jobTitleText(propName, clientName)}
                       </Text>
                     </HStack>
@@ -5041,8 +5054,8 @@ export default function JobsTab({
                 <Card.Root
                   key={`ghost-next-${occ.id}-${occIdx}`}
                   size="sm"
-                  bg={GHOST_CARD_BG}
-                  color="gray.50"
+                  bg={ghostBg}
+                  color={ghostInk}
                   cursor="pointer"
                   onClick={toggleCard}
                   style={cardStyle}
@@ -5050,26 +5063,26 @@ export default function JobsTab({
                   <Card.Body p={3}>
                     <HStack justify="space-between" align="start" gap={2}>
                       <VStack align="start" gap={0.5} flex="1" minW={0}>
-                        <HStack gap={1.5} color="gray.100">
+                        <HStack gap={1.5} color={ghostInkDim}>
                           <Clock size={13} />
                           <Text fontSize="xs" fontWeight="medium" textTransform="uppercase" letterSpacing="wide">
                             Next visit not scheduled
                           </Text>
                         </HStack>
-                        <Text fontSize="sm" fontWeight="semibold" color="white">
+                        <Text fontSize="sm" fontWeight="semibold" color={ghostInk}>
                           {jobTitleText(propName, clientName)}
                         </Text>
-                        <Text fontSize="xs" color="gray.100">
+                        <Text fontSize="xs" color={ghostInkDim}>
                           {ghostExpired ? "Was due" : "Would post on"} {wouldBeDateKey ? fmtDate(wouldBeDateKey) : "—"} · {blockerLabel}
                         </Text>
                         {cardMode === "expanded" && (
-                          <VStack align="start" gap={0.5} pt={2} borderTopWidth="1px" borderColor="gray.strong" mt={2} w="full">
+                          <VStack align="start" gap={0.5} pt={2} borderTopWidth="1px" borderColor={ghostRule} mt={2} w="full">
                             {propAddress && (
-                              <Text fontSize="xs" color="gray.100">
+                              <Text fontSize="xs" color={ghostInkDim}>
                                 {propAddress}
                               </Text>
                             )}
-                            <Text fontSize="xs" color="gray.100">
+                            <Text fontSize="xs" color={ghostInkDim}>
                               This card will disappear once the prior visit is
                               closed and the next occurrence is generated.
                               {ghostSuppressed
@@ -5114,9 +5127,9 @@ export default function JobsTab({
                                 size="xs"
                                 variant="outline"
                                 mt={2}
-                                borderColor="gray.strong"
-                                color="gray.50"
-                                _hover={{ bg: "gray.700" }}
+                                borderColor={ghostRule}
+                                color={ghostInk}
+                                _hover={{ bg: ghostUrgent ? "gray.700" : "gray.subtle" }}
                                 onClick={(e: any) => {
                                   // The card body toggles density on click.
                                   e.stopPropagation();
@@ -5144,8 +5157,8 @@ export default function JobsTab({
                           size="xs"
                           variant="outline"
                           colorPalette="gray"
-                          color="gray.100"
-                          borderColor="gray.strong"
+                          color={ghostInkDim}
+                          borderColor={ghostRule}
                           flexShrink={0}
                           whiteSpace="nowrap"
                           title="Warning suppressed — not counted in alerts or the expired badge"

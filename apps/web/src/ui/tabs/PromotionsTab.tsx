@@ -216,11 +216,13 @@ type ContactRow = {
  *  in services/promotions.ts. */
 function PromotionsExplainer() {
   return (
-    <TabExplainer storageKey="seedlings:promotionsTab:guideOpen" title="How promotions reach clients">
+    <TabExplainer explainerId="seedlings:promotionsTab:guideOpen">
       <ExplainerText>
-        Promotions <Em>ride along</Em> on messages you already send — an active campaign is
-        appended to an outgoing invoice by email or text, rather than sent as its own blast. The
-        invoice page can also display one.
+        A campaign reaches people one of two ways, and you choose which when you create it.{" "}
+        <Em>Ride along</Em> appends it to an invoice you were already sending by email or text —
+        nothing goes out on its own. <Em>Manual</Em> holds it until you press <Em>Send now</Em>,
+        which is a real blast to the audience. The invoice page can also display one without
+        sending anything.
       </ExplainerText>
       <ExplainerText>
         <Em>Nobody is contacted twice.</Em> A contact who opted out of a channel is skipped on that
@@ -229,9 +231,11 @@ function PromotionsExplainer() {
         because texts are billed per segment; email can carry several.
       </ExplainerText>
       <ExplainerText>
-        Every email footer carries your business address and a one-click opt-out link, which is what
-        the law requires. Campaigns are editable while <Em>Draft</Em> or <Em>Paused</Em>; an active
-        one is locked so the copy cannot change under a message already going out.
+        Every email footer carries your business address and an opt-out link, which is what the law
+        requires — the link opens a public page where the recipient types their own email or phone,
+        so the same URL is safe on every message. Campaigns are editable while <Em>Draft</Em> or{" "}
+        <Em>Paused</Em>; an active one is locked so the copy cannot change under a message already
+        going out.
       </ExplainerText>
     </TabExplainer>
   );
@@ -240,7 +244,7 @@ function PromotionsExplainer() {
 export default function PromotionsTab() {
   const [view, setView] = useState<"campaigns" | "contacts">("campaigns");
   return (
-    <VStack align="stretch" gap={4} px={2} py={2}>
+    <VStack align="stretch" gap={4} pb={2}>
       <PromotionsExplainer />
       <Tabs.Root value={view} onValueChange={(e) => setView(e.value as any)} size="sm">
         <Tabs.List>

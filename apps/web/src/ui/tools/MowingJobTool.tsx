@@ -286,8 +286,8 @@ export default function MowingJobTool() {
   }
 
   return (
-    <VStack align="stretch" gap={4} p={4} maxW="900px" mx="auto">
-      <TabExplainer storageKey="seedlings:toolsMowingTab:guideOpen" title="What this estimator does">
+    <VStack align="stretch" gap={4} pb={4} maxW="900px" mx="auto">
+      <TabExplainer explainerId="seedlings:toolsMowingTab:guideOpen">
         <ExplainerText>
           Prices a mow before you quote it. Choose how the base is measured — flat residential, per
           acre, by time, or a custom figure — then toggle the add-on services. <Em>Full Service</Em>{" "}

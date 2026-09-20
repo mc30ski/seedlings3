@@ -154,7 +154,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
 
   return (
     <Box>
-      <TabExplainer storageKey="seedlings:activityTab:guideOpen" title="What Engagement shows">
+      <TabExplainer explainerId="seedlings:activityTab:guideOpen">
         <ExplainerText>
           Who has been using the app, drawn from the <Em>audit log</Em> — every approved user with
           what they have done over the last 30 days. It answers &ldquo;is this person actually

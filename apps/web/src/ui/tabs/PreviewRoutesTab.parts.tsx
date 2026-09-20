@@ -29,7 +29,7 @@ import {
   Spinner, Text, VStack, createListCollection,
 } from "@chakra-ui/react";
 import {
-  Activity,
+  BarChart3,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
@@ -367,11 +367,24 @@ export function RoutesOperationsPanel() {
   );
 
   return (
+    // THE SAME SURFACE THE OTHER FIVE TABS CALL INSIGHTS.
+    //
+    // This shipped as "Operations" in the default grey, and the difference
+    // was drift rather than design: it is the same thing as Home, Jobs,
+    // Inventory, Collections and Vehicles — a Super-only rollup of the
+    // tab's own subject, deeper than the list beside it, with its own
+    // timeframe. Home's Insights takes a timeframe and fetches
+    // independently too, so nothing about this one was actually distinct.
+    //
+    // Naming and colour now match, which is the point of the variant:
+    // "Insights is the same surface wherever you meet it" (see Dashboard).
+    // The storage key keeps its old name so nobody's collapsed state resets.
     <Dashboard
       storageKey="seedlings:routesTab:operationsOpen"
       timeframe={periodTimeframe(ROUTES_OPS_PERIODS, period, setPeriod)}
-      title="Operations"
-      icon={Activity}
+      title="Insights"
+      icon={BarChart3}
+      variant="insights"
       summarySlot={
         <Text
           fontSize="xs"

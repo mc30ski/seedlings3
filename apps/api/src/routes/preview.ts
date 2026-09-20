@@ -248,6 +248,14 @@ export default async function previewRoutes(app: FastifyInstance) {
     // current coords, used in the prompt and surfaced in the response so the UI
     // can show "Started from <address>" instead of bare lat/lng.
     let currentLocationAddress: string | null = null;
+    /** The address the day actually starts from, in EITHER mode — so the
+     *  client can hand Google Maps a real origin instead of falling back to
+     *  the first job site. Hoisted out of the routing block below because the
+     *  response is built after it closes. */
+    let resolvedStartAddress: string | null = null;
+    /** Mirrors the `roundTrip` given to the optimizer, so a launched map ends
+     *  where the plan ends. */
+    let routeReturnsToStart = false;
 
     try {
       const router = getRoutingProvider(routingProviderName);
@@ -280,10 +288,15 @@ export default async function previewRoutes(app: FastifyInstance) {
             currentLocationAddress = await router.reverseGeocode(startCoords);
           } catch { /* non-fatal */ }
         }
+        resolvedStartAddress = currentLocationAddress;
       } else if (user.homeBaseAddress) {
         const homeGeo = await router.geocode(user.homeBaseAddress);
-        if (homeGeo) startCoords = homeGeo.coordinates;
+        if (homeGeo) {
+          startCoords = homeGeo.coordinates;
+          resolvedStartAddress = user.homeBaseAddress;
+        }
       }
+      routeReturnsToStart = !!startCoords && !fromCurrentLocation;
 
       if (validCoords.length > 1) {
         optimizedRoute = await router.optimizeRoute(validCoords, {
@@ -389,6 +402,17 @@ export default async function previewRoutes(app: FastifyInstance) {
         capacity,
         startedFromCurrentLocation: fromCurrentLocation,
         currentLocationAddress: fromCurrentLocation ? currentLocationAddress : null,
+        // WHERE THE DAY ACTUALLY STARTS, in both modes.
+        //
+        // `currentLocationAddress` is null on a home-base route, so the
+        // client had no origin to hand Google Maps and used the FIRST JOB
+        // instead — the launched route began at the first site and the leg
+        // to get there, the one you drive first, was missing entirely.
+        //
+        // `routeReturnsToStart` mirrors the `roundTrip` passed to the
+        // optimizer above, so the map link ends where the plan ends.
+        startAddress: resolvedStartAddress,
+        routeReturnsToStart,
         dataIssues,
       };
     } catch (err: any) {

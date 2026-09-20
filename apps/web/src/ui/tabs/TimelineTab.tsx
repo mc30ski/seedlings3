@@ -36,7 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import { fmtDate, bizDateKey, bizToday, bizDaysBetween } from "@/src/lib/dates";
 import {
   publishInlineMessage,
@@ -481,31 +481,22 @@ export default function TimelineTab({ isSuper = false }: Props) {
 
   return (
     <Box w="full">
-      <TabExplainer storageKey={`seedlings:timelineTab:guideOpen:${isSuper ? "super" : "admin"}`} title="What the Timeline is">
-        {isSuper ? (
-          <>
+      <TabExplainer explainerId={`seedlings:timelineTab:guideOpen:${isSuper ? "super" : "admin"}`}>
+        <ExplainerText>
+          Dated business events worth remembering — filings, renewals, insurance, licences,
+          anything with a deadline. Upcoming ones surface as reminders.
+        </ExplainerText>
+        <ExplainerText>
+          This is a <Em>record kept by hand</Em>. Nothing writes to it automatically, so an
+          event only exists here because someone entered it. Adding, editing and completing
+          entries are <Em>super-only</Em>.
+        </ExplainerText>
+        {isSuper && (
+          <RoleSection role="Super">
             <ExplainerText>
-              Dated business events worth remembering — filings, renewals, insurance, licences,
-              anything with a deadline. You can add, edit, complete, archive and delete entries,
-              and upcoming ones surface as reminders.
+              You can add, edit, complete, archive and delete entries.
             </ExplainerText>
-            <ExplainerText>
-              This is a <Em>record you keep by hand</Em>. Nothing writes to it automatically, so an
-              event only exists here because someone entered it.
-            </ExplainerText>
-          </>
-        ) : (
-          <>
-            <ExplainerText>
-              Dated business events worth remembering — filings, renewals, insurance, licences,
-              anything with a deadline, with upcoming ones surfaced as reminders.
-            </ExplainerText>
-            <ExplainerText>
-              <Em>Read-only for you.</Em> Adding, editing and completing entries are super-admin
-              actions. Nothing writes to this automatically either — an event is here because
-              someone entered it.
-            </ExplainerText>
-          </>
+          </RoleSection>
         )}
       </TabExplainer>
       <HStack mb={2} gap={2}>

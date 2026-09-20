@@ -391,7 +391,7 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
 
   return (
     <Box>
-      <TabExplainer storageKey="seedlings:historyTab:guideOpen" title="What History records">
+      <TabExplainer explainerId="seedlings:historyTab:guideOpen">
         <ExplainerText>
           Every state-changing action in the app, newest first — who did it, to what, and when.
           Jobs, payments, clients, equipment, supplies, policies: if it changed something, it is

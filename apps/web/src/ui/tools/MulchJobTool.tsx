@@ -215,11 +215,12 @@ export default function MulchJobTool() {
   }
 
   return (
-    // Match the centered-with-padding layout used by ExportsTab, PaymentsTab,
-    // etc. — without this the tool sits flush-left under the tab bar and
-    // reads as misaligned compared to other tabs.
-    <VStack align="stretch" gap={4} p={4} maxW="900px" mx="auto">
-      <TabExplainer storageKey="seedlings:toolsMulchTab:guideOpen" title="What this estimator does">
+    // Centered, with VERTICAL padding only. It used to be `p={4}`, which
+    // inset the content 16px further than every other tab and made the
+    // explainer panel visibly narrower than the same panel elsewhere. The
+    // tab body already supplies the horizontal gutter.
+    <VStack align="stretch" gap={4} pb={4} maxW="900px" mx="auto">
+      <TabExplainer explainerId="seedlings:toolsMulchTab:guideOpen">
         <ExplainerText>
           Turns bed measurements into cubic yards and a price. Add a bed per area, entering either
           length &times; width or a square-foot figure directly, then set the depth — the volume and

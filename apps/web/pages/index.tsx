@@ -4321,7 +4321,12 @@ chip: false, bucket: t.bucket }));
               // card's own color, so the alert and the cards it lands on
               // read as the same thing. Expired is the darker of the two.
               if (scopeIsAdmin && ghostExpiringCount > 0) alerts.push({ label: "Next visits expiring", count: ghostExpiringCount, bg: "#F3F4F6", color: "#374151", dotColor: "#6B7280", onClick: goToExpiringGhosts });
-              if (scopeIsAdmin && ghostExpiredCount > 0) alerts.push({ label: "Next visits expired", count: ghostExpiredCount, bg: "#E5E7EB", color: "#111827", dotColor: "#374151", onClick: goToExpiredGhosts });
+              // Slate grey, not near-black. It was #374151, which sits at
+              // 1.72:1 against the black total-count circle above it — the
+              // two read as the same colour. #6b7280 is 3.67:1 from that
+              // black while keeping the white numeral at 4.83:1, and it is
+              // in the same family as the grey ghost cards it points at.
+              if (scopeIsAdmin && ghostExpiredCount > 0) alerts.push({ label: "Next visits expired", count: ghostExpiredCount, bg: "#E5E7EB", color: "#111827", dotColor: "#6b7280", onClick: goToExpiredGhosts });
               if (scopeIsSuper && policyPendingUploadsCount > 0) alerts.push({ label: "Compliance uploads to review", count: policyPendingUploadsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToCompliance });
               if (scopeIsSuper && policyPendingApprovalsCount > 0) alerts.push({ label: "Policy versions awaiting approval", count: policyPendingApprovalsCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToCompliance });
               // "Documents to sign" is a per-user obligation, so it
@@ -4823,7 +4828,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             </Box>
           }
           headerRight={
-            <HStack gap={3} align="center" w="full">
+            <HStack gap={2} align="center">
               {/* TRIAL (worker Jobs only): the "How Jobs work" explainer's
                   trigger, moved out of the content area. Inline, that
                   disclosure held a full row at the top of every visit even
@@ -4877,8 +4882,9 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
                   screen edge — a page-level affordance, not part of the tab
                   path. Unconditional: the button renders nothing on tabs that
                   have no explainer, and there is deliberately no per-tab
-                  mapping here to fall out of date when a tab is added. */}
-              <Spacer />
+                  mapping here to fall out of date when a tab is added.
+                  No Spacer: this cluster is pinned to the right edge by
+                  BreadcrumbNav, so there is no slack for one to take. */}
               <ActiveTabExplainerButton />
             </HStack>
           }
