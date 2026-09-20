@@ -356,18 +356,15 @@ export default function VanityUrlsTab() {
     }
   }, [pendingDeleteId, pages, load]);
 
-  if (pages === null) {
-    return (
-      <Box p={6} textAlign="center">
-        <Spinner size="lg" />
-      </Box>
-    );
-  }
-
-  return (
-    <VStack align="stretch" gap={4} px={2} py={2}>
-      
-      <TabExplainer storageKey="seedlings:vanityTab:guideOpen" title="What Vanity links are">
+  // HOISTED ABOVE THE LOADING GATES ON PURPOSE.
+  // The help panel is static copy — it does not depend on anything this tab
+  // fetches. While it lived below the gates it was unmounted for the whole
+  // fetch, and because the breadcrumb's (i) is driven by whichever explainer
+  // is mounted, the icon blinked out and back on every visit to this tab.
+  // Rendering it in the gate branches too keeps it mounted from the first
+  // paint. Closed, it renders nothing, so the loading view is unchanged.
+  const tabHelp = (
+      <TabExplainer explainerId="seedlings:vanityTab:guideOpen">
         <ExplainerText>
           Short, public links you can hand out — on a flyer, a truck, a business card — that point
           at a landing page you control here. Anyone can open one; no sign-in, no account.
@@ -377,6 +374,23 @@ export default function VanityUrlsTab() {
           anyone who guesses or is given the link, so nothing private belongs on it.
         </ExplainerText>
       </TabExplainer>
+  );
+
+  if (pages === null) {
+    return (
+      <>
+        {tabHelp}
+        <Box p={6} textAlign="center">
+          <Spinner size="lg" />
+        </Box>
+      </>
+    );
+  }
+
+  return (
+    <VStack align="stretch" gap={4} pb={2}>
+      
+      {tabHelp}
       
       <HStack justify="space-between">
         <VStack align="start" gap={0}>

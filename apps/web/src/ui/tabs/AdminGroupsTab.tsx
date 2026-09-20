@@ -19,7 +19,7 @@ import {
 } from "@chakra-ui/react";
 import { Plus, Users, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -178,17 +178,26 @@ export default function AdminGroupsTab({ scope }: AdminGroupsTabProps = {}) {
 
   return (
     <Box w="full" pb={8}>
-      <TabExplainer storageKey="seedlings:groupsTab:guideOpen:admin" title="What Crews are">
+      <TabExplainer explainerId="seedlings:groupsTab:guideOpen:admin">
         <ExplainerText>
-          Named teams that get assigned to jobs together, so a recurring visit does not have to be
-          staffed one person at a time. A crew has a <Em>claimer</Em> — the person who takes
-          responsibility for the job — and members alongside them.
+          Named teams that get assigned to jobs together, so a recurring visit does not have to
+          be staffed one person at a time. Every crew has a <Em>claimer</Em> — the person who
+          takes responsibility for the job — and members working alongside them.
         </ExplainerText>
         <ExplainerText>
-          The <Em>cost split</Em> on a crew decides how equipment charges divide between its
-          members. You can also give a crew preferred equipment, so the right machine is suggested
-          when they claim work.
+          Workers see <Em>names and roles only</Em> — cost splits and anyone&rsquo;s pay details
+          are never shown to them. Building and changing a crew is <Em>admin-only</Em>.
         </ExplainerText>
+        <RoleSection role="Admin">
+          <ExplainerText>
+            You build the crews: who is on one, and which member is the claimer.
+          </ExplainerText>
+          <ExplainerText>
+            The <Em>cost split</Em> on a crew decides how equipment charges divide between its
+            members when equipment billing is switched on. You can also give a crew preferred
+            equipment, so the right machine is suggested when they claim work.
+          </ExplainerText>
+        </RoleSection>
       </TabExplainer>
       {/* Title row — kept intentionally identical in shape to the
           Worker "My Groups" view below (same outer Box, same HStack
@@ -1002,14 +1011,15 @@ function WorkerMyCrews() {
 
   return (
     <Box w="full" pb={8}>
-      <TabExplainer storageKey="seedlings:groupsTab:guideOpen:worker" title="What your crews are">
+      <TabExplainer explainerId="seedlings:groupsTab:guideOpen:worker">
         <ExplainerText>
-          The crews you are part of, and who else is on each one. Your role on a crew is either{" "}
-          <Em>claimer</Em> — the person responsible for the job — or a member working alongside them.
+          Named teams that get assigned to jobs together, so a recurring visit does not have to
+          be staffed one person at a time. Every crew has a <Em>claimer</Em> — the person who
+          takes responsibility for the job — and members working alongside them.
         </ExplainerText>
         <ExplainerText>
-          <Em>Read-only</Em>, and names and roles only. Cost splits and anyone&rsquo;s pay details
-          are not shown here. Crews are set up by an admin.
+          Workers see <Em>names and roles only</Em> — cost splits and anyone&rsquo;s pay details
+          are never shown to them. Building and changing a crew is <Em>admin-only</Em>.
         </ExplainerText>
       </TabExplainer>
       <HStack mb={3} gap={2} wrap="wrap" align="center">

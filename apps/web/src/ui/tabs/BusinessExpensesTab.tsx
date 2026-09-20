@@ -1196,25 +1196,18 @@ export default function BusinessExpensesTab() {
           </Box>
         </>
       )}
-      <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
-        <Text fontWeight="bold" fontSize="lg">Ledger</Text>
-        <HStack gap={2}>
-          <Button size="sm" colorPalette="blue" onClick={openCreate}>
-            <Plus size={14} /> Add Entry
-          </Button>
-        </HStack>
-      </HStack>
-
       {/* ONE explainer, not two. This tab had a CollapsibleNote carrying the
           capitalize-vs-expense reference, and a second TabExplainer was added
           above the header — so the tab opened with two blue disclosures
           saying overlapping things. Merged: what the Ledger is, what it does
           NOT record, and the fixed-asset rule, in one place.
 
-          Sits BELOW the header so the tab leads with its own name, and
-          carries its own bottom margin — the root Box has no gap, so a child
-          without a margin butts straight against the next one. */}
-        <TabExplainer storageKey="seedlings:ledgerTab:guideOpen" title="What the Ledger is">
+          Sits ABOVE the header, like every other tab: the breadcrumb already
+          says which tab you are on, so leading with a second copy of the name
+          pushed the help below a title and a button and made this tab the odd
+          one out. Carries its own bottom margin — the root Box has no gap, so
+          a child without a margin butts straight against the next one. */}
+        <TabExplainer explainerId="seedlings:ledgerTab:guideOpen">
           <ExplainerText>
             The <Em>tax record</Em> — real money off a card or bank statement, entered by hand. It
             holds three kinds of row: <Em>expenses</Em>, which carry a Schedule C line and are the
@@ -1263,6 +1256,15 @@ export default function BusinessExpensesTab() {
             </Box>
           </Box>
         </TabExplainer>
+      <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
+        <Text fontWeight="bold" fontSize="lg">Ledger</Text>
+        <HStack gap={2}>
+          <Button size="sm" colorPalette="blue" onClick={openCreate}>
+            <Plus size={14} /> Add Entry
+          </Button>
+        </HStack>
+      </HStack>
+
 
       {/* Due to record — recurring expenses whose next expected instance
           has arrived (or is within the lead window). Hidden when nothing

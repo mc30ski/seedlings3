@@ -16,7 +16,7 @@ import {
   Wrap,
 } from "@chakra-ui/react";
 import { DollarSign, Pencil, Plus, Trash2 } from "lucide-react";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { fmtDate } from "@/src/lib/dates";
 import {
@@ -183,8 +183,48 @@ export default function PricingTab({ isSuper, readOnly, scope }: Props) {
     }
   }
 
+  // HOISTED ABOVE THE LOADING GATES ON PURPOSE.
+  // The help panel is static copy — it does not depend on anything this tab
+  // fetches. While it lived below the gates it was unmounted for the whole
+  // fetch, and because the breadcrumb's (i) is driven by whichever explainer
+  // is mounted, the icon blinked out and back on every visit to this tab.
+  // Rendering it in the gate branches too keeps it mounted from the first
+  // paint. Closed, it renders nothing, so the loading view is unchanged.
+  const tabHelp = (
+  <TabExplainer
+          explainerId={`seedlings:pricingTab:guideOpen:${canEdit ? "super" : "read"}`}
+        >
+          <ExplainerText>
+            Reference prices for common job types — a <Em>starting point</Em> when quoting, not what
+            any client is actually charged. What a job bills is set on the job itself and can differ
+            per client.
+          </ExplainerText>
+          {/* WAS "the AI estimate features read this list". Nothing AI reads
+              it — the only model call in the app is the Forecast tool, and it
+              does not touch PricingEntry. What actually reads this list is the
+              reference panel inside the Complete-Estimate dialog, which sums
+              the entries matching the job's tags and offers the total as the
+              amount. See `pricingReferenceTags` in ConfirmDialog. */}
+          <ExplainerText>
+            When you complete an estimate, the dialog shows the entries matching that
+            job&rsquo;s tags and offers their total as the amount &mdash; so an entry that
+            drifts from what you really charge quietly pulls quotes along with it. Changing
+            an entry is <Em>super-only</Em>; if a price here looks wrong it is worth
+            flagging.
+          </ExplainerText>
+          {canEdit && (
+            <RoleSection role="Super">
+              <ExplainerText>
+                You can add, edit and remove entries. Nothing recalculates behind you &mdash;
+                a change applies to the next quote, not to work already priced.
+              </ExplainerText>
+            </RoleSection>
+          )}
+        </TabExplainer>
+  );
+
   if (loading) {
-    return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
+    return <>{tabHelp}<Box py={10} textAlign="center"><Spinner size="lg" /></Box></>;
   }
 
   return (
@@ -194,27 +234,7 @@ export default function PricingTab({ isSuper, readOnly, scope }: Props) {
           reading that would go looking for buttons that are not rendered. */}
       {/* Own bottom margin: this tab's root Box has no `gap`, so without it
           the explainer butts straight into the Add Pricing Entry button. */}
-  <TabExplainer
-          storageKey={`seedlings:pricingTab:guideOpen:${canEdit ? "super" : "read"}`}
-          title="What this pricing is for"
-        >
-          <ExplainerText>
-            Reference prices for common job types — a <Em>starting point</Em> when quoting, not what
-            any client is actually charged. What a job bills is set on the job itself and can differ
-            per client.
-          </ExplainerText>
-          {canEdit ? (
-            <ExplainerText>
-              You can add, edit and remove entries. The AI estimate features read this list, so an
-              entry that drifts from what you really charge will pull estimates along with it.
-            </ExplainerText>
-          ) : (
-            <ExplainerText>
-              <Em>Read-only for you</Em> — only a super admin can change these. The AI estimate
-              features read from this list, so if a price here looks wrong it is worth flagging.
-            </ExplainerText>
-          )}
-        </TabExplainer>
+  {tabHelp}
 
       {canEdit && (
         <Box mb={3}>

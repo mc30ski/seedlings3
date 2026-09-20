@@ -20,7 +20,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, Filter, Info, RefreshCw, Shield, Tag, UserPlus, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import { fmtDate, bizToday, bizAddDays, bizDateKey, bizDaysBetween } from "@/src/lib/dates";
 import { prettyStatus } from "@/src/lib/labels";
 import { equipmentStatusColor } from "@/src/lib/statusColors";
@@ -587,32 +587,26 @@ export default function UsersTab({ role = "worker", readOnly = false, scope }: T
 
   return (
     <Box w="full">
-      <TabExplainer storageKey={`seedlings:usersTab:guideOpen:${showSuperExtras ? "super" : "admin"}`} title="What the directory shows">
-        {showSuperExtras ? (
-          <>
+      <TabExplainer explainerId={`seedlings:usersTab:guideOpen:${showSuperExtras ? "super" : "admin"}`}>
+        <ExplainerText>
+          Everyone with an account, including sign-ups waiting to be approved — so you know
+          who is here and who is queued. Until a sign-up is approved they cannot use the app
+          at all.
+        </ExplainerText>
+        <ExplainerText>
+          Worker type is not a label: it decides how someone is paid. Employees and trainees
+          are made whole when a client underpays and are paid through payroll with tax
+          withheld; contractors take a short payment pro-rata and are paid 1099. Approving
+          someone, changing a role or worker type, and adjusting privileges are all{" "}
+          <Em>super-only</Em>.
+        </ExplainerText>
+        {showSuperExtras && (
+          <RoleSection role="Super">
             <ExplainerText>
-              Everyone with an account. <Em>Approving a new sign-up is yours alone</Em> — until you
-              do, they cannot use the app. You also set roles, worker type, and per-person
-              privileges here.
+              <Em>Approving a new sign-up is yours alone</Em> — you also set roles and worker
+              type, and adjust per-person privileges.
             </ExplainerText>
-            <ExplainerText>
-              Worker type is not a label: it decides how someone is paid. Employees and trainees are
-              made whole when a client underpays and are paid through payroll with tax withheld;
-              contractors take a short payment pro-rata and are paid 1099.
-            </ExplainerText>
-          </>
-        ) : (
-          <>
-            <ExplainerText>
-              Everyone with an account, including sign-ups waiting to be approved — so you know who
-              is here and who is queued.
-            </ExplainerText>
-            <ExplainerText>
-              <Em>Read-only for you.</Em> Approving someone, changing a role or worker type, and
-              adjusting privileges are all super-admin actions. You can see the queue; you cannot
-              act on it.
-            </ExplainerText>
-          </>
+          </RoleSection>
         )}
       </TabExplainer>
       {/* Filters */}
@@ -1589,7 +1583,7 @@ function WorkerTeamRoster() {
 
   return (
     <Box w="full">
-      <TabExplainer storageKey="seedlings:usersTab:guideOpen:worker" title="Who is on the team">
+      <TabExplainer explainerId="seedlings:usersTab:guideOpen:worker">
         <ExplainerText>
           The people you work alongside — names and whether each is an employee, trainee or
           contractor. That is deliberately <Em>all</Em> it shows.

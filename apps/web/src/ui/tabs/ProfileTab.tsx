@@ -16,7 +16,7 @@ import {
 import { Check, X } from "lucide-react";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -319,30 +319,24 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
 
   return (
     <Box w="full" pb={8}>
-      <TabExplainer storageKey={`seedlings:profileTab:guideOpen:${isAdmin ? "admin" : "worker"}`} title="What Profile is for">
-        {isAdmin ? (
-          <>
+      <TabExplainer explainerId={`seedlings:profileTab:guideOpen:${isAdmin ? "admin" : "worker"}`}>
+        <ExplainerText>
+          Your contact details, and how you want to be reached. Keeping your phone and email
+          current matters — job alerts and payment notices go there.
+        </ExplainerText>
+        <ExplainerText>
+          This is also where you <Em>read and sign the policies</Em> you owe, and where you
+          can open one you have already signed. Policies appear <Em>only on your own</Em>{" "}
+          profile, and nobody can sign on anyone else&rsquo;s behalf.
+        </ExplainerText>
+        {isAdmin && (
+          <RoleSection role="Admin">
             <ExplainerText>
-              Your own details, and <Em>anyone else&rsquo;s</Em> — pick a person above to view or
-              edit theirs. Contact details, and their hourly wage, which is admin-only and never
-              shown to the person on their own profile.
+              Pick a person above to view or edit theirs — contact details, and their hourly
+              wage, which is admin-only and never shown to the person on their own profile.
+              Their signing status lives on the Compliance tab, not here.
             </ExplainerText>
-            <ExplainerText>
-              Policies you owe are shown <Em>only on your own</Em> profile. You cannot sign on
-              someone else&rsquo;s behalf, and their signing status lives on the Compliance tab.
-            </ExplainerText>
-          </>
-        ) : (
-          <>
-            <ExplainerText>
-              Your contact details, and how you want to be reached. Keeping your phone and email
-              current matters — job alerts and payment notices go there.
-            </ExplainerText>
-            <ExplainerText>
-              This is also where you <Em>read and sign the policies</Em> you owe, and where you can
-              open one you have already signed. Nobody can sign on your behalf.
-            </ExplainerText>
-          </>
+          </RoleSection>
         )}
       </TabExplainer>
       {/* Admin: user selector */}

@@ -156,13 +156,19 @@ export default function AuditTab() {
 
   return (
     <Box>
-      <TabExplainer storageKey="seedlings:auditTab:guideOpen" title="What the Audit checks">
+      <TabExplainer explainerId="seedlings:auditTab:guideOpen">
         <ExplainerText>
           Runs a set of <Em>data-integrity checks</Em> across the app and reports what looks wrong:
           duplicate clients, properties, jobs or visits; a recurring job with no next visit
-          scheduled; an unclaimed job with no guidance; jobs whose real time has drifted from
-          their estimate; and ledger expenses that carry no tax category, which would otherwise
-          reach the Schedule C export with a blank line.
+          scheduled; an unclaimed job with no guidance; and ledger expenses that carry no tax
+          category, which would otherwise reach the Schedule C export with a blank line.
+        </ExplainerText>
+        <ExplainerText>
+          Two checks look at the same drift between estimated and real job time, and the
+          difference between them is what to do about it. <Em>Time Estimate Mismatch</Em> still
+          has hours awaiting approval behind it, so the drift may not be real yet.{" "}
+          <Em>Stale Estimate</Em> has every recent visit approved — the numbers are settled and
+          the estimate is the thing that is wrong.
         </ExplainerText>
         <ExplainerText>
           <Em>It only reads.</Em> Nothing here fixes anything — each finding links to the record so

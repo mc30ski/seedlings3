@@ -1169,20 +1169,23 @@ export default function ReconcileTab() {
   return (
     <VStack align="stretch" gap={4}>
       
-      <TabExplainer storageKey="seedlings:reconcileTab:guideOpen" title="What Reconcile does">
+      <TabExplainer explainerId="seedlings:reconcileTab:guideOpen">
         <ExplainerText>
           Closes a period: for a chosen window it totals <Em>hours, earnings, revenue and fees</Em>
           from their source of truth — workday clocks for hours, the promised-payout snapshot for
           earnings, confirmed payments for revenue — and shows whether they agree.
         </ExplainerText>
         <ExplainerText>
-          When the totals match, the period is filed. When they do not, drill into the worker rows
-          to find where the variance is. The P&amp;L and the QuickBooks and Gusto exports are
-          driven from the same window.
+          When the totals match there is nothing to chase — no period is opened or closed here,
+          and nothing is filed. When they do not match, drill into the worker rows to find where
+          the variance is. The P&amp;L and the Capital, Income, Expenses, Workdays and Payroll
+          CSVs are all driven from the same window, so what you reconcile is what you export.
         </ExplainerText>
         <ExplainerText>
           <Em>It reports; it does not adjust.</Em> Fixing a variance means correcting the thing
-          that is wrong — a payment, a workday, a ledger row — not editing a total here.
+          that is wrong — a payment, a workday, a ledger row — not editing a total here. The one
+          exception is <Em>Upload payroll</Em>, which imports the Gusto journal; that is the same
+          import as the Payroll tab, put here because it is what you reach for mid-reconcile.
         </ExplainerText>
       </TabExplainer>
       

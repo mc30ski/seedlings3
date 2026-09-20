@@ -38,7 +38,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Badge, Box, HStack, Text, VStack } from "@chakra-ui/react";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 
 /** Ghost-card fill — mirrors GHOST_CARD_BG in JobsTab. */
 const GHOST_BG = "#7c8698";
@@ -130,46 +130,15 @@ export default function JobsExplainer({
   const isContractor = workerType === "CONTRACTOR";
 
   return (
-    <TabExplainer storageKey={jobsExplainerKey(role)} title="How Jobs work">
-      {/* ── Who this feed is, per role ── */}
-      {isSuperView ? (
-        <>
-          <ExplainerText>
-            Every occurrence in the business, on one timeline: service visits, estimates,
-            your own tasks and reminders, and the team-wide events, followups and
-            announcements. You can assign anyone, confirm and reschedule without the
-            worker&rsquo;s date window, and create every card type below.
-          </ExplainerText>
-          <ExplainerText>
-            Yours alone, on the elevated row at the bottom of a fully-expanded card:{" "}
-            <Em>Reopen</Em> a closed, completed, cancelled or awaiting-payment visit back to
-            scheduled, <Em>Force next</Em> on a repeating job stuck in pending payment, and{" "}
-            <Em>Archive</Em>. Admins get Cancel there. That row is hidden at the compact card
-            densities — tap a card up to full size to reach it.
-          </ExplainerText>
-        </>
-      ) : isAdminView ? (
-        <>
-          <ExplainerText>
-            Every occurrence on one timeline: service visits, estimates, your own tasks and
-            reminders, and the team-wide events, followups and announcements. Team events are
-            admin-visible only — a worker never sees one in their feed unless they are on it.
-          </ExplainerText>
-          <ExplainerText>
-            You can assign a team, confirm a tentative visit, reschedule without the
-            two-day window a worker has, and <Em>Cancel</Em> from the elevated row at the
-            bottom of a fully-expanded card. Reopen, Force next and Archive on that row are
-            Super-only.
-          </ExplainerText>
-        </>
-      ) : (
-        <>
-          <ExplainerText>
-            Everything scheduled for you, everything still unclaimed, your own tasks and
-            reminders, and whatever the office has posted for the team. Card colour tells you
-            the state at a glance — the legend is at the bottom.
-          </ExplainerText>
-          {isTrainee ? (
+    <TabExplainer explainerId={jobsExplainerKey(role)}>
+      {/* ── What the feed is, for everyone ── */}
+      <ExplainerText>
+        Every occurrence you can see on one timeline: service visits, estimates, your own
+        tasks and reminders, and whatever the office has posted for the team. Card colour
+        tells you the state at a glance &mdash; the legend is at the bottom.
+      </ExplainerText>
+
+      {isTrainee ? (
             <ExplainerText>
               As a trainee you can see and comment, but you cannot <Em>claim</Em> a job, and
               you cannot start, complete or manage one even when you are on the team — a team
@@ -190,14 +159,44 @@ export default function JobsExplainer({
               that gate claiming to be signed and current.
             </ExplainerText>
           )}
-          {!isTrainee && (
-            <ExplainerText>
-              If you lead a crew, <Em>Claim for [crew]</Em> takes the whole crew onto the job
-              instead of just you. Only the crew&rsquo;s lead can do that, and a job already
-              attached to a crew cannot be claimed solo.
-            </ExplainerText>
-          )}
-        </>
+      {!isTrainee && (
+        <ExplainerText>
+          If you lead a crew, <Em>Claim for [crew]</Em> takes the whole crew onto the job
+          instead of just you. Only the crew&rsquo;s lead can do that, and a job already
+          attached to a crew cannot be claimed solo.
+        </ExplainerText>
+      )}
+
+      {/* ADDITIVE from here. Each section says only what the role ADDS to
+          everything above — the same way the buttons on a card stack. */}
+      {isAdminView && (
+        <RoleSection role="Admin">
+          <ExplainerText>
+            You see every occurrence in the business, not just your own and the unclaimed
+            ones &mdash; including team events, which a worker never sees unless they are on
+            one. You can assign anyone to a visit, confirm a tentative one, and reschedule
+            without the two-day window that limits a contractor.
+          </ExplainerText>
+          <ExplainerText>
+            <Em>Cancel</Em> appears on the elevated row at the bottom of a fully-expanded
+            card. That row is hidden at the compact densities &mdash; tap a card up to full
+            size to reach it.
+          </ExplainerText>
+        </RoleSection>
+      )}
+
+      {isSuperView && (
+        <RoleSection role="Super">
+          <ExplainerText>
+            Three more actions on that same elevated row, and only here:{" "}
+            <Em>Reopen</Em> puts a finished, closed, cancelled or awaiting-payment visit back
+            to scheduled; <Em>Force next</Em> creates the next visit on a repeating job stuck
+            in awaiting-payment; <Em>Archive</Em> takes it out of the active list for good.
+          </ExplainerText>
+          <ExplainerText>
+            The <Em>Insights</Em> rollup at the top of the tab is yours alone.
+          </ExplainerText>
+        </RoleSection>
       )}
 
       {/* ── Job types ── */}

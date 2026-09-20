@@ -75,7 +75,7 @@ import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 import { Dashboard } from "@/src/ui/components/Dashboard";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 
 // `localDate` removed — use `bizDateKey` directly.
 
@@ -1104,50 +1104,48 @@ export default function ServicesTab({
     return rows;
   }, [items, q, kind, jobStatusFilter, showArchived, vipOnly, reviewTargetJobIds]);
 
-  if (!isAvail) return <UnavailableNotice />;
-  if (loading && items.length === 0) return <LoadingCenter />;
+  // HOISTED ABOVE THE LOADING GATES ON PURPOSE.
+  // The help panel is static copy — it does not depend on anything this tab
+  // fetches. While it lived below the gates it was unmounted for the whole
+  // fetch, and because the breadcrumb's (i) is driven by whichever explainer
+  // is mounted, the icon blinked out and back on every visit to this tab.
+  // Rendering it in the gate branches too keeps it mounted from the first
+  // paint. Closed, it renders nothing, so the loading view is unchanged.
+  const tabHelp = (
+        <TabExplainer
+          explainerId={`seedlings:servicesTab:guideOpen:${isSuper ? "super" : "admin"}`}
+        >
+          <ExplainerText>
+            The recurring services themselves — the job behind the visits. A service carries
+            the price, the cadence and the <Em>default team</Em> that gets put on each new
+            visit. Create and edit them here, add a visit by hand, and archive a service that
+            has run its course.
+          </ExplainerText>
+          <ExplainerText>
+            <Em>Pausing a stream</Em> holds one recurring line (hedging, say) while the others
+            under the same service keep running. The client change-request queue at the top is
+            where reschedule and skip requests land. Deleting an archived service or visit
+            outright is <Em>super-only</Em>.
+          </ExplainerText>
+          {isSuper && (
+            <RoleSection role="Super">
+              <ExplainerText>
+                You get that Delete on an archived service or visit — and a service will not
+                delete while it still has visits attached.
+              </ExplainerText>
+            </RoleSection>
+          )}
+        </TabExplainer>
+  );
+
+  if (!isAvail) return <>{tabHelp}<UnavailableNotice /></>;
+  if (loading && items.length === 0) return <>{tabHelp}<LoadingCenter /></>;
 
   return (
     <Box w="full">
       {/* Role-tailored orientation. Services is admin+super only — no
           worker branch exists because the tab is not mounted for them. */}
-        <TabExplainer
-          storageKey={`seedlings:servicesTab:guideOpen:${isSuper ? "super" : "admin"}`}
-          title="What Services holds"
-        >
-          {isSuper ? (
-            <>
-              <ExplainerText>
-                The recurring services themselves — the job behind the visits. A service
-                carries the price, the cadence and the <Em>default team</Em> that gets put on
-                each new visit. Create and edit them here, add a visit by hand, and archive a
-                service that has run its course.
-              </ExplainerText>
-              <ExplainerText>
-                <Em>Pausing a stream</Em> holds one recurring line (hedging, say) while the
-                others under the same service keep running. The client change-request queue at
-                the top is where reschedule and skip requests land. Deleting an archived
-                service or visit outright is reserved for you — and a service will not delete
-                while it still has visits attached.
-              </ExplainerText>
-            </>
-          ) : (
-            <>
-              <ExplainerText>
-                The recurring services themselves — the job behind the visits. A service
-                carries the price, the cadence and the <Em>default team</Em> that gets put on
-                each new visit. Create and edit them here, add a visit by hand, and archive a
-                service that has run its course.
-              </ExplainerText>
-              <ExplainerText>
-                <Em>Pausing a stream</Em> holds one recurring line (hedging, say) while the
-                others under the same service keep running. The client change-request queue at
-                the top is where reschedule and skip requests land. The Delete button on an
-                archived service or visit is reserved for a Super.
-              </ExplainerText>
-            </>
-          )}
-        </TabExplainer>
+        {tabHelp}
       {forAdmin && (
         <Box mb={3}>
           <Dashboard

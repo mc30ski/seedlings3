@@ -280,15 +280,22 @@ export default function AdminNotifyTab() {
   // ── Render ────────────────────────────────────────────────────
   return (
     <Box w="full">
-      <TabExplainer storageKey="seedlings:notifyTab:guideOpen" title="What Notify does">
+      <TabExplainer explainerId="seedlings:notifyTab:guideOpen">
         <ExplainerText>
-          Sends an ad-hoc message to one or more approved people on the team. Each send fans out
-          over <Em>text, email and push at once</Em> — it is not a choice of channel, so write it
-          to read sensibly in all three.
+          Sends an ad-hoc message to one or more approved people on the team. By default it fans
+          out over <Em>text, email and push at once</Em>, so write it to read sensibly in all
+          three. <Em>Push-only</Em> narrows that to push — free to send, but it reaches only
+          people who have notifications turned on.
         </ExplainerText>
         <ExplainerText>
-          <Em>Capped at 20 sends per person per day</Em>, resetting at midnight Eastern. Every send
-          is written to the audit log with who sent it and who received it, and the History view
+          <Em>Also post home banner</Em> is a separate channel, not a copy of the message: it
+          pins the text to the top of each recipient&rsquo;s Worker Home tab until they dismiss
+          it themselves. Use it for something that has to survive a missed notification.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Capped at 20 sends per sender per day</Em>, resetting at midnight Eastern. The cap
+          counts sends, not people — one message to the whole team costs one. Every send is
+          written to the audit log with who sent it and who received it, and the History view
           here reads from that log.
         </ExplainerText>
         <ExplainerText>

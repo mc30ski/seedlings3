@@ -40,7 +40,7 @@ import {
 } from "@/src/ui/tabs/JobsTab.parts";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { bumpMyActivities } from "@/src/lib/bus";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 
 type Props = {
   me: Me | null | undefined;
@@ -505,11 +505,61 @@ export default function HomeTab({
     ? (viewAsDisplayName?.split(" ")[0] || "")
     : (me?.displayName?.split(" ")[0] || me?.email?.split("@")[0] || "");
 
+  // HOISTED ABOVE THE LOADING GATES ON PURPOSE.
+  // The help panel is static copy — it does not depend on anything this tab
+  // fetches. While it lived below the gates it was unmounted for the whole
+  // fetch, and because the breadcrumb's (i) is driven by whichever explainer
+  // is mounted, the icon blinked out and back on every visit to this tab.
+  // Rendering it in the gate branches too keeps it mounted from the first
+  // paint. Closed, it renders nothing, so the loading view is unchanged.
+  const tabHelp = (
+        <TabExplainer
+          explainerId={`seedlings:homeTab:guideOpen:${scope.isSuper ? "super" : scope.isAdmin ? "admin" : "worker"}`}
+        >
+          <ExplainerText>
+            Your day in one place: the next thing to do as a big button, your workday clock,
+            mileage, anything you still need to sign, and tiles into the rest of the app.
+            Company announcements sit at the top.
+          </ExplainerText>
+          <ExplainerText>
+            The two pay numbers are <Em>not</Em> the same thing and are meant to differ. The
+            hourly figure is an estimate from your completed work; <Em>My payday</Em> is what
+            payroll actually paid you. Someone paid as a contractor has no payroll record, so
+            that card stays hidden.
+          </ExplainerText>
+          {scope.isAdmin && (
+            <RoleSection role="Admin">
+              <ExplainerText>
+                The worker picker re-scopes the whole page. Nothing selected is the{" "}
+                <Em>team aggregate</Em> — who is on the clock and what they are doing; one
+                worker renders their Home as they see it; several gives you a subset table.
+              </ExplainerText>
+              <ExplainerText>
+                The personal cards — pay estimate, payday, compliance prompts, mileage — only
+                render in the single-worker and own-view modes, because none of them means
+                anything averaged across a team.
+              </ExplainerText>
+            </RoleSection>
+          )}
+          {scope.isSuper && (
+            <RoleSection role="Super">
+              <ExplainerText>
+                The <Em>Insights</Em> rollup above your day is yours alone: money, jobs,
+                equipment, team and clients under one period control.
+              </ExplainerText>
+            </RoleSection>
+          )}
+        </TabExplainer>
+  );
+
   if (loading && !summary) {
     return (
-      <Box py={10} textAlign="center">
-        <Spinner size="lg" />
-      </Box>
+      <>
+        {tabHelp}
+        <Box py={10} textAlign="center">
+          <Spinner size="lg" />
+        </Box>
+      </>
     );
   }
 
@@ -973,55 +1023,7 @@ export default function HomeTab({
             numbers explicitly — the estimate and the Gusto actual sit
             next to each other by design and the mismatch reads as a bug
             without a sentence saying it is not. */}
-        <TabExplainer
-          storageKey={`seedlings:homeTab:guideOpen:${scope.isSuper ? "super" : scope.isAdmin ? "admin" : "worker"}`}
-          title="What Home shows"
-        >
-          {scope.isSuper ? (
-            <>
-              <ExplainerText>
-                Your own day at the top — the same hero, workday clock and tiles every
-                worker gets — and above it the <Em>Insights</Em> rollup that is yours alone:
-                money, jobs, equipment, team and clients for one period control.
-              </ExplainerText>
-              <ExplainerText>
-                The worker picker switches the whole page underneath. Nothing selected is the{" "}
-                <Em>team aggregate</Em>; one worker renders their Home exactly as they see it;
-                several gives you a subset table. The personal cards (pay, payday, compliance,
-                mileage) only appear in the single-worker and own-view modes — they have no
-                meaning across a team.
-              </ExplainerText>
-            </>
-          ) : scope.isAdmin ? (
-            <>
-              <ExplainerText>
-                Your own day at the top — hero, workday clock, tiles — plus the worker picker
-                that re-scopes the whole page. Nothing selected is the <Em>team aggregate</Em>{" "}
-                with who is on the clock and what they are doing; one worker renders their Home
-                as they see it; several gives you a subset table.
-              </ExplainerText>
-              <ExplainerText>
-                The personal cards — pay estimate, payday, compliance prompts, mileage — only
-                render in the single-worker and own-view modes, because none of them means
-                anything averaged across a team.
-              </ExplainerText>
-            </>
-          ) : (
-            <>
-              <ExplainerText>
-                Your day in one place: the next thing to do as a big button, your workday
-                clock, mileage, anything you still need to sign, and tiles into the rest of
-                the app. Company announcements sit at the top.
-              </ExplainerText>
-              <ExplainerText>
-                The two pay numbers are <Em>not</Em> the same thing and are meant to differ.
-                The hourly figure is an estimate from your completed work; <Em>My payday</Em>{" "}
-                is what payroll actually paid you. If you are paid as a contractor you have no
-                payroll record, so that card stays hidden.
-              </ExplainerText>
-            </>
-          )}
-        </TabExplainer>
+        {tabHelp}
 
         {/* Admin-posted broadcasts — stay above MY DASHBOARD so
             company-wide announcements aren't buried inside the

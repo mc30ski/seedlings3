@@ -2,7 +2,7 @@
 
 import { Box, Text, VStack } from "@chakra-ui/react";
 import { FiPlus, FiDownload, FiDatabase, FiShare2 } from "react-icons/fi";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 
 type TaskDef = {
   id: string;
@@ -35,44 +35,38 @@ export default function AdminTasksTab({ tasks, scope, workerType }: Props) {
           workflows for a worker, four setup/export ones for an admin — so
           the copy does too. */}
         <TabExplainer
-          storageKey={`seedlings:actionsTab:guideOpen:${isSuper ? "super" : isAdminView ? "admin" : "worker"}`}
-          title="What Actions are"
+          explainerId={`seedlings:actionsTab:guideOpen:${isSuper ? "super" : isAdminView ? "admin" : "worker"}`}
         >
-          {isAdminView ? (
-            <>
+          <ExplainerText>
+            Guided, step-by-step workflows — the things that would otherwise mean visiting
+            several tabs in the right order. Nothing here does anything you cannot do card by
+            card elsewhere; they just put the steps in order so nothing gets skipped on a busy
+            morning, and nothing here deletes or changes existing records.
+          </ExplainerText>
+          <ExplainerText>
+            <Em>Plan next work day</Em> walks tomorrow&rsquo;s claimed jobs, confirms them and
+            offers to message the clients; <Em>Prepare for work day</Em> runs today&rsquo;s —
+            review the schedule, confirm, and start your first stop.
+          </ExplainerText>
+          {workerType === "TRAINEE" && !isAdminView && (
+            <ExplainerText>
+              As a trainee, planning is <Em>read-only</Em>: you get the summary of what is
+              coming, but confirming, releasing and messaging clients are your team
+              lead&rsquo;s to do.
+            </ExplainerText>
+          )}
+          {isAdminView && (
+            <RoleSection role="Admin">
               <ExplainerText>
-                Guided, multi-step workflows — the things that would otherwise mean visiting
-                four tabs in the right order. <Em>New Job Service</Em> walks a client,
-                property, job and first visit through in one pass.
+                <Em>New Job Service</Em> walks a client, property, job and first visit through
+                in one pass.
               </ExplainerText>
               <ExplainerText>
-                The rest take data out rather than putting it in:{" "}
-                <Em>Share Photos</Em> pulls job photos together to post or download, and the
-                two exports give you a readable summary or the raw JSON of everything.
-                Nothing here deletes or changes existing records.
+                The rest take data out rather than putting it in: <Em>Share Photos</Em> pulls
+                job photos together to post or download, and the two exports give you a
+                readable summary or the raw JSON of everything.
               </ExplainerText>
-            </>
-          ) : (
-            <>
-              <ExplainerText>
-                Guided, step-by-step workflows for the two moments that need one.{" "}
-                <Em>Plan next work day</Em> walks tomorrow&rsquo;s claimed jobs, confirms them
-                and offers to message the clients; <Em>Prepare for work day</Em> runs
-                today&rsquo;s — review the schedule, confirm, and start your first stop.
-              </ExplainerText>
-              {workerType === "TRAINEE" ? (
-                <ExplainerText>
-                  As a trainee, planning is <Em>read-only</Em>: you get the summary of what is
-                  coming, but confirming, releasing and messaging clients are your team
-                  lead&rsquo;s to do.
-                </ExplainerText>
-              ) : (
-                <ExplainerText>
-                  Neither one does anything you cannot do card by card on the Jobs tab — they
-                  just put the steps in order so nothing gets skipped on a busy morning.
-                </ExplainerText>
-              )}
-            </>
+            </RoleSection>
           )}
         </TabExplainer>
       <VStack align="stretch" gap={3} pt={2}>

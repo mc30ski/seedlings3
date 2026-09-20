@@ -54,7 +54,7 @@ import { AdminViewAsSelector, AdminViewAsBadges, type AdminWorker } from "@/src/
 import { EQUIPMENT_KIND, EQUIPMENT_STATUS } from "@/src/lib/types";
 import { parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
 import { Dashboard } from "@/src/ui/components/Dashboard";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import {
   SUPER_PERIODS,
   periodKey,
@@ -1702,8 +1702,86 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     );
   }
 
-  if (!isAvail) return <UnavailableNotice />;
-  if (loading && items.length === 0) return <LoadingCenter />;
+  // HOISTED ABOVE THE LOADING GATES ON PURPOSE.
+  // The help panel is static copy — it does not depend on anything this tab
+  // fetches. While it lived below the gates it was unmounted for the whole
+  // fetch, and because the breadcrumb's (i) is driven by whichever explainer
+  // is mounted, the icon blinked out and back on every visit to this tab.
+  // Rendering it in the gate branches too keeps it mounted from the first
+  // paint. Closed, it renders nothing, so the loading view is unchanged.
+  const tabHelp = (
+        <TabExplainer
+          explainerId={`seedlings:inventoryTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
+        >
+          <ExplainerText>
+            Every piece of equipment, what state it is in, who is holding it and which kits it
+            belongs to. <Em>Reserve</Em> one to hold it, then scan its QR sticker to check it
+            out; returning it is just a confirm, no scan needed. The scan button up top only
+            finds a piece in the list — it does not claim it.
+          </ExplainerText>
+          <ExplainerText>
+            Some pieces require a <Em>signed policy</Em> before anyone can take them out — if
+            you have not signed it, Reserve opens that document before anything else.
+          </ExplainerText>
+          {!showAdminExtras && (
+            isTrainee ? (
+              <ExplainerText>
+                As a trainee you can browse, pin and read up on anything, but{" "}
+                <Em>reserving is off</Em> — an admin checks equipment out to you. Nothing here
+                is ever billed to you.
+              </ExplainerText>
+            ) : me?.workerType === "EMPLOYEE" ? (
+              <ExplainerText>
+                Your list puts pinned pieces first, then whatever you are holding, then what
+                is available. Equipment is <Em>not billed to you</Em>; your cards read
+                &ldquo;No charge&rdquo; because the business carries the cost of the tools you
+                work with.
+              </ExplainerText>
+            ) : (
+              <ExplainerText>
+                Equipment you take out is billed to you: a card shows either a flat daily rate
+                or a per-job rate capped at that daily figure, and the real charge is worked
+                out <Em>when you return it</Em>, from the days you actually had it. If you
+                lead a crew, the reserve picker lets you take a piece out for the crew — the
+                cost then splits across the crew&rsquo;s contractors, and any employees or
+                trainees in it pay nothing.
+              </ExplainerText>
+            )
+          )}
+          {showAdminExtras && (
+            <RoleSection role="Admin">
+              <ExplainerText>
+                You can edit a piece, <Em>force-release</Em> one a worker still has out, move
+                it in and out of maintenance, and retire or un-retire it. Team Usage below is
+                every worker&rsquo;s checkout history, grouped by person, piece, kit or day.
+              </ExplainerText>
+              <ExplainerText>
+                There is no act-on-behalf button for you, but turning on <Em>view-as</Em> for
+                a worker gives you their own reserve and return buttons when you need them.
+                Adding a new piece and deleting a retired one are <Em>super-only</Em> —
+                putting equipment on the books is a capital decision.
+              </ExplainerText>
+            </RoleSection>
+          )}
+          {showSuperExtras && (
+            <RoleSection role="Super">
+              <ExplainerText>
+                <Em>Adding a new piece</Em> and permanently deleting one that is already
+                retired are yours alone.
+              </ExplainerText>
+              <ExplainerText>
+                You can also reserve, check out or return <Em>on behalf of a worker</Em> — the
+                QR scan is bypassed and the audit trail records that you pulled the lever, not
+                them. Insights covers today&rsquo;s fleet state, rental income for the window,
+                the leaderboard and what is sitting idle.
+              </ExplainerText>
+            </RoleSection>
+          )}
+        </TabExplainer>
+  );
+
+  if (!isAvail) return <>{tabHelp}<UnavailableNotice /></>;
+  if (loading && items.length === 0) return <>{tabHelp}<LoadingCenter /></>;
 
   return (
     <Box w="full">
@@ -1712,81 +1790,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           per class: contractors are billed for what they take out,
           employees never are, and trainees cannot reserve at all
           (see canWorkerReserve + the workerRateBadge below). */}
-        <TabExplainer
-          storageKey={`seedlings:inventoryTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
-          title="How Inventory works"
-        >
-          {showSuperExtras ? (
-            <>
-              <ExplainerText>
-                The whole fleet — every piece, what state it is in, who is holding it and
-                which kits it belongs to. You have every admin control here (edit, force a
-                piece back from whoever has it, maintenance in and out, retire and
-                un-retire) plus the two that are yours alone: <Em>adding a new piece</Em>{" "}
-                and permanently deleting one that is already retired.
-              </ExplainerText>
-              <ExplainerText>
-                You can also reserve, check out or return <Em>on behalf of a worker</Em> —
-                the QR scan is bypassed and the audit trail records that you pulled the
-                lever, not them. Insights covers today&rsquo;s fleet state, rental income
-                for the window, the leaderboard and what is sitting idle; Team Usage below
-                is the raw checkout log, grouped by person, piece, kit or day.
-              </ExplainerText>
-            </>
-          ) : showAdminExtras ? (
-            <>
-              <ExplainerText>
-                The whole fleet — every piece, what state it is in, who is holding it and
-                which kits it belongs to. You can edit a piece,{" "}
-                <Em>force-release</Em> one a worker still has out, move it in and out of
-                maintenance, and retire or un-retire it. Team Usage below is every
-                worker&rsquo;s checkout history, grouped by person, piece, kit or day.
-              </ExplainerText>
-              <ExplainerText>
-                Adding a new piece and deleting a retired one are Super-only — putting
-                equipment on the books is a capital decision. There is no
-                act-on-behalf button for you either, but turning on <Em>view-as</Em> for a
-                worker gives you their own reserve and return buttons when you need them.
-              </ExplainerText>
-            </>
-          ) : (
-            <>
-              <ExplainerText>
-                Every piece of equipment and whether it is free right now.{" "}
-                <Em>Reserve</Em> one to hold it, then scan its QR sticker to check it out;
-                returning it is just a confirm, no scan needed. Your list puts pinned
-                pieces first, then whatever you are holding, then what is available. The
-                scan button up top only finds a piece in the list — it does not claim it.
-              </ExplainerText>
-              {isTrainee ? (
-                <ExplainerText>
-                  Some pieces require a signed policy before anyone can take them out. As
-                  a trainee you can browse, pin and read up on anything, but{" "}
-                  <Em>reserving is off</Em> — an admin checks equipment out to you.
-                  Nothing here is ever billed to you.
-                </ExplainerText>
-              ) : me?.workerType === "EMPLOYEE" ? (
-                <ExplainerText>
-                  Some pieces require a signed policy first — if you have not signed it,
-                  Reserve opens that document before anything else. Equipment is{" "}
-                  <Em>not billed to you</Em>; your cards read &ldquo;No charge&rdquo;
-                  because the business carries the cost of the tools you work with.
-                </ExplainerText>
-              ) : (
-                <ExplainerText>
-                  Some pieces require a signed policy first — if you have not signed it,
-                  Reserve opens that document before anything else. Equipment you take out
-                  is billed to you: a card shows either a flat daily rate or a per-job rate
-                  capped at that daily figure, and the real charge is worked out{" "}
-                  <Em>when you return it</Em>, from the days you actually had it. If you
-                  lead a crew, the reserve picker lets you take a piece out for the crew
-                  rather than yourself — the cost then splits across the crew&rsquo;s
-                  contractors, and any employees or trainees in it pay nothing.
-                </ExplainerText>
-              )}
-            </>
-          )}
-        </TabExplainer>
+        {tabHelp}
       {/* Top toolbar — tab-level actions only (refresh, scan-to-find,
           admin Add). Section-scoped controls (search / compact /
           kind / status / liked / active-filter chips) live inside

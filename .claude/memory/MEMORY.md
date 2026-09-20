@@ -54,6 +54,7 @@ split (JobsTab ~11k LOC).
 - [Never ship a red spec](feedback_never_ship_a_red_spec.md) — a failing e2e pre-deploy is a blocker; one called "flaky" took Ledger down in prod.
 - [Match test depth to the change](feedback_test_tier_by_change_size.md) — UI-only → tsc; logic → those specs; API/money → build gate; schema/auth → full Playwright.
 - [Never `next build` while dev server or e2e is live](feedback_never_build_while_dev_server_runs.md) — one shared `.next`; it 404s every route and poisons the run.
+- [Never mutation-test source while the dev server runs](feedback_never_mutate_source_while_dev_server_runs.md) — a restored file still serves the broken chunk; verify the app, not the diff.
 - [Playwright + Clerk setup](reference_playwright_setup.md) — e2e at `apps/web/tests/e2e/`, sign-in tickets, 5 seed users, `E2E_` scratch data.
 - [E2E localStorage stamp race](feedback_e2e_localstorage_stamp_race.md) — waitForLoadState BEFORE stamping topTab or React clobbers it.
 - [Compliance e2e were passing-by-accident — RESOLVED](project_compliance_banner_specs_dead.md) — read before trusting any green compliance run.

@@ -23,7 +23,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import { fmtDate, fmtDateKey, fmtDateTime, bizDateKey, bizToday, bizAddDays, bizAddYears, type EtDateKey } from "@/src/lib/dates";
 import { prettyStatus, clientLabel } from "@/src/lib/labels";
 import { determineRoles } from "@/src/lib/roles";
@@ -3447,86 +3447,63 @@ function PaymentsExplainer({
   const isContractor = workerType === "CONTRACTOR";
   return (
     <TabExplainer
-      storageKey={`seedlings:paymentsTab:guideOpen:${role}${role === "worker" ? `:${isContractor ? "contractor" : "employee"}` : ""}`}
-      title="What this tab shows"
+      explainerId={`seedlings:paymentsTab:guideOpen:${role}${role === "worker" ? `:${isContractor ? "contractor" : "employee"}` : ""}`}
     >
-      {role === "worker" ? (
-        <>
-          <ExplainerText>
-            Every job you worked and what it was worth to you, with where each one has got to —
-            waiting on the client, recorded and awaiting review, or settled. <Em>This tab is a
-            record, not a place to do anything</Em>; you take a payment on the job itself.
-          </ExplainerText>
-          {isContractor ? (
-            <>
-            <ExplainerText>
-              As a contractor, <Em>what the client actually pays reaches you</Em>. If they pay less
-              than the job was worth, your share is reduced in proportion — the business does not
-              cover the difference. If they pay more, your share is capped at what the job
-              promised.
-            </ExplainerText>
-            <ExplainerText>
-              <Em>Unless it is called a tip.</Em> When a client overpays, a super admin can
-              designate some of that extra as a tip and set who it goes to. A tip reaches you on
-              top of your pay <Em>without any fee or margin taken off it</Em>. Anything overpaid
-              and not designated stays with the business.
-            </ExplainerText>
-            </>
-          ) : (
-            <>
-            <ExplainerText>
-              <Em>You are made whole either way.</Em> If a client underpays, or never pays at all,
-              you still receive what the job promised you — the business absorbs the difference.
-              Paying more than the job was worth does not raise your share either.
-            </ExplainerText>
-            <ExplainerText>
-              <Em>Unless it is called a tip.</Em> When a client overpays, a super admin can
-              designate some of that extra as a tip and set who it goes to. A tip reaches you on
-              top of your pay <Em>without any fee or margin taken off it</Em>. Anything overpaid
-              and not designated stays with the business.
-            </ExplainerText>
-            </>
-          )}
-        </>
-      ) : role === "admin" ? (
-        <>
-          <ExplainerText>
-            Every payment across the team, and the equipment charged against them — for{" "}
-            <Em>visibility</Em>. Nothing on this tab is an action you can take: approving,
-            adjusting, writing off and reverting are all super-admin only, and the approval queue
-            is not shown to you.
-          </ExplainerText>
-          <ExplainerText>
-            Use it to answer &ldquo;has this been paid, and what did it come to&rdquo;. If a
-            payment looks wrong, it needs a super admin.
-          </ExplainerText>
-        </>
+      <ExplainerText>
+        Every job worked and what it was worth, with where each one has got to — waiting on
+        the client, recorded and awaiting review, or settled. A payment is <Em>taken on the
+        job itself</Em>, not here.
+      </ExplainerText>
+      {isContractor ? (
+        <ExplainerText>
+          As a contractor, <Em>what the client actually pays reaches you</Em>. If they pay
+          less than the job was worth, your share is reduced in proportion — the business does
+          not cover the difference. If they pay more, your share is capped at what the job
+          promised.
+        </ExplainerText>
       ) : (
-        <>
+        <ExplainerText>
+          <Em>You are made whole either way.</Em> If a client underpays, or never pays at all,
+          you still receive what the job promised you — the business absorbs the difference.
+          Paying more than the job was worth does not raise your share either.
+        </ExplainerText>
+      )}
+      <ExplainerText>
+        <Em>Unless it is called a tip.</Em> When a client overpays, a super can designate some
+        of that extra as a tip and set who it goes to. A tip reaches a worker on top of their
+        pay <Em>without any fee or margin taken off it</Em>. Anything overpaid and not
+        designated stays with the business. Approving, adjusting, writing off and reverting
+        are all <Em>super-only</Em>.
+      </ExplainerText>
+      {role === "admin" && (
+        <RoleSection role="Admin">
           <ExplainerText>
-            Everything, plus the actions: <Em>Pending approval</Em> lists what workers have
-            recorded and is waiting on you. Approving is what <Em>moves the money</Em> — it writes
-            each worker&rsquo;s split from what was actually collected, so approve against the
-            bank, not the reported figure. You can adjust the amount as you approve, reject it, or
-            write the job off.
+            You see every payment across the team, and the equipment charged against them —
+            for <Em>visibility</Em>. The approval queue is not shown to you. Use this to answer
+            &ldquo;has this been paid, and what did it come to&rdquo;; if a payment looks
+            wrong, it needs a super.
+          </ExplainerText>
+        </RoleSection>
+      )}
+      {role === "super" && (
+        <RoleSection role="Super">
+          <ExplainerText>
+            <Em>Pending approval</Em> lists what workers have recorded and is waiting on you.
+            Approving is what <Em>moves the money</Em> — it writes each worker&rsquo;s split
+            from what was actually collected, so approve against the bank, not the reported
+            figure. You can adjust the amount as you approve, reject it, or write the job off.
           </ExplainerText>
           <ExplainerText>
-            Employees and trainees are made whole on a short payment; contractors take it pro-rata
-            and are capped at what the job promised on an overpayment. Where a client overpaid, you
-            can <Em>designate part of it a tip</Em> and set the split between the business and
-            named workers — a tip is carved out of the overpayment (never more than it) and
-            deliberately bypasses fee and margin. Whatever you do not designate stays with the
-            business.
+            Where a client overpaid you can <Em>designate part of it a tip</Em> and set the
+            split between the business and named workers — carved out of the overpayment,
+            never more than it. <Em>Reverting</Em> an approved payment un-does those splits:
+            the one action here that changes a number a worker has already been shown.
           </ExplainerText>
           <ExplainerText>
-            <Em>Reverting</Em> an approved payment is yours alone and un-does those splits — the one
-            action here that changes a number a worker has already been shown.
+            <Em>View as</Em> a worker renders this tab exactly as they see it — the quickest
+            answer to &ldquo;why does my pay look wrong&rdquo;.
           </ExplainerText>
-          <ExplainerText>
-            <Em>View as</Em> a worker renders this tab exactly as they see it — the quickest answer
-            to &ldquo;why does my pay look wrong&rdquo;.
-          </ExplainerText>
-        </>
+        </RoleSection>
       )}
     </TabExplainer>
   );

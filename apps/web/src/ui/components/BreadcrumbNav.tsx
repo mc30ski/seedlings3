@@ -351,7 +351,26 @@ export default function BreadcrumbNav({
 
   return (
     <Box>
-      <HStack gap={1} pt={1} pb={2} pl={2} pr={1} align="center" flexWrap="nowrap" overflowX="auto" css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}>
+      <HStack gap={1} pt={1} pb={2} pl={2} pr={3} align="center" flexWrap="nowrap">
+        {/* ONLY THE TAB PATH SCROLLS.
+            The whole row used to be the scroll container, which put the
+            right-hand actions inside it — so on a narrow screen with long tab
+            names ("Equipment › Collections") the row overflowed and the (i)
+            was pushed off the edge with no way to reach it but a sideways
+            drag nobody knows is there. Worse, the actions box was the only
+            flex item that could shrink, so it was squeezed BELOW its content
+            width (48px for 76px of buttons) and clipped its own child.
+            The path scrolls inside this box; the actions sit outside it and
+            are always on screen. */}
+        <HStack
+          gap={1}
+          align="center"
+          flexWrap="nowrap"
+          flex="1"
+          minW={0}
+          overflowX="auto"
+          css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}
+        >
         {headerLeft}
         {/* Level 1: Outer (Client/Worker/Admin/Super) — hidden when the
             parent provides an out-of-breadcrumb role selector (see
@@ -496,15 +515,16 @@ export default function BreadcrumbNav({
             )}
           </Box>
         )}
+        </HStack>
         {headerRight && (
-          // Takes the remaining width rather than hugging the tabs, so a
-          // caller can push something to the SCREEN edge with its own
-          // Spacer. Previously `flexShrink={0}`, which left everything
-          // packed against the breadcrumb no matter what the caller did —
-          // the prop is documented as "the right edge of the row" and was
-          // not that. Callers that just want their content next to the tabs
-          // are unaffected: content still starts at the left of this box.
-          <Box flex="1" minW={0} display="flex" alignItems="center">
+          // The right edge of the row, and never anything else. It sits
+          // OUTSIDE the scrolling path and refuses to shrink, so these
+          // controls keep their size and stay reachable at any width — the
+          // tab path gives up room for them, not the other way round.
+          // (It briefly took the remaining width with `flex="1"` so a caller
+          // could push content out with a Spacer. That is what allowed it to
+          // be compressed to less than its own contents.)
+          <Box flexShrink={0} display="flex" alignItems="center">
             {headerRight}
           </Box>
         )}

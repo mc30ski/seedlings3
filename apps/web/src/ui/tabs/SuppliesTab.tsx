@@ -38,7 +38,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import { prettyStatus } from "@/src/lib/labels";
 import { occurrenceStatusColor } from "@/src/lib/statusColors";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import QRScannerDialog from "@/src/ui/dialogs/QRScannerDialog";
 import SupplyPhotos, { uploadStagedPhotos, type StagedPhoto, type SupplyPhoto } from "@/src/ui/components/SupplyPhotos";
@@ -760,6 +760,54 @@ export default function SuppliesTab({
 
   return (
     <Box w="full">
+      {/* FROM THE GUARDS:
+            • worker → GET /supplies, /supplies/:id/history. Pulling stock onto
+              a job is workerGuard too, but it happens ON THE JOB, not here.
+            • admin  → the same reads plus hold detail, and may point a
+              purchase at a ledger row (PATCH .../ledger-link is adminGuard).
+              Buying, adjusting and editing the catalog are all superGuard.
+            • super  → everything. */}
+      {/* Own bottom margin: the surrounding stack has no `gap` here, so
+          without it the explainer butts straight into the filters. */}
+        <TabExplainer
+          explainerId={`seedlings:suppliesTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
+        >
+          <ExplainerText>
+            What the company has on hand, and what upcoming jobs have <Em>claimed</Em>.
+            Remaining is what is genuinely free to take — stock another job has already
+            claimed is not counted, so a supply can show stock on hand and still be
+            unavailable.
+          </ExplainerText>
+          <ExplainerText>
+            Supplies go onto a job <Em>from the job</Em>, not from here. They are billed to
+            the client on top of the labor price and <Em>never come out of anyone&rsquo;s
+            pay</Em>. The price is set on the job and can differ per client; the catalog only
+            holds a default. Buying, adjusting stock and editing the catalog are{" "}
+            <Em>super-only</Em>.
+          </ExplainerText>
+          {showAdminExtras && (
+            <RoleSection role="Admin">
+              <ExplainerText>
+                From a supply&rsquo;s history you can point a purchase at the Ledger row that
+                paid for it.
+              </ExplainerText>
+            </RoleSection>
+          )}
+          {showSuperExtras && (
+            <RoleSection role="Super">
+              <ExplainerText>
+                Supplies track <Em>stock, not taxes</Em>. Buying adds units to the shelf and
+                creates <Em>no tax entry</Em> — the deduction is the real card charge you
+                enter in the Ledger, and one receipt can cover several purchases.
+              </ExplainerText>
+              <ExplainerText>
+                <Em>Average price</Em> is what the stock on hand actually cost, oldest units
+                first — so a price you have stopped paying leaves the figure as that stock is
+                used up.
+              </ExplainerText>
+            </RoleSection>
+          )}
+        </TabExplainer>
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
         <Text fontWeight="bold" fontSize="lg">Supplies</Text>
         {showSuperExtras && (
@@ -781,63 +829,6 @@ export default function SuppliesTab({
         )}
       </HStack>
 
-      {/* FROM THE GUARDS:
-            • worker → GET /supplies, /supplies/:id/history. Pulling stock onto
-              a job is workerGuard too, but it happens ON THE JOB, not here.
-            • admin  → the same reads plus hold detail, and may point a
-              purchase at a ledger row (PATCH .../ledger-link is adminGuard).
-              Buying, adjusting and editing the catalog are all superGuard.
-            • super  → everything. */}
-      {/* Own bottom margin: the surrounding stack has no `gap` here, so
-          without it the explainer butts straight into the filters. */}
-  <TabExplainer
-          storageKey={`seedlings:suppliesTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
-          title="How supplies are tracked"
-        >
-          {showSuperExtras ? (
-            <>
-              <ExplainerText>
-                Supplies track <Em>stock, not taxes</Em>. Buying adds units to the shelf and creates{" "}
-                <Em>no tax entry</Em> — the deduction is the real card charge you enter in the
-                Ledger. A purchase can point at that Ledger row as a reminder of what it bought; one
-                receipt can cover several.
-              </ExplainerText>
-              <ExplainerText>
-                When a job pulls from inventory the units are <Em>billed to the client</Em> on top of
-                the labor price, and never come out of anyone&rsquo;s pay. The price is set{" "}
-                <Em>on the job</Em> and can differ per client; the catalog only holds a default.
-              </ExplainerText>
-              <ExplainerText>
-                <Em>Average price</Em> is what the stock on hand actually cost, oldest units first —
-                so a price you have stopped paying leaves the figure as that stock is used up.
-              </ExplainerText>
-            </>
-          ) : showAdminExtras ? (
-            <>
-              <ExplainerText>
-                What is on the shelf and what upcoming jobs have <Em>claimed</Em>. Available is what
-                is left once those claims are counted, so a supply can show stock on hand and still
-                be unavailable.
-              </ExplainerText>
-              <ExplainerText>
-                <Em>Read-only here</Em> — buying, adjusting stock and editing the catalog are
-                super-admin actions. You can point a purchase at its Ledger row from a
-                supply&rsquo;s history, and supplies go onto a job from the job itself.
-              </ExplainerText>
-            </>
-          ) : (
-            <>
-              <ExplainerText>
-                What the company has on hand. <Em>Remaining</Em> is what is genuinely free to take —
-                stock another job has already claimed is not counted.
-              </ExplainerText>
-              <ExplainerText>
-                You add supplies to a job <Em>from the job</Em>, not from here. They are billed to
-                the client on top of the labor price and <Em>never come out of your pay</Em>.
-              </ExplainerText>
-            </>
-          )}
-        </TabExplainer>
       {/* THE OLD WORKER NOTICE IS GONE, and it was not merely redundant: it
           said the cost shown was "the per-unit charge to your payout when you
           use that supply on a job". Supplies have never come out of a

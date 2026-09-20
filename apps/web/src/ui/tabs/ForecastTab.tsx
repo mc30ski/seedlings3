@@ -580,8 +580,52 @@ export default function ForecastTab() {
 
   const crewRevenuePerHour = scenario?.revenuePerClockedHour ?? 60;
 
+  // HOISTED ABOVE THE LOADING GATES ON PURPOSE.
+  // The help panel is static copy — it does not depend on anything this tab
+  // fetches. While it lived below the gates it was unmounted for the whole
+  // fetch, and because the breadcrumb's (i) is driven by whichever explainer
+  // is mounted, the icon blinked out and back on every visit to this tab.
+  // Rendering it in the gate branches too keeps it mounted from the first
+  // paint. Closed, it renders nothing, so the loading view is unchanged.
+  const tabHelp = (
+      <TabExplainer explainerId="seedlings:forecastTab:guideOpen">
+        <ExplainerText>
+          A <Em>what-if</Em> over jobs you have already done. Pick a window, move the levers —
+          margin, hourly base, prices, volume, crew — and see what the books and each
+          worker&rsquo;s hourly rate would have looked like.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>It changes nothing.</Em> No setting, no payment, no payroll row. Nothing here reaches
+          a worker or a client; it is a calculator over history, and closing the tab discards it
+          unless you save a scenario. A saved scenario can be sent to <Em>Claude</Em> for a
+          written assessment of it — the only thing on this tab that leaves the app, and it still
+          writes nothing back.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Costs are spread over the period they cover; income is not.</Em> A premium or
+          licence you pay once a year is charged to this window only for the months of it this
+          window contains — so a three-month window carries a quarter of an annual policy
+          whether you paid it inside that window or six weeks before it. Anything without a
+          recurrence set on it stays where it was paid, which is right for fuel, a repair or a
+          bag of mulch.
+        </ExplainerText>
+        <ExplainerText>
+          Income is still counted when the money <Em>arrived</Em>, not when you invoiced it, so
+          this is not full accrual accounting — the gap between what you billed and what you
+          collected is a real fact worth seeing rather than smoothing away. Your P&amp;L is cash
+          basis on both sides, so a window containing an annual premium will show the whole
+          premium there and a slice of it here. Neither is wrong; they answer different
+          questions.
+        </ExplainerText>
+        <ExplainerText>
+          It answers &ldquo;what would a different rate have done&rdquo; well. It does not find
+          where money is leaking — for that, compare jobs by price band and by actual hours.
+        </ExplainerText>
+      </TabExplainer>
+  );
+
   if (loading && !data) {
-    return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
+    return <>{tabHelp}<Box py={10} textAlign="center"><Spinner size="lg" /></Box></>;
   }
   if (!data || !assumptions || !scenario) {
     return (
@@ -627,38 +671,7 @@ export default function ForecastTab() {
     <VStack align="stretch" gap={3}>
       {/* The root VStack carries gap={3}, so no margin wrapper here — unlike
           Pricing and the Ledger, whose roots are plain Boxes. */}
-      <TabExplainer storageKey="seedlings:forecastTab:guideOpen" title="What the Forecast does">
-        <ExplainerText>
-          A <Em>what-if</Em> over jobs you have already done. Pick a window, move the levers —
-          margin, hourly base, prices, volume, crew — and see what the books and each
-          worker&rsquo;s hourly rate would have looked like.
-        </ExplainerText>
-        <ExplainerText>
-          <Em>It changes nothing.</Em> No setting, no payment, no payroll row. Nothing here reaches
-          a worker or a client; it is a calculator over history, and closing the tab discards it
-          unless you save a scenario.
-        </ExplainerText>
-        <ExplainerText>
-          <Em>Costs are spread over the period they cover; income is not.</Em> A premium or
-          licence you pay once a year is charged to this window only for the months of it this
-          window contains — so a three-month window carries a quarter of an annual policy
-          whether you paid it inside that window or six weeks before it. Anything without a
-          recurrence set on it stays where it was paid, which is right for fuel, a repair or a
-          bag of mulch.
-        </ExplainerText>
-        <ExplainerText>
-          Income is still counted when the money <Em>arrived</Em>, not when you invoiced it, so
-          this is not full accrual accounting — the gap between what you billed and what you
-          collected is a real fact worth seeing rather than smoothing away. Your P&amp;L is cash
-          basis on both sides, so a window containing an annual premium will show the whole
-          premium there and a slice of it here. Neither is wrong; they answer different
-          questions.
-        </ExplainerText>
-        <ExplainerText>
-          It answers &ldquo;what would a different rate have done&rdquo; well. It does not find
-          where money is leaking — for that, compare jobs by price band and by actual hours.
-        </ExplainerText>
-      </TabExplainer>
+      {tabHelp}
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <Box borderWidth="1px" borderRadius="md" p={3} bg="bg.panel">

@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import { fmtDate } from "@/src/lib/dates";
 import {
   publishInlineMessage,
@@ -655,31 +655,23 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   return (
     <Box w="full">
-      <TabExplainer storageKey={`seedlings:documentsTab:guideOpen:${isSuper ? "super" : "admin"}`} title="What Documents holds">
-        {isSuper ? (
-          <>
+      <TabExplainer explainerId={`seedlings:documentsTab:guideOpen:${isSuper ? "super" : "admin"}`}>
+        <ExplainerText>
+          The company&rsquo;s own paperwork — insurance certificates, licences, registrations,
+          contracts — with expiring ones surfaced before they lapse. Each document keeps its{" "}
+          <Em>versions</Em>, so replacing one does not lose the one it replaced.
+        </ExplainerText>
+        <ExplainerText>
+          This is company paperwork, <Em>not</Em> client documents or signed policies —
+          policies live under Compliance. Adding, replacing and archiving are{" "}
+          <Em>super-only</Em>.
+        </ExplainerText>
+        {isSuper && (
+          <RoleSection role="Super">
             <ExplainerText>
-              The company&rsquo;s own paperwork — insurance certificates, licences, registrations,
-              contracts. Each document keeps its <Em>versions</Em>, so replacing one does not lose
-              the one it replaced, and expiring documents are surfaced before they lapse.
+              You can add, edit, archive and delete, and manage the Drive backup.
             </ExplainerText>
-            <ExplainerText>
-              You can add, edit, archive and delete, and manage the Drive backup. This is company
-              paperwork, <Em>not</Em> client documents or signed policies — policies live under
-              Compliance.
-            </ExplainerText>
-          </>
-        ) : (
-          <>
-            <ExplainerText>
-              The company&rsquo;s own paperwork — insurance certificates, licences, registrations,
-              contracts — with expiring ones surfaced before they lapse.
-            </ExplainerText>
-            <ExplainerText>
-              <Em>Read-only for you.</Em> Adding, replacing and archiving are super-admin actions.
-              This is company paperwork, not client documents or signed policies.
-            </ExplainerText>
-          </>
+          </RoleSection>
         )}
       </TabExplainer>
       {isSuper && <DocumentSyncStatusPanel refreshNonce={syncPanelNonce} />}

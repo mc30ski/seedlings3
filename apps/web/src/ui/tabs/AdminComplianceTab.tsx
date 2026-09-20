@@ -252,7 +252,7 @@ export default function AdminComplianceTab() {
 
   return (
     <Box w="full" pb={8}>
-      <TabExplainer storageKey="seedlings:complianceTab:guideOpen" title="What Compliance tracks">
+      <TabExplainer explainerId="seedlings:complianceTab:guideOpen">
         <ExplainerText>
           Policies the crew must read and sign, and who has signed what. A policy is{" "}
           <Em>versioned</Em>: publishing a new version asks for a fresh signature, and an old

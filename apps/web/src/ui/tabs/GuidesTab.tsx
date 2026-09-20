@@ -32,7 +32,7 @@ import {
   Portal,
 } from "@chakra-ui/react";
 import { AlertTriangle, ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import GuideMarkdown from "@/src/ui/components/GuideMarkdown";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -185,42 +185,31 @@ export default function GuidesTab({
 
   return (
     <Box w="full">
-      <TabExplainer storageKey={`seedlings:guidesTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`} title="What Guides are">
-        {showSuperExtras ? (
-          <>
+      <TabExplainer explainerId={`seedlings:guidesTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}>
+        <ExplainerText>
+          How-to references for the work — how a job is done, how a machine is handled, what a
+          client expects. Everyone sees <Em>published</Em> guides, never drafts. Guides are
+          written by admins and published by a super admin, so if something here is wrong or
+          out of date, say so.
+        </ExplainerText>
+        {showAdminExtras && (
+          <RoleSection role="Admin">
             <ExplainerText>
-              How-to references for the crew. Anyone with admin can write and revise a guide, but
-              <Em> only you publish one</Em> — a draft is submitted for approval and waits in the
-              approvals queue until you approve or reject it.
+              You can <Em>write and revise</Em> guides and upload media for them.{" "}
+              <Em>You cannot publish.</Em> Saving a draft and submitting it sends it for
+              approval — until then the crew still sees the last published version, not your
+              draft.
             </ExplainerText>
+          </RoleSection>
+        )}
+        {showSuperExtras && (
+          <RoleSection role="Super">
             <ExplainerText>
-              You can also roll a guide back to an earlier version, unpublish it, archive it, or
-              purge it outright. Everything else on this tab is available to admins too.
+              <Em>Publishing is yours alone</Em> — submitted drafts wait in the approvals
+              queue until you approve or reject. You can also roll a guide back to an earlier
+              version, unpublish, archive, or purge it outright.
             </ExplainerText>
-          </>
-        ) : showAdminExtras ? (
-          <>
-            <ExplainerText>
-              How-to references for the crew — how a job is done, how a machine is handled, what a
-              client expects. You can <Em>write and revise</Em> guides and upload media for them.
-            </ExplainerText>
-            <ExplainerText>
-              <Em>You cannot publish.</Em> Saving a draft and submitting it sends it for approval;
-              a super admin publishes, rejects or rolls it back. Until then the crew sees the last
-              published version, not your draft.
-            </ExplainerText>
-          </>
-        ) : (
-          <>
-            <ExplainerText>
-              How-to references for the work — how a job is done, how a machine is handled, what a
-              client expects. <Em>Read-only</Em>: you see published guides, not drafts.
-            </ExplainerText>
-            <ExplainerText>
-              If something here is wrong or out of date, tell an admin — guides are written by
-              admins and published by a super admin.
-            </ExplainerText>
-          </>
+          </RoleSection>
         )}
       </TabExplainer>
       <HStack mb={3} gap={2} align="center" wrap="wrap">

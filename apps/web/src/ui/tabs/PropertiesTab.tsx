@@ -16,7 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { Filter, LayoutList, Plus, RefreshCw, X } from "lucide-react";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { prettyStatus, clientLabel } from "@/src/lib/labels";
 import { determineRoles } from "@/src/lib/roles";
@@ -348,37 +348,42 @@ export default function PropertiesTab({
     }
   }
 
-  if (!isAvail) return <UnavailableNotice />;
-  if (loading && items.length === 0) return <LoadingCenter />;
+  // HOISTED ABOVE THE LOADING GATES ON PURPOSE.
+  // The help panel is static copy — it does not depend on anything this tab
+  // fetches. While it lived below the gates it was unmounted for the whole
+  // fetch, and because the breadcrumb's (i) is driven by whichever explainer
+  // is mounted, the icon blinked out and back on every visit to this tab.
+  // Rendering it in the gate branches too keeps it mounted from the first
+  // paint. Closed, it renders nothing, so the loading view is unchanged.
+  const tabHelp = (
+      <TabExplainer explainerId={`seedlings:propertiesTab:guideOpen:${showAdminExtras ? "admin" : "worker"}`}>
+        <ExplainerText>
+          Every place you service, each belonging to a client — where they are, who they
+          belong to, and what is particular about each one. Properties are set up by an admin.
+        </ExplainerText>
+        <ExplainerText>
+          The <Em>photos</Em> are the useful part: they are what a worker sees as guidance on
+          the job — access, gate codes, the awkward corner that is easy to miss. Worth a look
+          before a first visit.
+        </ExplainerText>
+        {showAdminExtras && (
+          <RoleSection role="Admin">
+            <ExplainerText>
+              You can add and edit properties, and keep <Em>photos with descriptions</Em> — a
+              picture of the gate code or the awkward corner earns its place. Archiving a
+              property <Em>previews what it will affect</Em> first, so it is never blind.
+            </ExplainerText>
+          </RoleSection>
+        )}
+      </TabExplainer>
+  );
+
+  if (!isAvail) return <>{tabHelp}<UnavailableNotice /></>;
+  if (loading && items.length === 0) return <>{tabHelp}<LoadingCenter /></>;
 
   return (
     <Box w="full">
-      <TabExplainer storageKey={`seedlings:propertiesTab:guideOpen:${showAdminExtras ? "admin" : "worker"}`} title="What Properties holds">
-        {showAdminExtras ? (
-          <>
-            <ExplainerText>
-              Every place you service, each belonging to a client. Add and edit properties, and keep{" "}
-              <Em>photos with descriptions</Em> — those photos are what a worker sees as guidance on
-              the job, so a picture of the gate code or the awkward corner earns its place.
-            </ExplainerText>
-            <ExplainerText>
-              Archiving a property <Em>previews what it will affect</Em> first — scheduled visits and
-              open jobs — so it is never a blind action.
-            </ExplainerText>
-          </>
-        ) : (
-          <>
-            <ExplainerText>
-              The places you service — where they are, who they belong to, and what is particular
-              about each one. <Em>Read-only</Em>: properties are set up by an admin.
-            </ExplainerText>
-            <ExplainerText>
-              The <Em>photos</Em> are the useful part: they are put there as guidance — access, gate
-              codes, the bit that is easy to miss. Worth a look before a first visit.
-            </ExplainerText>
-          </>
-        )}
-      </TabExplainer>
+      {tabHelp}
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)" }}>
           <RefreshCw size={14} />
