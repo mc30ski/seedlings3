@@ -517,23 +517,25 @@ export function etStartOfMonth(): EtDateKey {
 }
 
 /**
- * Get the first day of the current CALENDAR quarter, as YYYY-MM-DD in ET.
- * Quarters are Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec.
+ * Step a date key back or forward by whole MONTHS, in ET.
  *
- * Calendar, not a rolling ninety days, because that is what "this quarter"
- * means to anyone reading it — and because mixing the two is visible: a
- * rolling quarter can exceed a calendar year-to-date in January, which on a
- * board that shows both side by side reads as a bug.
+ * Clamps rather than overflowing: 31 March minus one month is 28 February
+ * (29 in a leap year), not 3 March. `new Date().setMonth(m - 1)` gives the
+ * latter, which is the classic way a "last month" window silently swallows
+ * three extra days four times a year.
  *
- * Derived from the month rather than from day arithmetic, so it cannot drift
- * across a DST boundary.
+ * Used for trailing windows — "the past month from today" — where counting
+ * 30 days drifts against the calendar over a quarter or a year.
  */
-export function etStartOfQuarter(): EtDateKey {
-  const today = etToday();
-  const year = today.slice(0, 4);
-  const month = Number(today.slice(5, 7));
-  const firstMonthOfQuarter = Math.floor((month - 1) / 3) * 3 + 1;
-  return `${year}-${String(firstMonthOfQuarter).padStart(2, "0")}-01` as EtDateKey;
+export function etAddMonths(dateKey: EtDateKey, n: number): EtDateKey {
+  const [y, m, d] = String(dateKey).split("-").map(Number);
+  const totalMonths = y * 12 + (m - 1) + n;
+  const ny = Math.floor(totalMonths / 12);
+  const nm = totalMonths % 12; // 0-indexed
+  // Day 0 of the FOLLOWING month is the last day of this one.
+  const lastDayOfTargetMonth = new Date(Date.UTC(ny, nm + 1, 0, 12)).getUTCDate();
+  const nd = Math.min(d, lastDayOfTargetMonth);
+  return `${ny}-${String(nm + 1).padStart(2, "0")}-${String(nd).padStart(2, "0")}` as EtDateKey;
 }
 
 /**

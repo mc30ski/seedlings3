@@ -479,3 +479,106 @@ describe("Date-handling build gate — forbidden patterns must not appear in pro
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A LOCALE IS NOT A TIME ZONE.
+//
+// `toLocaleTimeString(undefined, …)` was already forbidden above. What was NOT
+// caught is the shape that actually shipped:
+//
+//     new Date(iso).toLocaleTimeString("en-US", { hour: "numeric" })
+//
+// Naming a locale looks deliberate and reads as fixed, but the TIME ZONE still
+// defaults to the host's. It reached the wall display, where it is at its
+// worst: a kiosk mini-PC whose clock was never configured (a fresh Pi defaults
+// to UTC) would have shown every clock-in four or five hours out, with nothing
+// on screen to suggest the board was wrong.
+//
+// THIS RULE ONLY LOOKS AT DATE FORMATTING. `.toLocaleString()` is overwhelm-
+// ingly used here for NUMBERS — currency, odometers, miles — where a time zone
+// is meaningless. The first cut of this rule did not distinguish them and
+// reported 64 offenders, 61 of which were money and mileage. A rule that cries
+// wolf 61 times out of 64 gets suppressed rather than fixed, so it now treats
+// `.toLocaleString` as a date formatter only when its options actually name
+// date or time fields.
+//
+// NO BASELINE. Once the false positives were gone the real count was two, both
+// now fixed, so the bar is zero.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Date-handling build gate — date formatting must name a timeZone", () => {
+  /** Option keys that mean "this call formats a DATE", not a number. */
+  const DATE_FIELDS = [
+    "weekday", "year", "month", "day", "hour", "minute",
+    "second", "dateStyle", "timeStyle", "era", "timeZoneName",
+  ];
+
+  /** Comments discuss these patterns on purpose — including the ❌ examples in
+   *  lib/labels.ts, which this rule flagged as a violation of itself. */
+  function stripComments(src: string): string {
+    return src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+  }
+
+  /** Scan to the matching paren for the call's real arguments: a regex cannot
+   *  balance brackets, and an options object can contain nested braces. */
+  function offenders(src: string): string[] {
+    const out: string[] = [];
+    const clean = stripComments(src);
+    for (const m of clean.matchAll(/\.toLocale(Time|Date)?String\s*\(/g)) {
+      let i = m.index! + m[0].length - 1;
+      let depth = 0;
+      while (i < clean.length) {
+        if (clean[i] === "(") depth += 1;
+        else if (clean[i] === ")") {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+        i += 1;
+      }
+      const args = clean.slice(m.index! + m[0].length, i);
+      if (args.includes("timeZone")) continue;
+      // toLocaleDateString / toLocaleTimeString are always date formatting.
+      // Bare toLocaleString only counts when it names a date or time field.
+      const isDateCall = m[1] != null || DATE_FIELDS.some((k) => new RegExp(`\\b${k}\\s*:`).test(args));
+      if (!isDateCall) continue;
+      const line = clean.slice(0, m.index!).split("\n").length;
+      out.push(`line ${line}: ${clean.slice(m.index! - 40, i + 1).replace(/\s+/g, " ").trim()}`);
+    }
+    return out;
+  }
+
+  it("no date is formatted without an explicit timeZone", () => {
+    const EXCLUDE = ["lib/dates.ts", "lib/web-date-helpers"];
+    const allFiles: string[] = [];
+    for (const dir of SCAN_DIRS) walkFiles(join(REPO_ROOT, dir), allFiles);
+    expect(allFiles.length, "sanity: the walk found nothing").toBeGreaterThan(50);
+
+    const found: string[] = [];
+    for (const file of allFiles) {
+      const key = relative(REPO_ROOT, file).split(sep).join("/");
+      if (EXCLUDE.some((x) => key.includes(x))) continue;
+      if (key.endsWith(".test.ts") || key.endsWith(".test.tsx")) continue;
+      for (const hit of offenders(readFileSync(file, "utf8"))) found.push(`  ${key} ${hit}`);
+    }
+    expect(
+      found.join("\n"),
+      "A locale is not a time zone. Pass `timeZone`, or use the canonical helpers in lib/dates.ts (fmtTimeOpts, fmtDateOpts, etFormatTimeOpts).",
+    ).toBe("");
+  });
+
+  it("the display surfaces are covered by that scan", () => {
+    // Where the hazard is sharpest: nobody is standing at a wall display to
+    // notice that every time on it is four hours out. Named so the rule cannot
+    // quietly stop covering them if the scan roots ever change.
+    for (const rel of [
+      "apps/web/pages/display.tsx",
+      "apps/api/src/services/displays.ts",
+      "apps/web/src/ui/tabs/DisplaysTab.tsx",
+    ]) {
+      expect(offenders(readFileSync(join(REPO_ROOT, rel), "utf8")), rel).toEqual([]);
+    }
+  });
+});

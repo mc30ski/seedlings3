@@ -10,10 +10,7 @@
 import { createHash, randomBytes, randomInt } from "crypto";
 import type { OccurrenceWorkflow } from "@prisma/client";
 import { prisma } from "../db/prisma";
-import {
-  etToday, etMidnight, etEndOfDay, etAddDays,
-  etWeekStart, etStartOfMonth, etStartOfQuarter, etStartOfYear,
-} from "../lib/dates";
+import { etToday, etMidnight, etEndOfDay, etAddDays, etAddMonths } from "../lib/dates";
 import { businessLatLng } from "../lib/businessLocation";
 import { cached } from "../lib/cache";
 import { fetchWeatherAlerts } from "./weatherAlerts";
@@ -473,16 +470,30 @@ export async function buildPrivateBoard(): Promise<PrivateBoard> {
 export async function buildPublicBoard(): Promise<PublicBoard> {
   const dateKey = etToday();
   const dayStart = etMidnight(dateKey);
-  // CALENDAR periods, not rolling windows. These were `today - 7` and
-  // `today - 30` while labelled "this week" and "this month", which is the
-  // same mislabel the exports were fixed for — and the moment quarter and
-  // year joined them the mismatch became visible rather than merely loose: a
-  // rolling 30-day month can exceed a calendar year-to-date in early January,
-  // so a smaller window would report a bigger number right next to it.
-  const weekStart = etMidnight(etWeekStart(dateKey));
-  const monthStart = etMidnight(etStartOfMonth());
-  const quarterStart = etMidnight(etStartOfQuarter());
-  const yearStart = etMidnight(etStartOfYear());
+  // TRAILING windows — today, plus the period behind it — not calendar periods.
+  //
+  // These were calendar-to-date for a while and it was wrong on a wall. The
+  // board was read on a MONDAY and "this week" said 0, because a Monday-start
+  // calendar week had begun that morning and a full weekend of finished work
+  // had just dropped into "last week". A board that reports zero on the
+  // morning after a busy weekend is worse than one that reports nothing.
+  //
+  // The same reasoning applies on the 1st of a month, the 1st of a quarter and
+  // the 1st of January — three more days a year where a calendar window resets
+  // to almost nothing while the crews have plainly been working.
+  //
+  // NOTE FOR ANYONE TEMPTED TO ALIGN THESE WITH THE EXPORTS: don't. Exports
+  // and Reconcile deliberately use the CALENDAR week (Mon-Sun) because they
+  // close a period for payroll. This board answers "how much have we been
+  // getting done lately", which is a trailing question. Same words, different
+  // jobs.
+  //
+  // Months are stepped as whole months rather than 30/90/365 days so the
+  // window does not drift against the calendar across a year.
+  const weekStart = etMidnight(etAddDays(dateKey, -6)); // today + the 6 before = 7 days
+  const monthStart = etMidnight(etAddMonths(dateKey, -1));
+  const quarterStart = etMidnight(etAddMonths(dateKey, -3));
+  const yearStart = etMidnight(etAddMonths(dateKey, -12));
 
   const dayEnd = etEndOfDay(dateKey);
   const [
@@ -538,12 +549,16 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
         occurrence: { status: { in: [...DONE_STATUSES] } },
       },
       orderBy: { createdAt: "desc" },
-      // A deep pool, because the wall cycles through it rather than showing a
+      // A DEEP pool, because the wall cycles through it rather than showing a
       // fixed six. The payload carries ids and URLs only — the images
-      // themselves are fetched lazily as each tile turns over, so a big pool
-      // costs almost nothing until it is actually shown.
-      take: 60,
-      select: { id: true, r2Key: true, createdAt: true },
+      // themselves are fetched lazily as each tile turns over, so depth costs
+      // almost nothing until it is actually shown.
+      //
+      // 60 was too shallow: a single job can carry twenty photos, so sixty
+      // newest could be three jobs and the wall would look like the company
+      // only worked three properties.
+      take: 300,
+      select: { id: true, r2Key: true, createdAt: true, occurrenceId: true },
     }),
     prisma.promotion.findMany({
       where: { status: "ACTIVE" },
@@ -559,10 +574,40 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
 
   const setting = (k: string) => settings.find((s) => s.key === k)?.value ?? null;
 
+  // INTERLEAVED BY JOB, so consecutive tiles come from different properties.
+  //
+  // Depth alone does not fix variety: newest-first means one job that shot
+  // twenty photos occupies the front of the queue, and the wall spends three
+  // minutes on a single lawn before reaching anything else. Round-robin across
+  // occurrences — one photo from each job in turn, then a second from each —
+  // keeps every photo eligible (nothing is dropped) while spreading the jobs
+  // across the rotation.
+  //
+  // Deterministic rather than shuffled: the wall works through the whole pool
+  // predictably, and a display that reloads does not jump to a random place.
+  const byOccurrence = new Map<string, typeof photos>();
+  for (const p of photos) {
+    const list = byOccurrence.get(p.occurrenceId) ?? [];
+    list.push(p);
+    byOccurrence.set(p.occurrenceId, list);
+  }
+  const queues = [...byOccurrence.values()];
+  const interleaved: typeof photos = [];
+  for (let round = 0; interleaved.length < photos.length; round++) {
+    let tookAny = false;
+    for (const q of queues) {
+      if (round < q.length) {
+        interleaved.push(q[round]);
+        tookAny = true;
+      }
+    }
+    if (!tookAny) break; // exhausted — cannot happen, but never loop forever
+  }
+
   // Served through the API, not as presigned R2 links — the route strips EXIF
   // from the copy it hands over, and the URL dies with the display's token.
   // See /public/display/photo/:photoId.
-  const photoUrls = photos.map((p) => ({
+  const photoUrls = interleaved.map((p) => ({
     id: p.id,
     url: `/api/public/display/photo/${p.id}`,
     takenAt: p.createdAt.toISOString(),

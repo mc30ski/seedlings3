@@ -90,7 +90,13 @@ export function whenLabel(a: WeatherAlert, todayKey: string, tomorrowKey: string
   if (a.dateKeys.includes(tomorrowKey)) return "tomorrow";
   const first = a.dateKeys[0];
   if (!first) return "";
-  return new Date(`${first}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long" });
+  // Named timeZone. The UTC-noon anchor keeps the date key from sliding, but
+  // the WEEKDAY was still rendered in whatever zone the device is set to —
+  // correct in ET and wrong east of UTC+12. The business runs on ET, so say so.
+  return new Date(`${first}T12:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "America/New_York",
+  });
 }
 
 /** Alerts covering a specific ET date key, for per-day surfaces like a job

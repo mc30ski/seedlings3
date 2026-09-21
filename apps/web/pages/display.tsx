@@ -28,6 +28,7 @@
 import Head from "next/head";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSeasonIcons } from "@/src/lib/season";
+import { fmtTimeOpts } from "@/src/lib/dates";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -166,12 +167,17 @@ function ago(fromIso: string | null, now: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m ago`;
 }
 
+/** Wall-clock time in ET, via the canonical helper.
+ *
+ *  This used to call `toLocaleTimeString("en-US", …)` directly, with no
+ *  timeZone — which renders in the DEVICE's zone. On the one surface where
+ *  that matters most: a kiosk mini-PC whose clock was never configured (a
+ *  fresh Pi defaults to UTC) would have shown every clock-in and every trip
+ *  four or five hours off, with nothing on screen to suggest it was wrong.
+ *  The business runs on ET; the board says ET regardless of the box it is
+ *  plugged into. */
 function clockTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "";
-  }
+  return fmtTimeOpts(iso, { hour: "numeric", minute: "2-digit" });
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -1042,8 +1048,14 @@ function PhotoWall({
     [token],
   );
 
+  // NEVER MORE TILES THAN PHOTOS. `i % photos.length` wrapped, so four photos
+  // in six tiles laid out as [0,1,2,3,0,1] — the same two lawns side by side,
+  // which reads as a rendering fault rather than a small library. Fewer, larger
+  // tiles is the honest answer when there is little to show.
+  const tileCount = Math.max(1, Math.min(tiles, photos.length));
+
   const [slots, setSlots] = useState<number[]>(() =>
-    Array.from({ length: tiles }, (_, i) => i % Math.max(1, photos.length)),
+    Array.from({ length: tileCount }, (_, i) => i),
   );
 
   /** Photos whose image would not load. A photo can be hidden, deleted, or its
@@ -1059,29 +1071,33 @@ function PhotoWall({
   useEffect(() => setDead(new Set()), [photos]);
 
   useEffect(() => {
-    setSlots(Array.from({ length: tiles }, (_, i) => i % Math.max(1, photos.length)));
-  }, [tiles, photos.length]);
+    setSlots(Array.from({ length: tileCount }, (_, i) => i));
+  }, [tileCount]);
 
   useEffect(() => {
     // Nothing to rotate through — leave the grid alone rather than shuffling
     // the same six pictures around, which reads as a glitch.
-    if (photos.length <= tiles) return;
+    if (photos.length <= tileCount) return;
     let tick = 0;
     let cancelled = false;
 
     const t = setInterval(() => {
       setSlots((prev) => {
-        const slot = tick % tiles;
+        const slot = tick % tileCount;
         tick += 1;
         const shown = new Set(prev);
         // Walk forward to the next photo nobody is showing, so the wall works
         // through the pool instead of flipping between the same few.
-        let next = (prev[slot] + tiles) % photos.length;
+        let next = (prev[slot] + tileCount) % photos.length;
         let guard = 0;
         while ((shown.has(next) || dead.has(photos[next].id)) && guard < photos.length) {
           next = (next + 1) % photos.length;
           guard += 1;
         }
+        // Exhausted: every photo is either on screen already or failed to
+        // load. Leave the tile alone rather than duplicating a neighbour —
+        // the same picture twice reads as a bug, a tile that holds does not.
+        if (shown.has(next) || dead.has(photos[next].id)) return prev;
         // Warm the image before it is on screen. Without this the tile paints
         // empty for as long as the fetch takes, which on a slow shop
         // connection is a visible hole in the wall. A failure here is how a
@@ -1101,13 +1117,13 @@ function PhotoWall({
       cancelled = true;
       clearInterval(t);
     };
-  }, [photos, tiles, srcOf, dead]);
+  }, [photos, tileCount, srcOf, dead]);
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: `repeat(${cols}, 1fr)`,
+        gridTemplateColumns: `repeat(${Math.min(cols, tileCount)}, 1fr)`,
         gap: "1vmin",
         flex: 1,
         minHeight: 0,

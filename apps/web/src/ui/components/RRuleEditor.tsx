@@ -316,7 +316,16 @@ export function rruleLabel(rrule: string | null | undefined): string {
   }
   if (s.freq === "YEARLY") {
     const monthName = s.byMonth
-      ? new Date(2000, s.byMonth - 1, 1).toLocaleString("en-US", { month: "long" })
+      // Built in UTC and read back in UTC, so the two agree by construction.
+      // The old form built a LOCAL midnight and formatted it in the local zone
+      // — which happened to work, but only because both halves drifted
+      // together; pinning just one of them would have shifted "January" to
+      // "December". This is a month NAME, not a business instant, so UTC is
+      // the right anchor rather than ET.
+      ? new Date(Date.UTC(2000, s.byMonth - 1, 1, 12)).toLocaleString("en-US", {
+          month: "long",
+          timeZone: "UTC",
+        })
       : "";
     const day = s.byMonthDay ?? "";
     const when = monthName && day ? ` on ${monthName} ${day}` : monthName ? ` in ${monthName}` : "";
