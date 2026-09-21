@@ -10,7 +10,7 @@ import { usePersistedState } from "@/src/lib/usePersistedState";
 import DateInput from "@/src/ui/components/DateInput";
 import PayrollUploadDialog from "@/src/ui/dialogs/PayrollUploadDialog";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
-import { bizToday, bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear, type EtDateKey } from "@/src/lib/dates";
+import { bizToday, bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear, type EtDateKey, fmtDate } from "@/src/lib/dates";
 
 /**
  * Money → Reconcile tab. Replaces the old Exports + P&L Report tabs.
@@ -192,6 +192,18 @@ type WorkerRow = {
   feesOrMargin: number;
   topUps: number;
   netPaid: number;
+  /** Payment-anchored, so it does NOT appear in `days` — see tipRows. */
+  tips: number;
+  tipRows?: {
+    paymentId: string;
+    paidOn: string;
+    amount: number;
+    client: string | null;
+    property: string | null;
+    jobTitle: string | null;
+    jobInWindow: boolean;
+    completedAt: string | null;
+  }[];
   ownerEarnings: number;
   effectiveHourly: number | null;
   preTopUpHourly: number | null;
@@ -2784,6 +2796,46 @@ function WorkerCard({
             <BreakdownStat label="Top-ups" value={fmtUSD(worker.topUps)} />
             <BreakdownStat label="Net paid" value={fmtUSD(worker.netPaid)} bold />
           </HStack>
+
+          {/* WHERE THE TIPS CAME FROM.
+              The daily breakdown buckets by the day the JOB was completed;
+              a tip is anchored to the day the CLIENT PAID. So a worker could
+              show "$12.50 tips" while every job listed underneath showed
+              none, and expanding rows would never explain it — the originating
+              job can sit in an earlier period entirely. Listed separately
+              because that is the shape of the data, not hidden inside a row
+              that may not be on screen. */}
+          {worker.tips > 0 ? (
+            <Box mb={3}>
+              <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>
+                Tips · {fmtUSD(worker.tips)}
+              </Text>
+              {!worker.tipRows?.length ? (
+                <Text fontSize="xs" color="fg.muted" fontStyle="italic">
+                  Detail unavailable for this period.
+                </Text>
+              ) : (
+                <VStack align="stretch" gap={0.5}>
+                  {worker.tipRows.map((t) => (
+                    <HStack key={t.paymentId + t.paidOn} gap={2} fontSize="xs" wrap="wrap">
+                      <Text fontWeight="semibold" minW="60px">{fmtUSD(t.amount)}</Text>
+                      <Text color="fg.muted">
+                        paid {fmtDate(t.paidOn)}
+                      </Text>
+                      <Text>
+                        {[t.client, t.property].filter(Boolean).join(" · ") || t.jobTitle || "—"}
+                      </Text>
+                      {!t.jobInWindow ? (
+                        <Badge size="xs" colorPalette="orange" variant="subtle">
+                          job completed {t.completedAt ? fmtDate(t.completedAt) : "earlier"} — outside this period
+                        </Badge>
+                      ) : null}
+                    </HStack>
+                  ))}
+                </VStack>
+              )}
+            </Box>
+          ) : null}
 
           {/* Day-by-day breakdown */}
           <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>
