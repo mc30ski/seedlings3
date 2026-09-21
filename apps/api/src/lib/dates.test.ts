@@ -19,7 +19,7 @@ import {
   etSundayOnOrBefore,
   etStartOfMonth,
   etStartOfYear,
-  etStartOfQuarter,
+  etAddMonths,
   parseUserDate,
   parseUsDateToEtDateKey,
   parseUsDateRangeToEtDateKeys,
@@ -470,43 +470,35 @@ describe("etClockTime / etHourAxisLabel — the ET display formatters", () => {
   });
 });
 
-describe("etStartOfQuarter", () => {
-  // The function reads the clock, so the boundaries are asserted through the
-  // same month arithmetic rather than by faking time — what matters is that
-  // every month maps to the right quarter start, including the edges where an
-  // off-by-one would be invisible for two months out of three.
-  const startFor = (month: number) => {
-    const firstMonthOfQuarter = Math.floor((month - 1) / 3) * 3 + 1;
-    return String(firstMonthOfQuarter).padStart(2, "0");
-  };
-
-  it("maps every month to the first month of its calendar quarter", () => {
-    const expected: Record<number, string> = {
-      1: "01", 2: "01", 3: "01",
-      4: "04", 5: "04", 6: "04",
-      7: "07", 8: "07", 9: "07",
-      10: "10", 11: "10", 12: "10",
-    };
-    for (let m = 1; m <= 12; m++) {
-      expect(startFor(m), `month ${m}`).toBe(expected[m]);
-    }
+describe("etAddMonths", () => {
+  it("steps whole months in both directions", () => {
+    expect(etAddMonths("2026-09-21" as any, -1)).toBe("2026-08-21");
+    expect(etAddMonths("2026-09-21" as any, -3)).toBe("2026-06-21");
+    expect(etAddMonths("2026-09-21" as any, -12)).toBe("2025-09-21");
+    expect(etAddMonths("2026-09-21" as any, 1)).toBe("2026-10-21");
   });
 
-  it("returns a real date key for today, on a quarter boundary month", () => {
-    const key = etStartOfQuarter();
-    expect(key).toMatch(/^\d{4}-\d{2}-01$/);
-    const month = Number(key.slice(5, 7));
-    expect([1, 4, 7, 10], "a quarter can only start in Jan, Apr, Jul or Oct").toContain(month);
+  it("crosses the year boundary correctly", () => {
+    expect(etAddMonths("2026-01-15" as any, -1)).toBe("2025-12-15");
+    expect(etAddMonths("2026-02-10" as any, -3)).toBe("2025-11-10");
+    expect(etAddMonths("2026-12-31" as any, 1)).toBe("2027-01-31");
   });
 
-  it("never lands after today", () => {
-    expect(etStartOfQuarter() <= etToday()).toBe(true);
+  it("CLAMPS instead of overflowing into the next month", () => {
+    // `setMonth` would turn these into 3 March / 1 July — the classic way a
+    // trailing window quietly swallows extra days a few times a year.
+    expect(etAddMonths("2026-03-31" as any, -1)).toBe("2026-02-28");
+    expect(etAddMonths("2026-05-31" as any, -1)).toBe("2026-04-30");
+    expect(etAddMonths("2026-01-31" as any, 1)).toBe("2026-02-28");
   });
 
-  it("is on or after the start of the year, and on or before the start of the month", () => {
-    // Orders the four period boundaries the public board shows side by side.
-    // If these ever cross, a smaller window reports a bigger number.
-    expect(etStartOfYear() <= etStartOfQuarter()).toBe(true);
-    expect(etStartOfQuarter() <= etStartOfMonth()).toBe(true);
+  it("handles a leap February", () => {
+    expect(etAddMonths("2028-03-31" as any, -1)).toBe("2028-02-29");
+    expect(etAddMonths("2028-01-30" as any, 1)).toBe("2028-02-29");
+  });
+
+  it("is reversible on a day that exists in both months", () => {
+    const start = "2026-09-15" as any;
+    expect(etAddMonths(etAddMonths(start, -3), 3)).toBe(start);
   });
 });
