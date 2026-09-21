@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
 import { cached } from "../lib/cache";
+import { businessLatLng } from "../lib/businessLocation";
 import { prisma } from "../db/prisma";
 import { hourlyForecastForOccurrence } from "../services/hourlyForecast";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
@@ -4100,6 +4101,10 @@ export default async function workerRoutes(app: FastifyInstance) {
         uploadedBy: p.uploadedBy,
         createdAt: p.createdAt,
         url: await getDownloadUrl(p.r2Key),
+        // Whether this photo is held back from public wall displays. Read-only
+        // to a worker — the toggle is Super-only — but carried here so the
+        // viewer can show the state wherever the photo is looked at.
+        hiddenFromDisplay: p.hiddenFromPublicAt != null,
       }))
     );
 
@@ -4985,51 +4990,9 @@ export default async function workerRoutes(app: FastifyInstance) {
   // address usually fails. The ZIP endpoint is exact and a US address almost
   // always carries one, so try that first and fall back to parsing a
   // "City, ST" pair out of the comma-separated parts.
-  let cachedBizLoc: { key: string; lat: number; lng: number } | null = null;
-
-  async function businessLatLng(): Promise<{ lat: number; lng: number } | null> {
-    const [addrSetting, keySetting] = await Promise.all([
-      prisma.setting.findUnique({ where: { key: "BUSINESS_ADDRESS" } }),
-      prisma.setting.findUnique({ where: { key: "WEATHER_API_KEY" } }),
-    ]);
-    const address = (addrSetting?.value ?? "").trim();
-    const apiKey = keySetting?.value || process.env.OPENWEATHER_API_KEY;
-    if (!address || !apiKey) return null;
-    // Keyed on the address itself, so editing the setting invalidates this
-    // without needing a cache-busting step anywhere.
-    if (cachedBizLoc?.key === address) return { lat: cachedBizLoc.lat, lng: cachedBizLoc.lng };
-
-    const urls: string[] = [];
-    const zip = address.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1];
-    if (zip) urls.push(`https://api.openweathermap.org/geo/1.0/zip?zip=${zip},US&appid=${apiKey}`);
-    // "225 Stony Branch Trl., Chapel Hill, NC. 27516" -> "Chapel Hill,NC,US"
-    const parts = address.split(",").map((p) => p.trim()).filter(Boolean);
-    const stateIdx = parts.findIndex((p) => /^[A-Za-z]{2}\b\.?/.test(p) && p.length <= 12);
-    if (stateIdx > 0) {
-      const city = parts[stateIdx - 1];
-      const st = parts[stateIdx].slice(0, 2).toUpperCase();
-      if (city) urls.push(`https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(city)},${st},US&limit=1&appid=${apiKey}`);
-    }
-
-    for (const url of urls) {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) continue;
-        const body = await res.json();
-        // /zip returns an object, /direct returns an array.
-        const hit = Array.isArray(body) ? body[0] : body;
-        const lat = Number(hit?.lat);
-        const lng = Number(hit?.lon);
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-          cachedBizLoc = { key: address, lat, lng };
-          return { lat, lng };
-        }
-      } catch {
-        // try the next strategy
-      }
-    }
-    return null;
-  }
+  // businessLatLng now lives in lib/businessLocation.ts — the wall display
+  // needs the same answer and must not carry a second copy of the
+  // address-parsing heuristics.
 
   app.get("/weather/location", workerGuard, async (req: any) => {
     const biz = await businessLatLng();

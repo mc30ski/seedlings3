@@ -57,6 +57,11 @@ function uiFiles(): string[] {
       // Client-facing pages render for people with no stored theme and are
       // deliberately fixed to the standard look.
       if (full.includes("/pages/pay/") || full.includes("/pages/promotion/")) continue;
+      // The wall display is the same category: it renders for a viewer with no
+      // stored theme, on a panel nobody signs into, and wants ONE deliberate
+      // dark look — glare, viewing distance and burn-in all point there. It is
+      // a single self-contained file so this exemption stays narrow.
+      if (full.endsWith("/pages/display.tsx")) continue;
       out.push(full);
     }
   };

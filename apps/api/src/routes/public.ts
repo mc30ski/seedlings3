@@ -1,6 +1,10 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../db/prisma";
-import { getDownloadUrl } from "../lib/r2";
+import { getDownloadUrl, getObjectBuffer } from "../lib/r2";
+import { stripImageMetadata } from "../lib/stripImageMetadata";
+import * as displays from "../services/displays";
+import { writeAudit } from "../lib/auditLogger";
+import { AUDIT } from "../lib/auditActions";
 import { services } from "../services";
 import { etFormatDate, etFormatDateOpts, etIcalLocalDateTime, etHourMinute, etMidnight, etToday, etAddDays } from "../lib/dates";
 import {
@@ -171,6 +175,11 @@ export default async function publicRoutes(app: FastifyInstance) {
           },
         },
         photos: {
+          // OUTWARD-FACING, so the same rule as a wall display: a photo
+          // someone pulled down must not reappear here. This feed is
+          // unauthenticated — anyone can read it — and it shows one client's
+          // property to everyone else.
+          where: { hiddenFromPublicAt: null },
           select: {
             id: true,
             r2Key: true,
@@ -1413,5 +1422,191 @@ export default async function publicRoutes(app: FastifyInstance) {
   });
   app.get("/public/mo/:slug/:code", async (req: any, reply: any) => {
     return handleShortClick(req, reply, String(req.params.code ?? "") || null);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // WALL DISPLAYS — pairing and the board feed.
+  //
+  // Unauthenticated by design. A display is a device bolted to a wall with no
+  // keyboard and nobody standing at it; a user session would expire and need a
+  // human to walk over. What replaces it: a device-generated secret, a code a
+  // Super approves from their phone, and a long-lived token that only ever
+  // buys a board payload. See services/displays.ts and the Display model.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** The device asks to be paired. Returns the six digits it should put ON
+   *  SCREEN, plus a secret it keeps to itself. */
+  app.post("/public/display/pair", async (req: any, reply: any) => {
+    // Cheap flood guard. Each request writes a row, and the only caller is a
+    // TV that pairs once a year — a burst is someone fishing.
+    const recent = await prisma.displayPairing.count({
+      where: { createdAt: { gte: new Date(Date.now() - 60_000) } },
+    });
+    if (recent > 20) {
+      return reply.code(429).send({ error: "too_many_requests" });
+    }
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null;
+    const ua = String(req.headers["user-agent"] ?? "").slice(0, 300) || null;
+    const started = await displays.startPairing({ ip, userAgent: ua });
+    // Housekeeping, off the hot path of any real request.
+    void displays.purgeDeadPairings().catch(() => {});
+    return {
+      code: started.code,
+      deviceSecret: started.deviceSecret,
+      expiresAt: started.expiresAt.toISOString(),
+    };
+  });
+
+  /** The device asks whether it has been approved yet.
+   *
+   *  IT POLLS WITH ITS OWN SECRET, NEVER THE SIX DIGITS. The code is on a wall
+   *  where anyone can read it; if the code were enough to collect the token,
+   *  a client in the waiting room could pair themselves the moment you
+   *  approved the real TV. */
+  app.post("/public/display/pair/poll", async (req: any, reply: any) => {
+    const secret = String((req.body || {}).deviceSecret ?? "");
+    if (!secret) return reply.code(400).send({ error: "deviceSecret required" });
+
+    const pairing = await prisma.displayPairing.findUnique({
+      where: { deviceSecretHash: displays.hashSecret(secret) },
+    });
+    // An unknown or expired request is "start over", not an error — the device
+    // just requests a fresh code and carries on unattended.
+    if (!pairing || pairing.expiresAt < new Date()) {
+      return { status: "expired" as const };
+    }
+    if (!pairing.approvedAt || !pairing.displayId) {
+      // The code goes back to the DEVICE, which already proved it owns this
+      // request by holding the secret — it is the device's own code. Letting it
+      // resume means a reboot re-displays the same digits instead of opening
+      // another pending request.
+      return {
+        status: "pending" as const,
+        code: pairing.code,
+        expiresAt: pairing.expiresAt.toISOString(),
+      };
+    }
+    if (!pairing.issuedToken) {
+      // Already collected once. A second pickup is a replay.
+      return { status: "expired" as const };
+    }
+
+    const token = pairing.issuedToken;
+    const display = await prisma.display.findUnique({ where: { id: pairing.displayId } });
+
+    // Hand the token over exactly once, then remove the only plaintext copy.
+    await prisma.$transaction(async (tx) => {
+      await tx.displayPairing.update({
+        where: { id: pairing.id },
+        data: { issuedToken: null, consumedAt: new Date() },
+      });
+      await writeAudit(tx, AUDIT.DISPLAY.TOKEN_ACCESSED, null, {
+        displayId: pairing.displayId,
+        displayName: display?.name ?? null,
+        code: pairing.code,
+      });
+    });
+
+    return {
+      status: "approved" as const,
+      token,
+      display: display ? { id: display.id, name: display.name, mode: display.mode, farViewing: display.farViewing } : null,
+    };
+  });
+
+  /** A featured photo, with its metadata stripped, for a public display.
+   *
+   *  NOT a presigned R2 URL. Two reasons: a presigned URL serves the ORIGINAL,
+   *  which still carries the client's GPS coordinates in EXIF — and unlike
+   *  anything drawn on screen, that travels with the file if someone saves it.
+   *  And a presigned URL works for anyone who gets hold of it, whereas this
+   *  needs the display's token and stops working the moment it is revoked.
+   *
+   *  The stored original keeps its EXIF. That data is evidence of when and
+   *  where the work happened; only the copy that reaches a waiting room is
+   *  scrubbed. */
+  app.get("/public/display/photo/:photoId", async (req: any, reply: any) => {
+    const token = String((req.query?.token as string) ?? "");
+    if (!token) return reply.code(401).send({ error: "unauthorized" });
+
+    const display = await prisma.display.findUnique({
+      where: { tokenHash: displays.hashSecret(token) },
+    });
+    if (!display || display.revokedAt) return reply.code(401).send({ error: "unauthorized" });
+
+    const photo = await prisma.jobOccurrencePhoto.findUnique({
+      where: { id: String(req.params.photoId) },
+    });
+    // A display token must not be a key to every job photo in the system by
+    // id: it may fetch only what its own board would show — finished work,
+    // nothing pulled down.
+    if (!photo || photo.hiddenFromPublicAt) return reply.code(404).send({ error: "not_found" });
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: photo.occurrenceId },
+      select: { status: true },
+    });
+    if (!occ || !["COMPLETED", "PENDING_PAYMENT", "CLOSED"].includes(occ.status)) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    const obj = await getObjectBuffer(photo.r2Key);
+    if (!obj?.bytes) return reply.code(404).send({ error: "not_found" });
+
+    const { buffer } = stripImageMetadata(obj.bytes, photo.contentType ?? obj.contentType);
+    return reply
+      .header("content-type", photo.contentType || "image/jpeg")
+      // A job photo never changes once uploaded, and a wall display cycles
+      // through the same pool for hours. Ten minutes meant re-fetching every
+      // image six times an hour, forever, for bytes that are identical.
+      .header("cache-control", "private, max-age=86400, immutable")
+      .send(buffer);
+  });
+
+  /** The board itself. One endpoint, two genuinely different payloads — which
+   *  one you get is decided HERE by the token's mode, not by the client
+   *  asking. A PUBLIC display must not be able to fetch client names at all;
+   *  its token sits in a room full of strangers. */
+  app.get("/public/display/board", async (req: any, reply: any) => {
+    const token = String(
+      (req.query?.token as string) ||
+        String(req.headers["authorization"] ?? "").replace(/^Bearer\s+/i, ""),
+    );
+    if (!token) return reply.code(401).send({ error: "unauthorized" });
+
+    const display = await prisma.display.findUnique({
+      where: { tokenHash: displays.hashSecret(token) },
+    });
+    if (!display || display.revokedAt) {
+      // Revoked reads the same as never-paired on purpose: the device drops
+      // back to a pairing code either way, which is the only recovery that
+      // does not need someone to carry a keyboard to the wall.
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    // audit-allow: lastSeenAt bump on every board poll. A liveness counter —
+    // auditing it would write a row every 30 seconds, forever.
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null;
+    await prisma.display.update({
+      where: { id: display.id },
+      data: {
+        lastSeenAt: new Date(),
+        lastSeenIp: ip,
+        lastSeenUserAgent: String(req.headers["user-agent"] ?? "").slice(0, 300) || null,
+      },
+    });
+
+    const board =
+      display.mode === "PRIVATE"
+        ? await displays.buildPrivateBoard()
+        : await displays.buildPublicBoard();
+
+    return {
+      display: { id: display.id, name: display.name, mode: display.mode, farViewing: display.farViewing },
+      // The page compares this to the build it booted with and reloads once
+      // when they differ. A JS bundle cannot be hot-swapped in place, and
+      // without this the wall runs whatever shipped the day it was paired.
+      build: process.env.VERCEL_GIT_COMMIT_SHA || process.env.BUILD_ID || "dev",
+      board,
+    };
   });
 }

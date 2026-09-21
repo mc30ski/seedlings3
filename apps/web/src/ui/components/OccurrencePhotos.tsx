@@ -12,7 +12,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Camera, ChevronLeft, ChevronRight, ImageIcon, Trash2 } from "lucide-react";
+import { Camera, ChevronLeft, ChevronRight, Eye, EyeOff, ImageIcon, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { type OccurrencePhoto } from "@/src/lib/types";
 import { fmtDateTime } from "@/src/lib/dates";
@@ -28,6 +28,10 @@ import { enqueueAction } from "@/src/lib/offlineQueue";
 
 type Props = {
   occurrenceId: string;
+  /** Super-only: allow holding a photo back from outward-facing surfaces
+   *  (wall displays, the public activity feed). The client's own portal and
+   *  invoice are unaffected — see JobOccurrencePhoto.hiddenFromPublicAt. */
+  canSetPublicVisibility?: boolean;
   /** Use admin endpoints for viewing/deleting */
   isAdmin?: boolean;
   /** Allow uploads (workers on their own occurrences) */
@@ -37,7 +41,7 @@ type Props = {
 };
 
 
-export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, photoCount }: Props) {
+export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, photoCount, canSetPublicVisibility }: Props) {
   const { isOffline } = useOffline();
   const [photos, setPhotos] = useState<OccurrencePhoto[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -171,6 +175,28 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
 
   const openPicker = useFileUpload(handleFiles);
 
+  /** Hold a photo back from wall displays and the public feed — or put it
+   *  back. Deliberately NOT a delete: the photo stays on the job, and the
+   *  client keeps seeing it on their invoice and in their account. */
+  async function handleTogglePublic(photo: OccurrencePhoto) {
+    const next = !photo.hiddenFromDisplay;
+    // Optimistic: the viewer is open on this photo, so waiting on a round
+    // trip before the label changes reads as the button not working.
+    setPhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, hiddenFromDisplay: next } : p)));
+    try {
+      await apiPost(`/api/super/photos/${photo.id}/visibility`, { hidden: next });
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: next
+          ? "Hidden from the shop screen and the public feed. The client still sees it."
+          : "Showing publicly again.",
+      });
+    } catch (err) {
+      setPhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, hiddenFromDisplay: !next } : p)));
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Could not change that photo", err) });
+    }
+  }
+
   async function handleDelete(photo: OccurrencePhoto) {
     try {
       if (isAdmin) {
@@ -281,6 +307,8 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
         onPrev={() => hasPrev && setViewPhoto(photos[viewIndex - 1])}
         onNext={() => hasNext && setViewPhoto(photos[viewIndex + 1])}
         onDelete={handleDelete}
+        onTogglePublic={handleTogglePublic}
+        canSetPublicVisibility={canSetPublicVisibility}
       />}
 
       {/* Batch review / upload dialog. Lets the worker blur or remove
@@ -307,6 +335,8 @@ function PhotoViewer({
   onPrev,
   onNext,
   onDelete,
+  onTogglePublic,
+  canSetPublicVisibility,
 }: {
   photos: OccurrencePhoto[];
   viewPhoto: OccurrencePhoto;
@@ -317,6 +347,8 @@ function PhotoViewer({
   onPrev: () => void;
   onNext: () => void;
   onDelete: (photo: OccurrencePhoto) => void;
+  onTogglePublic: (photo: OccurrencePhoto) => void;
+  canSetPublicVisibility?: boolean;
 }) {
   const touchXRef = useRef<number | null>(null);
 
@@ -414,6 +446,23 @@ function PhotoViewer({
         <Text color="whiteAlpha.700" fontSize="sm">
           {viewIndex + 1} / {photos.length} · {viewPhoto.uploadedBy?.displayName ?? "Unknown"} · {fmtDateTime(viewPhoto.createdAt)}
         </Text>
+        {canSetPublicVisibility ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            color={viewPhoto.hiddenFromDisplay ? "orange.300" : "whiteAlpha.800"}
+            _hover={{ color: "orange.200", bg: "whiteAlpha.200" }}
+            onClick={() => onTogglePublic(viewPhoto)}
+            title={
+              viewPhoto.hiddenFromDisplay
+                ? "Held back from the shop screen and the public feed. The client still sees it on their invoice and in their account."
+                : "Stop this appearing on the shop screen and the public feed. The client still sees it on their invoice and in their account."
+            }
+          >
+            {viewPhoto.hiddenFromDisplay ? <EyeOff size={14} /> : <Eye size={14} />}
+            {viewPhoto.hiddenFromDisplay ? "Hidden publicly" : "Hide publicly"}
+          </Button>
+        ) : null}
         <Button
           size="xs"
           variant="ghost"

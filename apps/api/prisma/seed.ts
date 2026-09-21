@@ -878,7 +878,13 @@ async function seedDatabase() {
     ],
   });
 
-  // ── Equipment checkouts (5 active) ────────────────────────────────────────
+  // ── Equipment checkouts (9 active) ────────────────────────────────────────
+  //
+  // NINE, NOT FIVE, ON PURPOSE. The wall display's "Out now" panel shows six
+  // rows and pages through the rest — and a seed that produced exactly six
+  // meant the paging never ran, so nobody could see it working in dev. Any
+  // list on that board which can overflow in production needs a dev dataset
+  // that overflows too, or the behaviour is untested by eye.
   console.log("  Creating checkouts...");
 
   await prisma.checkout.create({ data: { equipmentId: mower1.id, userId: EMPLOYEE_ID, reservedAt: daysAgo(5), checkedOutAt: daysAgo(5) } });
@@ -886,6 +892,11 @@ async function seedDatabase() {
   await prisma.checkout.create({ data: { equipmentId: trimmer2.id, userId: ADMIN_WORKER_ID, reservedAt: daysAgo(2), checkedOutAt: daysAgo(2) } });
   await prisma.checkout.create({ data: { equipmentId: blower3.id, userId: TRAINEE_ID, reservedAt: daysAgo(1), checkedOutAt: daysAgo(1) } });
   await prisma.checkout.create({ data: { equipmentId: trailer.id, userId: ADMIN_WORKER_ID, reservedAt: daysAgo(7), checkedOutAt: daysAgo(7) } });
+  // These four push "Out now" past one page on the wall display.
+  await prisma.checkout.create({ data: { equipmentId: edger1.id, userId: EMPLOYEE_ID, reservedAt: daysAgo(4), checkedOutAt: daysAgo(4) } });
+  await prisma.checkout.create({ data: { equipmentId: aerator.id, userId: CONTRACTOR_ID, reservedAt: daysAgo(6), checkedOutAt: daysAgo(6) } });
+  await prisma.checkout.create({ data: { equipmentId: spreader.id, userId: TRAINEE_ID, reservedAt: daysAgo(2), checkedOutAt: daysAgo(2) } });
+  await prisma.checkout.create({ data: { equipmentId: mower3.id, userId: EMPLOYEE_ID, reservedAt: daysAgo(1), checkedOutAt: daysAgo(1) } });
   // Past returned checkout
   await prisma.checkout.create({ data: { equipmentId: chainsawEquip.id, userId: CONTRACTOR_ID, reservedAt: daysAgo(14), checkedOutAt: daysAgo(14), releasedAt: daysAgo(12), rentalDays: 2, rentalCost: 10.0 } });
 
@@ -5614,6 +5625,23 @@ async function seedVehicleFixtures() {
     },
   });
 
+  // A SECOND vehicle out right now. One open trip made the wall display's
+  // "Out now" panel show a single vehicle above a list of equipment, which
+  // never exercised the mixed-page case — and a second truck on the road is
+  // the normal state of a two-crew day anyway.
+  const secondTripStart = new Date(now);
+  secondTripStart.setHours(now.getHours() - 3, 15, 0, 0);
+  await prisma.mileageEntry.create({
+    data: {
+      vehicleId: secondTruck.id,
+      driverUserId: EMPLOYEE_ID,
+      entryDate: dayKey(secondTripStart),
+      startedAt: secondTripStart,
+      // Open too — still out.
+      startOdometer: 62480,
+    },
+  });
+
   // Backfill enrichment — 10 additional past-30d approved sessions
   // spread across all three vehicles + all drivers, plus one extra
   // pending entry per week. This populates the Super Insights strip
@@ -7414,6 +7442,70 @@ async function assertPrimaryContactInvariant() {
     );
   }
   console.log("✓ Every completed non-payroll occurrence has its hours stamped.");
+
+  // ── Job photos ────────────────────────────────────────────────────────────
+  //
+  // Real landscaping photographs, already uploaded to R2 under stable keys
+  // that OUTLIVE a reseed — so this only has to recreate the rows pointing at
+  // them. (Freely licensed, from Wikimedia Commons.)
+  //
+  // WHY THESE ARE SEEDED AT ALL. Two things are invisible without them: the
+  // public wall display's photo wall renders an empty frame, and every test in
+  // display-stale-links-admin.spec.ts SKIPS — four security assertions about
+  // revoked screens and hidden photos quietly passing by not running. A seed
+  // that leaves a feature with no data leaves it untested by eye and untested
+  // by CI at the same time.
+  console.log("  Creating job photos...");
+  const photoKeys = [
+    "seed/landscaping/00.jpg",
+    "seed/landscaping/01.jpg",
+    "seed/landscaping/02.jpg",
+    "seed/landscaping/03.jpg",
+    "seed/landscaping/04.jpg",
+    "seed/landscaping/05.jpg",
+    "seed/landscaping/07.jpg",
+  ];
+  const photoTargets = await prisma.jobOccurrence.findMany({
+    where: { status: { in: ["COMPLETED", "PENDING_PAYMENT", "CLOSED"] } },
+    orderBy: { startAt: "desc" },
+    take: 14,
+    select: { id: true },
+  });
+  // One on an UNFINISHED visit as well: the public board must refuse to show
+  // photos from work still in progress, and that rule cannot be tested — or
+  // broken visibly — without a photo that exercises it.
+  const inProgressTarget = await prisma.jobOccurrence.findFirst({
+    where: { status: { notIn: ["COMPLETED", "PENDING_PAYMENT", "CLOSED"] } },
+    orderBy: { startAt: "desc" },
+    select: { id: true },
+  });
+  let photoCount = 0;
+  for (const [i, occ] of photoTargets.entries()) {
+    const key = photoKeys[i % photoKeys.length];
+    await prisma.jobOccurrencePhoto.create({
+      data: {
+        occurrenceId: occ.id,
+        r2Key: key,
+        fileName: key.split("/").pop() ?? "photo.jpg",
+        contentType: "image/jpeg",
+        uploadedById: EMPLOYEE_ID,
+      },
+    });
+    photoCount++;
+  }
+  if (inProgressTarget) {
+    await prisma.jobOccurrencePhoto.create({
+      data: {
+        occurrenceId: inProgressTarget.id,
+        r2Key: photoKeys[0],
+        fileName: "in-progress.jpg",
+        contentType: "image/jpeg",
+        uploadedById: EMPLOYEE_ID,
+      },
+    });
+    photoCount++;
+  }
+  console.log(`✓ ${photoCount} job photos — the display photo wall has content.`);
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────

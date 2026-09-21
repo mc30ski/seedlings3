@@ -7,6 +7,8 @@ import { randomUUID } from "crypto";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
+import * as displays from "../services/displays";
+import { LIVE_WINDOW_MS, OFFLINE_WINDOW_MS } from "../services/displays";
 import {
   etMidnight,
   etEndOfDay,
@@ -9759,6 +9761,241 @@ const LEDGER_ROW_INCLUDE = Prisma.validator<Prisma.BusinessExpenseInclude>()({
   // (matches other equipment admin flows).
   app.get("/admin/policies/attachable-to-equipment", { preHandler: (req, reply) => app.requireRole(req, reply, RoleVal.ADMIN) }, async () => {
     return services.policies.listEquipmentAttachablePolicies();
+  });
+
+  // ── Wall displays (Super -> System -> Displays) ────────────────────────────
+  //
+  // Super-only throughout. Pairing a device that then reads live job and
+  // worker data with NO user session is a security-boundary action, the same
+  // tier as approving a user or publishing a policy.
+
+  app.get("/super/displays", superGuard, async () => {
+    // Sweep dead rows here too. Purging only when a NEW pairing starts meant
+    // expired requests sat in the table indefinitely on a quiet week — hidden
+    // from this list by the expiry filter, but still there.
+    await displays.purgeDeadPairings().catch(() => {});
+    const [paired, pending] = await Promise.all([
+      prisma.display.findMany({
+        where: { revokedAt: null },
+        orderBy: { pairedAt: "desc" },
+        include: { pairedBy: { select: { id: true, displayName: true } } },
+      }),
+      prisma.displayPairing.findMany({
+        where: { approvedAt: null, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    const now = Date.now();
+    return {
+      displays: paired.map((d) => {
+        const seen = d.lastSeenAt ? now - d.lastSeenAt.getTime() : null;
+        // How long this screen has been silent. A screen polls every 45
+        // seconds, so this separates "unplugged over the weekend" from "that
+        // device was wiped and re-paired as a new row weeks ago" — which look
+        // identical in the list otherwise.
+        // date-handling-allow: elapsed-time — real time since the last poll, not a calendar day count. A screen quiet since 11pm last night has been quiet an hour, not a day, so etDaysBetween would answer a different question.
+        const quietDays = Math.floor((seen ?? now - d.pairedAt.getTime()) / 86_400_000);
+        return {
+          id: d.id,
+          name: d.name,
+          mode: d.mode,
+          farViewing: d.farViewing,
+          pairedAt: d.pairedAt.toISOString(),
+          pairedBy: d.pairedBy?.displayName ?? null,
+          lastSeenAt: d.lastSeenAt ? d.lastSeenAt.toISOString() : null,
+          lastSeenIp: d.lastSeenIp,
+          quietDays,
+          // Derived rather than stored, so it can never go stale itself.
+          liveness:
+            seen == null ? "never" : seen < LIVE_WINDOW_MS ? "live" : seen < OFFLINE_WINDOW_MS ? "stale" : "offline",
+        };
+      }),
+      pending: pending.map((p) => ({
+        id: p.id,
+        code: p.code,
+        requestedIp: p.requestedIp,
+        requestedUserAgent: p.requestedUserAgent,
+        expiresAt: p.expiresAt.toISOString(),
+      })),
+    };
+  });
+
+  /** Approve a pairing BY CODE — not by picking a row off the pending list.
+   *
+   *  Typing the six digits is the step that ties the approval to the screen
+   *  you are looking at. The realistic attack on this flow is not guessing a
+   *  code, it is getting an operator to approve a request that is not their
+   *  TV; a list you can tap through makes that trivial. */
+  app.post("/super/displays/approve", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    const code = String(b.code ?? "").replace(/\D/g, "");
+    // Required, not defaulted. Silently naming three screens "Display" makes
+    // the management list unusable — and revoking the wrong one is the kind of
+    // mistake that takes the shop board down mid-morning.
+    const name = String(b.name ?? "").trim();
+    const mode = b.mode === "PRIVATE" ? "PRIVATE" : "PUBLIC";
+    const farViewing = b.farViewing !== false;
+
+    if (code.length !== 6) throw app.httpErrors.badRequest("A six-digit code is required.");
+    if (!name) throw app.httpErrors.badRequest("Give the screen a name — you will be picking it out of a list later.");
+
+    // RE-PAIRING AN EXISTING SCREEN. When a device loses its browser storage —
+    // wiped profile, replaced stick, factory reset — it comes back asking to
+    // pair as if it were new. Approving that leaves the old row behind: a
+    // credential nobody holds, sitting in the list looking like a TV that is
+    // merely switched off. Naming the screen it replaces revokes the old one
+    // in the same transaction, so the ghost never exists.
+    const replaceId = String(b.replaceDisplayId ?? "").trim() || null;
+    let replacing: { id: string; name: string } | null = null;
+    if (replaceId) {
+      const old_ = await prisma.display.findUnique({ where: { id: replaceId } });
+      if (!old_ || old_.revokedAt) throw app.httpErrors.notFound("That screen is not connected.");
+      replacing = { id: old_.id, name: old_.name };
+    }
+
+    const pairing = await prisma.displayPairing.findUnique({ where: { code } });
+    if (!pairing || pairing.expiresAt < new Date()) {
+      throw app.httpErrors.notFound("That code has expired. Reload the display for a new one.");
+    }
+    if (pairing.approvedAt) {
+      throw app.httpErrors.conflict("That code has already been used.");
+    }
+
+    const token = displays.newDisplayToken();
+
+    const display = await prisma.$transaction(async (tx) => {
+      const created = await tx.display.create({
+        data: {
+          name,
+          mode,
+          farViewing,
+          tokenHash: displays.hashSecret(token),
+          pairedById: uid,
+        },
+      });
+      // audit-allow: marks the pairing consumed inside the SAME transaction
+      // as the DISPLAY.APPROVED row below, which already records who approved
+      // what, from which address, into which mode.
+      await tx.displayPairing.update({
+        where: { id: pairing.id },
+        data: { approvedAt: new Date(), approvedById: uid, displayId: created.id, issuedToken: token },
+      });
+      if (replacing) {
+        // audit-allow: the replaced screen's revocation is recorded by the
+        // DISPLAY.APPROVED row below, which carries replacedDisplayId and
+        // name. One event, both halves — a separate revoke row would read as
+        // an unexplained disconnect next to an unexplained pairing.
+        await tx.display.update({
+          where: { id: replacing.id },
+          data: { revokedAt: new Date(), revokedById: uid },
+        });
+      }
+      await writeAudit(tx, AUDIT.DISPLAY.APPROVED, uid, {
+        displayId: created.id,
+        name,
+        mode,
+        code,
+        requestedIp: pairing.requestedIp,
+        requestedUserAgent: pairing.requestedUserAgent,
+        // Both sides of a replacement land in one row, so the trail reads as
+        // "this screen took over from that one" rather than as an unexplained
+        // revoke next to an unexplained pairing.
+        replacedDisplayId: replacing?.id ?? null,
+        replacedDisplayName: replacing?.name ?? null,
+      });
+      return created;
+    });
+
+    return { id: display.id, name: display.name, mode: display.mode };
+  });
+
+  app.patch("/super/displays/:id", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const b = req.body || {};
+    const before = await prisma.display.findUnique({ where: { id } });
+    if (!before || before.revokedAt) throw app.httpErrors.notFound("Display not found.");
+
+    const data: any = {};
+    if (typeof b.name === "string" && b.name.trim()) data.name = b.name.trim();
+    if (b.mode === "PUBLIC" || b.mode === "PRIVATE") data.mode = b.mode;
+    if (typeof b.farViewing === "boolean") data.farViewing = b.farViewing;
+    if (Object.keys(data).length === 0) return { ok: true };
+
+    const after = await prisma.$transaction(async (tx) => {
+      const updated = await tx.display.update({ where: { id }, data });
+      await writeAudit(tx, AUDIT.DISPLAY.UPDATED, uid, {
+        displayId: id,
+        nameBefore: before.name,
+        nameAfter: updated.name,
+        // The one that matters. Moving a screen from PUBLIC to PRIVATE widens
+        // what a device in a room full of strangers can read.
+        modeBefore: before.mode,
+        modeAfter: updated.mode,
+        farViewingBefore: before.farViewing,
+        farViewingAfter: updated.farViewing,
+      });
+      return updated;
+    });
+    return { id: after.id, name: after.name, mode: after.mode, farViewing: after.farViewing };
+  });
+
+  /** Revoke. Takes effect on the display's NEXT poll, so the kill switch is
+   *  bounded by the poll interval rather than instant — which is the real
+   *  argument for polling every 30-60s rather than every few minutes. */
+  app.post("/super/displays/:id/revoke", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const before = await prisma.display.findUnique({ where: { id } });
+    if (!before || before.revokedAt) throw app.httpErrors.notFound("Display not found.");
+
+    await prisma.$transaction(async (tx) => {
+      await tx.display.update({ where: { id }, data: { revokedAt: new Date(), revokedById: uid } });
+      await writeAudit(tx, AUDIT.DISPLAY.DELETED, uid, {
+        displayId: id,
+        name: before.name,
+        mode: before.mode,
+        lastSeenAt: before.lastSeenAt,
+      });
+    });
+    return { ok: true };
+  });
+
+  /** Hold a photo back from OUTWARD-FACING surfaces — wall displays and the
+   *  public activity feed — or put it back.
+   *
+   *  NOT under /super/displays: it started there, and then the public feed
+   *  turned out to show the same photos. A route named for one surface is how
+   *  the next person adding a surface misses it.
+   *
+   *  This never affects the owning client. Their portal and their invoice
+   *  still show every photo of their own property — they are not an audience,
+   *  they are who the work was done for. */
+  app.post("/super/photos/:photoId/visibility", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const photoId = String(req.params.photoId);
+    const hidden = (req.body || {}).hidden !== false;
+    const before = await prisma.jobOccurrencePhoto.findUnique({ where: { id: photoId } });
+    if (!before) throw app.httpErrors.notFound("Photo not found.");
+
+    await prisma.$transaction(async (tx) => {
+      await tx.jobOccurrencePhoto.update({
+        where: { id: photoId },
+        data: {
+          hiddenFromPublicAt: hidden ? new Date() : null,
+          hiddenById: hidden ? uid : null,
+        },
+      });
+      await writeAudit(tx, AUDIT.DISPLAY.UPDATED, uid, {
+        photoId,
+        occurrenceId: before.occurrenceId,
+        hidden,
+        surface: "public_photo_visibility",
+      });
+    });
+    return { ok: true, hidden };
   });
 
   app.post("/admin/policies/nudge", superGuard, async (req: any) => {
