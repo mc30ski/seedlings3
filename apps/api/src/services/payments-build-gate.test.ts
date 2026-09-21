@@ -1312,3 +1312,47 @@ describe("payments build gate — re-price scope is stated, not assumed", () => 
     expect(TAB).toMatch(/setPriceEditValue\(occ\.price != null \? occ\.price\.toFixed\(2\) : ""\)/);
   });
 });
+
+describe("[build-gate] a tip is never dropped", () => {
+  // FOUND IN PRODUCTION. Two crew split a $25 tip; the client paid three days
+  // after the job. One of them worked that week and was paid their half. The
+  // other did not work that week, so the reconcile accumulator — which is
+  // built from work done IN the window — had no entry for them, and
+  //
+  //     const a = acc.get(t.userId);
+  //     if (!a) continue;
+  //
+  // threw their $12.50 away. They did not appear as a $0 row. They did not
+  // appear at all, so nothing on the payroll screen suggested anything was
+  // missing.
+  //
+  // This is not an edge case: a tip is anchored to the day the CLIENT PAID and
+  // clients pay late, so the tipped worker having no work in that same period
+  // is ordinary.
+  const SRC = readFileSync(join(__dirname, "reconcileWorkers.ts"), "utf8");
+
+  it("the tip loop CREATES an accumulator rather than skipping", () => {
+    const at = SRC.indexOf("for (const t of tipSplits)");
+    expect(at, "the tip fold must exist").toBeGreaterThan(-1);
+    const loop = SRC.slice(at, at + 1600);
+    expect(
+      loop,
+      "a tipped worker with no work in the window must still get a payroll row",
+    ).toMatch(/getAcc\(normalizeUser\(t\.user\)\)/);
+  });
+
+  it("the tip query selects the user, which is what makes that possible", () => {
+    // Selecting only `userId` is what forced the skip in the first place:
+    // there was no user record to build an accumulator from.
+    const at = SRC.indexOf("tipAmount: { gt: 0 }");
+    expect(at).toBeGreaterThan(-1);
+    const query = SRC.slice(at, at + 900);
+    expect(query, "the tip query must carry the user record").toMatch(/user:\s*\{/);
+    expect(query).toMatch(/workerType: true/);
+  });
+
+  it("tips stay OUT of netPaid, so this fix cannot inflate the effective rate", () => {
+    // The rule this must not break while fixing the drop.
+    expect(SRC).toMatch(/Tips stay OUT of netPaid/);
+  });
+});

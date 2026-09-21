@@ -55,6 +55,28 @@ export type ReconcileJobAssigneeBreakdown = {
   isOwnerEarnings: boolean;
 };
 
+/** One tip, with enough to find where it came from.
+ *
+ *  Tips were folded into a per-worker TOTAL and nowhere else, so a payroll row
+ *  could read "$12.50 tips" while every job underneath it showed none — and no
+ *  amount of expanding would explain it. Two reasons the job rows cannot carry
+ *  it on their own: a tip is anchored to the PAYMENT, so its job may sit
+ *  outside the window entirely, and one payment can tip several workers. */
+export type ReconcileTipRow = {
+  paymentId: string;
+  /** The date the client PAID, which is what decides the payroll period. */
+  paidOn: string; // ISO
+  amount: number;
+  client: string | null;
+  property: string | null;
+  jobTitle: string | null;
+  /** The job completed inside this window. When false, the work was done in
+   *  an earlier period and only the tip lands here — the case that makes the
+   *  number look like it came from nowhere. */
+  jobInWindow: boolean;
+  completedAt: string | null; // ISO
+};
+
 export type ReconcileJobRow = {
   occurrenceId: string;
   title: string;
@@ -120,6 +142,8 @@ export type ReconcileWorkerRow = {
    *  inside `netPaid` — `effectiveHourly` is derived from netPaid and the
    *  operator's rule is that tips don't count toward the effective rate. */
   tips: number;
+  /** Where each of those tips came from. Empty when `tips` is 0. */
+  tipRows: ReconcileTipRow[];
   netPaid: number;             // sum of the per-job figures (see netForJob)
   ownerEarnings: number;       // business cut (only populated for the LLC owner)
 
@@ -415,7 +439,43 @@ export async function buildReconcileWorkers(
           skippedAt: null,
         },
       },
-      select: { userId: true, tipAmount: true, ownerEarnings: true },
+      select: {
+        userId: true,
+        tipAmount: true,
+        ownerEarnings: true,
+        // The USER too, so a worker who earned only a tip this period can be
+        // added to the payroll. Selecting just the id made that impossible.
+        user: {
+          select: {
+            id: true,
+            displayName: true,
+            email: true,
+            workerType: true,
+            hourlyWage: true,
+            isOwner: true,
+          },
+        },
+        payment: {
+          select: {
+            id: true,
+            confirmedAt: true,
+            occurrence: {
+              select: {
+                id: true,
+                title: true,
+                completedAt: true,
+                job: {
+                  select: {
+                    property: {
+                      select: { street1: true, client: { select: { displayName: true } } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     }),
   ]);
 
@@ -441,6 +501,7 @@ export async function buildReconcileWorkers(
     /** Tips received in the window. PAYMENT-anchored, unlike every other
      *  figure on this row — see the tips query below. */
     tips: number;
+    tipRows: ReconcileTipRow[];
     ownerEarnings: number;
     // Set of occurrence IDs that fed owner-earnings to this user.
     // Used ONLY for owner-row display so the headline jobs count
@@ -510,6 +571,7 @@ export async function buildReconcileWorkers(
         feesOrMargin: 0,
         topUps: 0,
         tips: 0,
+        tipRows: [],
         ownerEarnings: 0,
         ownerEarningOccurrenceIds: new Set(),
         byDay: new Map(),
@@ -835,10 +897,41 @@ export async function buildReconcileWorkers(
   // business money, not a personal wage — which keeps them out of Gusto
   // W-2 / Contractors automatically.
   for (const t of tipSplits) {
-    const a = acc.get(t.userId);
+    // CREATE the accumulator if this worker has none.
+    //
+    // This used to be `acc.get(...)` with `if (!a) continue`, and the
+    // accumulator is built from work done IN the window — so a worker who did
+    // no jobs that period had no entry and their tip was silently discarded.
+    // They did not show a $0 row; they did not appear at all.
+    //
+    // It is not a rare edge: a tip is anchored to the day the client PAID, and
+    // clients pay late. Someone who worked a job on the 13th, was tipped when
+    // the client paid on the 16th, and happened to work no jobs that week was
+    // simply never paid the tip. Found in production — two crew split a $25
+    // tip and only the one who also worked that week received their half.
+    const a = t.user ? getAcc(normalizeUser(t.user)) : acc.get(t.userId);
     if (!a) continue;
-    if (t.ownerEarnings) a.ownerEarnings += t.tipAmount ?? 0;
-    else a.tips += t.tipAmount ?? 0;
+    if (t.ownerEarnings) {
+      a.ownerEarnings += t.tipAmount ?? 0;
+      continue;
+    }
+    a.tips += t.tipAmount ?? 0;
+
+    // Record WHERE it came from. Without this the figure is unauditable: the
+    // job it belongs to may have completed in an earlier period, so it cannot
+    // simply be attached to a row in this window's daily breakdown.
+    const occ = t.payment?.occurrence;
+    const completedAt = occ?.completedAt ?? null;
+    a.tipRows.push({
+      paymentId: t.payment?.id ?? "",
+      paidOn: (t.payment?.confirmedAt ?? new Date()).toISOString(),
+      amount: round2(t.tipAmount ?? 0),
+      client: occ?.job?.property?.client?.displayName ?? null,
+      property: occ?.job?.property?.street1 ?? null,
+      jobTitle: occ?.title ?? null,
+      jobInWindow: completedAt != null && completedAt >= start && completedAt <= end,
+      completedAt: completedAt ? completedAt.toISOString() : null,
+    });
   }
 
   const workers: ReconcileWorkerRow[] = [];
@@ -953,6 +1046,8 @@ export async function buildReconcileWorkers(
       // non-owners, displayNet === netPaid so this is a no-op.
       netPaid: displayNet,
       tips,
+      // Sorted so the operator reads them in the order they were paid.
+      tipRows: [...a.tipRows].sort((x, y) => x.paidOn.localeCompare(y.paidOn)),
       ownerEarnings,
       effectiveHourly,
       preTopUpHourly,
