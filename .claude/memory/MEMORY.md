@@ -46,6 +46,7 @@ split (JobsTab ~11k LOC).
 - [Always audit every mutation](feedback_audit_every_mutation.md) — every state change writes an AuditEvent in the SAME edit. Destructive paths snapshot first.
 - [Audit system mechanics](reference_audit_system.md) — `writeAudit(tx, AUDIT.SCOPE.VERB, actor, meta)`. AuditScope/Verb are Prisma enums, so a new scope needs a migration.
 - [Confirm dialogs are mandatory](feedback_confirm_dialogs.md) — every Approve/Reject/Adjust/Write-off/Delete/Revert needs one. Mobile-first; accidental taps are real.
+- [The app does NOT poll](feedback_no_polling.md) — hard rule; one exception is /display once paired. Gated.
 - [Never use native `<select>`](feedback_no_native_select.md) — always Chakra `Select.Root` + `createListCollection`.
 - [Theming — 14 themes, test EVERY feature against all](reference_theming.md) — `_dark` misses 4 dark-grounded themes; raw hex/ramp never themes; `solid` is a fill, not an ink.
 - [Run the build gate after every change](feedback_run_build_gate_after_changes.md) — `cd apps/api && npm run test:build-gate` before reporting done.

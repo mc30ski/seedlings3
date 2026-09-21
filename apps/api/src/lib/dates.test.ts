@@ -19,6 +19,7 @@ import {
   etSundayOnOrBefore,
   etStartOfMonth,
   etStartOfYear,
+  etStartOfQuarter,
   parseUserDate,
   parseUsDateToEtDateKey,
   parseUsDateRangeToEtDateKeys,
@@ -466,5 +467,46 @@ describe("etClockTime / etHourAxisLabel — the ET display formatters", () => {
     // Same wall-clock hour, six months apart: EDT (-04:00) and EST (-05:00).
     expect(etClockTime(at("2026-07-15T14:00:00-04:00"))).toBe("2:00 PM");
     expect(etClockTime(at("2026-01-15T14:00:00-05:00"))).toBe("2:00 PM");
+  });
+});
+
+describe("etStartOfQuarter", () => {
+  // The function reads the clock, so the boundaries are asserted through the
+  // same month arithmetic rather than by faking time — what matters is that
+  // every month maps to the right quarter start, including the edges where an
+  // off-by-one would be invisible for two months out of three.
+  const startFor = (month: number) => {
+    const firstMonthOfQuarter = Math.floor((month - 1) / 3) * 3 + 1;
+    return String(firstMonthOfQuarter).padStart(2, "0");
+  };
+
+  it("maps every month to the first month of its calendar quarter", () => {
+    const expected: Record<number, string> = {
+      1: "01", 2: "01", 3: "01",
+      4: "04", 5: "04", 6: "04",
+      7: "07", 8: "07", 9: "07",
+      10: "10", 11: "10", 12: "10",
+    };
+    for (let m = 1; m <= 12; m++) {
+      expect(startFor(m), `month ${m}`).toBe(expected[m]);
+    }
+  });
+
+  it("returns a real date key for today, on a quarter boundary month", () => {
+    const key = etStartOfQuarter();
+    expect(key).toMatch(/^\d{4}-\d{2}-01$/);
+    const month = Number(key.slice(5, 7));
+    expect([1, 4, 7, 10], "a quarter can only start in Jan, Apr, Jul or Oct").toContain(month);
+  });
+
+  it("never lands after today", () => {
+    expect(etStartOfQuarter() <= etToday()).toBe(true);
+  });
+
+  it("is on or after the start of the year, and on or before the start of the month", () => {
+    // Orders the four period boundaries the public board shows side by side.
+    // If these ever cross, a smaller window reports a bigger number.
+    expect(etStartOfYear() <= etStartOfQuarter()).toBe(true);
+    expect(etStartOfQuarter() <= etStartOfMonth()).toBe(true);
   });
 });

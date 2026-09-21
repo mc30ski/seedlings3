@@ -78,6 +78,7 @@ import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
 import PricingTab from "@/src/ui/tabs/PricingTab";
 import PromotionsTab from "@/src/ui/tabs/PromotionsTab";
 import VanityUrlsTab from "@/src/ui/tabs/VanityUrlsTab";
+import DisplaysTab from "@/src/ui/tabs/DisplaysTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -88,7 +89,7 @@ import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 import { Me, Role, AdminTabs, ClientTabs, WorkerTabs, SuperTabs, EventTypes } from "@/src/lib/types";
-import { FiActivity, FiAlertCircle, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiHome, FiLink, FiMapPin, FiNavigation, FiPackage, FiRefreshCw, FiSearch, FiSettings, FiShield, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
+import { FiActivity, FiAlertCircle, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiHome, FiLink, FiMapPin, FiMonitor, FiNavigation, FiPackage, FiRefreshCw, FiSearch, FiSettings, FiShield, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
 import { TfiMoney } from "react-icons/tfi";
@@ -1926,6 +1927,19 @@ chip: false, bucket: t.bucket }));
           categoryIcon: FiSettings,
         },
         {
+          // Displays — wall screens showing a live board. Its own tab rather
+          // than a section inside Settings because of the pairing moment:
+          // you are standing at the screen with a code counting down and a
+          // phone in your hand, so it has to be one tap from the breadcrumb.
+          // See DisplaysTab + services/displays.ts + the Display model.
+          value: "displays",
+          label: "Displays",
+          icon: FiMonitor,
+          content: wrapWithInlineMessage(<DisplaysTab />),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
           value: "settings",
           label: "Settings",
           icon: FiSettings,
@@ -3357,7 +3371,7 @@ chip: false, bucket: t.bucket }));
       reconcile: "Records", workdays: "Records", compliance: "Records", activity: "Records",
       history: "Records", timeline: "Records", documents: "Records", guides: "Records", audit: "Records",
       "tools-mowing": "Tools", "tools-mulch": "Tools",
-      notify: "System", settings: "System", profile: "System", vanity: "System",
+      notify: "System", settings: "System", profile: "System", vanity: "System", displays: "System",
     };
     const onNav = (e: Event) => {
       const { tab, remount } = (e as CustomEvent).detail || {};

@@ -901,6 +901,10 @@ export type OccurrencePhoto = {
   uploadedBy?: { id: string; displayName?: string | null };
   createdAt: string;
   url: string;
+  /** Held back from OUTWARD-FACING surfaces — wall displays and the public
+   *  activity feed. Never affects the owning client: their portal and their
+   *  invoice show every photo of their own property. */
+  hiddenFromDisplay?: boolean;
 };
 
 export type PropertyPhotoItem = {

@@ -517,6 +517,26 @@ export function etStartOfMonth(): EtDateKey {
 }
 
 /**
+ * Get the first day of the current CALENDAR quarter, as YYYY-MM-DD in ET.
+ * Quarters are Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec.
+ *
+ * Calendar, not a rolling ninety days, because that is what "this quarter"
+ * means to anyone reading it — and because mixing the two is visible: a
+ * rolling quarter can exceed a calendar year-to-date in January, which on a
+ * board that shows both side by side reads as a bug.
+ *
+ * Derived from the month rather than from day arithmetic, so it cannot drift
+ * across a DST boundary.
+ */
+export function etStartOfQuarter(): EtDateKey {
+  const today = etToday();
+  const year = today.slice(0, 4);
+  const month = Number(today.slice(5, 7));
+  const firstMonthOfQuarter = Math.floor((month - 1) / 3) * 3 + 1;
+  return `${year}-${String(firstMonthOfQuarter).padStart(2, "0")}-01` as EtDateKey;
+}
+
+/**
  * Get January 1 of the current year, as YYYY-MM-DD in ET. For YTD
  * date-range presets and summary endpoints.
  */

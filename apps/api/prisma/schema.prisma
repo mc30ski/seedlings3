@@ -68,6 +68,12 @@ enum AuditScope {
   // document a pay-structure decision gets argued from, so who built it,
   // who edited the assumptions, and who deleted it are all worth keeping.
   FORECAST
+
+  // Added 2026-09-20 with wall Displays (Super -> System -> Displays).
+  // A paired display reads job and worker data with NO user session, so
+  // who paired one, into which mode, and who revoked it are the whole
+  // security story. The token handoff itself is audited too.
+  DISPLAY
 }
 
 enum AuditVerb {
@@ -501,6 +507,13 @@ model User {
   guideVersionsPublished GuideVersion[] @relation("GuideVersionPublisher")
   guideVersionsRejected  GuideVersion[] @relation("GuideVersionRejecter")
   guideAssetsUploaded    GuideAsset[]   @relation("GuideAssetUploader")
+
+  // Wall displays (Super -> System -> Displays). A Display is a paired
+  // DEVICE, not a person — these relations only record which human
+  // approved or revoked one.
+  displaysPaired        Display[]            @relation("DisplayPairedBy")
+  displaysRevoked       Display[]            @relation("DisplayRevokedBy")
+  publicPhotosHidden    JobOccurrencePhoto[] @relation("PublicPhotoHiddenBy")
 }
 
 model NotificationTemplate {
@@ -1423,9 +1436,36 @@ model JobOccurrencePhoto {
   uploadedById String
   uploadedBy   User   @relation(fields: [uploadedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
+  // ── Held back from OUTWARD-FACING surfaces (opt-out) ──────────────────
+  // Job photos are shown outwardly by default, newest first — the same
+  // instinct as the client-facing photo lists: show what is latest, with
+  // nobody curating it first. This was built the other way round at first
+  // (nothing showed until a human hand-picked each photo) and that was
+  // wrong: a feature that does nothing until someone does work is a feature
+  // nobody uses, and the review burden grows with every job.
+  //
+  // What remains is the exception. These surfaces put ONE client's property
+  // in front of OTHER people — a lobby screen, the public activity feed —
+  // so there has to be a way to pull a photo down: the sprinkler-head
+  // close-up, the one with a plate in frame.
+  //
+  // NAMED FOR THE RULE, NOT ONE SURFACE. It started as
+  // `hiddenFromDisplayAt` and by the time the public feed was found it was
+  // already gating two things; a flag named for a screen would have been
+  // read as "only the TV" by the next person to add a surface.
+  //
+  // WHAT IT MUST NEVER HIDE: the owning client's own views — their logged-in
+  // portal and their invoice. Those are not an audience, they are the
+  // person the work was done for. Enforced by
+  // services/photo-visibility-build-gate.test.ts.
+  hiddenFromPublicAt DateTime?
+  hiddenById         String?
+  hiddenBy           User?     @relation("PublicPhotoHiddenBy", fields: [hiddenById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
   createdAt DateTime @default(now())
 
   @@index([occurrenceId])
+  @@index([hiddenFromPublicAt])
 }
 
 model JobAssigneeDefault {
@@ -4164,5 +4204,116 @@ model CacheEntry {
   updatedAt DateTime @updatedAt
 
   @@index([namespace])
+  @@index([expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WALL DISPLAYS — Super -> System -> Displays
+//
+// A TV on the shop wall, or a vertical kiosk in the waiting room, showing a
+// live board. The device runs an ordinary browser at /display in kiosk mode;
+// there is no native app.
+//
+// WHY THIS IS NOT A CLERK SESSION. A display hangs on a wall for months and
+// nobody is standing at it. A user session expires, and re-authenticating
+// means carrying a keyboard to the wall — so instead the device holds a
+// long-lived bearer token that only ever buys the board payload, and a Super
+// can revoke it from their phone. The token is NOT a user: it has no roles,
+// cannot mutate anything, and reads only what its own mode allows.
+//
+// MODE IS SERVER-SIDE AND AUTHORITATIVE. `PUBLIC` is the waiting room, where
+// strangers sit under the screen with time to read; `PRIVATE` is the back
+// office. These are two different payloads built from different queries, NOT
+// one payload with fields hidden — a public device must not be ABLE to fetch
+// client names, because its token is physically reachable by anyone in that
+// room. Pairing defaults to PUBLIC so the privileged mode is always a
+// deliberate act.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum DisplayMode {
+  /// Waiting room. No client names, no addresses, no prices, no job detail.
+  PUBLIC
+
+  /// Back office. Who is on the clock, what is in progress, what needs a human.
+  PRIVATE
+}
+
+model Display {
+  id   String      @id @default(cuid())
+  name String
+  mode DisplayMode @default(PUBLIC)
+
+  /// SHA-256 of the bearer token. The device holds the only plaintext copy —
+  /// losing it means re-pairing, which is a 20-second walk rather than a
+  /// support incident, and is the trade that keeps a readable token out of
+  /// the database.
+  tokenHash String @unique
+
+  /// Viewing distance, which decides type size and is the one thing the page
+  /// cannot detect for itself. Orientation IS detectable (the page branches on
+  /// aspect ratio) — distance is not: a kiosk someone walks up to is read from
+  /// three feet, the same panel mounted high in the lobby from twelve.
+  farViewing Boolean @default(true)
+
+  pairedAt   DateTime @default(now())
+  pairedById String?
+  pairedBy   User?    @relation("DisplayPairedBy", fields: [pairedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  /// Bumped on every poll. Drives the Live / Stale / Offline reading in the
+  /// Displays tab, which is how an operator checks the board is alive without
+  /// walking to the shop.
+  lastSeenAt        DateTime?
+  lastSeenIp        String?
+  lastSeenUserAgent String?
+
+  /// Revocation takes effect on the display's NEXT poll, so the kill switch is
+  /// bounded by the poll interval rather than instant. The device clears and
+  /// falls back to a pairing code — it must never freeze on the last good
+  /// frame, which looks identical to a working board.
+  revokedAt   DateTime?
+  revokedById String?
+  revokedBy   User?     @relation("DisplayRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tokenHash])
+  @@index([revokedAt])
+}
+
+model DisplayPairing {
+  id String @id @default(cuid())
+
+  /// The six digits shown ON THE WALL. Public by construction — anyone in the
+  /// room can read it — so it is only a lookup handle for the human doing the
+  /// approving. It is NOT what the device authenticates with.
+  code String @unique
+
+  /// SHA-256 of a long random secret the device generated for itself and never
+  /// displays. The device polls with this, and the issued token is handed back
+  /// only to whoever holds it. Without this split, anyone who glanced at the
+  /// wall could poll the same code and walk off with the token the instant it
+  /// was approved.
+  deviceSecretHash String @unique
+
+  requestedIp        String?
+  requestedUserAgent String?
+
+  /// Short-lived and single-use. A code lying around for hours is a code
+  /// someone can be talked into approving.
+  expiresAt DateTime
+
+  approvedAt   DateTime?
+  approvedById String?
+  displayId    String?
+
+  /// The plaintext token, held ONLY between approval and the device's next
+  /// poll, then nulled. This is the one moment it exists in the database.
+  issuedToken String?
+  consumedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([code])
   @@index([expiresAt])
 }

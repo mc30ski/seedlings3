@@ -413,6 +413,19 @@ export const AUDIT = {
     UPDATED: [AuditScope.EQUIPMENT_COLLECTION, AuditVerb.UPDATED] as const,
     DELETED: [AuditScope.EQUIPMENT_COLLECTION, AuditVerb.DELETED] as const,
   },
+  // Wall displays. A paired display reads live job + worker data with no
+  // user session, so the trail is the whole security story: APPROVED is a
+  // Super granting a device access, UPDATED covers renames and — the one
+  // that matters — a mode change from PUBLIC to PRIVATE, DELETED is a
+  // revoke. TOKEN_ACCESSED records the single moment the plaintext token is
+  // handed to the device.
+  DISPLAY: {
+    APPROVED: [AuditScope.DISPLAY, AuditVerb.APPROVED] as const,
+    TOKEN_ACCESSED: [AuditScope.DISPLAY, AuditVerb.TOKEN_ACCESSED] as const,
+    UPDATED: [AuditScope.DISPLAY, AuditVerb.UPDATED] as const,
+    DELETED: [AuditScope.DISPLAY, AuditVerb.DELETED] as const,
+  },
+
   CALENDAR_FEED: {
     // Minting one hands out a bearer token that reads a worker's schedule
     // without authentication.

@@ -8729,6 +8729,10 @@ export default function JobsTab({
                         isAdmin={forAdmin}
                         canUpload={isActiveAssignee}
                         photoCount={occ._count?.photos ?? 0}
+                        // Super-only, matching the route guard. Holding a photo
+                        // back from outward-facing surfaces is the same tier of
+                        // decision as pairing a screen.
+                        canSetPublicVisibility={isSuper}
                       />
                     )}
 
@@ -10978,6 +10982,7 @@ export default function JobsTab({
                     occurrenceId={photoPromptOccId}
                     canUpload
                     isAdmin={forAdmin && (isAdmin || isSuper)}
+                    canSetPublicVisibility={isSuper}
                   />
                 )}
               </Dialog.Body>
