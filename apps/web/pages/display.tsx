@@ -955,11 +955,28 @@ function Weather({ w, scale }: { w: BoardWeather; scale: number }) {
   const severe = w.alerts.length > 0;
   return (
     <Panel title="Weather">
-      <div style={{ display: "flex", alignItems: "baseline", gap: "1.6vmin", flexWrap: "wrap" }}>
-        <span style={{ fontSize: `${7 * scale}vmin`, fontWeight: 700, lineHeight: 1 }}>{w.tempF}°</span>
-        <div>
-          <div style={{ fontSize: `${2.1 * scale}vmin`, textTransform: "capitalize" }}>{w.description}</div>
-          <div style={{ fontSize: `${1.8 * scale}vmin`, color: C.inkDim }}>
+      {/* CENTRE, not baseline. Baseline puts the big temperature's baseline on
+          the FIRST of the two text lines, so the second line hangs below it
+          and the pair reads as having slipped down the panel. The conditions
+          are one block and belong centred against the number. */}
+      <div style={{ display: "flex", alignItems: "center", gap: "1.6vmin", flexWrap: "nowrap" }}>
+        <span style={{ fontSize: `${7 * scale}vmin`, fontWeight: 700, lineHeight: 1, flexShrink: 0 }}>
+          {w.tempF}°
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: `${2.1 * scale}vmin`,
+              textTransform: "capitalize",
+              lineHeight: 1.25,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {w.description}
+          </div>
+          <div style={{ fontSize: `${1.8 * scale}vmin`, color: C.inkDim, lineHeight: 1.25, whiteSpace: "nowrap" }}>
             {w.highF}° / {w.lowF}°{w.rainChance > 0 ? ` · ${w.rainChance}% rain` : ""}
           </div>
         </div>
@@ -984,17 +1001,54 @@ function Weather({ w, scale }: { w: BoardWeather; scale: number }) {
   );
 }
 
+/** A row of counts that SHRINKS rather than wraps.
+ *
+ *  These rows are read from across a room, so their meaning comes from the
+ *  numbers sitting side by side at a glance. Wrapping breaks that: "this year"
+ *  dropping onto a line of its own reads as a separate, lesser statistic, and
+ *  it happened as soon as the counts reached three digits.
+ *
+ *  So the row is a fixed N-column grid that never wraps, and the type is
+ *  capped against the row's OWN width in container units — `min(design,
+ *  fits)`. At normal counts nothing changes; when the digits would overflow,
+ *  every cell in the row steps down together and they stay on one line.
+ *
+ *  Sized rather than measured. A ResizeObserver would be exact, but this runs
+ *  unattended for months on a screen nobody reloads, and arithmetic over a
+ *  known column count cannot get wedged. */
+const DIGIT_EM = 0.62; // advance of one tabular digit in this face
+const LABEL_EM = 0.52; // rough average glyph advance for the lowercase labels
+
+function statFit(count: number, cells: { value: number; label: string }[]) {
+  // Usable share of the row for one cell, as a percentage of the row's width.
+  const share = (100 / count) * 0.9;
+  const digits = Math.max(...cells.map((c) => String(c.value).length));
+  const chars = Math.max(...cells.map((c) => c.label.length));
+  return {
+    valueCqi: share / (digits * DIGIT_EM),
+    labelCqi: share / (chars * LABEL_EM),
+  };
+}
+
 function Stat({
-  label, value, color, scale, size = 7,
-}: { label: string; value: number; color: string; scale: number; size?: number }) {
+  label, value, color, scale, size = 7, fit,
+}: {
+  label: string; value: number; color: string; scale: number; size?: number;
+  /** Caps from `statFit`. Omitted, the stat sizes purely on the design scale. */
+  fit?: { valueCqi: number; labelCqi: number };
+}) {
+  const labelSize = Math.max(1.4, size * 0.24) * scale;
   return (
-    <div>
+    <div style={{ minWidth: 0 }}>
       <div
         style={{
-          fontSize: `${size * scale}vmin`,
+          fontSize: fit
+            ? `min(${size * scale}vmin, ${fit.valueCqi.toFixed(2)}cqi)`
+            : `${size * scale}vmin`,
           fontWeight: 700,
           color,
           lineHeight: 1,
+          whiteSpace: "nowrap",
           // Digits on a wall shift the label under them as the count ticks
           // over unless they share a width.
           fontVariantNumeric: "tabular-nums",
@@ -1002,7 +1056,14 @@ function Stat({
       >
         {value}
       </div>
-      <div style={{ fontSize: `${Math.max(1.4, size * 0.24) * scale}vmin`, color: C.inkDim, marginTop: "0.6vmin" }}>
+      <div
+        style={{
+          fontSize: fit ? `min(${labelSize}vmin, ${fit.labelCqi.toFixed(2)}cqi)` : `${labelSize}vmin`,
+          color: C.inkDim,
+          marginTop: "0.6vmin",
+          whiteSpace: "nowrap",
+        }}
+      >
         {label}
       </div>
     </div>
@@ -1274,10 +1335,12 @@ function PublicView({
           <Panel title="Work completed">
             <div
               style={{
-                display: "flex",
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                 gap: "2.2vmin",
                 alignItems: "baseline",
-                flexWrap: "wrap",
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                ...({ containerType: "inline-size" } as any),
                 // A quiet inset rather than a second border: the three belong
                 // together, but the panel already has an edge and another one
                 // inside it reads as a card within a card.
@@ -1286,19 +1349,45 @@ function PublicView({
                 padding: "1.2vmin 1.4vmin",
               }}
             >
-              <Stat label="scheduled today" value={board.today.scheduled} color={C.accent} scale={scale} size={5.4} />
-              <Stat label="in progress" value={board.today.inProgress} color={C.warn} scale={scale} size={5.4} />
-              <Stat label="completed today" value={board.today.completed} color={C.good} scale={scale} size={5.4} />
+              {(() => {
+                const cells = [
+                  { label: "scheduled today", value: board.today.scheduled, color: C.accent },
+                  { label: "in progress", value: board.today.inProgress, color: C.warn },
+                  { label: "completed today", value: board.today.completed, color: C.good },
+                ];
+                const fit = statFit(cells.length, cells);
+                return cells.map((c) => (
+                  <Stat key={c.label} label={c.label} value={c.value} color={c.color} scale={scale} size={5.4} fit={fit} />
+                ));
+              })()}
             </div>
             {/* Four calendar periods, each nested inside the next, so they can
                 only ever grow left to right. They were rolling windows until
                 quarter and year joined them, at which point a rolling month
                 could out-count a calendar year-to-date in January. */}
-            <div style={{ display: "flex", gap: "2.4vmin", alignItems: "baseline", flexWrap: "wrap", marginTop: "1.6vmin" }}>
-              <Stat label="this week" value={board.completed.week} color={C.cool} scale={scale} size={6} />
-              <Stat label="this month" value={board.completed.month} color={C.violet} scale={scale} size={6} />
-              <Stat label="this quarter" value={board.completed.quarter} color={C.teal} scale={scale} size={6} />
-              <Stat label="this year" value={board.completed.year} color={C.rose} scale={scale} size={6} />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gap: "2.4vmin",
+                alignItems: "baseline",
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                ...({ containerType: "inline-size" } as any),
+                marginTop: "1.6vmin",
+              }}
+            >
+              {(() => {
+                const cells = [
+                  { label: "this week", value: board.completed.week, color: C.cool },
+                  { label: "this month", value: board.completed.month, color: C.violet },
+                  { label: "this quarter", value: board.completed.quarter, color: C.teal },
+                  { label: "this year", value: board.completed.year, color: C.rose },
+                ];
+                const fit = statFit(cells.length, cells);
+                return cells.map((c) => (
+                  <Stat key={c.label} label={c.label} value={c.value} color={c.color} scale={scale} size={6} fit={fit} />
+                ));
+              })()}
             </div>
           </Panel>
 

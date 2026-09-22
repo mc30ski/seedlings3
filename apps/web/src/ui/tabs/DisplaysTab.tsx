@@ -20,9 +20,11 @@ import {
   Box,
   Button,
   Card,
+  Dialog,
   HStack,
   Image,
   Input,
+  Portal,
   Select,
   Spinner,
   Switch,
@@ -91,11 +93,13 @@ export default function DisplaysTab() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
 
-  // When set, approving REPLACES this screen instead of adding another. See
-  // the approve route: a device that loses its browser storage comes back
-  // looking brand new, and without this the old row lingers as a credential
-  // nobody holds.
-  const [replacing, setReplacing] = useState<DisplayRow | null>(null);
+  // The re-pair dialog. When set, approving REPLACES this screen instead of
+  // adding another. See the approve route: a device that loses its browser
+  // storage comes back looking brand new, and without this the old row
+  // lingers as a credential nobody holds.
+  const [rePairing, setRePairing] = useState<DisplayRow | null>(null);
+  const [rePairCode, setRePairCode] = useState("");
+  const [rePairBusy, setRePairBusy] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState<DisplayRow | null>(null);
 
@@ -154,33 +158,74 @@ export default function DisplaysTab() {
     publishInlineMessage({ type: "ERROR", text: msg });
   }
 
-  async function approve() {
-    setApproving(true);
+  /** The one call both pairing paths make. Adding a screen and taking one
+   *  over are the same server operation — only `replaceDisplayId` differs —
+   *  so they must not drift into two hand-written bodies. */
+  async function submitPairing(args: {
+    code: string;
+    name: string;
+    mode: "PUBLIC" | "PRIVATE";
+    farViewing: boolean;
+    replace: DisplayRow | null;
+  }): Promise<boolean> {
     try {
       await apiPost("/api/super/displays/approve", {
-        code: code.replace(/\D/g, ""),
-        name: name.trim(),
-        mode,
-        farViewing,
-        replaceDisplayId: replacing?.id ?? null,
+        code: args.code.replace(/\D/g, ""),
+        name: args.name.trim(),
+        mode: args.mode,
+        farViewing: args.farViewing,
+        replaceDisplayId: args.replace?.id ?? null,
       });
       publishInlineMessage({
         type: "SUCCESS",
-        text: replacing
-          ? `Paired, replacing ${replacing.name}. The old entry is gone.`
+        text: args.replace
+          ? `${args.replace.name} re-paired to the screen showing that code. The old entry is gone.`
           : "Display paired. It will pick up the board within a minute.",
       });
-      setCode("");
-      setName("");
-      setReplacing(null);
       await load();
+      return true;
     } catch (err) {
       // A pairing code that has expired or been used is the same shape of
       // problem, and the fix is the same: re-read so the pending list matches
       // what the server thinks.
       await handleGoneOrReport(err, "Could not pair that code");
-    } finally {
-      setApproving(false);
+      return false;
+    }
+  }
+
+  async function approve() {
+    setApproving(true);
+    const ok = await submitPairing({ code, name, mode, farViewing, replace: null });
+    if (ok) {
+      setCode("");
+      setName("");
+    }
+    setApproving(false);
+  }
+
+  /** RE-PAIR IS ONE ACTION, NOT TWO.
+   *
+   *  This used to prefill the add-a-screen form and leave the operator to
+   *  find the Pair button further up the page — a click that visibly did
+   *  nothing, followed by an act of faith. Everything a takeover needs is
+   *  already known except the six digits, so the dialog asks for those and
+   *  finishes the job. */
+  async function submitRePair() {
+    if (!rePairing) return;
+    setRePairBusy(true);
+    const ok = await submitPairing({
+      code: rePairCode,
+      name: rePairing.name,
+      mode: rePairing.mode,
+      farViewing: rePairing.farViewing,
+      replace: rePairing,
+    });
+    setRePairBusy(false);
+    // Stay open on failure — an expired or mistyped code is a retry, and
+    // closing the dialog would throw away the context it was holding.
+    if (ok) {
+      setRePairing(null);
+      setRePairCode("");
     }
   }
 
@@ -338,19 +383,6 @@ export default function DisplaysTab() {
                 </Text>
               )}
 
-              {replacing ? (
-                <Box borderWidth="1px" borderColor="orange.emphasized" bg="orange.subtle" borderRadius="md" p={2}>
-                  <HStack justify="space-between" align="center" gap={2}>
-                    <Text fontSize="xs" color="orange.fg">
-                      Replacing <b>{replacing.name}</b> — its old entry will be removed when you pair.
-                    </Text>
-                    <Button size="xs" variant="ghost" onClick={() => setReplacing(null)}>
-                      Cancel
-                    </Button>
-                  </HStack>
-                </Box>
-              ) : null}
-
               <Box>
                 <Text fontSize="xs" color="fg.muted" mb={1}>Code on the screen</Text>
                 <Input
@@ -500,13 +532,12 @@ export default function DisplaysTab() {
                           variant="outline"
                           colorPalette="orange"
                           onClick={() => {
-                            // Carry the old screen's identity across, so the
-                            // operator is confirming a takeover rather than
-                            // retyping a name and hoping they match.
-                            setReplacing(d);
-                            setName(d.name);
-                            setMode(d.mode);
-                            setFarViewing(d.farViewing);
+                            // Opens the takeover dialog, which carries this
+                            // screen's name and mode across on its own. The
+                            // operator confirms a takeover; they never retype
+                            // a name and hope the two match.
+                            setRePairCode("");
+                            setRePairing(d);
                           }}
                         >
                           Re-pair this screen
@@ -540,7 +571,7 @@ export default function DisplaysTab() {
             ? `"${name.trim()}" will show the back-office board: who is on the clock, jobs in progress, and what needs attention. Only pair a private screen somewhere clients cannot read it.`
             : `"${name.trim()}" will show the waiting-room board: crew first names, completed counts, promotions and hand-picked photos. No client names, addresses or prices.`
         }
-        confirmLabel={replacing ? "Replace screen" : "Pair screen"}
+        confirmLabel="Pair screen"
         confirmColorPalette="blue"
         onConfirm={() => {
           setConfirmApprove(false);
@@ -548,6 +579,103 @@ export default function DisplaysTab() {
         }}
         onCancel={() => setConfirmApprove(false)}
       />
+
+      {/* RE-PAIR: one click opens this, six digits and one more click finish
+          it. Not a ConfirmDialog — that component's text input has no numeric
+          keypad, and this field is typed standing in a shop on a phone. */}
+      <Dialog.Root
+        role="alertdialog"
+        open={!!rePairing}
+        onOpenChange={(e: any) => {
+          if (!e.open && !rePairBusy) {
+            setRePairing(null);
+            setRePairCode("");
+          }
+        }}
+        placement="center"
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.Header>
+                <Dialog.Title>Re-pair {rePairing?.name}</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <Text fontSize="sm" color="fg.muted">
+                    Hand <b>{rePairing?.name}</b> over to the screen showing a code right now. It
+                    keeps its name and stays{" "}
+                    {rePairing?.mode === "PRIVATE" ? "private — back office" : "public — waiting room"}.
+                    The old entry is removed.
+                  </Text>
+
+                  {pending.length === 0 ? (
+                    <Box borderWidth="1px" borderColor="orange.emphasized" bg="orange.subtle" borderRadius="md" p={2}>
+                      <Text fontSize="xs" color="orange.fg">
+                        No screen is waiting. Open <Em>/display</Em> on the screen first — it will
+                        show six digits.
+                      </Text>
+                    </Box>
+                  ) : (
+                    <Text fontSize="xs" color="fg.muted">
+                      {pending.length === 1 ? "A screen is waiting" : `${pending.length} screens are waiting`}
+                      {soonestExpiry ? ` · oldest expires in ${soonestExpiry}` : ""}
+                    </Text>
+                  )}
+
+                  <Box>
+                    <Text fontSize="xs" color="fg.muted" mb={1}>Code on the screen</Text>
+                    <Input
+                      autoFocus
+                      value={rePairCode}
+                      onChange={(e) => setRePairCode(e.target.value)}
+                      placeholder="000000"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      maxLength={7}
+                      fontSize="2xl"
+                      letterSpacing="0.3em"
+                      textAlign="center"
+                      fontFamily="mono"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && rePairCode.replace(/\D/g, "").length === 6 && !rePairBusy) {
+                          void submitRePair();
+                        }
+                      }}
+                    />
+                  </Box>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <VStack w="full" gap={2}>
+                  <Button
+                    w="full"
+                    colorPalette="orange"
+                    loading={rePairBusy}
+                    disabled={rePairCode.replace(/\D/g, "").length !== 6 || rePairBusy}
+                    onClick={() => void submitRePair()}
+                  >
+                    Re-pair {rePairing?.name}
+                  </Button>
+                  <Button
+                    w="full"
+                    variant="outline"
+                    colorPalette="gray"
+                    disabled={rePairBusy}
+                    onClick={() => {
+                      setRePairing(null);
+                      setRePairCode("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </VStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
 
       <ConfirmDialog
         open={!!confirmRevoke}

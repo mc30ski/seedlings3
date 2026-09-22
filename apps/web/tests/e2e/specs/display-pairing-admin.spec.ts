@@ -206,16 +206,23 @@ test.describe("Displays — pairing, board, revoke", () => {
       .filter({ has: app.getByRole("button", { name: /Re-pair this screen/ }) })
       .last();
     await oldRow.getByRole("button", { name: /Re-pair this screen/ }).click();
+
+    // RE-PAIR IS SELF-CONTAINED. It used to prefill the add-a-screen form and
+    // leave the operator to find the Pair button elsewhere on the page — a
+    // click that visibly did nothing. Everything the takeover needs must live
+    // inside this one dialog, so assert on the dialog, not on the page.
+    const dlg = app.getByRole("alertdialog");
     await expect(
-      app.getByText(/Replacing/),
-      "the form must say which screen it is taking over",
+      dlg.getByRole("heading", { name: new RegExp(`Re-pair ${screenName}`) }),
+      "the dialog must say which screen it is taking over",
     ).toBeVisible({ timeout: 15_000 });
-    await app.getByPlaceholder("000000").fill(secondCode);
+
+    await dlg.getByPlaceholder("000000").fill(secondCode);
     const approved = app.waitForResponse(
       (r) => r.url().includes("/displays/approve") && r.request().method() === "POST",
     );
-    await app.getByRole("button", { name: /^Pair screen$/ }).click();
-    await app.getByRole("alertdialog").getByRole("button", { name: /^Replace screen$/ }).click();
+    // ONE button, inside the dialog, and it finishes the job.
+    await dlg.getByRole("button", { name: new RegExp(`^Re-pair ${screenName}$`) }).click();
     expect((await approved).status()).toBe(200);
 
     // The whole point: ONE entry, not two. Without the replacement path the
