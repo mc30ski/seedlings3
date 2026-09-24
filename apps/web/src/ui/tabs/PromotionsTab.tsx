@@ -41,7 +41,14 @@ import { fmtDate, fmtDateTime, bizDateKey, bizInstantFromEtParts, type EtDateKey
 
 type PromotionStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "CLOSED";
 type DispatchChannel = "email" | "sms";
-type DisplaySurface = "invoice_page";
+/** Where a campaign may appear. Mirrors `displaySurfaceSchema` in
+ *  apps/api/src/services/promotions.ts — the server is the authority; this
+ *  type exists so the editor cannot offer a surface the API would reject.
+ *
+ *  The three have very different audiences: one client reading their own
+ *  bill, anyone at all on a public tab, and a room of strangers in the
+ *  waiting area. That is the whole reason each is a separate checkbox. */
+type DisplaySurface = "invoice_page" | "promotions_tab" | "wall_display";
 type TriggerKind = "on_invoice_sent" | "manual_send";
 
 /**
@@ -1449,9 +1456,20 @@ function PromotionEditor({
                   </Box>
                   <Box>
                     <Text fontSize="xs" fontWeight="semibold" mb={1}>Display surfaces</Text>
-                    <HStack gap={3}>
+                    <HStack gap={3} flexWrap="wrap">
                       <Checkbox.Root checked={displaySurfaces.includes("invoice_page")} onCheckedChange={() => toggleSurface("invoice_page")}>
                         <Checkbox.HiddenInput /><Checkbox.Control /><Checkbox.Label>Invoice page</Checkbox.Label>
+                      </Checkbox.Root>
+                      {/* Both of these are PUBLIC. The invoice is read by one
+                          client looking at their own bill; these two are read
+                          by anyone — the tab has no sign-in gate and the wall
+                          hangs in the waiting area. Worth pausing over before
+                          ticking, which is why they are not defaulted on. */}
+                      <Checkbox.Root checked={displaySurfaces.includes("promotions_tab")} onCheckedChange={() => toggleSurface("promotions_tab")}>
+                        <Checkbox.HiddenInput /><Checkbox.Control /><Checkbox.Label>Promotions tab (public)</Checkbox.Label>
+                      </Checkbox.Root>
+                      <Checkbox.Root checked={displaySurfaces.includes("wall_display")} onCheckedChange={() => toggleSurface("wall_display")}>
+                        <Checkbox.HiddenInput /><Checkbox.Control /><Checkbox.Label>Wall display</Checkbox.Label>
                       </Checkbox.Root>
                     </HStack>
                   </Box>

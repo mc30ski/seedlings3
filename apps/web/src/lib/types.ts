@@ -62,7 +62,7 @@ export type SuperTabs =
 // Client → Services is the client's list of services they subscribe
 // to. Wrong-way cross-navigation between them was reported as
 // confusing.
-export type ClientTabs = "my-jobs" | "public" | "client-services" | "statements";
+export type ClientTabs = "my-jobs" | "public" | "client-services" | "statements" | "client-promotions";
 
 export type PreviewTabs = "routes";
 

@@ -1622,6 +1622,83 @@ export default async function publicRoutes(app: FastifyInstance) {
       .send(buffer);
   });
 
+  /** ACTIVE campaigns for the public Promotions tab.
+   *
+   *  Unauthenticated on purpose: this backs a tab that renders for anyone,
+   *  the same as Community and Services. That is also why it returns only
+   *  what a stranger may read — customer copy, artwork and a landing link.
+   *  No audience, no delivery rows, no click history, and never the
+   *  operator's internal `description`. See loadPublicPromos.
+   *
+   *  A stable URL is the whole point of this surface: a printed QR code
+   *  points at the tab, and campaigns rotate behind it without anyone
+   *  reprinting anything. */
+  app.get("/public/promotions", async () => {
+    const { loadPublicPromos } = await import("../services/promotions");
+    try {
+      return { promotions: await loadPublicPromos({ surface: "promotions_tab" }) };
+    } catch (err: any) {
+      // A promo failure must not take the tab down — it renders an empty
+      // state, which is honest, rather than an error page on a surface a
+      // prospect may have reached from a sign in a waiting room.
+      app.log.warn({ where: "public.promotions", err: err?.message }, "promo load failed");
+      return { promotions: [] };
+    }
+  });
+
+  /** A promotion's own artwork, for the waiting-room board.
+   *
+   *  Separate from the job-photo route above because the two answer different
+   *  questions. A job photo is a picture of ONE CLIENT'S property and has to
+   *  prove the visit is finished and the photo has not been pulled down. A
+   *  promo image is marketing the company chose to publish — there is no
+   *  client in it and nothing to hide it from.
+   *
+   *  What they share is the part that matters: the display's token, so the URL
+   *  dies when the screen is revoked, and the metadata strip, because an image
+   *  uploaded from someone's phone carries where it was taken whatever it is a
+   *  picture of.
+   *
+   *  PUBLIC-MODE ONLY. The private board carries no promotions, so a
+   *  back-office token has no business fetching one — and a route that answers
+   *  for tokens its own board would never reference is how the scope of a
+   *  credential quietly widens. */
+  app.get("/public/display/promo-photo/:photoId", async (req: any, reply: any) => {
+    const token = String((req.query?.token as string) ?? "");
+    if (!token) return reply.code(401).send({ error: "unauthorized" });
+
+    const display = await prisma.display.findUnique({
+      where: { tokenHash: displays.hashSecret(token) },
+    });
+    if (!display || display.revokedAt) return reply.code(401).send({ error: "unauthorized" });
+    if (display.mode !== "PUBLIC") return reply.code(404).send({ error: "not_found" });
+
+    const photo = await prisma.promotionInvoicePhoto.findUnique({
+      where: { id: String(req.params.photoId) },
+      select: { r2Key: true, contentType: true, promotion: { select: { status: true } } },
+    });
+    // Only from a campaign the board would actually show. A finished or draft
+    // promotion's artwork is not on the wall, so its URL must not work either.
+    if (!photo || photo.promotion?.status !== "ACTIVE") {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    // THE PROMOTION BUCKET, not the default photo one. `getObjectBuffer`
+    // defaults to "photos", and PromotionInvoicePhoto.r2Key lives in
+    // "promotion-images" — so this read every real campaign image from the
+    // wrong bucket and 404'd. It looked healthy only because the seed rows
+    // borrowed keys that happen to exist in BOTH, which is exactly the kind
+    // of fixture that hides a bug instead of exposing it.
+    const obj = await getObjectBuffer(photo.r2Key, "promotion-images");
+    if (!obj?.bytes) return reply.code(404).send({ error: "not_found" });
+
+    const { buffer } = stripImageMetadata(obj.bytes, photo.contentType ?? obj.contentType);
+    return reply
+      .header("content-type", photo.contentType || "image/jpeg")
+      .header("cache-control", "private, max-age=86400, immutable")
+      .send(buffer);
+  });
+
   /** The board itself. One endpoint, two genuinely different payloads — which
    *  one you get is decided HERE by the token's mode, not by the client
    *  asking. A PUBLIC display must not be able to fetch client names at all;

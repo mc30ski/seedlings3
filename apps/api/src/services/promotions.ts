@@ -68,7 +68,21 @@ export const promotionContentSchema = z.object({
 export type PromotionContent = z.infer<typeof promotionContentSchema>;
 
 const dispatchChannelSchema = z.enum(["email", "sms"]);
-const displaySurfaceSchema = z.enum(["invoice_page"]);
+/** WHERE A CAMPAIGN IS ALLOWED TO APPEAR.
+ *
+ *  Every value here is a place a human being reads the promo, and each one
+ *  has a different audience:
+ *
+ *    invoice_page    one client, looking at their own bill
+ *    promotions_tab  anyone at all — this tab has no sign-in gate
+ *    wall_display    a room of strangers in the waiting area
+ *
+ *  The last two were shipped as surfaces before they were shipped as
+ *  CHOICES: the wall simply rendered every ACTIVE campaign, so a promo
+ *  written for one client's invoice went up on a screen in a lobby with no
+ *  way to say otherwise. A surface a campaign cannot opt out of is not a
+ *  surface, it is a leak with a nice layout. */
+const displaySurfaceSchema = z.enum(["invoice_page", "promotions_tab", "wall_display"]);
 const triggerKindSchema = z.enum(["on_invoice_sent", "manual_send"]);
 const audienceSpecSchema = z.object({
   kind: z.literal("all"),
@@ -156,7 +170,14 @@ export const promotionSavePayloadSchema = z
       }
     }
     for (const s of val.displaySurfaces) {
-      if (!resolveChannelContent(val.content as PromotionContent, s)) {
+      // DISPLAY SURFACES SHARE ONE BODY OF COPY. Only `invoice_page` has a
+      // block of its own in `content`; the Promotions tab and the wall
+      // display render the shared offer text, falling back to the invoice
+      // wording. So every surface is validated against that one resolver —
+      // without this, enabling the tab or the wall would save cleanly with
+      // no copy anywhere and then render nothing, which is precisely the
+      // silent failure the channel loop above exists to prevent.
+      if (!resolveChannelContent(val.content as PromotionContent, "invoice_page")) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["content", s],
@@ -3767,3 +3788,106 @@ export const promotionsService = {
   generateShortCode,
   generateUniqueShortCode,
 };
+
+// ── Public promotions index ─────────────────────────────────────────────
+
+/**
+ * Active campaigns for the PUBLIC Promotions tab.
+ *
+ * A sibling of `loadInvoicePagePromos`, and deliberately not a parameter on
+ * it, because the two differ in the thing that matters most: who is reading.
+ * The invoice surface knows a contact, applies their opt-out state, and can
+ * carry a pay token back to their bill. This one has no viewer at all — the
+ * tab renders for anyone, signed in or not — so there is no contact to
+ * suppress against and nothing viewer-specific may leak into the payload.
+ *
+ * TWO THINGS THIS MUST NEVER SHIP:
+ *   • `Promotion.description` — the operator's internal note. It reads like
+ *     "Piggyback fall/winter promo. Points at the landing page so you can
+ *     exercise the click wrapper", and it has already reached a screen once.
+ *     Customer copy comes from `content` via the resolver, or the promo is
+ *     skipped entirely.
+ *   • Anything about who a campaign was sent to. Audience, delivery and
+ *     click rows stay on the operator side of this boundary.
+ */
+export async function loadPublicPromos(params: {
+  /** Which surface is asking. The tab and the wall display are separate
+   *  choices in the editor, so each asks for its own. */
+  surface: "promotions_tab" | "wall_display";
+}): Promise<
+  {
+    id: string;
+    headline: string;
+    body: string;
+    ctaText: string | null;
+    /** Absolute landing-page URL. Null when the campaign has no landing
+     *  page — an EXTERNAL-link promo still shows its copy, it just has
+     *  nowhere of ours to send anyone. */
+    url: string | null;
+    imageUrls: string[];
+  }[]
+> {
+  const settings = await loadPromotionSettings();
+  const now = new Date();
+  const promos = await prisma.promotion.findMany({
+    where: {
+      status: "ACTIVE",
+      AND: [
+        { OR: [{ startAt: null }, { startAt: { lte: now } }] },
+        { OR: [{ endAt: null }, { endAt: { gte: now } }] },
+      ],
+    },
+    orderBy: { startAt: "desc" },
+    include: { landingPage: { select: { slug: true } } },
+  });
+
+  const out: {
+    id: string; headline: string; body: string; ctaText: string | null;
+    url: string | null; imageUrls: string[];
+  }[] = [];
+
+  for (const p of promos) {
+    const surfaces = Array.isArray(p.displaySurfaces)
+      ? (p.displaySurfaces as unknown[]).filter((s): s is string => typeof s === "string")
+      : [];
+    if (!surfaces.includes(params.surface)) continue;
+
+    // Gate on the RESOLVER, not the raw key — the same lesson the invoice
+    // surface learned: a promo written with only `shared` copy saved fine,
+    // validated fine, and then silently appeared nowhere.
+    const content = (p.content ?? {}) as PromotionContent;
+    const resolved = resolveChannelContent(content, "invoice_page");
+    if (!resolved) continue;
+    const headline = (resolved.headline ?? "").trim() || (p.title ?? "").trim();
+    const body = (resolved.body ?? "").trim();
+    if (!headline || !body) continue;
+
+    // The landing URL picks its path segment from the host the campaign is
+    // branded to — /motion/ on the marketing domain, /promotion/ elsewhere.
+    // Built here rather than assembled by the caller, because a caller that
+    // assembles it hardcodes one of the two and is wrong on the other host.
+    const base = p.baseDomain ?? (settings.landingBaseUrl || settings.baseUrl);
+    const url = p.landingPage?.slug ? buildLandingPageUrl(base, p.landingPage.slug) : null;
+
+    const photoRows = await prisma.promotionInvoicePhoto.findMany({
+      where: { promotionId: p.id },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      select: { r2Key: true },
+    });
+    const signed = await Promise.all(
+      photoRows.map((ph) =>
+        getDownloadUrl(ph.r2Key, 6 * 3600, "promotion-images").catch(() => null),
+      ),
+    );
+
+    out.push({
+      id: p.id,
+      headline,
+      body,
+      ctaText: (resolved.ctaText ?? "").trim() || null,
+      url,
+      imageUrls: signed.filter((u): u is string => !!u),
+    });
+  }
+  return out;
+}
