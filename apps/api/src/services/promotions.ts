@@ -87,7 +87,21 @@ const dispatchChannelSchema = z.enum(["email", "sms"]);
  *  written for one client's invoice went up on a screen in a lobby with no
  *  way to say otherwise. A surface a campaign cannot opt out of is not a
  *  surface, it is a leak with a nice layout. */
-const displaySurfaceSchema = z.enum(["invoice_page", "promotions_tab", "external_display"]);
+/** `wall_display` was this value's first name, and rows were saved with it
+ *  before the rename shipped. A stored enum value cannot simply be renamed:
+ *  the row outlives the deploy, and the next save of an untouched campaign
+ *  fails validation on data the app itself wrote. Accepted on the way in and
+ *  normalised, so one save cleans the row up. */
+const LEGACY_SURFACE_ALIASES: Record<string, string> = { wall_display: "external_display" };
+
+export function normalizeDisplaySurface(v: unknown): unknown {
+  return typeof v === "string" && LEGACY_SURFACE_ALIASES[v] ? LEGACY_SURFACE_ALIASES[v] : v;
+}
+
+const displaySurfaceSchema = z.preprocess(
+  normalizeDisplaySurface,
+  z.enum(["invoice_page", "promotions_tab", "external_display"]),
+);
 const triggerKindSchema = z.enum(["on_invoice_sent", "manual_send"]);
 const audienceSpecSchema = z.object({
   kind: z.literal("all"),
@@ -110,7 +124,15 @@ export const promotionSavePayloadSchema = z
     link: z.string().url().nullable().optional(),
     audienceSpec: audienceSpecSchema.default({ kind: "all" }),
     dispatchChannels: z.array(dispatchChannelSchema).default([]),
-    displaySurfaces: z.array(displaySurfaceSchema).default([]),
+    // DEDUPED after normalisation. A row holding the old `wall_display`
+    // renders its checkbox unticked (the box looks for the new string), so
+    // the operator ticks it, the form appends `external_display`, and both
+    // spellings travel in one array. Normalising alone would then store the
+    // same surface twice.
+    displaySurfaces: z
+      .array(displaySurfaceSchema)
+      .default([])
+      .transform((arr) => [...new Set(arr)]),
     triggerKind: triggerKindSchema.nullable().optional(),
     triggerConfig: triggerConfigSchema,
     cooldownDays: z.number().int().min(0).max(365).default(7),
@@ -3855,7 +3877,10 @@ export async function loadPublicPromos(params: {
     const surfaces = Array.isArray(p.displaySurfaces)
       ? (p.displaySurfaces as unknown[]).filter((s): s is string => typeof s === "string")
       : [];
-    if (!surfaces.includes(params.surface)) continue;
+    // Normalised on read too — a campaign saved before the rename still
+    // carries the old string, and it means the same thing.
+    const normalised = surfaces.map((x) => normalizeDisplaySurface(x) as string);
+    if (!normalised.includes(params.surface)) continue;
 
     // Gate on the RESOLVER, not the raw key — the same lesson the invoice
     // surface learned: a promo written with only `shared` copy saved fine,

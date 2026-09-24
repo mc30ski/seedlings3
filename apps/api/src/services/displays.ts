@@ -726,7 +726,14 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
       // Promotions editor beside the invoice checkbox.
       where: {
         status: "ACTIVE",
-        displaySurfaces: { array_contains: ["external_display"] },
+        // EITHER SPELLING. `wall_display` was this value's first name and
+        // rows still carry it until their next save; a board that matched
+        // only the new string would quietly drop a campaign the operator had
+        // already ticked.
+        OR: [
+          { displaySurfaces: { array_contains: ["external_display"] } },
+          { displaySurfaces: { array_contains: ["wall_display"] } },
+        ],
       },
       orderBy: { startAt: "desc" },
       take: 5,
