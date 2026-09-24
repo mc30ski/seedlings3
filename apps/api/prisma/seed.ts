@@ -6,7 +6,7 @@ import { MARKET_RATE_SETTINGS } from "../src/services/marketRate";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
-import { etAddDays, etFormatDate, etInstantFromParts, etMidnight, etToday } from "../src/lib/dates";
+import { etAddDays, etEndOfDay, etFormatDate, etInstantFromParts, etMidnight, etToday } from "../src/lib/dates";
 import { legacyReceiptNumberFor } from "../src/lib/receiptNumber";
 import { createHash } from "crypto";
 
@@ -7417,6 +7417,41 @@ async function assertPrimaryContactInvariant() {
   }
   console.log("✓ Every supply hold agrees with its occurrence's status.");
 
+  // ── Finish some of TODAY's work ───────────────────────────────────────────
+  //
+  // Every occurrence dated today was left SCHEDULED, which meant the boards
+  // that are ABOUT today had nothing to say: the private display showed
+  // "0 done", and its photo strip — today's finished visits only — never
+  // rendered at all. A seed that leaves a panel empty leaves it unreviewed by
+  // eye and unexercised by CI at the same time.
+  //
+  // Completed the way the app completes them: `completedAt` set, which the
+  // create helper above mirrors into `hoursApprovedAt`. Done BEFORE the
+  // invariant check below on purpose, so that check covers these rows too
+  // rather than running before they exist.
+  const todayStart = etMidnight(etToday());
+  const todayEnd = etEndOfDay(etToday());
+  const finishableToday = await prisma.jobOccurrence.findMany({
+    where: {
+      startAt: { gte: todayStart, lte: todayEnd },
+      status: "SCHEDULED",
+      // Field work only — a completed reminder or task is not a "visit" and
+      // would inflate the very counts these boards exist to report.
+      workflow: { notIn: ["TASK", "REMINDER", "FOLLOWUP", "EVENT"] },
+    },
+    orderBy: { startAt: "asc" },
+    take: 3,
+    select: { id: true, startAt: true },
+  });
+  for (const occ of finishableToday) {
+    const finishedAt = new Date(occ.startAt.getTime() + 90 * 60_000);
+    await prisma.jobOccurrence.update({
+      where: { id: occ.id },
+      data: { status: "COMPLETED", completedAt: finishedAt, hoursApprovedAt: finishedAt },
+    });
+  }
+  console.log(`✓ ${finishableToday.length} of today's visits completed — today's boards have content.`);
+
   // ── Hours-approval invariant ────────────────────────────────────────
   // `evaluateHoursApproval` stamps any workflow that is not STANDARD or
   // ONE_OFF at the moment it completes, so estimates, tasks, reminders and
@@ -7465,12 +7500,32 @@ async function assertPrimaryContactInvariant() {
     "seed/landscaping/05.jpg",
     "seed/landscaping/07.jpg",
   ];
-  const photoTargets = await prisma.jobOccurrence.findMany({
-    where: { status: { in: ["COMPLETED", "PENDING_PAYMENT", "CLOSED"] } },
+  // TODAY'S finished visits FIRST, and guaranteed a photo each.
+  //
+  // `orderBy startAt desc, take 14` looks like it would cover today already —
+  // it does not, and quietly. The seed's completed work is historical, so the
+  // fourteen newest finished visits were all from previous days and the
+  // private board's "today's photos" strip had an empty pool every single
+  // reseed. The panel is invisible when empty, so nothing ever said so.
+  const todaysFinished = await prisma.jobOccurrence.findMany({
+    where: {
+      status: { in: ["COMPLETED", "PENDING_PAYMENT", "CLOSED"] },
+      startAt: { gte: etMidnight(etToday()), lte: etEndOfDay(etToday()) },
+    },
+    orderBy: { startAt: "asc" },
+    select: { id: true },
+  });
+  const olderFinished = await prisma.jobOccurrence.findMany({
+    where: {
+      status: { in: ["COMPLETED", "PENDING_PAYMENT", "CLOSED"] },
+      startAt: { lt: etMidnight(etToday()) },
+    },
     orderBy: { startAt: "desc" },
     take: 14,
     select: { id: true },
   });
+  // Today's first, so the strip is never short even if the older pool grows.
+  const photoTargets = [...todaysFinished, ...olderFinished];
   // One on an UNFINISHED visit as well: the public board must refuse to show
   // photos from work still in progress, and that rule cannot be tested — or
   // broken visibly — without a photo that exercises it.

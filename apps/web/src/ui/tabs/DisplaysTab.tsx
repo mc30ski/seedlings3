@@ -57,7 +57,8 @@ type DisplayRow = {
 
 type PendingRow = {
   id: string;
-  code: string;
+  // No `code` — the server deliberately does not send it. See the comment on
+  // the pending payload in routes/admin.ts.
   requestedIp: string | null;
   requestedUserAgent: string | null;
   expiresAt: string;

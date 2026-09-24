@@ -1494,8 +1494,16 @@ describe("[build-gate] the ghost urgency window is one number, not two", () => {
     const server = /export const GHOST_EXPIRING_SOON_DAYS = (\d+);/.exec(JOBS_SVC);
     expect(server, "GHOST_EXPIRING_SOON_DAYS must be a plain numeric literal").toBeTruthy();
 
-    const client = /const ghostUrgent = [^;]*?ghostDaysLeft <= (\d+)/.exec(TAB);
-    expect(client, "the ghost pulse threshold must be a plain numeric literal").toBeTruthy();
+    // The pulse reads the client's named constant; that constant is pinned to
+    // the server's number by its own rule below. Matching the literal here is
+    // what the old version did, and it broke the moment the literal was
+    // (rightly) replaced by a shared constant.
+    expect(
+      TAB,
+      "the ghost pulse must use the shared threshold, not a loose literal",
+    ).toMatch(/ghostDaysLeft <= GHOST_EXPIRING_SOON_DAYS/);
+    const client = /^const GHOST_EXPIRING_SOON_DAYS = (\d+);$/m.exec(TAB);
+    expect(client, "the client threshold must be a plain numeric literal").toBeTruthy();
 
     expect(
       client![1],
@@ -1505,14 +1513,65 @@ describe("[build-gate] the ghost urgency window is one number, not two", () => {
     ).toBe(server![1]);
   });
 
+  it("the alert opens a range that actually COVERS its own window", () => {
+    // The third shipping of this bug, and the first in the expiring bucket.
+    // `applyGhostFilter` opened the list on the "now" preset — today..today+2
+    // — while the alert counted anything due within 3 days. A visit due in
+    // exactly three days was counted by the badge and filtered out of the
+    // list behind it, so clicking "Next visits expiring 1" landed on "No job
+    // occurrences match current filters."
+    //
+    // No named preset can track a threshold, so the range must be derived
+    // from the threshold itself.
+    const at = TAB.indexOf("const applyGhostFilter");
+    expect(at, "applyGhostFilter must exist").toBeGreaterThan(-1);
+    const fn = TAB.slice(at, at + 3000);
+
+    expect(
+      fn,
+      "the expiring bucket must use the named preset the gate can check, not a literal",
+    ).toMatch(/bucket === "expiring" \? GHOST_EXPIRING_PRESET/);
+
+    // And that preset must actually REACH the threshold. This is the check
+    // that has teeth: it resolves the preset in datePresets.ts and compares
+    // its forward reach against the server's number.
+    const named = /const GHOST_EXPIRING_PRESET: DatePreset = "([a-zA-Z0-9]+)";/.exec(TAB);
+    expect(named, "the expiring preset must be a named constant").toBeTruthy();
+
+    const PRESETS = web("lib/datePresets.ts");
+    const caseRe = new RegExp(
+      `case "${named![1]}":\\s*return \\{[^}]*?to: bizAddDays\\(today, (-?\\d+)\\)`,
+      "s",
+    );
+    const reach = caseRe.exec(PRESETS);
+    expect(reach, `preset "${named![1]}" must resolve to a bizAddDays(today, N) upper bound`).toBeTruthy();
+
+    const server = /export const GHOST_EXPIRING_SOON_DAYS = (\d+);/.exec(JOBS_SVC);
+    expect(
+      Number(reach![1]),
+      `the alert counts ${server![1]} days ahead but preset "${named![1]}" only reaches ` +
+        `${reach![1]} — visits in the gap are counted and then filtered out`,
+    ).toBeGreaterThanOrEqual(Number(server![1]));
+  });
+
+  it("the client's copy of the threshold is a named constant, tied to the server's", () => {
+    const server = /export const GHOST_EXPIRING_SOON_DAYS = (\d+);/.exec(JOBS_SVC);
+    const client = /^const GHOST_EXPIRING_SOON_DAYS = (\d+);$/m.exec(TAB);
+    expect(client, "the client must name the threshold rather than repeat a literal").toBeTruthy();
+    expect(
+      client![1],
+      "the client and server thresholds must be the same number",
+    ).toBe(server![1]);
+  });
+
   it("the pulse keeps going once the date has passed", () => {
     // `<=` not a range. An expired ghost is past the line and MORE urgent,
     // not less; a window would make it go quiet exactly when it most needs
     // chasing.
     expect(TAB, "the threshold must be open-ended downward")
-      .toMatch(/ghostDaysLeft <= \d+/);
+      .toMatch(/ghostDaysLeft <= GHOST_EXPIRING_SOON_DAYS/);
     expect(TAB, "a two-sided window would silence expired ghosts")
-      .not.toMatch(/ghostDaysLeft >= 0 && ghostDaysLeft <= \d+/);
+      .not.toMatch(/ghostDaysLeft >= 0 && ghostDaysLeft <= /);
   });
 
   it("a ghost that is not pulsing is visibly calmer", () => {
@@ -2602,9 +2661,11 @@ describe("[build-gate] expired ghosts have no window, and nothing may imply one"
    *  Set would collapse them to one and make "did I find both?" unanswerable. */
   function expiredPresets(): string[] {
     const out: string[] = [];
-    // applyGhostFilter's ternary. "expiring" is the live-window bucket; the
-    // other branch is the one that has to reach expired rows.
-    const t = /bucket === "expiring" \? "[a-zA-Z0-9]+" : "([a-zA-Z0-9]+)"/.exec(TAB);
+    // applyGhostFilter's non-expiring branch. The expiring bucket no longer
+    // uses a named preset at all — it derives its range from the threshold —
+    // so this reads the preset the OTHER branch falls back to, which is the
+    // one that has to reach expired rows.
+    const t = /bucket === "expiring" \? GHOST_EXPIRING_PRESET : "([a-zA-Z0-9]+)"/.exec(TAB);
     if (t) out.push(t[1]);
     // The chip's own onClick, which sets the filter and the dates together.
     const chip = /setStatusFilter\(\["GHOST_EXPIRED"\]\);[\s\S]{0,400}?setDatePreset\("([a-zA-Z0-9]+)"\)/g;

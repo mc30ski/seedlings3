@@ -157,6 +157,24 @@ import {
  * text at ~4.3:1. Shared with the legend swatch in the help section so the
  * example can't drift from the real card.
  */
+/** How many days ahead a next-visit ghost counts as "expiring soon".
+ *
+ *  MUST EQUAL `GHOST_EXPIRING_SOON_DAYS` in apps/api/src/services/jobs.ts,
+ *  which is what the "Next visits expiring" alert counts with. Three things
+ *  read this number — the card's pulse, the alert's count, and the date range
+ *  the alert opens the list on — and when the third one was a hand-picked
+ *  preset instead of this constant, the badge counted a visit the list then
+ *  refused to show. A build gate holds the two files together. */
+const GHOST_EXPIRING_SOON_DAYS = 3;
+
+/** The preset the "Next visits expiring" alert opens the list on.
+ *
+ *  It must reach at least GHOST_EXPIRING_SOON_DAYS into the future, or the
+ *  alert counts visits the list then refuses to show. A build gate checks
+ *  that this preset's forward reach covers the threshold, so swapping it for
+ *  a shorter one fails the build rather than emptying the list. */
+const GHOST_EXPIRING_PRESET: DatePreset = "overdueAndNext3";
+
 const GHOST_CARD_BG = "#7c8698";
 /** A ghost that is NOT pulsing is not overdue — it is a visit still comfortably
  *  ahead of its date, or one an admin has muted. The stark slate above reads as
@@ -1176,17 +1194,45 @@ export default function JobsTab({
     // 7-day server, then "lastWeek" against a 30-day one. With the grace
     // window gone the only preset that can keep up is the unbounded one.
     // A build gate ties them together.
-    const preset: DatePreset = bucket === "expiring" ? "now" : "all";
+    //
+    // AND IT SHIPPED A THIRD TIME, HERE, IN THE EXPIRING BUCKET.
+    //
+    // This used the "now" preset, which is today..today+2. The alert counts
+    // a ghost as expiring at `daysUntilExpiry <= GHOST_EXPIRING_SOON_DAYS`,
+    // which is 3 — so a visit due in exactly three days was counted by the
+    // badge and then filtered out of the list behind it. "Next visits
+    // expiring 1" opening on "No job occurrences match current filters" is
+    // the whole bug, and it is an off-by-one between a preset and a
+    // threshold that no preset was ever going to track.
+    //
+    // So the expiring bucket takes a NAMED preset that provably reaches at
+    // least as far as the alert looks, and a build gate checks that it does.
+    //
+    // It cannot be a custom range, which is what the first attempt at this
+    // fix used. `datePreset` is PERSISTED state, and the effect that turns a
+    // preset into dates re-runs once that state settles — after this handler
+    // has already run. A custom range (preset = null) was therefore
+    // overwritten a moment later by the stored preset's own dates: the
+    // network showed the right request go out, `to=09-26`, and then a second
+    // one behind it with `to=09-25` that won. Setting a preset means the
+    // re-run recomputes the SAME covering window instead of undoing it.
+    //
+    // The extra reach into the past costs nothing here: the status filter
+    // below is GHOST_EXPIRING, which excludes expired ghosts and every real
+    // occurrence, so nothing else can come back through the wider window.
+    const preset: DatePreset = bucket === "expiring" ? GHOST_EXPIRING_PRESET : "all";
     const d = computeDatesFromPreset(preset);
+    const from = d.from;
+    const to = d.to;
     setStatusFilter([
       bucket === "expired" ? "GHOST_EXPIRED"
       : bucket === "suppressed" ? "GHOST_SUPPRESSED"
       : "GHOST_EXPIRING",
     ]);
     setDatePreset(preset);
-    setDateFrom(d.from);
-    setDateTo(d.to);
-    void load(true, { from: d.from, to: d.to });
+    setDateFrom(from);
+    setDateTo(to);
+    void load(true, { from, to });
   }, []);
 
   useEffect(() => {
@@ -4974,7 +5020,7 @@ export default function JobsTab({
               // app nagging about the one thing it was told to stop
               // nagging about.
               const ghostUrgent = !ghostSuppressed
-                && typeof ghostDaysLeft === "number" && ghostDaysLeft <= 3;
+                && typeof ghostDaysLeft === "number" && ghostDaysLeft <= GHOST_EXPIRING_SOON_DAYS;
               // One switch for the whole card, so ground and ink can never
               // disagree — dark ink on the stark slate, or light ink on the
               // calm one, would each be unreadable.

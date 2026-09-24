@@ -9811,9 +9811,15 @@ const LEDGER_ROW_INCLUDE = Prisma.validator<Prisma.BusinessExpenseInclude>()({
             seen == null ? "never" : seen < LIVE_WINDOW_MS ? "live" : seen < OFFLINE_WINDOW_MS ? "stale" : "offline",
         };
       }),
+      // THE CODE IS DELIBERATELY NOT HERE.
+      //
+      // Typing the digits off the screen is the step that ties an approval to
+      // the screen the operator is actually looking at. Shipping them in this
+      // payload made that a formality — the panel never rendered them, but
+      // anyone with the network tab could approve a request coming from a
+      // browser they had never seen.
       pending: pending.map((p) => ({
         id: p.id,
-        code: p.code,
         requestedIp: p.requestedIp,
         requestedUserAgent: p.requestedUserAgent,
         expiresAt: p.expiresAt.toISOString(),

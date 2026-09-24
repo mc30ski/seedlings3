@@ -82,8 +82,30 @@ describe("[build-gate] job photo visibility", () => {
 
     // The wall display's board.
     const disp = read("services/displays.ts");
-    const pubBoard = disp.slice(disp.indexOf("buildPublicBoard"));
+    const privAt = disp.indexOf("export async function buildPrivateBoard");
+    const pubAt = disp.indexOf("export async function buildPublicBoard");
+    expect(privAt, "buildPrivateBoard must exist").toBeGreaterThan(-1);
+    expect(pubAt, "buildPublicBoard must come after it").toBeGreaterThan(privAt);
+
+    const pubBoard = disp.slice(pubAt);
     expect(pubBoard, "the public board must filter on it").toContain(`${FLAG}: null`);
+
+    // The PRIVATE board shows today's photos too. It is a back-office screen,
+    // not a client-facing one, so the instinct is to let it see everything —
+    // but that instinct produces a broken panel, not a more informative one.
+    // /public/display/photo/:photoId refuses a hidden photo, and one whose
+    // visit is not finished, for EVERY token regardless of mode. A board that
+    // selected more broadly would emit URLs that 404 and render as a row of
+    // dead tiles.
+    const privBoard = disp.slice(privAt, pubAt);
+    expect(
+      privBoard,
+      "the private board selects photos, so it must filter on the flag — the photo route will 404 them anyway",
+    ).toContain(`${FLAG}: null`);
+    expect(
+      privBoard,
+      "the private board's photos must be scoped to FINISHED visits, for the same reason",
+    ).toMatch(/status:\s*\{\s*in:\s*\[\.\.\.DONE_STATUSES\]/);
 
     // And the single-photo route a display fetches each image through.
     expect(pub, "the display photo route must refuse a hidden photo")

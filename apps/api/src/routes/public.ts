@@ -1434,19 +1434,37 @@ export default async function publicRoutes(app: FastifyInstance) {
   // buys a board payload. See services/displays.ts and the Display model.
   // ───────────────────────────────────────────────────────────────────────────
 
+  /** How long an already-handed-over token stays collectable.
+   *
+   *  Long enough to cover a dropped response and the device's next poll (3s),
+   *  short enough that a leaked device secret is not a standing key. */
+  const TOKEN_COLLECT_GRACE_MS = 60_000;
+
   /** The device asks to be paired. Returns the six digits it should put ON
    *  SCREEN, plus a secret it keeps to itself. */
   app.post("/public/display/pair", async (req: any, reply: any) => {
-    // Cheap flood guard. Each request writes a row, and the only caller is a
-    // TV that pairs once a year — a burst is someone fishing.
-    const recent = await prisma.displayPairing.count({
-      where: { createdAt: { gte: new Date(Date.now() - 60_000) } },
-    });
-    if (recent > 20) {
-      return reply.code(429).send({ error: "too_many_requests" });
-    }
     const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null;
     const ua = String(req.headers["user-agent"] ?? "").slice(0, 300) || null;
+
+    // Flood guard, PER CALLER first and globally only as a backstop.
+    //
+    // A single global counter meant one noisy client — a tab stuck in a retry
+    // loop, someone fishing — could lock every OTHER screen in the shop out of
+    // pairing, which is the failure the guard exists to prevent turned inside
+    // out. The per-IP budget is what actually bites; the global number is a
+    // much higher ceiling that only a real flood reaches.
+    const since = new Date(Date.now() - 60_000);
+    const [fromCaller, fromEveryone] = await Promise.all([
+      ip
+        ? prisma.displayPairing.count({ where: { createdAt: { gte: since }, requestedIp: ip } })
+        : Promise.resolve(0),
+      prisma.displayPairing.count({ where: { createdAt: { gte: since } } }),
+    ]);
+    // A TV pairs once a year and the page retries every 15s at worst, so ten a
+    // minute from one address is already far past anything legitimate.
+    if (fromCaller > 10 || fromEveryone > 100) {
+      return reply.code(429).send({ error: "too_many_requests" });
+    }
     const started = await displays.startPairing({ ip, userAgent: ua });
     // Housekeeping, off the hot path of any real request.
     void displays.purgeDeadPairings().catch(() => {});
@@ -1470,9 +1488,22 @@ export default async function publicRoutes(app: FastifyInstance) {
     const pairing = await prisma.displayPairing.findUnique({
       where: { deviceSecretHash: displays.hashSecret(secret) },
     });
-    // An unknown or expired request is "start over", not an error — the device
-    // just requests a fresh code and carries on unattended.
-    if (!pairing || pairing.expiresAt < new Date()) {
+    // An unknown request is "start over", not an error — the device just asks
+    // for a fresh code and carries on unattended.
+    if (!pairing) return { status: "expired" as const };
+
+    // EXPIRY IS CHECKED AFTER APPROVAL, NOT BEFORE.
+    //
+    // The ten minutes is how long the DIGITS are good for, not how long the
+    // device has to come and collect a token that has already been issued to
+    // it. Checking expiry first meant this: approve a screen at minute nine,
+    // the device is mid-reboot or its wifi drops, and sixty seconds later the
+    // token it was granted becomes uncollectable — while the Display row it
+    // belongs to lives on as a credential nobody holds. That ghost row is
+    // exactly what "Re-pair this screen" exists to clear up, which is how the
+    // bug stayed hidden: the cleanup for it was already built.
+    const approvedAndWaiting = pairing.approvedAt && pairing.displayId && pairing.issuedToken;
+    if (!approvedAndWaiting && pairing.expiresAt < new Date()) {
       return { status: "expired" as const };
     }
     if (!pairing.approvedAt || !pairing.displayId) {
@@ -1486,26 +1517,55 @@ export default async function publicRoutes(app: FastifyInstance) {
         expiresAt: pairing.expiresAt.toISOString(),
       };
     }
-    if (!pairing.issuedToken) {
-      // Already collected once. A second pickup is a replay.
+    // Already swept — the grace window below closed it.
+    if (!pairing.issuedToken) return { status: "expired" as const };
+
+    // A SHORT GRACE WINDOW ON COLLECTION.
+    //
+    // The plaintext token used to be destroyed in the same transaction that
+    // handed it back, so a response lost in flight — wifi dropping at exactly
+    // the wrong second, which is the normal weather for a device on a shop
+    // roof — destroyed the only copy. The device retried, was told "expired",
+    // started over, and the Display row it had already been granted lived on
+    // as a credential nobody held.
+    //
+    // Re-collection is NOT a new exposure: it still costs the device secret,
+    // which is the thing that proves ownership of this request in the first
+    // place. A caller who has the secret could already collect the token on
+    // the first try. What the window trades away is only the narrow case of a
+    // secret that leaks within sixty seconds of a pairing being approved.
+    if (
+      pairing.consumedAt &&
+      Date.now() - pairing.consumedAt.getTime() > TOKEN_COLLECT_GRACE_MS
+    ) {
+      // audit-allow: retiring a plaintext copy that is past its window. The
+      // collection itself was audited below when it happened.
+      await prisma.displayPairing.update({
+        where: { id: pairing.id },
+        data: { issuedToken: null },
+      });
       return { status: "expired" as const };
     }
 
     const token = pairing.issuedToken;
     const display = await prisma.display.findUnique({ where: { id: pairing.displayId } });
 
-    // Hand the token over exactly once, then remove the only plaintext copy.
-    await prisma.$transaction(async (tx) => {
-      await tx.displayPairing.update({
-        where: { id: pairing.id },
-        data: { issuedToken: null, consumedAt: new Date() },
+    // Audit the FIRST pickup only. A retry inside the window is the same
+    // collection finishing, not a second one, and a trail that logged both
+    // would read as two devices holding one token.
+    if (!pairing.consumedAt) {
+      await prisma.$transaction(async (tx) => {
+        await tx.displayPairing.update({
+          where: { id: pairing.id },
+          data: { consumedAt: new Date() },
+        });
+        await writeAudit(tx, AUDIT.DISPLAY.TOKEN_ACCESSED, null, {
+          displayId: pairing.displayId,
+          displayName: display?.name ?? null,
+          code: pairing.code,
+        });
       });
-      await writeAudit(tx, AUDIT.DISPLAY.TOKEN_ACCESSED, null, {
-        displayId: pairing.displayId,
-        displayName: display?.name ?? null,
-        code: pairing.code,
-      });
-    });
+    }
 
     return {
       status: "approved" as const,
