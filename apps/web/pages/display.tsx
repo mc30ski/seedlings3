@@ -62,6 +62,11 @@ const POLL_MS = 45_000;
 /** Pairing polls faster — a human is standing there watching. */
 const PAIR_POLL_MS = 3_000;
 
+/** How often to re-ask for a pairing code when the request to open one failed
+ *  outright. Slower than the approval poll — nobody is waiting on this yet,
+ *  and the pair endpoint has a flood guard that a tight retry would trip. */
+const PAIR_RETRY_MS = 15_000;
+
 /** No successful poll in this long means something is wedged in a way the page
  *  cannot fix from the inside, because the thing that would fix it is the
  *  thing that is broken. Reloading the document is the only recovery that does
@@ -107,6 +112,8 @@ type PrivateBoard = {
   equipmentOut: { id: string; name: string; holder: string }[];
   counts: { done: number; inProgress: number; remaining: number; total: number };
   attention: { kind: string; label: string; detail: string }[];
+  /** TODAY'S finished work only — not the public wall's trailing week. */
+  photos: { id: string; url: string; takenAt: string }[];
   weather: BoardWeather;
 };
 type PublicBoard = {
@@ -452,12 +459,38 @@ export default function DisplayPage() {
 
   // Watchdog. The last resort, and the only case besides a new build where a
   // document reload is the right tool.
+  //
+  // ONLY WHILE PAIRED. It used to run unconditionally, and `lastGoodMsRef` is
+  // only ever touched by a successful BOARD fetch — which an unpaired screen
+  // never makes. So a screen sitting on a pairing code, or one that had just
+  // been revoked, tripped the watchdog ten minutes in and then reloaded itself
+  // every sixty seconds, all night, flashing the code at whoever walked past.
+  // A screen waiting to be paired is not wedged; it is waiting.
   useEffect(() => {
+    if (!token) return;
+    // Start the clock when pairing completes rather than at mount, so time
+    // spent showing a code is not counted against the first board fetch.
+    lastGoodMsRef.current = Date.now();
     const t = setInterval(() => {
       if (Date.now() - lastGoodMsRef.current > WATCHDOG_MS) window.location.reload();
     }, 60_000);
     return () => clearInterval(t);
-  }, []);
+  }, [token]);
+
+  // KEEP ASKING FOR A CODE until we get one.
+  //
+  // `startPairing` swallows a network failure on purpose — a device commonly
+  // beats the wifi up on boot — and its comment promised "the retry loop below
+  // simply tries again". There was no such loop. The approval poll only runs
+  // once a code EXISTS, so a display that booted before the network (or hit
+  // the pair endpoint's flood guard) rendered "— — —" and sat there until the
+  // watchdog reloaded the document ten minutes later. On the one screen that
+  // is supposed to recover unattended, that was the longest outage on it.
+  useEffect(() => {
+    if (!booted || token || pairing) return;
+    const t = setInterval(() => void startPairing(), PAIR_RETRY_MS);
+    return () => clearInterval(t);
+  }, [booted, token, pairing, startPairing]);
 
   const staleness = useMemo(() => {
     if (!lastGoodAt) return { label: "waiting…", color: C.inkDim };
@@ -505,7 +538,7 @@ export default function DisplayPage() {
         {!booted ? null : !token ? (
           <Pairing code={pairing?.code ?? null} scale={scale} logo={logo} slot={slot} />
         ) : board?.mode === "PRIVATE" ? (
-          <PrivateView board={board} landscape={landscape} scale={scale} now={now} />
+          <PrivateView board={board} landscape={landscape} scale={scale} now={now} token={token} />
         ) : board?.mode === "PUBLIC" ? (
           <PublicView board={board} landscape={landscape} scale={scale} logo={logo} token={token} />
         ) : (
@@ -756,8 +789,8 @@ function NoticeBoard({ notices, scale }: { notices: Notice[]; scale: number }) {
 // ── Private (back office) ────────────────────────────────────────────────────
 
 function PrivateView({
-  board, landscape, scale, now,
-}: { board: PrivateBoard; landscape: boolean; scale: number; now: number }) {
+  board, landscape, scale, now, token,
+}: { board: PrivateBoard; landscape: boolean; scale: number; now: number; token: string | null }) {
   // Everything that can overflow pages itself, so no row is permanently
   // invisible on a screen nobody can scroll.
   const clockPage = usePagedItems(board.onTheClock, landscape ? 7 : 9);
@@ -767,6 +800,24 @@ function PrivateView({
     ...board.equipmentOut.map((e) => ({ kind: "equipment" as const, ...e })),
   ];
   const outPage = usePagedItems(outItems, 6);
+
+  /* TODAY'S WORK, AS PICTURES. Deliberately a strip and not the public wall:
+     this panel answers "what has the crew actually done today" in one glance,
+     and anything taller would start competing with the job list for the eye.
+     Absent entirely until there is something to show — an empty row of
+     placeholder squares on a back-office board reads as the photos having
+     failed to load.
+
+     Tile COUNT is what sets tile size here, since the row is full-width and
+     each tile is a fixed 4:3. Eight across a 16:9 board lands each one near a
+     sixth of the screen's width, which is enough to recognise a property from
+     a desk; more than that and they go back to being postage stamps. */
+  const todayPhotos =
+    board.photos.length > 0 ? (
+      <Panel title={`Today's photos · ${board.photos.length}`} flex="0 0 auto">
+        <PhotoStrip photos={board.photos} token={token} tiles={landscape ? 8 : 5} />
+      </Panel>
+    ) : null;
   const clock = (
     <Panel title={`On the clock · ${board.onTheClock.length}`} flex={landscape ? "2" : "1"}>
       {board.onTheClock.length === 0 ? (
@@ -939,6 +990,13 @@ function PrivateView({
         )}
       </div>
 
+      {/* ITS OWN FULL-WIDTH ROW, not a tile in the side column. Squeezed into
+          a third of the board the thumbnails came out too small to read as
+          photographs at all — which defeats the point of showing them. Across
+          the whole width the same short strip gets each image roughly four
+          times the area for a couple of vmin of extra height. */}
+      {todayPhotos}
+
       {/* One notice at a time, dropping into place and locking. Severe weather,
           rain that will move the day, and the exception queue all share this
           strip — they are the things worth interrupting someone for, and with
@@ -1096,6 +1154,131 @@ const TILE_ROTATE_MS = 7_000;
  *  The drift also happens to be the right answer for burn-in: a static bright
  *  panel is the shape that ghosts, and nothing here is static.
  */
+/** The private board's photo strip.
+ *
+ *  A short row of squares, fixed height, one tile crossfading at a time. It is
+ *  NOT the public PhotoWall shrunk: no Ken Burns drift, because the panel is
+ *  small enough that a slow pan inside it just looks like the image is
+ *  wobbling, and the back-office board already has motion it wants the eye to
+ *  catch — the notice strip and the job statuses.
+ *
+ *  Same dead-URL handling as the wall. A photo can be hidden or its visit
+ *  reopened between polls, and a tile pointed at a 404 is a hole in the row. */
+function PhotoStrip({
+  photos, token, tiles,
+}: {
+  photos: { id: string; url: string }[];
+  token: string | null;
+  tiles: number;
+}) {
+  const srcOf = useCallback(
+    (p: { url: string }) => `${p.url}?token=${encodeURIComponent(token ?? "")}`,
+    [token],
+  );
+  // Never more tiles than photos — a repeated image side by side reads as a
+  // rendering fault rather than a short day.
+  const tileCount = Math.max(1, Math.min(tiles, photos.length));
+  const [slots, setSlots] = useState<number[]>(() => Array.from({ length: tileCount }, (_, i) => i));
+  const [dead, setDead] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => setDead(new Set()), [photos]);
+  useEffect(() => {
+    setSlots(Array.from({ length: tileCount }, (_, i) => i));
+  }, [tileCount, photos.length]);
+
+  // The interval reads these through refs so that neither a re-fetch nor a
+  // newly-dead photo is a DEPENDENCY of the effect below.
+  const photosRef = useRef(photos);
+  const deadRef = useRef(dead);
+  photosRef.current = photos;
+  deadRef.current = dead;
+  /** Survives effect restarts on purpose — see below. */
+  const tickRef = useRef(0);
+
+  useEffect(() => {
+    if (photos.length <= tileCount) return; // nothing to rotate to
+
+    // KEYED ON COUNT, NOT ARRAY IDENTITY, and the cursor lives in a ref.
+    //
+    // `photos` is a fresh array on every 45s board poll, so depending on it
+    // tore down and rebuilt this interval every 45 seconds — which reset a
+    // local `tick` to 0 each time. At 7s a tick that is only ~6 rotations per
+    // poll, always starting at slot 0, so with 8 tiles slots 6 and 7 would
+    // never have come up and two of the eight would have sat frozen all day.
+    const t = setInterval(() => {
+      const pool = photosRef.current;
+      const gone = deadRef.current;
+      if (pool.length === 0) return;
+      setSlots((prev) => {
+        const slot = tickRef.current % prev.length;
+        tickRef.current += 1;
+        const shown = new Set(prev);
+        // Walk forward to the next photo nobody is showing, so the strip works
+        // through the pool rather than flipping between the same few.
+        let next = (prev[slot] + prev.length) % pool.length;
+        for (let guard = 0; guard < pool.length; guard++) {
+          if (!shown.has(next) && !gone.has(pool[next]?.id)) break;
+          next = (next + 1) % pool.length;
+        }
+        // Exhausted: everything is either on screen or failed to load. Hold
+        // the tile rather than duplicating a neighbour — the same picture
+        // twice reads as a bug, a tile that holds does not.
+        if (shown.has(next) || gone.has(pool[next]?.id)) return prev;
+        const copy = [...prev];
+        copy[slot] = next;
+        return copy;
+      });
+    }, TILE_ROTATE_MS);
+    return () => clearInterval(t);
+  }, [photos.length, tileCount]);
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${tileCount}, minmax(0, 1fr))`,
+        gap: "0.8vmin",
+        flexShrink: 0,
+      }}
+    >
+      {slots.map((photoIdx, i) => {
+        const p = photos[photoIdx];
+        if (!p) return null;
+        return (
+          <div
+            key={i}
+            style={{
+              position: "relative",
+              // 4:3 rather than square. Job photos are shot landscape, so a
+              // square crop threw away a third of every frame — and it was the
+              // sides, which is where the property is.
+              aspectRatio: "4 / 3",
+              borderRadius: "0.6vmin",
+              overflow: "hidden",
+              background: "#0d1117",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              key={p.id}
+              src={srcOf(p)}
+              alt=""
+              onError={() => setDead((prev) => new Set(prev).add(p.id))}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                display: "block",
+                animation: "wallIn 900ms ease-out",
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PhotoWall({
   photos, token, cols, tiles,
 }: {
@@ -1135,17 +1318,36 @@ function PhotoWall({
     setSlots(Array.from({ length: tileCount }, (_, i) => i));
   }, [tileCount]);
 
+  // Read through refs so neither a re-fetch nor a newly-dead photo is a
+  // DEPENDENCY of the rotation effect. See the comment on its deps below.
+  const poolRef = useRef(photos);
+  const goneRef = useRef(dead);
+  poolRef.current = photos;
+  goneRef.current = dead;
+  /** Survives effect restarts on purpose. */
+  const tickRef = useRef(0);
+
   useEffect(() => {
     // Nothing to rotate through — leave the grid alone rather than shuffling
     // the same six pictures around, which reads as a glitch.
     if (photos.length <= tileCount) return;
-    let tick = 0;
     let cancelled = false;
 
+    // KEYED ON COUNT, NOT ARRAY IDENTITY, with the cursor in a ref.
+    //
+    // `photos` is a fresh array on every 45s board poll, so depending on it
+    // rebuilt this interval every 45 seconds and reset a local `tick` to 0. At
+    // 7s a tick that is ~6 rotations per poll, always restarting at slot 0. Six
+    // tiles and six rotations covered every slot by luck, so this never showed
+    // — but it meant the tile count could never be raised without tiles at the
+    // end of the row silently freezing.
     const t = setInterval(() => {
+      const photos = poolRef.current;
+      const dead = goneRef.current;
+      if (photos.length === 0) return;
       setSlots((prev) => {
-        const slot = tick % tileCount;
-        tick += 1;
+        const slot = tickRef.current % tileCount;
+        tickRef.current += 1;
         const shown = new Set(prev);
         // Walk forward to the next photo nobody is showing, so the wall works
         // through the pool instead of flipping between the same few.
@@ -1178,7 +1380,7 @@ function PhotoWall({
       cancelled = true;
       clearInterval(t);
     };
-  }, [photos, tileCount, srcOf, dead]);
+  }, [photos.length, tileCount, srcOf]);
 
   return (
     <div
@@ -1267,8 +1469,10 @@ function PublicView({
           minHeight: 0,
         }}
       >
-        {/* The photo wall. Hand-picked only — see JobOccurrencePhoto.
-            With nothing picked yet it does NOT render an empty frame: a big
+        {/* The photo wall. AUTOMATIC — the latest finished work, the same
+            instinct as the client photo lists. Nothing is curated in; a Super
+            can only pull a photo OUT, via hiddenFromPublicAt.
+            With no photos at all it does NOT render an empty frame: a big
             blank box is worse than not being there, so the evergreen content
             takes the space instead. */}
         <Panel flex={landscape ? "2" : "2"}>
@@ -1361,10 +1565,17 @@ function PublicView({
                 ));
               })()}
             </div>
-            {/* Four calendar periods, each nested inside the next, so they can
-                only ever grow left to right. They were rolling windows until
-                quarter and year joined them, at which point a rolling month
-                could out-count a calendar year-to-date in January. */}
+            {/* Four TRAILING windows, each nested inside the next, so they can
+                only ever grow left to right.
+
+                LABELLED FOR WHAT THEY MEASURE. These read "this week / this
+                month / this quarter / this year" while the service behind
+                them had already been changed to trailing windows — so "this
+                year" was really the last twelve months, and a client in the
+                waiting room reading 481 would have understood year-to-date.
+                The numbers were right and the words were wrong, which is the
+                harder half to notice. See buildPublicBoard for why the
+                windows trail rather than follow the calendar. */}
             <div
               style={{
                 display: "grid",
@@ -1378,10 +1589,10 @@ function PublicView({
             >
               {(() => {
                 const cells = [
-                  { label: "this week", value: board.completed.week, color: C.cool },
-                  { label: "this month", value: board.completed.month, color: C.violet },
-                  { label: "this quarter", value: board.completed.quarter, color: C.teal },
-                  { label: "this year", value: board.completed.year, color: C.rose },
+                  { label: "past 7 days", value: board.completed.week, color: C.cool },
+                  { label: "past month", value: board.completed.month, color: C.violet },
+                  { label: "past 3 months", value: board.completed.quarter, color: C.teal },
+                  { label: "past 12 months", value: board.completed.year, color: C.rose },
                 ];
                 const fit = statFit(cells.length, cells);
                 return cells.map((c) => (

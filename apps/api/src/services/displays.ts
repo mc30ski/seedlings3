@@ -86,12 +86,22 @@ export async function startPairing(meta: { ip?: string | null; userAgent?: strin
 
   // Codes are unique and short, so on the (vanishingly rare) collision just
   // try again rather than handing back someone else's pending request.
-  let code = newPairingCode();
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const clash = await prisma.displayPairing.findUnique({ where: { code } });
-    if (!clash) break;
-    code = newPairingCode();
+  //
+  // EVERY candidate is checked, including the last. The previous shape
+  // generated a replacement at the end of the final iteration and then fell
+  // out of the loop without testing it, so an exhausted retry budget handed
+  // an unverified code to `create` and surfaced as a unique-constraint 500 on
+  // a screen that can only report it as a blank pairing panel.
+  let code: string | null = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const candidate = newPairingCode();
+    const clash = await prisma.displayPairing.findUnique({ where: { code: candidate } });
+    if (!clash) {
+      code = candidate;
+      break;
+    }
   }
+  if (!code) throw new Error("Could not allocate an unused pairing code.");
 
   // audit-allow: a pairing REQUEST is not a state change worth a row — any
   // device that loads /display creates one, and most expire unapproved. The
@@ -117,7 +127,12 @@ export async function purgeDeadPairings() {
   await prisma.displayPairing.deleteMany({
     where: {
       OR: [
-        { expiresAt: { lt: new Date() } },
+        // NOT an approved request whose token is still uncollected. Deleting
+        // one of those destroys the only plaintext copy of a token a Display
+        // row already depends on, leaving a screen that can never connect and
+        // an entry nobody holds. An approved request survives until the device
+        // picks it up, and the `consumedAt` clause below sweeps it afterwards.
+        { expiresAt: { lt: new Date() }, approvedAt: null },
         { consumedAt: { lt: new Date(Date.now() - 60 * 60 * 1000) } },
       ],
     },
@@ -246,6 +261,9 @@ export type PrivateBoard = {
   equipmentOut: { id: string; name: string; holder: string }[];
   counts: { done: number; inProgress: number; remaining: number; total: number };
   attention: { kind: string; label: string; detail: string }[];
+  /** TODAY'S finished work only — not the public wall's trailing week. Same
+   *  shape as the public board's so one tile component serves both. */
+  photos: { id: string; url: string; takenAt: string }[];
   weather: BoardWeather;
 };
 
@@ -277,6 +295,21 @@ const ACTIVE_STATUSES = ["IN_PROGRESS", "PAUSED"] as const;
 const NON_JOB_WORKFLOWS: OccurrenceWorkflow[] = ["TASK", "REMINDER", "FOLLOWUP", "EVENT"];
 const NON_JOB_WORKFLOW_EXCLUSION = { workflow: { notIn: NON_JOB_WORKFLOWS } };
 
+/** FINISHED FIELD WORK IN A WINDOW — the one filter every "work completed"
+ *  figure on the public board is built from.
+ *
+ *  A function rather than five `where` clauses on purpose. The five running
+ *  totals and the two today-counts beside them have to agree about what
+ *  counts as work, and when they were written out by hand they did not: the
+ *  totals were missing the workflow exclusion and their upper bound. Numbers
+ *  that sit side by side on a wall must be produced by the same rule, because
+ *  nothing about looking at them reveals that they were not. */
+const doneWorkBetween = (from: Date, to: Date) => ({
+  startAt: { gte: from, lte: to },
+  status: { in: [...DONE_STATUSES] },
+  ...NON_JOB_WORKFLOW_EXCLUSION,
+});
+
 /** Never on a board: cancelled, archived, and the estimate-proposal states,
  *  which are sales workflow rather than field work. */
 const OFF_BOARD_STATUSES = ["CANCELED", "ARCHIVED", "REJECTED", "PROPOSAL_SUBMITTED"] as const;
@@ -286,7 +319,7 @@ export async function buildPrivateBoard(): Promise<PrivateBoard> {
   const dayStart = etMidnight(dateKey);
   const dayEnd = etEndOfDay(dateKey);
 
-  const [workdays, occurrences, overdue, vehicleTrips, checkouts, weather] = await Promise.all([
+  const [workdays, occurrences, overdue, vehicleTrips, checkouts, weather, todayPhotos] = await Promise.all([
     prisma.workerWorkday.findMany({
       where: { workdayDate: dateKey, endedAt: null },
       include: {
@@ -346,6 +379,31 @@ export async function buildPrivateBoard(): Promise<PrivateBoard> {
       },
     }),
     buildBoardWeather(),
+    // TODAY'S PHOTOS ONLY. The public wall trails seven days because it is
+    // ambient and wants depth; the back office is a board about this shift,
+    // and a photo from Tuesday sitting on it reads as something that just
+    // came in.
+    //
+    // Same two filters as the public wall, and they are not optional here
+    // either: /public/display/photo/:photoId refuses a hidden photo, and one
+    // whose visit is not finished, for EVERY token whatever its mode. A
+    // private board that selected more broadly would emit URLs that 404 and
+    // render as a row of broken tiles.
+    prisma.jobOccurrencePhoto.findMany({
+      where: {
+        hiddenFromPublicAt: null,
+        occurrence: {
+          status: { in: [...DONE_STATUSES] },
+          startAt: { gte: dayStart, lte: dayEnd },
+          ...NON_JOB_WORKFLOW_EXCLUSION,
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      // A strip, not a wall. It shows what today looked like at a glance and
+      // is deliberately shallower than the public pool's 300.
+      take: 40,
+      select: { id: true, createdAt: true },
+    }),
   ]);
 
   const titleOf = (o: (typeof occurrences)[number]) =>
@@ -462,6 +520,11 @@ export async function buildPrivateBoard(): Promise<PrivateBoard> {
       holder: c.user ? shortPersonName(c.user) : "Unknown",
     })),
     counts: { done, inProgress, remaining: jobs.length - done - inProgress, total: jobs.length },
+    photos: todayPhotos.map((p) => ({
+      id: p.id,
+      url: `/api/public/display/photo/${p.id}`,
+      takenAt: p.createdAt.toISOString(),
+    })),
     attention,
     weather,
   };
@@ -504,21 +567,21 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
       where: { workdayDate: dateKey },
       include: { user: { select: { firstName: true, lastName: true, displayName: true } } },
     }),
-    prisma.jobOccurrence.count({
-      where: { startAt: { gte: dayStart }, status: { in: [...DONE_STATUSES] } },
-    }),
-    prisma.jobOccurrence.count({
-      where: { startAt: { gte: weekStart }, status: { in: [...DONE_STATUSES] } },
-    }),
-    prisma.jobOccurrence.count({
-      where: { startAt: { gte: monthStart }, status: { in: [...DONE_STATUSES] } },
-    }),
-    prisma.jobOccurrence.count({
-      where: { startAt: { gte: quarterStart }, status: { in: [...DONE_STATUSES] } },
-    }),
-    prisma.jobOccurrence.count({
-      where: { startAt: { gte: yearStart }, status: { in: [...DONE_STATUSES] } },
-    }),
+    // ALL FIVE THROUGH ONE FILTER. They were five hand-written `where`
+    // clauses, and every one of them had drifted from the two counts below:
+    // no workflow exclusion, so completed reminders, tasks, follow-ups and
+    // events were counted as work done, and no upper bound, so anything
+    // finished but dated in the future counted too.
+    //
+    // The result sat on the public wall as "1 scheduled today" — jobs only —
+    // beside a completed figure that also carried internal admin rows. The
+    // rule those two counts follow is written out immediately below; these
+    // five broke it silently because nobody reconciles a running total by eye.
+    prisma.jobOccurrence.count({ where: doneWorkBetween(dayStart, dayEnd) }),
+    prisma.jobOccurrence.count({ where: doneWorkBetween(weekStart, dayEnd) }),
+    prisma.jobOccurrence.count({ where: doneWorkBetween(monthStart, dayEnd) }),
+    prisma.jobOccurrence.count({ where: doneWorkBetween(quarterStart, dayEnd) }),
+    prisma.jobOccurrence.count({ where: doneWorkBetween(yearStart, dayEnd) }),
     // Counts only — no client, no property, no address. A number cannot
     // identify anyone, which is why these are safe on a public screen when
     // the job list behind them is not.
@@ -546,7 +609,14 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
     prisma.jobOccurrencePhoto.findMany({
       where: {
         hiddenFromPublicAt: null,
-        occurrence: { status: { in: [...DONE_STATUSES] } },
+        occurrence: {
+          status: { in: [...DONE_STATUSES] },
+          // Field work only, like every other figure on this board. A photo
+          // attached to a completed reminder or an internal task is not a
+          // picture of a lawn, and the waiting room is the wrong place to
+          // find out what it is a picture of.
+          ...NON_JOB_WORKFLOW_EXCLUSION,
+        },
       },
       orderBy: { createdAt: "desc" },
       // A DEEP pool, because the wall cycles through it rather than showing a
