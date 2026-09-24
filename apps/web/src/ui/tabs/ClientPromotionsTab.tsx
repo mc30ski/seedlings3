@@ -89,36 +89,8 @@ export default function ClientPromotionsTab() {
     );
   }
 
-  // The first campaign that actually has somewhere to send people. Its
-  // landing page is what the top action opens.
-  const primary = promos.find((p) => p.url) ?? null;
-
   return (
     <VStack align="stretch" gap={4}>
-      {/* THE ACTION COMES FIRST, BEFORE ANY CARD.
-          This tab is reached by scanning a code off a wall or a truck, on a
-          phone. Whatever is at the top is the only thing a good share of
-          visitors will ever see, so the way in cannot be something they have
-          to scroll to find. It opens the newest campaign that has a landing
-          page; the cards below still carry their own links, because with more
-          than one offer running no single button can reach them all. */}
-      {primary ? (
-        // Wrapped, because the VStack around it stretches its children: on a
-        // wide screen the button ran the entire width of the page and read as
-        // a banner rather than something to press. It hugs its label and sits
-        // on the cards' left edge instead.
-        <HStack pt={3}>
-          <Button
-            size="lg"
-            colorPalette="green"
-            onClick={() => window.open(primary.url!, "_blank", "noopener,noreferrer")}
-          >
-            {ctaLabel(primary.ctaText)}
-            <ExternalLink size={16} />
-          </Button>
-        </HStack>
-      ) : null}
-
       {promos.map((p) => (
         <Card.Root key={p.id} variant="outline" overflow="hidden">
           {/* WORDS FIRST, PHOTO UNDER THEM. With the image on top, a phone
@@ -130,11 +102,25 @@ export default function ClientPromotionsTab() {
               <Text fontSize="lg" fontWeight="bold">
                 {p.headline}
               </Text>
-              {/* NO BUTTON HERE. There is exactly one call to action on this
-                  tab and it sits at the very top, above every card. A second
-                  copy inside the card read as the action having moved back to
-                  the bottom — which is the thing the top button exists to
-                  fix. The card is the pitch; the button is the way in. */}
+              {/* ONE BUTTON PER CAMPAIGN, and it opens THAT campaign.
+                  A single action at the top of the tab could only ever point
+                  at one of them, so with more than one offer running the rest
+                  had no way through — the button said "See the offers" and
+                  meant "see the newest one". It sits above the photo so it is
+                  still the first thing reached on a phone, which is what the
+                  top button was for. */}
+              {p.url ? (
+                <HStack>
+                  <Button
+                    size="md"
+                    colorPalette="green"
+                    onClick={() => window.open(p.url!, "_blank", "noopener,noreferrer")}
+                  >
+                    {ctaLabel(p.ctaText)}
+                    <ExternalLink size={15} />
+                  </Button>
+                </HStack>
+              ) : null}
               {/* whiteSpace preserves the paragraph breaks an operator typed.
                   Without it the copy collapses into one block and the offer
                   they laid out carefully reads as a wall of text. */}
