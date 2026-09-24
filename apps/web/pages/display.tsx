@@ -125,6 +125,8 @@ type PublicBoard = {
     id: string; headline: string; body: string | null; url: string | null;
     /** Campaign artwork, cover first. Empty for a text-only promo. */
     photos: { id: string; url: string }[];
+    /** The individual services the campaign is selling. */
+    items: { id: string; title: string; body: string; photo: { id: string; url: string } | null }[];
   }[];
   company: { name: string | null; phone: string | null; email: string | null; serviceArea: string | null };
   weather: BoardWeather;
@@ -1272,7 +1274,11 @@ type PromoSlide = {
 function PromoRotator({
   promos, token, scale,
 }: {
-  promos: { id: string; headline: string; body: string | null; photos: { id: string; url: string }[] }[];
+  promos: {
+    id: string; headline: string; body: string | null;
+    photos: { id: string; url: string }[];
+    items: { id: string; title: string; body: string; photo: { id: string; url: string } | null }[];
+  }[];
   token: string | null;
   scale: number;
 }) {
@@ -1282,10 +1288,32 @@ function PromoRotator({
   const slides = useMemo<PromoSlide[]>(() => {
     const out: PromoSlide[] = [];
     for (const p of promos) {
+      // A CAMPAIGN WITH NOTHING ITEMISED SAYS ITS PIECE ONCE.
+      //
+      // Not a text slide followed by a slide per cover photo — that is three
+      // turns of the same sentence, which is the repetition this whole change
+      // exists to remove. One offer, one slide, with a picture on it.
+      if (p.items.length === 0) {
+        const cover = p.photos.find((ph) => !dead.has(ph.id)) ?? null;
+        out.push({ key: `${p.id}:solo`, headline: p.headline, body: p.body, photo: cover });
+        continue;
+      }
+
+      // Otherwise: the campaign in its own words first, as the cover…
       out.push({ key: `${p.id}:text`, headline: p.headline, body: p.body, photo: null });
-      for (const ph of p.photos) {
-        if (dead.has(ph.id)) continue; // a broken image is a blank slide
-        out.push({ key: `${p.id}:${ph.id}`, headline: p.headline, body: p.body, photo: ph });
+
+      // …then the SERVICES, one at a time, each with ITS OWN title and words.
+      //
+      // The board used to page through the campaign's invoice artwork while
+      // repeating the campaign headline on every slide, so a promotion
+      // advertising four different services showed one sentence twice and
+      // called it a rotation. The offers were in the landing page's items the
+      // whole time; the board was looking at the cover art.
+      for (const it of p.items) {
+        // A dead image costs the picture, not the offer — the words still
+        // stand on their own.
+        const photo = it.photo && !dead.has(it.photo.id) ? it.photo : null;
+        out.push({ key: `${p.id}:${it.id}`, headline: it.title, body: it.body, photo });
       }
     }
     return out;

@@ -73,16 +73,21 @@ const dispatchChannelSchema = z.enum(["email", "sms"]);
  *  Every value here is a place a human being reads the promo, and each one
  *  has a different audience:
  *
- *    invoice_page    one client, looking at their own bill
- *    promotions_tab  anyone at all — this tab has no sign-in gate
- *    wall_display    a room of strangers in the waiting area
+ *    invoice_page      one client, looking at their own bill
+ *    promotions_tab    anyone at all — this tab has no sign-in gate
+ *    external_display  a room of strangers, wherever the screen hangs
+ *
+ *  `external_display` rather than `wall_display`: the screen is whatever is
+ *  plugged into it — a TV on a wall today, a lobby kiosk or a window-facing
+ *  panel next year — and naming a surface after one of its mountings invites
+ *  the next one to get a second value that means the same thing.
  *
  *  The last two were shipped as surfaces before they were shipped as
- *  CHOICES: the wall simply rendered every ACTIVE campaign, so a promo
+ *  CHOICES: the board simply rendered every ACTIVE campaign, so a promo
  *  written for one client's invoice went up on a screen in a lobby with no
  *  way to say otherwise. A surface a campaign cannot opt out of is not a
  *  surface, it is a leak with a nice layout. */
-const displaySurfaceSchema = z.enum(["invoice_page", "promotions_tab", "wall_display"]);
+const displaySurfaceSchema = z.enum(["invoice_page", "promotions_tab", "external_display"]);
 const triggerKindSchema = z.enum(["on_invoice_sent", "manual_send"]);
 const audienceSpecSchema = z.object({
   kind: z.literal("all"),
@@ -3813,7 +3818,7 @@ export const promotionsService = {
 export async function loadPublicPromos(params: {
   /** Which surface is asking. The tab and the wall display are separate
    *  choices in the editor, so each asks for its own. */
-  surface: "promotions_tab" | "wall_display";
+  surface: "promotions_tab" | "external_display";
 }): Promise<
   {
     id: string;

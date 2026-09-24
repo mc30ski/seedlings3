@@ -182,4 +182,31 @@ describe("[build-gate] the wall display recovers unattended", () => {
     );
     expect(priv, "the back-office board must still say who is working").toContain("shortPersonName(");
   });
+
+  it("the board pages through a campaign's SERVICES, not its cover art", () => {
+    // A campaign is one headline over a LIST of services, and those live in
+    // the landing page's items. The board walked `invoicePhotos` instead, so
+    // a promotion advertising four different jobs showed the same sentence
+    // twice and called it a rotation — the offers were in the payload's reach
+    // the whole time, one relation away.
+    const src = readFileSync(join(API, "src/services/displays.ts"), "utf8");
+    const at = src.indexOf("export async function buildPublicBoard");
+    const body = src.slice(at);
+    expect(body, "the promo query must reach the landing page's items").toMatch(/items:\s*\{[\s\S]{0,200}orderBy:\s*\{\s*ordinal/);
+    expect(body, "and each item's own words must ship, not just its picture").toMatch(/description:\s*true/);
+
+    // The item photos need their own route: they authorise through a
+    // different chain (photo → item → page → promotion) than the cover art.
+    const routes = readFileSync(join(API, "src/routes/public.ts"), "utf8");
+    const rAt = routes.indexOf('app.get("/public/display/promo-item-photo/:photoId"');
+    expect(rAt, "the landing-item photo route must exist").toBeGreaterThan(-1);
+    const route = routes.slice(rAt, routes.indexOf("app.get(", rAt + 10));
+    expect(route, "it must require a display token").toMatch(/if \(!token\) return reply\.code\(401\)/);
+    expect(route, "a revoked screen must lose it").toMatch(/display\.revokedAt/);
+    expect(route, "a PRIVATE token must not reach it").toMatch(/display\.mode !== "PUBLIC"/);
+    expect(route, "only an ACTIVE campaign's images may serve").toMatch(/status !== "ACTIVE"/);
+    expect(route, "metadata must be stripped").toContain("stripImageMetadata");
+    expect(route, "and it reads the promotion bucket, not the job-photo one")
+      .toContain('getObjectBuffer(photo.r2Key, "promotion-images")');
+  });
 });

@@ -4603,7 +4603,7 @@ async function seedPromotionFixtures() {
         dispatchChannels: ["email", "sms"],
         // Fall Offers carries all three surfaces so the public tab and the
         // wall each have two campaigns to rotate between locally.
-        displaySurfaces: ["invoice_page", "promotions_tab", "wall_display"],
+        displaySurfaces: ["invoice_page", "promotions_tab", "external_display"],
         triggerKind: "on_invoice_sent",
         triggerConfig: {},
         cooldownDays: 7,
@@ -7589,7 +7589,7 @@ async function assertPrimaryContactInvariant() {
     // vanished from both new surfaces while the create branch looked correct.
     update: {
       status: "ACTIVE",
-      displaySurfaces: ["invoice_page", "promotions_tab", "wall_display"],
+      displaySurfaces: ["invoice_page", "promotions_tab", "external_display"],
     },
     create: {
       id: "seed_promo_winter_prep",
@@ -7602,7 +7602,7 @@ async function assertPrimaryContactInvariant() {
       // and the invoice page each have something to render locally. A
       // campaign that names no surface is invisible everywhere, which is how
       // both new surfaces looked broken the first time they were wired up.
-      displaySurfaces: ["invoice_page", "promotions_tab", "wall_display"],
+      displaySurfaces: ["invoice_page", "promotions_tab", "external_display"],
       triggerKind: null,
       triggerConfig: {},
       cooldownDays: 30,
@@ -7662,6 +7662,39 @@ async function assertPrimaryContactInvariant() {
     }
   }
   console.log(`✓ ${promoPhotoCount} promotion images across 2 active campaigns — the promo panel rotates.`);
+
+  // ── Landing-item photos ───────────────────────────────────────────────────
+  //
+  // The external display pages through a campaign's SERVICES, not its cover
+  // art — each landing item is one offer with its own words and picture. The
+  // seeded items had no photos at all, so locally the board showed the
+  // campaign headline and then nothing else, which is exactly the shape of
+  // the bug that hid this in the first place.
+  const itemPhotoKeys = [
+    "seed/promotions/01.jpg",
+    "seed/promotions/03.jpg",
+    "seed/promotions/04.jpg",
+    "seed/promotions/05.jpg",
+  ];
+  const landingItems = await prisma.promotionLandingPageItem.findMany({
+    where: { page: { promotion: { status: "ACTIVE" } } },
+    orderBy: { ordinal: "asc" },
+    select: { id: true, photos: { select: { id: true } } },
+  });
+  let itemPhotos = 0;
+  for (const [i, item] of landingItems.entries()) {
+    if (item.photos.length > 0) continue;
+    await prisma.promotionLandingPageItemPhoto.create({
+      data: {
+        itemId: item.id,
+        r2Key: itemPhotoKeys[i % itemPhotoKeys.length],
+        contentType: "image/jpeg",
+        sortOrder: 0,
+      },
+    });
+    itemPhotos++;
+  }
+  console.log(`✓ ${itemPhotos} landing-item photo(s) — the display pages through real services.`);
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
