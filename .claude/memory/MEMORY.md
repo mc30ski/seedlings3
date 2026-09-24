@@ -85,6 +85,7 @@ split (JobsTab ~11k LOC).
 - [Local .env is TEST Clerk even against prod DB](reference_local_env_is_test_clerk.md) — prove a key reaches the right instance before trusting a 404.
 - [Clerk satellite hostnames hardcoded](project_clerk_satellite_hardcoded_hostnames.md) — move to `NEXT_PUBLIC_*` env vars, not DB settings.
 - [Multi-domain / auth — design first](feedback_multi_domain_design_first.md) — full design pass and sign-off before implementing; no reactive patching.
+- [README holds operational procedures](reference_readme_holds_procedures.md) — QR generation, deploy steps. Grep it before saying something is undocumented.
 - [Check current docs BEFORE diagnosing infra bugs](feedback_check_current_docs_before_diagnosing.md) — WebFetch docs + issues first. Don't extrapolate from training data.
 - [Neon pipelineConnect=false workaround](project_neon_pipelineconnect_workaround.md) — issue #209; don't remove, don't add aggressive pool config.
 - [Detached Prisma include bypasses TypeScript](reference_prisma_detached_include.md) — lift an include into a `const` and TS stops key-checking it.

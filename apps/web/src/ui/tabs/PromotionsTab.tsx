@@ -48,7 +48,7 @@ type DispatchChannel = "email" | "sms";
  *  The three have very different audiences: one client reading their own
  *  bill, anyone at all on a public tab, and a room of strangers in the
  *  waiting area. That is the whole reason each is a separate checkbox. */
-type DisplaySurface = "invoice_page" | "promotions_tab" | "wall_display";
+type DisplaySurface = "invoice_page" | "promotions_tab" | "external_display";
 type TriggerKind = "on_invoice_sent" | "manual_send";
 
 /**
@@ -1468,8 +1468,8 @@ function PromotionEditor({
                       <Checkbox.Root checked={displaySurfaces.includes("promotions_tab")} onCheckedChange={() => toggleSurface("promotions_tab")}>
                         <Checkbox.HiddenInput /><Checkbox.Control /><Checkbox.Label>Promotions tab (public)</Checkbox.Label>
                       </Checkbox.Root>
-                      <Checkbox.Root checked={displaySurfaces.includes("wall_display")} onCheckedChange={() => toggleSurface("wall_display")}>
-                        <Checkbox.HiddenInput /><Checkbox.Control /><Checkbox.Label>Wall display</Checkbox.Label>
+                      <Checkbox.Root checked={displaySurfaces.includes("external_display")} onCheckedChange={() => toggleSurface("external_display")}>
+                        <Checkbox.HiddenInput /><Checkbox.Control /><Checkbox.Label>External display</Checkbox.Label>
                       </Checkbox.Root>
                     </HStack>
                   </Box>

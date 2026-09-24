@@ -1699,6 +1699,46 @@ export default async function publicRoutes(app: FastifyInstance) {
       .send(buffer);
   });
 
+  /** A photo belonging to one SERVICE inside a campaign.
+   *
+   *  Sibling of the promo-artwork route above, and separate because it
+   *  authorises through a different chain: photo → landing item → landing
+   *  page → promotion. Same three guarantees though — the display's token,
+   *  a PUBLIC board only, and an ACTIVE campaign — so a screen that is
+   *  revoked, or pointed at a finished campaign, stops loading these the
+   *  moment it stops being entitled to them. */
+  app.get("/public/display/promo-item-photo/:photoId", async (req: any, reply: any) => {
+    const token = String((req.query?.token as string) ?? "");
+    if (!token) return reply.code(401).send({ error: "unauthorized" });
+
+    const display = await prisma.display.findUnique({
+      where: { tokenHash: displays.hashSecret(token) },
+    });
+    if (!display || display.revokedAt) return reply.code(401).send({ error: "unauthorized" });
+    if (display.mode !== "PUBLIC") return reply.code(404).send({ error: "not_found" });
+
+    const photo = await prisma.promotionLandingPageItemPhoto.findUnique({
+      where: { id: String(req.params.photoId) },
+      select: {
+        r2Key: true,
+        contentType: true,
+        item: { select: { page: { select: { promotion: { select: { status: true } } } } } },
+      },
+    });
+    if (!photo || photo.item?.page?.promotion?.status !== "ACTIVE") {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    const obj = await getObjectBuffer(photo.r2Key, "promotion-images");
+    if (!obj?.bytes) return reply.code(404).send({ error: "not_found" });
+
+    const { buffer } = stripImageMetadata(obj.bytes, photo.contentType ?? obj.contentType);
+    return reply
+      .header("content-type", photo.contentType || "image/jpeg")
+      .header("cache-control", "private, max-age=86400, immutable")
+      .send(buffer);
+  });
+
   /** The board itself. One endpoint, two genuinely different payloads — which
    *  one you get is decided HERE by the token's mode, not by the client
    *  asking. A PUBLIC display must not be able to fetch client names at all;

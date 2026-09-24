@@ -349,6 +349,13 @@ export type PublicBoard = {
     /** The campaign's own artwork, cover first. Empty for a text-only promo,
      *  which the board still shows — it just has nothing to illustrate. */
     photos: { id: string; url: string }[];
+    /** The individual services this campaign is selling, in the operator's
+     *  order. This is what the board pages through; the campaign headline is
+     *  the cover, these are the contents. */
+    items: {
+      id: string; title: string; body: string;
+      photo: { id: string; url: string } | null;
+    }[];
   }[];
   company: { name: string | null; phone: string | null; email: string | null; serviceArea: string | null };
   weather: BoardWeather;
@@ -715,17 +722,38 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
       // This filtered on status alone, so every live campaign went up on a
       // screen in a room full of strangers whether or not it was written for
       // one — a promo aimed at a single client's invoice had no way to say
-      // no. `wall_display` is that way of saying no, and it lives in the
+      // no. `external_display` is that way of saying no, and it lives in the
       // Promotions editor beside the invoice checkbox.
       where: {
         status: "ACTIVE",
-        displaySurfaces: { array_contains: ["wall_display"] },
+        displaySurfaces: { array_contains: ["external_display"] },
       },
       orderBy: { startAt: "desc" },
       take: 5,
       select: {
         id: true, title: true, content: true,
-        landingPage: { select: { slug: true } },
+        landingPage: {
+          select: {
+            slug: true,
+            // THE ACTUAL OFFERS. A campaign is one headline over a LIST of
+            // services, and these rows are that list — "Overgrowth & Brush
+            // Clearing", "Limb & Debris Hauling", each with its own words and
+            // its own photograph. The board walked the campaign's invoice
+            // artwork instead and showed the same sentence twice, which is
+            // what a single cover image looks like when you mistake it for a
+            // catalogue.
+            items: {
+              orderBy: { ordinal: "asc" },
+              take: 8,
+              select: {
+                id: true,
+                title: true,
+                description: true,
+                photos: { orderBy: { sortOrder: "asc" }, take: 1, select: { id: true } },
+              },
+            },
+          },
+        },
         // The campaign's own artwork. Same rows the invoice page draws on —
         // sortOrder 0 is the cover the operator chose, so the wall leads with
         // the same image a client sees on their invoice rather than picking
@@ -842,6 +870,14 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
           photos: p.invoicePhotos.map((ph) => ({
             id: ph.id,
             url: `/api/public/display/promo-photo/${ph.id}`,
+          })),
+          items: (p.landingPage?.items ?? []).map((it) => ({
+            id: it.id,
+            title: it.title,
+            body: it.description,
+            photo: it.photos[0]
+              ? { id: it.photos[0].id, url: `/api/public/display/promo-item-photo/${it.photos[0].id}` }
+              : null,
           })),
         };
       })
