@@ -28,7 +28,7 @@
 import Head from "next/head";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSeasonIcons } from "@/src/lib/season";
-import { fmtTimeOpts } from "@/src/lib/dates";
+import { fmtTimeOpts, fmtDateOpts } from "@/src/lib/dates";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -118,11 +118,14 @@ type PrivateBoard = {
 };
 type PublicBoard = {
   mode: "PUBLIC"; generatedAt: string;
-  crewsOutToday: string[];
   today: { scheduled: number; inProgress: number; completed: number };
   completed: { today: number; week: number; month: number; quarter: number; year: number };
   photos: { id: string; url: string; takenAt: string }[];
-  promotions: { id: string; headline: string; body: string | null; url: string | null }[];
+  promotions: {
+    id: string; headline: string; body: string | null; url: string | null;
+    /** Campaign artwork, cover first. Empty for a text-only promo. */
+    photos: { id: string; url: string }[];
+  }[];
   company: { name: string | null; phone: string | null; email: string | null; serviceArea: string | null };
   weather: BoardWeather;
 };
@@ -130,6 +133,8 @@ type BoardWeather = {
   tempF: number; description: string; icon: string;
   highF: number; lowF: number; rainChance: number;
   alerts: { event: string; severity: string }[];
+  /** The next few days, today excluded. */
+  forecast: { dateKey: string; highF: number; lowF: number; rainChance: number; icon: string }[];
 } | null;
 type Board = PrivateBoard | PublicBoard;
 
@@ -612,7 +617,16 @@ function Pairing({ code, scale, logo, slot }: { code: string | null; scale: numb
 
 // ── Shared bits ──────────────────────────────────────────────────────────────
 
-function Panel({ children, title, flex }: { children: React.ReactNode; title?: string; flex?: string }) {
+function Panel({
+  children, title, flex, centerContent,
+}: {
+  children: React.ReactNode; title?: string; flex?: string;
+  /** Vertically centre the content under the title when the panel is taller
+   *  than it needs to be. For panels told to GROW: without it the content
+   *  clings to the top and the leftover height reads as a hole inside a
+   *  bordered box, which is worse than the gap it was meant to remove. */
+  centerContent?: boolean;
+}) {
   return (
     <div
       style={{
@@ -620,7 +634,19 @@ function Panel({ children, title, flex }: { children: React.ReactNode; title?: s
         border: `1px solid ${C.panelEdge}`,
         borderRadius: "1.2vmin",
         padding: "1.6vmin 1.8vmin",
-        flex,
+        // A PANEL NEVER SHRINKS BELOW ITS CONTENT UNLESS ASKED TO.
+        //
+        // The CSS default for a flex child is `0 1 auto` — it may be squeezed
+        // — and every panel here clips at its edge, so a squeeze does not
+        // reflow anything, it slices a number in half. On a 1080x1920 kiosk,
+        // where these stack into one tall column, that is exactly what
+        // happened: the weather panel came out shorter than the temperature
+        // inside it and rendered the top half of "58°".
+        //
+        // Panels that are MEANT to absorb or give up space say so — the photo
+        // wall is `2`, the counts are `1 0 auto`. Everything else holds its
+        // size, and the wall is what flexes around them.
+        flex: flex ?? "0 0 auto",
         minHeight: 0,
         display: "flex",
         flexDirection: "column",
@@ -641,7 +667,11 @@ function Panel({ children, title, flex }: { children: React.ReactNode; title?: s
           {title}
         </div>
       ) : null}
-      {children}
+      {centerContent ? (
+        <div style={{ margin: "auto 0", width: "100%", minHeight: 0 }}>{children}</div>
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -1012,7 +1042,7 @@ function Weather({ w, scale }: { w: BoardWeather; scale: number }) {
   if (!w) return null;
   const severe = w.alerts.length > 0;
   return (
-    <Panel title="Weather">
+    <Panel title="Weather" flex="1 0 auto" centerContent>
       {/* CENTRE, not baseline. Baseline puts the big temperature's baseline on
           the FIRST of the two text lines, so the second line hangs below it
           and the pair reads as having slipped down the panel. The conditions
@@ -1039,6 +1069,56 @@ function Weather({ w, scale }: { w: BoardWeather; scale: number }) {
           </div>
         </div>
       </div>
+      {/* THE NEXT FEW DAYS. In lawn care the forecast is not decoration — it
+          decides whether Thursday happens — and it is the question a client
+          sitting in the waiting room is most likely to be turning over. It
+          also fills the column: with the promo moved out from under it, this
+          side of the board had a dead strip where nothing grew.
+
+          The weekday is formatted HERE, from the date key, through the app's
+          ET-anchored formatter. A label the server rendered would be the
+          server's idea of the day, and this page already had one bug where a
+          box in the wrong timezone reported everything hours out. */}
+      {w.forecast.length > 0 ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${w.forecast.length}, minmax(0, 1fr))`,
+            gap: "1.2vmin",
+            marginTop: "1.4vmin",
+            paddingTop: "1.4vmin",
+            borderTop: `1px solid ${C.panelEdge}`,
+          }}
+        >
+          {w.forecast.map((d) => (
+            <div key={d.dateKey} style={{ minWidth: 0 }}>
+              <div style={{ fontSize: `${1.5 * scale}vmin`, color: C.inkDim, whiteSpace: "nowrap" }}>
+                {fmtDateOpts(d.dateKey, { weekday: "short" })}
+              </div>
+              <div
+                style={{
+                  fontSize: `${2.2 * scale}vmin`,
+                  fontWeight: 700,
+                  marginTop: "0.4vmin",
+                  whiteSpace: "nowrap",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {d.highF}°
+                <span style={{ color: C.inkDim, fontWeight: 400 }}> / {d.lowF}°</span>
+              </div>
+              {/* Shown only when it is worth planning around. A row of "0%
+                  rain" under three dry days is three columns of noise. */}
+              {d.rainChance >= 30 ? (
+                <div style={{ fontSize: `${1.5 * scale}vmin`, color: C.cool, whiteSpace: "nowrap" }}>
+                  {d.rainChance}% rain
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {severe ? (
         <div
           style={{
@@ -1154,13 +1234,165 @@ const TILE_ROTATE_MS = 7_000;
  *  The drift also happens to be the right answer for burn-in: a static bright
  *  panel is the shape that ghosts, and nothing here is static.
  */
+/** How long each SLIDE holds.
+ *
+ *  Two speeds, because the two slides do different jobs. The overview is the
+ *  only thing on this board a client is meant to READ — a headline and a
+ *  couple of sentences — and rotating it at photo speed means nobody ever
+ *  finishes one. An image slide is looked at, not read, so it moves sooner. */
+const PROMO_TEXT_HOLD_MS = 11_000;
+const PROMO_IMAGE_HOLD_MS = 7_000;
+
+type PromoSlide = {
+  key: string;
+  headline: string;
+  body: string | null;
+  /** null on the campaign's opening slide — that one is the description on
+   *  its own, the way the panel looked before there was any artwork. */
+  photo: { id: string; url: string } | null;
+};
+
+/** The waiting-room promo panel.
+ *
+ *  Each campaign leads with its DESCRIPTION alone, then walks its artwork one
+ *  image at a time, then hands over to the next campaign and eventually starts
+ *  again. Opening on the text matters: someone glancing up mid-cycle sees a
+ *  photograph, and the only thing that tells them what it is selling is the
+ *  slide that came before it — so that slide has to come first and has to come
+ *  back around.
+ *
+ *  It used to render `promotions[0]` and nothing else, so the second and third
+ *  campaigns an operator had written were invisible on the one screen a client
+ *  actually sits and studies, and the images uploaded against them never
+ *  appeared anywhere but an invoice.
+ *
+ *  A campaign with no artwork is not skipped — it simply has one slide. Plenty
+ *  are text-only, and dropping them would make "add a picture" the price of
+ *  being on the wall at all. */
+function PromoRotator({
+  promos, token, scale,
+}: {
+  promos: { id: string; headline: string; body: string | null; photos: { id: string; url: string }[] }[];
+  token: string | null;
+  scale: number;
+}) {
+  const [i, setI] = useState(0);
+  const [dead, setDead] = useState<Set<string>>(() => new Set());
+
+  const slides = useMemo<PromoSlide[]>(() => {
+    const out: PromoSlide[] = [];
+    for (const p of promos) {
+      out.push({ key: `${p.id}:text`, headline: p.headline, body: p.body, photo: null });
+      for (const ph of p.photos) {
+        if (dead.has(ph.id)) continue; // a broken image is a blank slide
+        out.push({ key: `${p.id}:${ph.id}`, headline: p.headline, body: p.body, photo: ph });
+      }
+    }
+    return out;
+  }, [promos, dead]);
+
+  // Keyed on the COUNT. The board is refetched every 45s and hands back fresh
+  // objects; keying on the array would restart the cycle on every poll and the
+  // wall would never get past the first campaign's opening slide.
+  useEffect(() => setI(0), [slides.length]);
+
+  useEffect(() => {
+    if (slides.length <= 1) return;
+    const hold = slides[Math.min(i, slides.length - 1)]?.photo
+      ? PROMO_IMAGE_HOLD_MS
+      : PROMO_TEXT_HOLD_MS;
+    const t = setTimeout(() => setI((n) => (n + 1) % slides.length), hold);
+    return () => clearTimeout(t);
+  }, [i, slides]);
+
+  if (slides.length === 0) return null;
+  const s = slides[Math.min(i, slides.length - 1)];
+
+  return (
+    <div
+      // Keyed on the slide so React remounts and the entry animation replays.
+      // Without it the text swaps in place under a new photo, which reads as a
+      // rendering fault rather than a change of subject.
+      key={s.key}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "2vmin",
+        // A FIXED BAND. Sizing this by the artwork's aspect ratio is what
+        // broke the panel in the side column: the image grew to the container
+        // width, went taller than the box, and clipped the words out. Here the
+        // band's height is the constant and the image is sized from it.
+        height: "20vmin",
+        animation: "wallIn 700ms ease-out",
+      }}
+    >
+      {s.photo ? (
+        <div
+          style={{
+            height: "100%",
+            aspectRatio: "4 / 3",
+            flexShrink: 0,
+            borderRadius: "0.8vmin",
+            overflow: "hidden",
+            background: "#0d1117",
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`${s.photo.url}?token=${encodeURIComponent(token ?? "")}`}
+            alt=""
+            onError={() => {
+              const id = s.photo!.id;
+              setDead((prev) => new Set(prev).add(id));
+            }}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        </div>
+      ) : null}
+
+      <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: "0.8vmin" }}>
+        <div style={{ fontSize: `${3 * scale}vmin`, fontWeight: 700, color: C.accent }}>
+          {s.headline}
+        </div>
+        {s.body ? (
+          <div
+            style={{
+              fontSize: `${2 * scale}vmin`,
+              color: C.inkDim,
+              lineHeight: 1.35,
+              minHeight: 0,
+              overflow: "hidden",
+            }}
+          >
+            {s.body}
+          </div>
+        ) : null}
+      </div>
+
+      {slides.length > 1 ? (
+        <div
+          style={{
+            alignSelf: "flex-end",
+            flexShrink: 0,
+            fontSize: `${1.5 * scale}vmin`,
+            color: C.inkDim,
+            opacity: 0.75,
+          }}
+        >
+          {i + 1} / {slides.length}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** The private board's photo strip.
  *
- *  A short row of squares, fixed height, one tile crossfading at a time. It is
- *  NOT the public PhotoWall shrunk: no Ken Burns drift, because the panel is
- *  small enough that a slow pan inside it just looks like the image is
- *  wobbling, and the back-office board already has motion it wants the eye to
- *  catch — the notice strip and the job statuses.
+ *  A short row of 4:3 tiles, fixed height, one crossfading at a time. It is
+ *  NOT the public PhotoWall shrunk: no Ken Burns drift, because at this size a
+ *  slow pan just looks like the image is wobbling, and the back-office board
+ *  already has motion it wants the eye to catch — the notice strip and the job
+ *  statuses.
  *
  *  Same dead-URL handling as the wall. A photo can be hidden or its visit
  *  reopened between polls, and a tile pointed at a 404 is a hole in the row. */
@@ -1387,6 +1619,13 @@ function PhotoWall({
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${Math.min(cols, tileCount)}, 1fr)`,
+        // ROWS SHARE THE HEIGHT THEY ARE GIVEN. Left as `auto`, each row sized
+        // itself from its tiles and the grid simply grew past the panel, which
+        // `overflow: hidden` then cut off — on a 1080x1920 kiosk that pushed
+        // the phone number clean off the bottom of the board. Explicit 1fr
+        // rows make the wall the thing that flexes, which is what it should be:
+        // it is the only panel whose content has no natural size.
+        gridTemplateRows: `repeat(${Math.ceil(tileCount / Math.min(cols, tileCount))}, minmax(0, 1fr))`,
         gap: "1vmin",
         flex: 1,
         minHeight: 0,
@@ -1434,11 +1673,6 @@ function PublicView({
 }: { board: PublicBoard; landscape: boolean; scale: number; logo: string | null; token: string | null }) {
   const promo = board.promotions[0] ?? null;
 
-  // DEGRADE GRACEFULLY. "0 crews out today" on a lobby screen at 8am on a rain
-  // day is a worse impression than showing nothing, so a thin day falls back to
-  // evergreen content rather than reporting an empty one.
-  const thinDay = board.crewsOutToday.length === 0;
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.8vmin", flex: 1, minHeight: 0 }}>
       {/* The waiting room is the one screen a client actually studies, so it
@@ -1475,7 +1709,29 @@ function PublicView({
             With no photos at all it does NOT render an empty frame: a big
             blank box is worse than not being there, so the evergreen content
             takes the space instead. */}
-        <Panel flex={landscape ? "2" : "2"}>
+        {/* LEFT GROUP: the wall, with the promo directly beneath it.
+            The promo used to run the full width of the board, under both
+            columns, which made it the widest thing on screen for what is a
+            headline and two sentences — and it stole height from the metrics
+            column at the same time. Tucking it under the wall lines its edge
+            up with the images above it and hands the right-hand column the
+            full height of the board. */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "1.8vmin",
+            // GROWS IN BOTH ORIENTATIONS. Content-sizing this in portrait
+            // collapsed the wall to a sliver: its grid rows are `1fr`, so they
+            // have no intrinsic height to size a container from, and a group
+            // that waits for its content to measure itself gets zero. The wall
+            // is the panel that should absorb whatever is left over, which
+            // means the group holding it has to ask for the room.
+            flex: landscape ? 2 : 1,
+            minHeight: 0,
+          }}
+        >
+        <Panel flex="1 1 auto">
           {board.photos.length === 0 ? (
             <div
               style={{
@@ -1509,15 +1765,80 @@ function PublicView({
           )}
         </Panel>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.8vmin", flex: 1, minHeight: 0 }}>
-          {!thinDay ? (
-            <Panel title="Out today">
-              <div style={{ fontSize: `${2.6 * scale}vmin`, lineHeight: 1.5 }}>
-                {board.crewsOutToday.join(" · ")}
+        {/* Not when the photo wall is already standing in for it — with no
+            photos the fallback IS this promotion, and showing it twice on one
+            screen reads as a bug. */}
+        {promo && board.photos.length > 0 ? (
+          <Panel flex="0 0 auto">
+            <div style={{ display: "flex", gap: "2vmin", alignItems: "stretch", minWidth: 0 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <PromoRotator promos={board.promotions} token={token} scale={scale} />
               </div>
-            </Panel>
-          ) : null}
+              {/* THE CODE LIVES WITH THE OFFERS IT LEADS TO.
+                  It sat in the contact panel, which pushed that column past
+                  the height of the board and clipped the email. Here it costs
+                  NOTHING: the band is already 20vmin tall for the artwork, so
+                  the code sizes itself from height that was spent anyway —
+                  and it sits beside the thing it is a shortcut to instead of
+                  beside a phone number.
 
+                  A static file, not a generated image: the URL it encodes,
+                  ?tab=client-promotions, never changes, so campaigns rotate
+                  behind that address and this SVG stays correct for as long
+                  as the tab exists.
+
+                  The white plate is inside the SVG (its first path fills
+                  41x41 white), which matters on a near-black board — a code
+                  whose light modules are transparent renders dark-on-dark and
+                  does not scan at all. */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "0.6vmin",
+                  justifyContent: "center",
+                }}
+              >
+                <div
+                  style={{
+                    background: "#ffffff",
+                    borderRadius: "0.8vmin",
+                    padding: "0.7vmin",
+                    lineHeight: 0,
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/promotions-qr.svg"
+                    alt=""
+                    style={{ width: `${16 * scale}vmin`, height: "auto", display: "block" }}
+                  />
+                </div>
+                <div style={{ fontSize: `${1.4 * scale}vmin`, color: C.inkDim, whiteSpace: "nowrap" }}>
+                  Scan for all offers
+                </div>
+              </div>
+            </div>
+          </Panel>
+        ) : null}
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "1.8vmin",
+            flex: landscape ? 1 : "0 0 auto",
+            // NO justifyContent. Pushing the slack between the panels turned
+            // it into two conspicuous voids — the eye reads a gap that size as
+            // something failing to load. The panels absorb it instead, each
+            // taking an equal share and centring its content, so the column
+            // simply looks like it was laid out for this screen.
+            minHeight: 0,
+          }}
+        >
           {/* SEVEN COUNTS, SEVEN INKS. The three for today are grouped and set
               a step smaller — they are a breakdown of one day, and running
               them at the same weight as the running totals made the panel read
@@ -1536,7 +1857,22 @@ function PublicView({
               Counts only: no client, no property, no address. A number
               identifies nobody, which is why these are safe here when the job
               list behind them is not. */}
-          <Panel title="Work completed">
+          {/* THIS PANEL TAKES THE SLACK — BUT NEVER GIVES ANY BACK.
+              The column's panels all size to their content, so with the promo
+              moved out to its own band nothing in here grew and the leftover
+              height collected at the bottom as a dead strip under the phone
+              number. The counts are the panel that benefits from room, and
+              their two rows spread into it rather than sitting at the top of a
+              taller box.
+
+              `1 0 auto`, NOT `1`. The shorthand `flex="1"` means `1 1 0%` — a
+              zero basis and permission to shrink — so on a 1080x1920 kiosk,
+              where the same panels stack into one tall column and space is
+              tight, this panel was sized SHORTER than its own contents and
+              Panel's `overflow: hidden` sliced the second row of numbers in
+              half. Growing into spare height and refusing to shrink below the
+              content are two different things, and this panel needs both. */}
+          <Panel title="Work completed" flex="1 0 auto" centerContent>
             <div
               style={{
                 display: "grid",
@@ -1602,31 +1938,31 @@ function PublicView({
             </div>
           </Panel>
 
-          {/* Not when the photo wall is already standing in for it — with no
-              photos picked yet the fallback IS this promotion, and showing it
-              twice on one screen reads as a bug. */}
-          {promo && board.photos.length > 0 ? (
-            <Panel flex="1">
-              <div style={{ fontSize: `${3 * scale}vmin`, fontWeight: 700, color: C.accent }}>
-                {promo.headline}
-              </div>
-              {promo.body ? (
-                <div style={{ fontSize: `${2 * scale}vmin`, color: C.inkDim, marginTop: "1vmin" }}>
-                  {promo.body}
+          <Weather w={board.weather} scale={scale} />
+
+          {/* CONTACT. The email was already being fetched and thrown away —
+              on the one screen whose whole job is to be read by a client
+              sitting in the room, the second way to reach the business was
+              being dropped on the floor. */}
+          {/* NO TITLE. A phone number and an email address under a heading
+              that says "Get in touch" is the heading restating the content —
+              on a board read from across a room, a line carrying no
+              information is a line competing with the ones that do. */}
+          {board.company.phone || board.company.email ? (
+            <Panel flex="1 0 auto" centerContent>
+              {board.company.phone ? (
+                <div style={{ fontSize: `${2.6 * scale}vmin` }}>{board.company.phone}</div>
+              ) : null}
+              {board.company.email ? (
+                <div style={{ fontSize: `${1.9 * scale}vmin`, color: C.inkDim, marginTop: "0.6vmin" }}>
+                  {board.company.email}
                 </div>
               ) : null}
             </Panel>
           ) : null}
-
-          <Weather w={board.weather} scale={scale} />
-
-          {board.company.phone ? (
-            <Panel>
-              <div style={{ fontSize: `${2.6 * scale}vmin` }}>{board.company.phone}</div>
-            </Panel>
-          ) : null}
         </div>
       </div>
+
     </div>
   );
 }

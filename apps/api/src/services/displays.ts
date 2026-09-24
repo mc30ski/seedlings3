@@ -10,10 +10,11 @@
 import { createHash, randomBytes, randomInt } from "crypto";
 import type { OccurrenceWorkflow } from "@prisma/client";
 import { prisma } from "../db/prisma";
-import { etToday, etMidnight, etEndOfDay, etAddDays, etAddMonths } from "../lib/dates";
+import { etToday, etMidnight, etEndOfDay, etAddDays, etAddMonths, etFormatDate } from "../lib/dates";
 import { businessLatLng } from "../lib/businessLocation";
 import { cached } from "../lib/cache";
 import { fetchWeatherAlerts } from "./weatherAlerts";
+import { buildLandingPageUrl, loadPromotionSettings } from "./promotions";
 
 /** How long a pairing code is good for. Short on purpose: a code lying around
  *  for hours is a code someone can be talked into approving. */
@@ -150,6 +151,17 @@ export type BoardWeather = {
   lowF: number;
   rainChance: number;
   alerts: { event: string; severity: string }[];
+  /** The next few days, today excluded. Empty when the forecast endpoint
+   *  gave us nothing usable — the strip simply does not render. */
+  forecast: {
+    /** ET date key. The client formats the weekday from it, so the board
+     *  never has to agree with the server about what "Thursday" means. */
+    dateKey: string;
+    highF: number;
+    lowF: number;
+    rainChance: number;
+    icon: string;
+  }[];
 } | null;
 
 /** A deliberately thin slice of what /weather returns — the display needs a
@@ -159,6 +171,61 @@ export type BoardWeather = {
  *  same two-decimal coordinate key the worker route uses, so a display polling
  *  every 45 seconds rides the entry the rest of the app already populated
  *  rather than doubling the calls to a metered API. */
+/** The next three days, folded out of the 3-hourly forecast list.
+ *
+ *  GROUPED BY ET DATE, FROM THE EPOCH. Every entry also carries a `dt_txt`
+ *  string, which is tempting and wrong: it is UTC, so from about 8pm ET
+ *  onwards its date has already rolled over and a day's entries land in the
+ *  wrong bucket. `dt` is an instant; `etFormatDate` is the only thing that
+ *  turns an instant into the day the business is actually having.
+ *
+ *  Today is excluded on purpose — the big number above the strip already IS
+ *  today, and repeating it costs a column that could show Thursday. */
+function buildForecastDays(
+  list: any[],
+  todayKey: string,
+): { dateKey: string; highF: number; lowF: number; rainChance: number; icon: string }[] {
+  const byDay = new Map<string, any[]>();
+  for (const e of list) {
+    if (!e?.dt) continue;
+    const key = etFormatDate(new Date(e.dt * 1000));
+    const bucket = byDay.get(key);
+    if (bucket) bucket.push(e);
+    else byDay.set(key, [e]);
+  }
+
+  const out: { dateKey: string; highF: number; lowF: number; rainChance: number; icon: string }[] = [];
+  for (let i = 1; i <= 3; i++) {
+    const key = etAddDays(todayKey as any, i) as unknown as string;
+    const entries = byDay.get(key);
+    // The 5-day endpoint thins out at the far end; a missing day is skipped
+    // rather than rendered as a column of zeroes.
+    if (!entries || entries.length === 0) continue;
+
+    const temps = entries.map((e) => e.main?.temp ?? 0);
+    const highF = Math.round(Math.max(...entries.map((e) => e.main?.temp_max ?? e.main?.temp ?? 0), ...temps));
+    const lowF = Math.round(Math.min(...entries.map((e) => e.main?.temp_min ?? e.main?.temp ?? 0), ...temps));
+    const rainChance = Math.max(...entries.map((e) => Math.round((e.pop ?? 0) * 100)));
+
+    // The day's most common condition, forced to its DAY variant: these are
+    // whole-day summaries and half the samples are after dark, so picking
+    // the raw winner regularly put a moon on a sunny Thursday.
+    const tally = new Map<string, number>();
+    for (const e of entries) {
+      const raw = e.weather?.[0]?.icon;
+      if (!raw) continue;
+      const day = String(raw).replace(/n$/, "d");
+      tally.set(day, (tally.get(day) ?? 0) + 1);
+    }
+    let icon = "";
+    let best = 0;
+    for (const [k, n] of tally) if (n > best) { icon = k; best = n; }
+
+    out.push({ dateKey: key, highF, lowF, rainChance, icon });
+  }
+  return out;
+}
+
 export async function buildBoardWeather(): Promise<BoardWeather> {
   try {
     const loc = await businessLatLng();
@@ -216,6 +283,7 @@ export async function buildBoardWeather(): Promise<BoardWeather> {
         ? Math.max(...todayEntries.map((e) => Math.round((e.pop ?? 0) * 100)))
         : 0,
       alerts: alerts.slice(0, 2).map((a) => ({ event: a.event, severity: a.severity })),
+      forecast: buildForecastDays(wx.forecast?.list ?? [], todayKey),
     };
   } catch {
     // Weather is decoration on a board whose job is jobs. A metered API being
@@ -270,14 +338,18 @@ export type PrivateBoard = {
 export type PublicBoard = {
   mode: "PUBLIC";
   generatedAt: string;
-  crewsOutToday: string[];
   /** Today, live. The week/month figures barely move, so a board built only
    *  from those looks identical hour to hour and the polling has nothing to
    *  show. These three change as the day is worked. */
   today: { scheduled: number; inProgress: number; completed: number };
   completed: { today: number; week: number; month: number; quarter: number; year: number };
   photos: { id: string; url: string; takenAt: string }[];
-  promotions: { id: string; headline: string; body: string | null; url: string | null }[];
+  promotions: {
+    id: string; headline: string; body: string | null; url: string | null;
+    /** The campaign's own artwork, cover first. Empty for a text-only promo,
+     *  which the board still shows — it just has nothing to illustrate. */
+    photos: { id: string; url: string }[];
+  }[];
   company: { name: string | null; phone: string | null; email: string | null; serviceArea: string | null };
   weather: BoardWeather;
 };
@@ -530,6 +602,17 @@ export async function buildPrivateBoard(): Promise<PrivateBoard> {
   };
 }
 
+/** WHO IS WORKING IS NOT ON THIS BOARD.
+ *
+ *  The waiting-room screen used to lead with an "Out today" panel listing the
+ *  crew's first names. It was the one thing on the public board that named a
+ *  person, and it is gone — along with the workday query behind it, so the
+ *  names are no longer read, let alone sent. A field the client does not
+ *  render is still a field on the wire, and this screen's payload travels to a
+ *  device sitting in a room full of strangers.
+ *
+ *  The private board still shows who is on the clock. That one is in the back
+ *  office, and that is the whole difference between the two. */
 export async function buildPublicBoard(): Promise<PublicBoard> {
   const dateKey = etToday();
   const dayStart = etMidnight(dateKey);
@@ -560,13 +643,9 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
 
   const dayEnd = etEndOfDay(dateKey);
   const [
-    workdays, doneToday, doneWeek, doneMonth, doneQuarter, doneYear,
+    doneToday, doneWeek, doneMonth, doneQuarter, doneYear,
     scheduledToday, inProgressToday, photos, promos, settings, weather,
   ] = await Promise.all([
-    prisma.workerWorkday.findMany({
-      where: { workdayDate: dateKey },
-      include: { user: { select: { firstName: true, lastName: true, displayName: true } } },
-    }),
     // ALL FIVE THROUGH ONE FILTER. They were five hand-written `where`
     // clauses, and every one of them had drifted from the two counts below:
     // no workflow exclusion, so completed reminders, tasks, follow-ups and
@@ -631,10 +710,28 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
       select: { id: true, r2Key: true, createdAt: true, occurrenceId: true },
     }),
     prisma.promotion.findMany({
-      where: { status: "ACTIVE" },
+      // THE WALL IS A CHOICE, NOT A CONSEQUENCE OF BEING ACTIVE.
+      //
+      // This filtered on status alone, so every live campaign went up on a
+      // screen in a room full of strangers whether or not it was written for
+      // one — a promo aimed at a single client's invoice had no way to say
+      // no. `wall_display` is that way of saying no, and it lives in the
+      // Promotions editor beside the invoice checkbox.
+      where: {
+        status: "ACTIVE",
+        displaySurfaces: { array_contains: ["wall_display"] },
+      },
       orderBy: { startAt: "desc" },
       take: 5,
-      select: { id: true, title: true, content: true, landingPage: { select: { slug: true } } },
+      select: {
+        id: true, title: true, content: true,
+        landingPage: { select: { slug: true } },
+        // The campaign's own artwork. Same rows the invoice page draws on —
+        // sortOrder 0 is the cover the operator chose, so the wall leads with
+        // the same image a client sees on their invoice rather than picking
+        // one of its own.
+        invoicePhotos: { select: { id: true }, orderBy: { sortOrder: "asc" }, take: 6 },
+      },
     }),
     prisma.setting.findMany({
       where: { key: { in: ["BUSINESS_NAME", "BUSINESS_PHONE", "BUSINESS_EMAIL", "BUSINESS_SERVICE_AREA"] } },
@@ -643,6 +740,12 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
   ]);
 
   const setting = (k: string) => settings.find((s) => s.key === k)?.value ?? null;
+
+  // The host a campaign's landing links should carry. Same resolution the
+  // invoice surface uses, so a screen and a bill send people to the same
+  // place rather than to two spellings of it.
+  const promoSettings = await loadPromotionSettings();
+  const promoBase = promoSettings.landingBaseUrl || promoSettings.baseUrl;
 
   // INTERLEAVED BY JOB, so consecutive tiles come from different properties.
   //
@@ -686,10 +789,6 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
   return {
     mode: "PUBLIC",
     generatedAt: new Date().toISOString(),
-    // First names only. Nothing here identifies a customer or a property.
-    crewsOutToday: [...new Set(workdays.map((w) => (w.user.firstName ?? "").trim() || shortPersonName(w.user)))]
-      .filter(Boolean)
-      .sort(),
     today: { scheduled: scheduledToday, inProgress: inProgressToday, completed: doneToday },
     completed: {
       today: doneToday, week: doneWeek, month: doneMonth,
@@ -730,7 +829,20 @@ export async function buildPublicBoard(): Promise<PublicBoard> {
           id: p.id,
           headline,
           body: body || null,
-          url: p.landingPage?.slug ? `/motion/${p.landingPage.slug}` : null,
+          // `/motion/` was hardcoded here. That segment is only correct on
+          // the marketing domain — buildLandingPageUrl picks it from the
+          // host, and everywhere else the path is `/promotion/`. Harmless
+          // while nothing rendered the link; wrong the moment anything did.
+          url: p.landingPage?.slug
+            ? buildLandingPageUrl(promoBase, p.landingPage.slug)
+            : null,
+          // Served through the API like every other image a display shows —
+          // token-gated, metadata stripped, dead the moment the screen is
+          // revoked. A presigned R2 link would outlive the display.
+          photos: p.invoicePhotos.map((ph) => ({
+            id: ph.id,
+            url: `/api/public/display/promo-photo/${ph.id}`,
+          })),
         };
       })
       // No customer copy anywhere means the campaign has nothing to say on a

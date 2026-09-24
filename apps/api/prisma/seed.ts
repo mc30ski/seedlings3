@@ -8,6 +8,7 @@ import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { etAddDays, etEndOfDay, etFormatDate, etInstantFromParts, etMidnight, etToday } from "../src/lib/dates";
 import { legacyReceiptNumberFor } from "../src/lib/receiptNumber";
+import { getObjectBuffer, putObjectBuffer, headObject } from "../src/lib/r2";
 import { createHash } from "crypto";
 
 // ── Safety guard ────────────────────────────────────────────────────────────
@@ -4600,7 +4601,9 @@ async function seedPromotionFixtures() {
         landingPageId: "seed_landing_fall_2026",
         audienceSpec: { kind: "all" },
         dispatchChannels: ["email", "sms"],
-        displaySurfaces: ["invoice_page"],
+        // Fall Offers carries all three surfaces so the public tab and the
+        // wall each have two campaigns to rotate between locally.
+        displaySurfaces: ["invoice_page", "promotions_tab", "wall_display"],
         triggerKind: "on_invoice_sent",
         triggerConfig: {},
         cooldownDays: 7,
@@ -7561,6 +7564,104 @@ async function assertPrimaryContactInvariant() {
     photoCount++;
   }
   console.log(`✓ ${photoCount} job photos — the display photo wall has content.`);
+
+  // ── Promotion artwork ─────────────────────────────────────────────────────
+  //
+  // The waiting-room board rotates through ACTIVE campaigns and shows each
+  // one's own image. With a single text-only promo in the seed that panel
+  // renders one static headline forever, so neither the rotation nor the
+  // artwork is visible to anyone testing locally — the same way the private
+  // photo strip was invisible until today's visits got photos.
+  //
+  // Reuses the landscaping keys already in R2 rather than uploading more:
+  // these rows only have to point at bytes that exist.
+  console.log("  Creating promotion artwork...");
+  await prisma.promotionInvoicePhoto.deleteMany({});
+
+  // A SECOND active campaign, so the panel actually rotates. The seeded
+  // referral promo is DRAFT on purpose (it exercises the Send Now path), so
+  // promoting that one would cost a different test its fixture.
+  await prisma.promotion.upsert({
+    where: { id: "seed_promo_winter_prep" },
+    // The UPDATE branch has to carry the surfaces too. It set status alone,
+    // so on every reseed after the first the existing row kept whatever
+    // surfaces it already had — an empty list — and this campaign silently
+    // vanished from both new surfaces while the create branch looked correct.
+    update: {
+      status: "ACTIVE",
+      displaySurfaces: ["invoice_page", "promotions_tab", "wall_display"],
+    },
+    create: {
+      id: "seed_promo_winter_prep",
+      title: "Winter Prep 2026",
+      description: "Second ACTIVE campaign so the wall display's promo panel has something to rotate to.",
+      link: "https://www.seedlings.team/promotions/winter-prep",
+      audienceSpec: { kind: "all" },
+      dispatchChannels: [],
+      // All three surfaces, so the public Promotions tab, the wall display
+      // and the invoice page each have something to render locally. A
+      // campaign that names no surface is invisible everywhere, which is how
+      // both new surfaces looked broken the first time they were wired up.
+      displaySurfaces: ["invoice_page", "promotions_tab", "wall_display"],
+      triggerKind: null,
+      triggerConfig: {},
+      cooldownDays: 30,
+      startAt: daysAgo(3, 9),
+      endAt: null,
+      status: "ACTIVE",
+      content: {
+        shared: {
+          headline: "Winter Prep",
+          body: "Gutter clearing, final mow, and irrigation shut-off before the first freeze. Book now and we will schedule around the weather.",
+        },
+      },
+      createdById: MICHAEL_ID,
+      updatedById: MICHAEL_ID,
+    },
+  });
+
+  // INTO THE PROMOTION BUCKET, not just rows pointing at the photo one.
+  //
+  // These first referenced `seed/landscaping/*.jpg` directly — keys that live
+  // in the job-photo bucket. Campaign artwork is stored in "promotion-images"
+  // (see PromotionInvoicePhoto.r2Key), so every presigned URL 404'd while the
+  // rows themselves looked perfectly correct. Copying the bytes across once
+  // makes the fixture match where real uploads actually land.
+  const promoArt: Record<string, string[]> = {
+    seed_promo_fall_2026: ["seed/promotions/01.jpg", "seed/promotions/03.jpg"],
+    seed_promo_winter_prep: ["seed/promotions/04.jpg", "seed/promotions/05.jpg"],
+  };
+  let staged = 0;
+  for (const keys of Object.values(promoArt)) {
+    for (const destKey of keys) {
+      const srcKey = destKey.replace("seed/promotions/", "seed/landscaping/");
+      // headObject RETURNS NULL on a miss — it does not throw. Wrapping it
+      // in try/catch meant the catch never ran, nothing was ever copied, and
+      // the seed reported success while every promo image 404'd.
+      const already = await headObject(destKey, "promotion-images");
+      if (already) continue; // a reseed should not re-upload megabytes
+      try {
+        const obj = await getObjectBuffer(srcKey, "photos");
+        await putObjectBuffer(destKey, obj.bytes, obj.contentType ?? "image/jpeg", "promotion-images");
+        staged++;
+      } catch (err: any) {
+        console.warn(`  ! could not stage ${destKey}: ${err?.message ?? err}`);
+      }
+    }
+  }
+  if (staged > 0) console.log(`  staged ${staged} image(s) into the promotion-images bucket`);
+  let promoPhotoCount = 0;
+  for (const [promotionId, keys] of Object.entries(promoArt)) {
+    const exists = await prisma.promotion.findUnique({ where: { id: promotionId } });
+    if (!exists) continue;
+    for (const [i, r2Key] of keys.entries()) {
+      await prisma.promotionInvoicePhoto.create({
+        data: { promotionId, r2Key, contentType: "image/jpeg", sortOrder: i },
+      });
+      promoPhotoCount++;
+    }
+  }
+  console.log(`✓ ${promoPhotoCount} promotion images across 2 active campaigns — the promo panel rotates.`);
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────

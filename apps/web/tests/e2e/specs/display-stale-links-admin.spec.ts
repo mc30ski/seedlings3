@@ -135,6 +135,54 @@ test.describe("Displays — no stale links", () => {
     }
   });
 
+  test("promotion artwork dies with the screen, and never leaves the waiting room", async () => {
+    // Promo art is the one image class on the board that is NOT a client's
+    // property, so the instinct is to treat it as harmless and serve it from a
+    // presigned R2 link. That instinct is what produces a URL outliving the
+    // screen it was printed for. It goes through the same token as everything
+    // else, and it answers only for a PUBLIC board — the private board carries
+    // no promotions, so a back-office token asking for one is a credential
+    // reaching past its own payload.
+    const pubToken = `promo-pub-${Date.now()}`;
+    const privToken = `promo-priv-${Date.now()}`;
+    const pub = await prisma.display.create({
+      data: { name: `E2E Promo Pub ${Date.now()}`, mode: "PUBLIC", tokenHash: hash(pubToken) },
+    });
+    const priv = await prisma.display.create({
+      data: { name: `E2E Promo Priv ${Date.now()}`, mode: "PRIVATE", tokenHash: hash(privToken) },
+    });
+    const api = await pwRequest.newContext();
+    try {
+      const board = await api.get(`${API}/api/public/display/board?token=${pubToken}`);
+      expect(board.status()).toBe(200);
+      const promos = (await board.json()).board?.promotions ?? [];
+      const art = promos.flatMap((p: any) => p.photos ?? [])[0];
+      test.skip(!art, "needs an active promotion carrying artwork");
+
+      const artUrl = `${API}${art.url}?token=${pubToken}`;
+      expect((await api.get(artUrl)).status(), "the waiting-room board can load its own art").toBe(200);
+
+      expect(
+        (await api.get(`${API}${art.url}`)).status(),
+        "artwork must not be fetchable without a display token",
+      ).toBe(401);
+
+      expect(
+        (await api.get(`${API}${art.url}?token=${privToken}`)).status(),
+        "a back-office token must not fetch art its own board never references",
+      ).toBe(404);
+
+      await prisma.display.update({ where: { id: pub.id }, data: { revokedAt: new Date() } });
+      expect(
+        (await api.get(artUrl)).status(),
+        "a revoked screen must not keep loading promo art from a URL it already holds",
+      ).toBe(401);
+    } finally {
+      await api.dispose();
+      await prisma.display.deleteMany({ where: { id: { in: [pub.id, priv.id] } } }).catch(() => {});
+    }
+  });
+
   test("a display token is not a key to every photo in the system", async () => {
     // The scariest shape: a valid token plus a guessed id. The endpoint must
     // answer only for photos its own board would show.

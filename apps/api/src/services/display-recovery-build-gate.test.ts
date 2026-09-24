@@ -125,4 +125,61 @@ describe("[build-gate] the wall display recovers unattended", () => {
       "the guard must count THIS caller's requests, not just everyone's",
     ).toMatch(/requestedIp: ip/);
   });
+
+  it("promotion artwork is token-gated and public-board only", () => {
+    // The one image class on the board that is not a client's property, which
+    // is exactly why it is the one most likely to end up on a presigned R2
+    // link that outlives the screen. It goes through the display's token like
+    // everything else, and it answers only for a PUBLIC board — the private
+    // board carries no promotions at all.
+    const src = readFileSync(join(API, "src/routes/public.ts"), "utf8");
+    const at = src.indexOf('app.get("/public/display/promo-photo/:photoId"');
+    expect(at, "the promo artwork route must exist").toBeGreaterThan(-1);
+    const route = src.slice(at, src.indexOf("app.get(", at + 10));
+
+    expect(route, "it must require a display token").toMatch(/if \(!token\) return reply\.code\(401\)/);
+    expect(route, "a revoked screen must lose it").toMatch(/display\.revokedAt/);
+    expect(
+      route,
+      "a PRIVATE token must not reach it — that board never references promo art",
+    ).toMatch(/display\.mode !== "PUBLIC"/);
+    expect(
+      route,
+      "only an ACTIVE campaign's art is on the wall, so only its URL may work",
+    ).toMatch(/status !== "ACTIVE"/);
+    expect(
+      route,
+      "metadata must be stripped — an operator's upload carries where it was taken",
+    ).toContain("stripImageMetadata");
+  });
+
+  it("the PUBLIC board never names a person", () => {
+    // The waiting-room screen sits in a room full of strangers. It used to
+    // lead with an "Out today" panel listing the crew's first names — the one
+    // thing on that board that identified a human being. Removing the panel is
+    // half the job; the other half is not SENDING the names, because a field
+    // the client happens not to render is still a field on the wire.
+    const src = readFileSync(join(API, "src/services/displays.ts"), "utf8");
+    const start = src.indexOf("export async function buildPublicBoard");
+    expect(start, "buildPublicBoard must exist").toBeGreaterThan(-1);
+    const body = src.slice(start);
+
+    expect(body, "the public board must not read worker names").not.toContain("shortPersonName(");
+    expect(body, "nor first names").not.toMatch(/firstName/);
+    expect(body, "nor the crew list that started this").not.toMatch(/crewsOutToday/);
+
+    // The type has to agree, or the next person adds the field back and only
+    // finds out when it is on a wall.
+    const type = src.slice(src.indexOf("export type PublicBoard"), src.indexOf("export type PublicBoard") + 900);
+    expect(type, "PublicBoard must not declare a crew list").not.toMatch(/crewsOutToday/);
+
+    // And the PRIVATE board still does show who is on the clock — that is the
+    // whole difference between the two, so a rule that passed because both
+    // boards went nameless would be guarding nothing.
+    const priv = src.slice(
+      src.indexOf("export async function buildPrivateBoard"),
+      start,
+    );
+    expect(priv, "the back-office board must still say who is working").toContain("shortPersonName(");
+  });
 });

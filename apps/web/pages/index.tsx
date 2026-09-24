@@ -49,6 +49,7 @@ import ServicesTab from "@/src/ui/tabs/ServicesTab";
 import ClientFeedTab from "@/src/ui/tabs/ClientFeedTab";
 import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
+import ClientPromotionsTab from "@/src/ui/tabs/ClientPromotionsTab";
 import ClientStatementsTab from "@/src/ui/tabs/ClientStatementsTab";
 import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
@@ -800,6 +801,26 @@ export default function HomePage() {
       label: "Services",
       icon: FiClipboard,
       content: <ClientServicesTab />,
+    },
+    {
+      // PUBLIC, like Community and Services above — no `visible` gate. The
+      // people most worth showing an offer to are the ones who do not have
+      // an account yet.
+      //
+      // Value is `client-promotions`, NOT `promotions`: the Super Money
+      // Promotions tab already owns that value, and sharing it makes
+      // BreadcrumbNav pair the two as one cross-role tab. Same reason
+      // Services is `client-services`. The deep link is unaffected — the
+      // resolver matches on slugify(label), so `?tab=client-promotions`
+      // still lands here.
+      //
+      // THAT URL IS PRINTED ON THINGS. A QR code on the wall display and on
+      // signage points at `?tab=client-promotions`; renaming this label
+      // breaks every code already out in the world.
+      value: "client-promotions",
+      label: "Promotions",
+      icon: FiTag,
+      content: <ClientPromotionsTab />,
     },
   ];
 
@@ -3442,7 +3463,6 @@ chip: false, bucket: t.bucket }));
     if (meLoading) return;
     const tabSlug = router.query.tab as string | undefined;
     if (!tabSlug) return;
-    if (!isSignedIn) return; // Wait for auth; URL stays intact across redirect.
 
     const slugify = (s: string): string =>
       (s || "").toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
@@ -3460,8 +3480,24 @@ chip: false, bucket: t.bucket }));
       return;
     }
     // Auth gate using the outer tab's visible predicate.
+    //
+    // SIGNED-OUT VISITORS RESOLVE TOO, and this used to return before
+    // reaching here — "wait for auth; the URL survives the redirect", which
+    // assumed every deep link pointed at something behind a login. Three of
+    // the client tabs are public (Community, Services, Promotions), so for
+    // the one audience that matters most to a printed QR code — someone who
+    // is not a customer yet — the link silently did nothing and dropped them
+    // on the default tab.
+    //
+    // The `visible` predicate is the authorization, not the signed-in check,
+    // so a public tab passes it while signed out and a private one does not.
     const outerVisible = typeof outer.visible === "function" ? outer.visible() : outer.visible;
     if (!outerVisible) {
+      // Not visible AND signed out: this is probably a private tab the
+      // visitor has yet to authenticate for. Leave the param intact so it
+      // still survives Clerk's redirect and resolves on the way back —
+      // that is the behaviour the old early-return existed to protect.
+      if (!isSignedIn) return;
       router.replace("/", undefined, { shallow: true });
       return;
     }
