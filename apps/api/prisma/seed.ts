@@ -7587,15 +7587,28 @@ async function assertPrimaryContactInvariant() {
     // so on every reseed after the first the existing row kept whatever
     // surfaces it already had — an empty list — and this campaign silently
     // vanished from both new surfaces while the create branch looked correct.
+    // The UPDATE branch has to carry every field the CREATE branch cares
+    // about. It set status alone at first, so a reseed left the existing row
+    // on its old surfaces; then it omitted `link`, so the row kept a dead URL
+    // after the fixture was corrected. A create-only fix is invisible on
+    // every machine that has already seeded once — which is all of them.
     update: {
       status: "ACTIVE",
       displaySurfaces: ["invoice_page", "promotions_tab", "external_display"],
+      link: "https://www.seedlings.team/",
+      linkKind: "EXTERNAL",
     },
     create: {
       id: "seed_promo_winter_prep",
       title: "Winter Prep 2026",
       description: "Second ACTIVE campaign so the wall display's promo panel has something to rotate to.",
-      link: "https://www.seedlings.team/promotions/winter-prep",
+      // A REAL destination. This was "…/promotions/winter-prep", a path that
+      // does not exist in this app — the landing route is /promotion/<slug>,
+      // singular — so clicking through in dev 404'd and looked like the
+      // feature was broken rather than the fixture. An EXTERNAL-link campaign
+      // is worth having in the seed (it exercises the other half of
+      // resolveDestinationUrl), but its link has to actually go somewhere.
+      link: "https://www.seedlings.team/",
       audienceSpec: { kind: "all" },
       dispatchChannels: [],
       // All three surfaces, so the public Promotions tab, the wall display

@@ -3892,12 +3892,20 @@ export async function loadPublicPromos(params: {
     const body = (resolved.body ?? "").trim();
     if (!headline || !body) continue;
 
-    // The landing URL picks its path segment from the host the campaign is
-    // branded to — /motion/ on the marketing domain, /promotion/ elsewhere.
-    // Built here rather than assembled by the caller, because a caller that
-    // assembles it hardcodes one of the two and is wrong on the other host.
+    // EVERY campaign with a destination gets one, not just landing-page ones.
+    //
+    // This built a URL only from `landingPage.slug`, so an EXTERNAL-link
+    // campaign came back with `url: null` and rendered without a button —
+    // an offer on the page with no way to act on it. `resolveDestinationUrl`
+    // is the function that already knows both shapes, and the landing form
+    // picks /motion/ or /promotion/ from the host it is branded to.
     const base = p.baseDomain ?? (settings.landingBaseUrl || settings.baseUrl);
-    const url = p.landingPage?.slug ? buildLandingPageUrl(base, p.landingPage.slug) : null;
+    const resolvedUrl = await resolveDestinationUrl(
+      base,
+      { linkKind: p.linkKind, link: p.link, landingPageId: p.landingPageId },
+      settings.landingBaseUrl,
+    );
+    const url = resolvedUrl?.url ?? null;
 
     const photoRows = await prisma.promotionInvoicePhoto.findMany({
       where: { promotionId: p.id },
