@@ -1420,31 +1420,6 @@ chip: false, bucket: t.bucket }));
       label: "Admin",
       icon: GrUserAdmin,
       visible: () => !!isSignedIn && isAdmin,
-      headerSlot: (
-        <>
-          <NewJobSetupWorkflow
-            active={activeWorkflow === "new-job-setup"}
-            onDone={() => { setActiveWorkflow(null); setWorkflowEstimateDefaults(null); }}
-            estimateDefaults={workflowEstimateDefaults}
-            onComplete={(jobId) => {
-              if (jobId) {
-                // Navigate to Admin Services tab and highlight the new job
-                setTopTab("admin");
-                setAdminInnerTab("services" as any);
-                setTimeout(() => {
-                  window.dispatchEvent(new CustomEvent("open:jobsTabToServicesTabSearch", { detail: { q: jobId, forAdmin: true, entityId: jobId } }));
-                }, 200);
-              } else {
-                window.location.reload();
-              }
-            }}
-          />
-          <SharePhotosWorkflow
-            active={activeWorkflow === "share-photos"}
-            onDone={() => setActiveWorkflow(null)}
-          />
-        </>
-      ),
       innerTabs: (() => {
         const catMap: Record<string, string> = {
           home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
@@ -4941,6 +4916,39 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
         />
       )}
       {/* Offline Queue Dialog */}
+      {/* WORKFLOWS MOUNT AT THE ROOT, NOT INSIDE A TAB.
+          These lived in the Admin tab's `headerSlot`, and BreadcrumbNav
+          renders only `activeOuter?.headerSlot` — the ACTIVE top tab's. So a
+          Super clicking "New Job Service" set activeWorkflow and nothing
+          rendered, because the component that renders it was not mounted:
+          the action was silently dead for every role except Admin, with no
+          error to find. A modal workflow has no business depending on which
+          tab someone happens to be standing on.
+
+          Mounting them unconditionally is inert — each renders nothing until
+          its own `active` prop is true. */}
+      <NewJobSetupWorkflow
+        active={activeWorkflow === "new-job-setup"}
+        onDone={() => { setActiveWorkflow(null); setWorkflowEstimateDefaults(null); }}
+        estimateDefaults={workflowEstimateDefaults}
+        onComplete={(jobId) => {
+          if (jobId) {
+            // Navigate to Admin Services tab and highlight the new job
+            setTopTab("admin");
+            setAdminInnerTab("services" as any);
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent("open:jobsTabToServicesTabSearch", { detail: { q: jobId, forAdmin: true, entityId: jobId } }));
+            }, 200);
+          } else {
+            window.location.reload();
+          }
+        }}
+      />
+      <SharePhotosWorkflow
+        active={activeWorkflow === "share-photos"}
+        onDone={() => setActiveWorkflow(null)}
+      />
+
       <OfflineQueueDialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen} />
 
       {/* Global compliance-policy gate interceptor. Listens for

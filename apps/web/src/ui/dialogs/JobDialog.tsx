@@ -73,6 +73,11 @@ export default function JobDialog({
   const dlgErr = useDialogError();
 
   const [properties, setProperties] = useState<PropertyLite[]>([]);
+  /** Type-to-narrow for the property picker. A plain Select is fine for six
+   *  options and unusable at eighty: production runs ~80 active properties,
+   *  and the only way to reach one was to scroll an unbounded popover that
+   *  ran off the bottom of the screen. */
+  const [propertyQuery, setPropertyQuery] = useState("");
   const [propertyValue, setPropertyValue] = useState<string[]>([]);
   const [kindValue, setKindValue] = useState<string[]>([JOB_KIND[0]]);
   // New jobs default to ACCEPTED — most jobs created via the New Job
@@ -94,6 +99,7 @@ export default function JobDialog({
   // Load active properties when dialog opens
   useEffect(() => {
     if (!open) return;
+    setPropertyQuery("");
     if (deferSave && deferredProperty) {
       setProperties([deferredProperty as any]);
       setPropertyValue([deferredProperty.id]);
@@ -174,6 +180,19 @@ export default function JobDialog({
     }
     return items;
   }, [properties, propertyValue]);
+  /** Filtered by the search box. Matches against the WHOLE rendered label —
+   *  property name, client, city and state — because a picker that hides the
+   *  thing you typed is worse than one with no search at all. */
+  const visiblePropertyItems = useMemo(() => {
+    const q = propertyQuery.trim().toLowerCase();
+    if (!q) return propertyItems;
+    return propertyItems.filter((i) => i.label.toLowerCase().includes(q));
+  }, [propertyItems, propertyQuery]);
+
+  /** The COLLECTION stays complete, even when the list is filtered. Chakra
+   *  resolves the selected value's label through it, so narrowing the
+   *  collection would blank the trigger text of an already-chosen property
+   *  the moment someone typed. */
   const propertyCollection = useMemo(
     () => createListCollection({ items: propertyItems }),
     [propertyItems]
@@ -291,12 +310,47 @@ export default function JobDialog({
                       </Select.Trigger>
                     </Select.Control>
                     <Select.Positioner>
-                      <Select.Content>
-                        {propertyItems.map((it) => (
-                          <Select.Item key={it.value} item={it.value}>
-                            <Select.ItemText>{it.label}</Select.ItemText>
-                          </Select.Item>
-                        ))}
+                      {/* BOUNDED AND SCROLLABLE. Unset, eighty items render a
+                          popover taller than the screen, and everything past
+                          the bottom edge is simply unreachable — which reads
+                          as "the list only has a few properties in it". */}
+                      <Select.Content maxH="340px" overflowY="auto">
+                        <Box
+                          position="sticky"
+                          top="0"
+                          zIndex={1}
+                          bg="bg.panel"
+                          px={2}
+                          pt={2}
+                          pb={1}
+                        >
+                          <Input
+                            size="sm"
+                            autoFocus
+                            placeholder="Search name, client, or city…"
+                            value={propertyQuery}
+                            onChange={(e) => setPropertyQuery(e.target.value)}
+                            // Chakra's Select does first-letter typeahead on
+                            // keystrokes it sees. Without this, typing here
+                            // ALSO jumps the highlighted option around and
+                            // space closes the menu mid-word.
+                            onKeyDown={(e) => e.stopPropagation()}
+                          />
+                          <Text fontSize="2xs" color="fg.muted" mt={1}>
+                            {visiblePropertyItems.length} of {propertyItems.length}
+                          </Text>
+                        </Box>
+                        {visiblePropertyItems.length === 0 ? (
+                          <Text fontSize="sm" color="fg.muted" px={3} py={3}>
+                            No properties match “{propertyQuery}”.
+                          </Text>
+                        ) : (
+                          visiblePropertyItems.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))
+                        )}
                       </Select.Content>
                     </Select.Positioner>
                   </Select.Root>
