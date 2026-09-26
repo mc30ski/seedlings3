@@ -1531,7 +1531,15 @@ function PhotoStrip({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: `repeat(${tileCount}, minmax(0, 1fr))`,
+        // COLUMNS FOR THE DESIGNED TILE COUNT, NOT THE PHOTO COUNT.
+        //
+        // Sized by `tileCount` — how many photos there actually are — one
+        // photo meant one column, the tile stretched to the full width of the
+        // panel, and its 4:3 ratio turned a thumbnail strip into a billboard
+        // that swallowed the whole board. A strip has to keep its tile size
+        // whether it holds one picture or eight; the empty cells are
+        // invisible, so a short day just leaves the row partly filled.
+        gridTemplateColumns: `repeat(${tiles}, minmax(0, 1fr))`,
         gap: "0.8vmin",
         flexShrink: 0,
       }}
