@@ -222,6 +222,37 @@ const STATUS_COLOR: Record<string, string> = {
  *  immune to it.
  */
 const BOARD_CSS = `
+        /* BURN-IN: the whole board drifts, very slowly, forever.
+           Most of this screen already moves — the photo wall pans, the promo
+           slides turn over, the age line ticks — but the panel borders, the
+           section titles and above all the QR code's white plate sit in
+           exactly the same pixels for months. A white square at full output
+           on a near-black ground is the worst thing on here for an OLED.
+
+           One full orbit every ten minutes, about 1vmin of travel: eleven
+           pixels on a 1080p panel, twice that on a 4K one. Nobody watching
+           can see it move, and every static edge gets smeared across enough
+           pixels to matter. It rides on a CSS transform, so the compositor does
+           the work and React never re-renders for it.
+
+           DELIBERATELY NOT gated on prefers-reduced-motion. This is not
+           decoration a viewer might find distracting — it is imperceptible,
+           it protects the panel, and a wall display has no viewer whose
+           preference we could be honouring anyway. */
+        @keyframes boardShift {
+          0%   { transform: translate(0, 0) }
+          25%  { transform: translate(1vmin, 0.7vmin) }
+          50%  { transform: translate(0, 1.4vmin) }
+          75%  { transform: translate(-1vmin, 0.7vmin) }
+          100% { transform: translate(0, 0) }
+        }
+
+        /* The board is exactly viewport-sized, so shifting it exposes a
+           sliver of whatever is behind at the trailing edge. Unset, that is
+           the browser's white default — a bright moving line at the screen
+           edge, which is the very thing the shift exists to prevent. */
+        html, body { background: #0d1117; }
+
         @keyframes wallIn { from { opacity: 0 } to { opacity: 1 } }
 
         /* A departure-board drop: the notice falls in from above, overshoots,
@@ -531,6 +562,10 @@ export default function DisplayPage() {
           position: "fixed",
           inset: 0,
           background: C.bg,
+          // See @keyframes boardShift. Ten minutes a lap; the travel stays
+          // well inside the padding below, so nothing is ever pushed off an
+          // edge.
+          animation: "boardShift 600s linear infinite",
           color: C.ink,
           fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
           // Overscan safe area: some TVs still crop 3-5% off every edge, and
