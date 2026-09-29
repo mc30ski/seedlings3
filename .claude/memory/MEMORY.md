@@ -71,6 +71,7 @@ split (JobsTab ~11k LOC).
 - [Business Start Date filter](feature_business_start_date.md) — hides pre-cutoff money from every view/export. Use `businessStartCutoff.ts` helpers. Prod default OFF.
 - [Equipment rental is income](project_equipment_rental_income.md) — `Checkout.rentalCost` is INCOME. **`EQUIPMENT_BILLING_ENABLED` is currently OFF.**
 - [Per-job equipment billing](feature_per_job_equipment_billing.md) — `Equipment.equivalentJobs` (NULL = flat daily). Don't reconstruct cost from days × rate.
+- [Job-service pause REMOVED](project_pause_redesign.md) — it was archive under another name. Holding work = reason-coded pause on the repeating occurrence, with history. Unarchive is the way back.
 - [Crews shipped](project_crews_roadmap.md) — splits written at release time. Two policy quirks — read before touching equipment billing.
 - [Payroll — Gusto CSV, three-tier visibility](reference_payroll.md) — rate columns aren't additive, blank ≠ zero, names never auto-matched.
 - [Never connect imported payroll to the P&L estimate](feedback_payroll_estimate_actual_firewall.md) — ground truth vs tunable estimate; bidirectional gate.

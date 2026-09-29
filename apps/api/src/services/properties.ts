@@ -5,8 +5,8 @@ import { writeAudit } from "../lib/auditLogger";
 import { ServiceError } from "../lib/errors";
 import { randomBytes } from "crypto";
 import {
-  applyJobPauseSideEffectsInTx,
-  applyJobResumeSideEffectsInTx,
+  clearScheduledVisitsInTx,
+  rebuildRecurringChainInTx,
 } from "./jobs";
 import type {
   ServicesProperties,
@@ -179,7 +179,7 @@ export const properties: ServicesProperties = {
         // Archive side effects — delete future SCHEDULED STANDARD
         // occurrences (parity with pause) so no worker gets dispatched
         // to an archived property.
-        await applyJobPauseSideEffectsInTx(
+        await clearScheduledVisitsInTx(
           tx,
           currentUserId,
           j.id,
@@ -235,12 +235,12 @@ export const properties: ServicesProperties = {
         // Unarchive side effects — rebuild recurring chain (one fresh
         // SCHEDULED occurrence) so the operator doesn't have to force
         // it manually. Parity with unpause.
-        await applyJobResumeSideEffectsInTx(
+        await rebuildRecurringChainInTx(
           tx,
           currentUserId,
           j.id,
-          { cascadeGroupId, triggeredBy: "property_unarchive", propertyId: id },
           "UNARCHIVED_REGENERATED_NEXT_OCCURRENCE",
+          { cascadeGroupId, triggeredBy: "property_unarchive", propertyId: id },
         );
         await writeAudit(tx, AUDIT.JOB.UNARCHIVED, currentUserId, {
           jobId: j.id,

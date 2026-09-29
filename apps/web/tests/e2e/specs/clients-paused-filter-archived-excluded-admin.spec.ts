@@ -7,13 +7,19 @@ import {
 } from "../helpers/db";
 
 /**
- * Regression: "Paused services only" filter on Admin → Directory →
+ * Regression: the "Paused repeating only" filter on Admin → Directory →
  * Clients used to include ARCHIVED clients (and clients on archived
- * properties) that happened to have a Job in status=PAUSED from before
- * archival. Operator screenshot on 2026-07-11 caught Claire (Archived)
- * appearing in the filter. The fix scopes the pausedJobsCount SQL
- * aggregate to (client.status=ACTIVE AND property.status=ACTIVE) so
- * archived-anything drops to zero and the filter naturally excludes it.
+ * properties) that happened to be holding work from before archival.
+ * Operator screenshot on 2026-07-11 caught Claire (Archived) appearing in
+ * the filter. The fix scopes the count SQL to (client.status=ACTIVE AND
+ * property.status=ACTIVE) so archived-anything drops to zero and the
+ * filter naturally excludes it.
+ *
+ * The held state moved while this predicate did not: the count used to be
+ * Jobs in status=PAUSED, and job-level pause is gone (it was Archive under
+ * a second name), so the fixture is now a STREAM_PAUSED occurrence. The
+ * exclusion this spec guards is unchanged — which is the point of keeping
+ * it pointed at the new shape rather than deleting it.
  */
 
 let prisma: PrismaClient;
@@ -42,8 +48,8 @@ async function gotoAdminClients(page: any) {
 }
 
 test.describe("Clients tab — paused filter excludes archived", () => {
-  test("Archived client with a paused Job does NOT appear when 'Paused services only' is on; active peer still does", async ({ page }) => {
-    // Two scratch clients, both with a PAUSED job:
+  test("an archived client holding a repeating visit stays out of 'Paused repeating only'; its active peer does not", async ({ page }) => {
+    // Two scratch clients, both holding a repeating visit:
     //   activeClient  — status ACTIVE   → should appear in filter
     //   archivedClient — status ARCHIVED → should NOT appear in filter
     const ACTIVE_NAME = `E2E ActiveWithPause ${Date.now()}`;
@@ -58,7 +64,7 @@ test.describe("Clients tab — paused filter excludes archived", () => {
       contacts: [{ firstName: "Archived", lastName: "Pause", isPrimary: true }],
     });
 
-    async function attachPausedJob(clientId: string) {
+    async function attachPausedRepeating(clientId: string) {
       const property = await prisma.property.create({
         data: {
           clientId,
@@ -75,14 +81,26 @@ test.describe("Clients tab — paused filter excludes archived", () => {
         data: {
           propertyId: property.id,
           kind: "SINGLE_ADDRESS",
-          status: "PAUSED",
-          description: "E2E paused job",
+          status: "ACCEPTED",
+          frequencyDays: 14,
+          description: "E2E paused repeating job",
         },
       });
-      return { propertyId: property.id, jobId: job.id };
+      const occurrence = await prisma.jobOccurrence.create({
+        data: {
+          jobId: job.id,
+          kind: "SINGLE_ADDRESS",
+          workflow: "STANDARD",
+          status: "STREAM_PAUSED",
+          startAt: new Date(),
+          streamPausedAt: new Date(),
+          streamPauseReasonCode: "customer_hold",
+        },
+      });
+      return { propertyId: property.id, jobId: job.id, occurrenceId: occurrence.id };
     }
-    const activeFixtures = await attachPausedJob(activeScratch.clientId);
-    const archivedFixtures = await attachPausedJob(archivedScratch.clientId);
+    const activeFixtures = await attachPausedRepeating(activeScratch.clientId);
+    const archivedFixtures = await attachPausedRepeating(archivedScratch.clientId);
 
     // Archive the second client so it hits the exclusion predicate.
     await prisma.client.update({
@@ -93,9 +111,9 @@ test.describe("Clients tab — paused filter excludes archived", () => {
     try {
       await gotoAdminClients(page);
 
-      // Toggle the "Paused services only" filter on.
+      // Toggle the "Paused repeating only" filter on.
       const pausedToggle = page.getByRole("button", {
-        name: /Show only clients with paused services|Showing only clients with paused services/i,
+        name: /(Show|Showing) only clients with a paused repeating service/i,
       });
       await expect(pausedToggle).toBeVisible({ timeout: 15_000 });
       await pausedToggle.click();
@@ -104,7 +122,10 @@ test.describe("Clients tab — paused filter excludes archived", () => {
       await expect(page.getByText(ACTIVE_NAME).first()).toBeVisible({ timeout: 15_000 });
       await expect(page.getByText(ARCHIVED_NAME)).toHaveCount(0);
     } finally {
-      // Clean up in FK-safe order.
+      // Clean up in FK-safe order — occurrences first.
+      await prisma.jobOccurrence.deleteMany({
+        where: { id: { in: [activeFixtures.occurrenceId, archivedFixtures.occurrenceId] } },
+      });
       await prisma.job.deleteMany({
         where: { id: { in: [activeFixtures.jobId, archivedFixtures.jobId] } },
       });

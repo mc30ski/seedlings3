@@ -284,12 +284,14 @@ export type Client = {
   updatedAt?: string | null;
 
   contacts?: Contact[];
-  /** Number of Jobs in status PAUSED across this client's properties.
-   *  Drives the "N services paused" hint + click-through on the Admin
-   *  Clients tab. Both bulk-paused (via "Pause services") and
-   *  individually-paused Jobs count. Populated by /admin/clients only;
-   *  the read-only /clients (worker) endpoint may omit it. */
-  pausedJobsCount?: number;
+  /** Repeating visits currently on hold across this client's services —
+   *  STREAM_PAUSED occurrences. Drives the "N repeating services paused"
+   *  hint + click-through on the Admin Clients tab. Was `pausedJobsCount`,
+   *  a count of Jobs in status PAUSED; that operation is gone (it was
+   *  archiving under a second name), and a held repeating visit is what
+   *  remains. Populated by /admin/clients only; the read-only /clients
+   *  (worker) endpoint may omit it. */
+  pausedRepeatingCount?: number;
 };
 
 export const CLIENT_KIND = [
@@ -342,7 +344,14 @@ export type ContactStatus = (typeof CONTACT_STATUS)[number];
 export const JOB_KIND = ["SINGLE_ADDRESS", "ENTIRE_SITE"] as const;
 export type JobKind = (typeof JOB_KIND)[number];
 
-export const JOB_STATUS = ["PROPOSED", "ACCEPTED", "PAUSED", "ARCHIVED"] as const;
+// PAUSED is gone from JobStatus — pausing a job service deleted every
+// scheduled visit and rebuilt the chain on resume, which is exactly what
+// Archive does through the same helpers. Holding work is now a repeating
+// pause on the occurrence (JobOccurrenceStatus.STREAM_PAUSED), which keeps
+// the visit, records why, and resumes onto a date you choose. Don't add it
+// back: the API enum no longer has the value, so a filter offering it would
+// return nothing and a PATCH sending it would 400.
+export const JOB_STATUS = ["PROPOSED", "ACCEPTED", "ARCHIVED"] as const;
 export type JobStatus = (typeof JOB_STATUS)[number];
 
 export const JOB_OCCURRENCE_STATUS = [
@@ -514,6 +523,18 @@ export type JobListItem = {
   assigneeCount: number;
   defaultAssignees?: { id: string; userId: string; role?: string | null; user?: { id: string; displayName?: string | null; email?: string | null } }[];
   occurrenceCount?: number;
+  /** Rollup of this service's repeating streams. A job service is only a
+   *  default — what matters is whether it actually has a live repeating
+   *  stream, and how many are on hold. Since job-pause was removed,
+   *  Job.status no longer tells you that. */
+  repeatingSummary?: {
+    total: number;
+    active: number;
+    paused: number;
+    /** Distinct reason codes among the paused ones. `__UNCODED__` marks a
+     *  stream paused before the reason taxonomy existed. */
+    pausedReasonCodes: string[];
+  };
   description?: string | null;
   notes?: string | null;
   guidanceNote?: string | null;

@@ -18,9 +18,27 @@ type Occ = {
   streamPausedAt?: string | null;
   streamResumeReminderAt?: string | null;
   streamPauseReason?: string | null;
+  /** Taxonomy key. Rows paused before the taxonomy existed have none. */
+  streamPauseReasonCode?: string | null;
 };
 
-export default function RepeatingPauseInfoLine({ occ }: { occ: Occ }) {
+/** Label for a reason code, from the taxonomy the caller already loaded.
+ *  Falls back to the raw code so an unknown or retired key still renders
+ *  something, rather than the reason silently vanishing from the card. */
+function labelFor(code: string | null | undefined, reasons: { code: string; label: string }[]) {
+  if (!code) return null;
+  return reasons.find((r) => r.code === code)?.label ?? code;
+}
+
+export default function RepeatingPauseInfoLine({
+  occ,
+  reasons = [],
+}: {
+  occ: Occ;
+  /** The pause-reason taxonomy. Optional so existing callers keep working;
+   *  without it the coded reason renders as its raw key. */
+  reasons?: { code: string; label: string }[];
+}) {
   const isPaused =
     (occ.status as string | null | undefined) === "STREAM_PAUSED" ||
     !!occ.streamPausedAt;
@@ -54,6 +72,14 @@ export default function RepeatingPauseInfoLine({ occ }: { occ: Occ }) {
               {occ.streamResumeReminderAt && (
                 <>Reminder to resume by <b>{fmtDate(occ.streamResumeReminderAt)}</b></>
               )}
+            </Text>
+          )}
+          {/* THE CODED REASON FIRST. It is the categorical answer — what the
+              filters and counts are built on — and it reads as a label, not a
+              sentence. The operator's note follows as the detail. */}
+          {labelFor(occ.streamPauseReasonCode, reasons) && (
+            <Text fontSize="xs" fontWeight="semibold" color="purple.fg" lineHeight="1.3">
+              {labelFor(occ.streamPauseReasonCode, reasons)}
             </Text>
           )}
           {occ.streamPauseReason && (

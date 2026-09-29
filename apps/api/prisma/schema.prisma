@@ -479,6 +479,9 @@ model User {
   promotionsUpdated            Promotion[]            @relation("PromotionUpdater")
   promotionsStarted            Promotion[]            @relation("PromotionStarter")
   promotionsClosed             Promotion[]            @relation("PromotionCloser")
+  streamPausesOpened  JobOccurrencePauseEvent[] @relation("StreamPausedBy")
+  streamPausesResumed JobOccurrencePauseEvent[] @relation("StreamResumedBy")
+
   promotionLandingPagesCreated PromotionLandingPage[] @relation("PromotionLandingCreator")
   promotionLandingPagesUpdated PromotionLandingPage[] @relation("PromotionLandingUpdater")
   // Vanity URL audit-actor back-relations — SetNull on the forward
@@ -965,10 +968,21 @@ enum JobKind {
   SINGLE_ADDRESS
 }
 
+/// A service's lifecycle. There is deliberately NO `PAUSED`.
+///
+/// Job-level pause was removed: it deleted every scheduled visit and rebuilt
+/// the chain on resume, which is the same operation `ARCHIVED` already
+/// performs through the same helpers — the only difference was that a paused
+/// job stayed in the list. Two verbs for one behaviour, and the destructive
+/// one sat on the card while the reversible one was buried.
+///
+/// To hold a recurring service temporarily, pause the repeating OCCURRENCE
+/// (JobOccurrenceStatus.STREAM_PAUSED) — that keeps the visit in place,
+/// records why, and resumes onto a date you choose. To end a service, archive
+/// it; archiving is reversible via unarchiveJob.
 enum JobStatus {
   PROPOSED
   ACCEPTED
-  PAUSED
   ARCHIVED
 }
 
@@ -1327,9 +1341,18 @@ model JobOccurrence {
   //
   // Distinct from `status = PAUSED` which is the WORKER TIMER paused
   // state during an in-progress job — completely different concept.
+  pauseEvents            JobOccurrencePauseEvent[]
+
   streamPausedAt         DateTime?
   streamPausedById       String?
+  /// Free-text note. Always optional, always available — it is what actually
+  /// happened, in the operator's words.
   streamPauseReason      String?
+  /// Taxonomy key from the PAUSE_REASONS setting (e.g. "season_over"). This
+  /// is what the filters and counts read; the free text above is not
+  /// aggregatable. Nullable because rows paused before the taxonomy existed
+  /// carry only a note.
+  streamPauseReasonCode  String?
   streamResumeReminderAt DateTime?
 
   // "Next visit not scheduled" warning — suppressed by an admin.
@@ -1421,6 +1444,50 @@ model JobOccurrence {
   @@index([kind])
   @@index([hoursApprovedAt])
   @@index([streamResumeReminderAt])
+}
+
+/// One pause of a repeating stream, kept after it ends.
+///
+/// The live pause state lives on JobOccurrence (streamPausedAt and friends)
+/// and is CLEARED on resume — which is right for "is this paused now", and
+/// useless for "how many services did we lose to the season last winter".
+/// This table is the answer to the second question: a row is written when a
+/// stream is paused and stamped when it resumes, so the reason survives.
+///
+/// Deliberately append-only from the app's point of view. Editing a pause's
+/// reason updates the OPEN row; resuming stamps it; nothing deletes one.
+model JobOccurrencePauseEvent {
+  id           String        @id @default(cuid())
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+
+  /// Taxonomy key at the time of pausing. Snapshotted rather than joined:
+  /// the PAUSE_REASONS setting is editable, and a reason retired next year
+  /// must not rewrite what last winter's pauses said.
+  reasonCode  String
+  reasonLabel String
+  /// The operator's free-text note, if they wrote one.
+  note        String? @db.Text
+
+  pausedAt   DateTime  @default(now())
+  pausedById String?
+  pausedBy   User?     @relation("StreamPausedBy", fields: [pausedById], references: [id], onDelete: SetNull)
+  /// The reminder set at pause time, kept for the record even if it passed.
+  reminderAt DateTime?
+
+  /// Null while the pause is still open. Set on resume.
+  resumedAt    DateTime?
+  resumedById  String?
+  resumedBy    User?     @relation("StreamResumedBy", fields: [resumedById], references: [id], onDelete: SetNull)
+  /// The date the stream was resumed ONTO — resume always picks a fresh
+  /// start, so this is not derivable from the occurrence afterwards.
+  resumedOntoAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([occurrenceId, pausedAt])
+  @@index([reasonCode, pausedAt])
+  @@index([resumedAt])
 }
 
 model JobOccurrencePhoto {

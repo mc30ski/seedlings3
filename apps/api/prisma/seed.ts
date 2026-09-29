@@ -3,6 +3,7 @@ import { PARCEL_SETTINGS } from "../src/services/parcels";
 import { ALERT_SETTINGS } from "../src/services/weatherAlerts";
 import { HOURLY_WEATHER_SETTINGS } from "../src/services/hourlyForecast";
 import { MARKET_RATE_SETTINGS } from "../src/services/marketRate";
+import { DEFAULT_PAUSE_REASONS, PAUSE_REASONS_SETTING_KEY } from "../src/services/pauseReasons";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
@@ -222,6 +223,10 @@ const SETTING_SECTIONS: Record<string, string> = {
   EXPENSE_CATEGORIES: "catalogs",
   EQUIPMENT_RENTAL_INCOME_CONFIG: "catalogs",
   GUIDE_CATEGORIES: "catalogs",
+  // Why a repeating visit is held. A taxonomy like the rest — the operator
+  // adds "Storm damage" in October and needs it that afternoon, not after a
+  // migration. See services/pauseReasons.ts.
+  REPEATING_JOB_OCCURRENCE_PAUSE_REASONS: "catalogs",
   // Property Records — public county parcel lookup. Every endpoint is a
   // setting so covering another state is a config change, not a deploy.
   PARCEL_ENABLED: "parcel",
@@ -5062,14 +5067,38 @@ async function seedPolicyFixtures() {
 }
 
 /**
- * Fixtures for the "Paused repeating to review" task/alert. Grabs the
- * two earliest SCHEDULED STANDARD occurrences on distinct repeating
- * jobs and transitions them to STREAM_PAUSED with a past reminder date
- * so they immediately show up on the tasks page + alert chip after a
- * reseed. Lets the operator verify the deep-link + filter + expand
- * flow (goToStreamPauseReminders) without manually pausing a stream.
+ * Fixtures for the repeating-pause feature: the reason taxonomy, a spread of
+ * currently-held streams across different reasons, and one already-resumed
+ * pause so the history table is not empty on a fresh dev database.
+ *
+ * WHY THE SPREAD MATTERS. The reason filter is only testable against more
+ * than one reason — with every paused stream on the same code, "narrow by
+ * reason" and "no filter" return the same rows and a broken filter looks
+ * like a working one. Two of the held streams get a reminder date in the
+ * past so they also land on the Tasks page and the alert chip; one gets a
+ * future reminder and one gets none, which is the "stop bugging me, I still
+ * want to find it" case the Dismiss button produces.
  */
 async function seedStreamPauseFixtures() {
+  // The taxonomy itself, as a Setting — user-facing taxonomies in this app
+  // are JSON settings, not DB enums, so the operator can add "Storm damage"
+  // in October without a migration. Seeded from the shipped defaults.
+  const reasonsJson = JSON.stringify(DEFAULT_PAUSE_REASONS);
+  const reasonsDescription =
+    "Why a repeating visit is on hold — the dropdown behind Pause repeating. Renaming a label is always safe. The code behind it is stored on every visit paused for that reason, so changing one orphans those pauses; retire a reason instead of deleting it and past pauses keep reading correctly.";
+  await prisma.setting.upsert({
+    where: { key: PAUSE_REASONS_SETTING_KEY },
+    create: {
+      key: PAUSE_REASONS_SETTING_KEY,
+      value: reasonsJson,
+      description: reasonsDescription,
+      updatedById: MICHAEL_ID,
+    },
+    // Value is NOT overwritten on reseed: once the operator has edited the
+    // list in dev, a reseed should not silently throw their reasons away.
+    update: { description: reasonsDescription, updatedById: MICHAEL_ID },
+  });
+
   const candidates = await prisma.jobOccurrence.findMany({
     where: {
       status: "SCHEDULED",
@@ -5080,44 +5109,136 @@ async function seedStreamPauseFixtures() {
       job: { frequencyDays: { not: null } },
     },
     orderBy: { startAt: "asc" },
-    select: { id: true, jobId: true },
+    select: { id: true, jobId: true, startAt: true, frequencyDays: true },
   });
-  // De-dupe by jobId so the two paused rows come from different jobs
-  // — makes the "expand only this job" per-row Review click distinct
-  // from the "expand every reminder-due job" section-arrow click.
+  // De-dupe by jobId so the paused rows come from different services —
+  // makes the "expand only this job" per-row Review click distinct from the
+  // "expand every reminder-due job" section-arrow click, and gives the
+  // Clients-tab paused count more than one service to point at.
   const seenJobs = new Set<string>();
-  const targets: string[] = [];
+  const targets: typeof candidates = [];
   for (const c of candidates) {
-    if (seenJobs.has(c.jobId)) continue;
+    if (!c.jobId || seenJobs.has(c.jobId)) continue;
     seenJobs.add(c.jobId);
-    targets.push(c.id);
-    if (targets.length >= 2) break;
+    targets.push(c);
+    if (targets.length >= 5) break;
   }
   if (targets.length === 0) {
     console.log("  (skipping stream-pause fixture — no SCHEDULED repeating occurrences)");
     return;
   }
-  const nowMinus1Day = daysAgo(1, 12);
-  const nowMinus7Days = daysAgo(7, 12);
-  const reasons = [
-    "Client traveling — resume when they get back",
-    "Sprinkler repair pending — hold until fixed",
+
+  // One entry per fixture, in priority order — a smaller dev database just
+  // gets the first few. `reminder` is resolved against the reason's own
+  // defaultReminderDays where it says "default".
+  const plan: {
+    code: string;
+    note: string | null;
+    /** Past = shows in "to review" immediately. */
+    reminder: "past" | "today" | "future" | "none";
+    pausedDaysAgo: number;
+  }[] = [
+    {
+      code: "non_payment",
+      note: "Two invoices outstanding — holding further visits until they clear.",
+      reminder: "past",
+      pausedDaysAgo: 21,
+    },
+    {
+      code: "customer_hold",
+      note: "Client is travelling — resume when they are back.",
+      reminder: "today",
+      pausedDaysAgo: 7,
+    },
+    {
+      code: "season_over",
+      // No note on purpose: the coded reason has to stand on its own on
+      // every card, and this is the row that proves it does.
+      note: null,
+      reminder: "future",
+      pausedDaysAgo: 30,
+    },
+    {
+      code: "property_inaccessible",
+      note: "Driveway is being repoured. Foreman said three weeks.",
+      reminder: "future",
+      pausedDaysAgo: 4,
+    },
+    {
+      code: "customer_unresponsive",
+      note: "Four calls, no answer. Not chasing further for now.",
+      // The dismissed-reminder shape: paused, findable, off the task list.
+      reminder: "none",
+      pausedDaysAgo: 45,
+    },
   ];
+
   for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    const step = plan[i % plan.length];
+    const reason = DEFAULT_PAUSE_REASONS.find((r) => r.code === step.code)!;
+    const pausedAt = daysAgo(step.pausedDaysAgo, 12);
+    const reminderAt =
+      step.reminder === "none"
+        ? null
+        : step.reminder === "past"
+          ? daysAgo(1, 12)
+          : step.reminder === "today"
+            ? new Date()
+            : daysFromNow(reason.defaultReminderDays ?? 21, 12);
+
     await prisma.jobOccurrence.update({
-      where: { id: targets[i] },
+      where: { id: t.id },
       data: {
         status: "STREAM_PAUSED",
-        streamPausedAt: i === 0 ? nowMinus7Days : nowMinus1Day,
+        streamPausedAt: pausedAt,
         streamPausedById: MICHAEL_ID,
-        streamPauseReason: reasons[i],
-        // Reminder in the past → immediately shows in the "to review"
-        // list on load.
-        streamResumeReminderAt: i === 0 ? nowMinus1Day : new Date(),
+        streamPauseReasonCode: step.code,
+        streamPauseReason: step.note,
+        streamResumeReminderAt: reminderAt,
+      },
+    });
+    // The open history row. Label is SNAPSHOTTED, not joined — renaming a
+    // reason next year must not rewrite what this winter's pauses said.
+    await prisma.jobOccurrencePauseEvent.create({
+      data: {
+        occurrenceId: t.id,
+        reasonCode: step.code,
+        reasonLabel: reason.label,
+        note: step.note,
+        pausedAt,
+        pausedById: MICHAEL_ID,
+        reminderAt,
       },
     });
   }
-  console.log(`  seeded ${targets.length} paused-repeating occurrence(s) with due reminders`);
+
+  // A CLOSED pause on one of the held streams, so the history table has a
+  // resumed row and not only open ones. Paused last autumn for the season
+  // and resumed in the spring: the shape the reason history exists to keep.
+  const historyTarget = targets[0];
+  const closedPausedAt = daysAgo(240, 12);
+  const closedResumedAt = daysAgo(120, 12);
+  await prisma.jobOccurrencePauseEvent.create({
+    data: {
+      occurrenceId: historyTarget.id,
+      reasonCode: "season_over",
+      reasonLabel: "Season over",
+      note: "Growth stopped — picking back up in the spring.",
+      pausedAt: closedPausedAt,
+      pausedById: MICHAEL_ID,
+      reminderAt: daysAgo(150, 12),
+      resumedAt: closedResumedAt,
+      resumedById: MICHAEL_ID,
+      resumedOntoAt: daysAgo(118, 12),
+    },
+  });
+
+  console.log(
+    `  seeded ${targets.length} paused-repeating occurrence(s) across ${
+      new Set(targets.map((_, i) => plan[i % plan.length].code)).size
+    } reason(s), + 1 resumed pause in history`,
+  );
 }
 
 /**

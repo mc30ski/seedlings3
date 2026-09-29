@@ -1189,6 +1189,278 @@ function PaymentFromOptionsEditor({ value, onChange, onSave, onCancel, saving }:
   );
 }
 
+/** Dedicated editor for the repeating-pause reason taxonomy.
+ *
+ *  Four fields per row, and each one earns its place:
+ *    • Label — what the operator picks from the dropdown.
+ *    • Code — stored on every paused visit and SNAPSHOTTED into its pause
+ *      history. Editing a code on a reason that is already in use orphans
+ *      those rows, so the field locks itself once a code has been saved and
+ *      has to be deliberately unlocked. New rows derive it from the label.
+ *    • Hint — the sentence under the option. Two similar reasons are only
+ *      distinguishable by this.
+ *    • Check back in — days ahead to pre-fill the reminder. It is what stops
+ *      a pause becoming a disappearance: the one pause that shipped before
+ *      this existed sat silent for three months, invisible to the alerts and
+ *      the Tasks page, because both only query reminders already due.
+ *
+ *  Retiring, not deleting, is the safe way to withdraw a reason: history
+ *  rows keep rendering their label, but it is no longer offered for new
+ *  pauses. Deleting a code that history references leaves those pauses
+ *  showing the raw key, so the editor says so on the row.
+ */
+type PauseReasonRow = {
+  code: string;
+  label: string;
+  hint: string;
+  defaultReminderDays: number | null;
+  retired: boolean;
+};
+
+/** Derive a code from a label the way the operator would expect. Only used
+ *  for NEW rows — an existing code is never rewritten from its label,
+ *  because the label is cosmetic and the code is a foreign key in spirit. */
+function codeFromLabel(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+}
+
+function PauseReasonsEditor({ value, onChange, onSave, onCancel, saving }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  // Codes present when editing started. Anything in here is potentially
+  // referenced by a paused visit or a history row, so its code is locked
+  // until the operator explicitly unlocks it.
+  const [establishedCodes] = useState<Set<string>>(() => {
+    try {
+      const p = JSON.parse(value);
+      return new Set(Array.isArray(p) ? p.map((r: any) => String(r?.code ?? "")) : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const [unlocked, setUnlocked] = useState<Set<string>>(new Set());
+
+  let items: PauseReasonRow[] = [];
+  let parseError: string | null = null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) throw new Error("must be an array");
+    items = parsed.map((r: any) => ({
+      code: String(r?.code ?? ""),
+      label: String(r?.label ?? ""),
+      hint: String(r?.hint ?? ""),
+      defaultReminderDays:
+        typeof r?.defaultReminderDays === "number" ? r.defaultReminderDays : null,
+      retired: r?.retired === true,
+    }));
+  } catch (e: any) {
+    parseError = e?.message ?? "invalid JSON";
+  }
+
+  /** Serialize back to the stored shape. `hint` and `defaultReminderDays`
+   *  round-trip as undefined/null rather than "" / 0, so a blank field does
+   *  not become a reason that claims a same-day reminder. */
+  function emit(rows: PauseReasonRow[]) {
+    onChange(
+      JSON.stringify(
+        rows.map((r) => ({
+          code: r.code,
+          label: r.label,
+          ...(r.hint.trim() ? { hint: r.hint.trim() } : {}),
+          defaultReminderDays: r.defaultReminderDays,
+          ...(r.retired ? { retired: true } : {}),
+        })),
+      ),
+    );
+  }
+
+  function update(idx: number, patch: Partial<PauseReasonRow>) {
+    emit(items.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
+  }
+  function remove(idx: number) {
+    emit(items.filter((_, i) => i !== idx));
+  }
+  function add() {
+    emit([...items, { code: "", label: "", hint: "", defaultReminderDays: null, retired: false }]);
+  }
+  function move(idx: number, delta: number) {
+    const next = [...items];
+    const target = idx + delta;
+    if (target < 0 || target >= next.length) return;
+    [next[idx], next[target]] = [next[target], next[idx]];
+    emit(next);
+  }
+
+  if (parseError) {
+    return (
+      <VStack align="stretch" gap={2} w="full">
+        <Text fontSize="xs" color="red.fg">
+          Repeating Job Occurrence Pause Reasons JSON is malformed: {parseError}
+        </Text>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </VStack>
+    );
+  }
+
+  const activeCount = items.filter((r) => !r.retired).length;
+
+  return (
+    <VStack align="stretch" gap={3} w="full">
+      <Text fontSize="2xs" color="fg.muted">
+        Why a repeating visit is on hold. The operator picks one of these every time they
+        pause — it is what makes a paused visit findable again, by reason, months later.
+        Order here is the order of the dropdown.
+      </Text>
+
+      {activeCount === 0 && (
+        <Text fontSize="xs" color="red.fg">
+          At least one reason must stay active — the reason is required when pausing, so a
+          list with none makes pausing impossible.
+        </Text>
+      )}
+
+      <VStack align="stretch" gap={3} w="full">
+        {items.map((row, idx) => {
+          // "New" is not a stored flag — it is simply a code that was not
+          // there when editing started, so nothing can reference it yet.
+          const isNew = !establishedCodes.has(row.code);
+          const locked = !isNew && !unlocked.has(row.code);
+          return (
+            <Box
+              key={idx}
+              borderWidth="1px"
+              borderColor={row.retired ? "border.subtle" : "border.emphasized"}
+              borderRadius="md"
+              p={3}
+              opacity={row.retired ? 0.65 : 1}
+            >
+              <VStack align="stretch" gap={2}>
+                <HStack gap={2} w="full" align="center">
+                  <Input
+                    size="sm"
+                    value={row.label}
+                    onChange={(e) => {
+                      const label = e.target.value;
+                      // A new row's code tracks its label until saved; an
+                      // established one never does.
+                      update(idx, isNew ? { label, code: codeFromLabel(label) } : { label });
+                    }}
+                    placeholder="e.g., Non-payment"
+                    flex="1"
+                  />
+                  <Button size="xs" variant="ghost" onClick={() => move(idx, -1)} disabled={idx === 0} title="Move up">↑</Button>
+                  <Button size="xs" variant="ghost" onClick={() => move(idx, 1)} disabled={idx === items.length - 1} title="Move down">↓</Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    colorPalette="red"
+                    onClick={() => remove(idx)}
+                    title={
+                      establishedCodes.has(row.code)
+                        ? "Delete — any past pause using this reason will show its raw code. Retire it instead to keep those readable."
+                        : "Delete"
+                    }
+                  >
+                    ×
+                  </Button>
+                </HStack>
+
+                <Input
+                  size="sm"
+                  value={row.hint}
+                  onChange={(e) => update(idx, { hint: e.target.value })}
+                  placeholder="Sentence shown under the option — what tells this apart from a similar reason"
+                />
+
+                <HStack gap={3} w="full" wrap="wrap" align="center">
+                  <HStack gap={1} align="center">
+                    <Text fontSize="2xs" color="fg.muted" whiteSpace="nowrap">Code</Text>
+                    <Input
+                      size="xs"
+                      value={row.code}
+                      disabled={locked}
+                      onChange={(e) => update(idx, { code: e.target.value })}
+                      placeholder="lower_case_key"
+                      width="180px"
+                      title={
+                        locked
+                          ? "Stored on every visit paused for this reason. Unlock only if you are sure none exist."
+                          : "Lower-case letters, numbers and underscores."
+                      }
+                    />
+                    {locked && (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => setUnlocked(new Set([...unlocked, row.code]))}
+                        title="Editing a code orphans every pause already recorded against it"
+                      >
+                        Unlock
+                      </Button>
+                    )}
+                  </HStack>
+
+                  <HStack gap={1} align="center">
+                    <Text fontSize="2xs" color="fg.muted" whiteSpace="nowrap">Check back in</Text>
+                    <Input
+                      size="xs"
+                      type="number"
+                      min={0}
+                      value={row.defaultReminderDays ?? ""}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        update(idx, { defaultReminderDays: raw === "" ? null : Math.round(Number(raw)) });
+                      }}
+                      placeholder="—"
+                      width="90px"
+                    />
+                    <Text fontSize="2xs" color="fg.muted" whiteSpace="nowrap">days</Text>
+                  </HStack>
+
+                  <HStack gap={1} align="center" as="label" cursor="pointer">
+                    <input
+                      type="checkbox"
+                      checked={row.retired}
+                      onChange={(e) => update(idx, { retired: e.target.checked })}
+                    />
+                    <Text fontSize="2xs" color="fg.muted" whiteSpace="nowrap">Retired</Text>
+                  </HStack>
+                </HStack>
+
+                {row.retired && (
+                  <Text fontSize="2xs" color="fg.muted">
+                    Not offered for new pauses. Visits already held for this reason keep showing it.
+                  </Text>
+                )}
+                {!locked && establishedCodes.has(row.code) && (
+                  <Text fontSize="2xs" color="orange.fg">
+                    Code unlocked. Changing it orphans every pause already recorded against it —
+                    those will show the raw key instead of this label.
+                  </Text>
+                )}
+              </VStack>
+            </Box>
+          );
+        })}
+        <Button size="xs" variant="outline" onClick={add} alignSelf="flex-start">+ Add reason</Button>
+      </VStack>
+
+      <HStack gap={2} justify="flex-end">
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+        <Button size="sm" onClick={onSave} loading={saving}>Save</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 /** Dedicated editor for the EXPENSE_CATEGORIES taxonomy — label, Schedule C
  *  line, QuickBooks chart-of-accounts mapping, and the selectable flag
  *  (off = export-only synthetic category). qbAccount is stored as
@@ -2050,6 +2322,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         "DOCUMENT_TYPES",
         "DOCUMENT_MAX_SIZE_MB",
         "TIMELINE_CATEGORIES",
+        "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS",
         "SOCIAL_LINKS",
         "WEATHER_API_KEY",
       ];
@@ -2101,6 +2374,13 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         const { invalidateExpenseCategories } = await import("@/src/lib/useExpenseCategories");
         invalidateExpenseCategories();
       }
+      // Every surface that renders a reason label holds the taxonomy in a
+      // module-scope cache, so without this the operator saves a rename and
+      // the job cards keep showing the old one until a hard refresh.
+      if (key === "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS") {
+        const { invalidatePauseReasons } = await import("@/src/lib/pauseReasons");
+        invalidatePauseReasons();
+      }
       // BSD settings — same rationale as saveSettingValue: refresh the
       // provider so the status panel + banner reflect the new cutoff
       // without requiring a page reload.
@@ -2129,6 +2409,13 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       if (key === "EXPENSE_CATEGORIES") {
         const { invalidateExpenseCategories } = await import("@/src/lib/useExpenseCategories");
         invalidateExpenseCategories();
+      }
+      // Every surface that renders a reason label holds the taxonomy in a
+      // module-scope cache, so without this the operator saves a rename and
+      // the job cards keep showing the old one until a hard refresh.
+      if (key === "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS") {
+        const { invalidatePauseReasons } = await import("@/src/lib/pauseReasons");
+        invalidatePauseReasons();
       }
       // BSD settings change the effective cutoff resolved by the server.
       // Refresh the provider so the status panel + reveal banner flip
@@ -2481,6 +2768,14 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         if (s.key === "EXPENSE_CATEGORIES") {
                           return <ExpenseCategoriesEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
                         }
+                        // Dedicated editor for the repeating-pause reason
+                        // taxonomy — label, hint, code, reminder default and
+                        // a retire flag. The generic key/label form cannot
+                        // express the reminder horizon or the code lock, and
+                        // both matter: see PauseReasonsEditor.
+                        if (s.key === "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS") {
+                          return <PauseReasonsEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
+                        }
                         // Dedicated editor for PAYMENT_FROM_OPTIONS — flat
                         // list of preset labels for the Add Expense dialog.
                         if (s.key === "PAYMENT_FROM_OPTIONS") {
@@ -2684,12 +2979,29 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           // Array of {key, label, equipmentKind?} objects
                           if (Array.isArray(parsed)) {
                             if (parsed.length === 0) return <Text fontSize="xs" color="fg.muted" fontStyle="italic">No items configured</Text>;
-                            if (parsed[0]?.key) {
+                            // `key` is the usual identifier; the pause-reason
+                            // taxonomy calls it `code` because that is what it
+                            // is called everywhere it is stored. Without the
+                            // fallback this one taxonomy was the only catalog
+                            // with no collapsed preview at all.
+                            if (parsed[0]?.key || parsed[0]?.code) {
                               return (
                                 <Box display="flex" gap="4px" flexWrap="wrap">
-                                  {parsed.map((item: any) => (
-                                    <Badge key={item.key} size="sm" variant="solid" colorPalette="blue" px="2" borderRadius="full" fontSize="xs">
-                                      {item.label}{item.equipmentKind ? ` → ${item.equipmentKind}` : ""}
+                                  {parsed.map((item: any, i: number) => (
+                                    <Badge
+                                      key={item.key ?? item.code ?? i}
+                                      size="sm"
+                                      // A retired entry is still configured, so
+                                      // it belongs in the preview — but it is
+                                      // not on offer, and a solid chip beside
+                                      // the live ones says it is.
+                                      variant={item.retired ? "outline" : "solid"}
+                                      colorPalette={item.retired ? "gray" : "blue"}
+                                      px="2"
+                                      borderRadius="full"
+                                      fontSize="xs"
+                                    >
+                                      {item.label}{item.equipmentKind ? ` → ${item.equipmentKind}` : ""}{item.retired ? " · retired" : ""}
                                     </Badge>
                                   ))}
                                 </Box>

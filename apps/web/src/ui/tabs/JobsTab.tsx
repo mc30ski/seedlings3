@@ -60,6 +60,14 @@ import {
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
 import NextStartOverrideAffordance from "@/src/ui/components/NextStartOverrideAffordance";
 import RepeatingPauseInfoLine from "@/src/ui/components/RepeatingPauseInfoLine";
+import {
+  useStreamPauseControls,
+  StreamPauseActions,
+  StreamPauseFilter,
+  passesPauseFilter,
+  ALL_PAUSE_REASONS,
+} from "@/src/ui/components/StreamPauseControls";
+import { usePauseReasons, pauseReasonLabel } from "@/src/lib/pauseReasons";
 import JobsExplainer from "@/src/ui/components/JobsExplainer";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
@@ -580,6 +588,18 @@ export default function JobsTab({
     return () => clearInterval(id);
   }, []);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
+
+  // Pausing a repeating service — the same implementation Services uses, so
+  // the two tabs cannot drift on copy, confirms or what a reason filter
+  // matches. See StreamPauseControls.
+  const streamControls = useStreamPauseControls({ onChanged: () => load(false) });
+  const pauseReasons = usePauseReasons();
+  // Holding a stream stops work someone else is scheduled for, and a worker
+  // has no view of that consequence — admin/super only.
+  const canManageStreams = !!(isAdmin || isSuper);
+  // Narrows a paused-only feed to one taxonomy reason. Meaningless while the
+  // paused filter is off, so the control is disabled rather than hidden.
+  const [pauseReasonFilter, setPauseReasonFilter] = useState<string>(ALL_PAUSE_REASONS);
   const [calFeedStep, setCalFeedStep] = useState<"closed" | "confirm" | "result">("closed");
   const [calFeedUrl, setCalFeedUrl] = useState<string | null>(null);
   const [calFeedLoading, setCalFeedLoading] = useState(false);
@@ -1186,6 +1206,7 @@ export default function JobsTab({
     setActivitiesOverdueActive(false);
     setUnapprovedHoursActive(false);
     setPausedRepeatingOnly(false);
+    setPauseReasonFilter(ALL_PAUSE_REASONS);
     // MUST COVER THE SERVER'S WINDOW, AND THE SERVER NO LONGER HAS ONE.
     // An expired ghost is dated on the day it was due and now stays until
     // it's dealt with, so anything short of "all" hides rows the badge has
@@ -3006,10 +3027,12 @@ export default function JobsTab({
       if (!showArchived) rows = rows.filter((occ) => occ.status !== "ARCHIVED");
     }
     if (pausedRepeatingOnly) {
-      // When on, narrow to only repeating-paused occurrences. The tab's
-      // date range still applies (upstream), so this shows paused rows
-      // within the selected window rather than the app-wide set.
-      rows = rows.filter((occ) => (occ.status as string) === "STREAM_PAUSED");
+      // When on, narrow to only repeating-paused occurrences, optionally to
+      // one reason. The tab's date range still applies (upstream) — a paused
+      // row keeps the date it was scheduled for, so it stays inside the
+      // window the operator picked rather than jumping to today. Shared
+      // predicate with Services so a reason filter means one thing.
+      rows = rows.filter((occ) => passesPauseFilter(occ as any, true, pauseReasonFilter));
     }
     if (overdueActive) {
       // Shared predicate (lib/overdueRule.ts). PENDING_PAYMENT rows only
@@ -3148,7 +3171,7 @@ export default function JobsTab({
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, activitiesOverdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, forAdmin, showAdminExtras, foreignRows]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, activitiesOverdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, pauseReasonFilter, forAdmin, showAdminExtras, foreignRows]);
 
   // Which advisory is expanded. Held here, not in the badge: the chip sits in
   // a horizontal header row, so the body has to render below that row.
@@ -3772,7 +3795,16 @@ export default function JobsTab({
           {likedOnly && <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>}
           {showCanceled && <Badge size="sm" colorPalette="red" variant="subtle">+ Canceled</Badge>}
           {showArchived && <Badge size="sm" colorPalette="gray" variant="solid">+ Archived</Badge>}
-          {pausedRepeatingOnly && <Badge size="sm" colorPalette="purple" variant="solid">Paused repeating only</Badge>}
+          {/* THE REASON, which nothing else on screen says. The trigger is a
+              bare icon and the status chip beside this only reaches "Paused
+              repeating" — so without this a feed narrowed to one reason is
+              indistinguishable from one showing every held visit. Rendered
+              only when narrowed, for that reason. */}
+          {pausedRepeatingOnly && pauseReasonFilter !== ALL_PAUSE_REASONS && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {`Paused · ${pauseReasonLabel(pauseReasonFilter, pauseReasons) ?? pauseReasonFilter}`}
+            </Badge>
+          )}
           {highlightOccId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 occurrence</Badge>}
           {!highlightOccId && filterJobId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to job</Badge>}
           {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
@@ -3848,7 +3880,11 @@ export default function JobsTab({
             const chosen = e.value[0];
             setShowCanceled(chosen === "CANCELED");
             setShowArchived(chosen === "ARCHIVED");
-            setPausedRepeatingOnly(chosen === "PAUSED_REPEATING");
+            const nextPaused = chosen === "PAUSED_REPEATING";
+            setPausedRepeatingOnly(nextPaused);
+            // A reason left armed after moving off the paused status would
+            // silently empty the feed the next time paused is picked.
+            if (!nextPaused) setPauseReasonFilter(ALL_PAUSE_REASONS);
             setStatusFilter(e.value);
           }}
           size="sm"
@@ -3871,6 +3907,23 @@ export default function JobsTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {/* PAUSE STATE — one control for "only held visits" and "which
+            reason", because they are one question. It sets the status
+            filter rather than keeping a flag of its own: the dropdown's
+            "Paused repeating" option and this are the same filter, and two
+            pieces of state for one filter is how they end up disagreeing. */}
+        {canManageStreams && (
+          <StreamPauseFilter
+            active={pausedRepeatingOnly}
+            reasonCode={pauseReasonFilter}
+            onChange={({ active, reasonCode }) => {
+              setPausedRepeatingOnly(active);
+              setPauseReasonFilter(reasonCode);
+              setStatusFilter(active ? ["PAUSED_REPEATING"] : ["ALL"]);
+            }}
+            reasons={pauseReasons}
+          />
+        )}
         <Select.Root
           collection={typeCollection}
           value={typeFilter}
@@ -4123,6 +4176,16 @@ export default function JobsTab({
           {statusFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : statusFilter[0] === "UNCONFIRMED" ? "orange" : "purple"} variant="subtle">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
+            </Badge>
+          )}
+          {/* THE REASON, which nothing else on screen says. The trigger is a
+              bare icon and the status chip beside this only reaches "Paused
+              repeating" — so without this a feed narrowed to one reason is
+              indistinguishable from one showing every held visit. Rendered
+              only when narrowed, for that reason. */}
+          {pausedRepeatingOnly && pauseReasonFilter !== ALL_PAUSE_REASONS && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {`Paused · ${pauseReasonLabel(pauseReasonFilter, pauseReasons) ?? pauseReasonFilter}`}
             </Badge>
           )}
           {typeFilter[0] !== "ALL" && (
@@ -5545,6 +5608,14 @@ export default function JobsTab({
                             )}
                           </Text>
                         )}
+                        {/* Coded reason first — it is the categorical answer
+                            the filters and counts are built on. The
+                            operator's note follows as the detail. */}
+                        {pauseReasonLabel((occ as any).streamPauseReasonCode, pauseReasons) && (
+                          <Text fontSize="sm" fontWeight="semibold">
+                            {pauseReasonLabel((occ as any).streamPauseReasonCode, pauseReasons)}
+                          </Text>
+                        )}
                         {(occ as any).streamPauseReason && (
                           <Text fontSize="sm" fontStyle="italic" color="fg.muted">
                             "{(occ as any).streamPauseReason}"
@@ -5574,7 +5645,8 @@ export default function JobsTab({
             // Peek mode is strictly view-only — never render the quick
             // action affordance on other workers' cards.
             // Paused-stream takes precedence over everything else — no
-            // start / resume / complete button when the service is paused.
+            // start / resume / complete button when the repeating service is
+            // held.
             /**
    * Occurrence instructions — the yellow "read this before you start" band.
    *
@@ -6834,7 +6906,7 @@ export default function JobsTab({
                           7d" with dead space around it. The expanded
                           branch already had it in a column, so only the
                           compact card showed the bug. */}
-                      <RepeatingPauseInfoLine occ={occ as any} />
+                      <RepeatingPauseInfoLine occ={occ as any} reasons={pauseReasons} />
                     </Box>
                     ) : (
                       /* ── EXPANDED HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
@@ -7277,7 +7349,7 @@ export default function JobsTab({
                         </HStack>
                         {/* Info line for repeating-paused occurrences.
                             Hidden when the occurrence isn't paused. */}
-                        <RepeatingPauseInfoLine occ={occ as any} />
+                        <RepeatingPauseInfoLine occ={occ as any} reasons={pauseReasons} />
                       </Box>
                     )}
                 </Card.Header>
@@ -7729,8 +7801,9 @@ export default function JobsTab({
                         </Text>
                         <Text fontSize="xs" color="red.fg">
                           {occ.payment.nextOccurrenceSkipReason === "no_frequency_set" && "No repeat frequency is set on the job or occurrence."}
-                          {occ.payment.nextOccurrenceSkipReason === "job_paused" && "The job service is paused."}
+                          {occ.payment.nextOccurrenceSkipReason === "job_paused" && "The job service was paused at the time."}
                           {occ.payment.nextOccurrenceSkipReason === "duplicate_exists" && "A scheduled occurrence already exists on the next date."}
+                          {occ.payment.nextOccurrenceSkipReason === "next_visit_held" && "The next visit already exists and is paused."}
                           {occ.payment.nextOccurrenceSkipReason === "occurrence_or_job_not_found" && "Could not find the job service."}
                         </Text>
                       </Box>
@@ -8915,8 +8988,17 @@ export default function JobsTab({
                     jobs can be confirmed, rescheduled, team-changed before
                     client confirmation). Workers/observers see it only on
                     non-tentative jobs since the start/complete affordances
-                    don't apply until the client has confirmed. */}
-                {!isCardCompact && !isTrainee && !isPeek && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && (!isTentative || (forAdmin && (isAdmin || isSuper))) && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
+                    don't apply until the client has confirmed.
+
+                    STREAM_PAUSED is in the list. A held repeating visit has
+                    exactly one thing an operator wants to do to it — resume
+                    it, or change why it is held — and without this it had no
+                    footer at all, so the purple "Repeating service paused"
+                    panel appeared on a card with no way to act on it. Note
+                    the two spellings of "paused" here are different enums:
+                    PAUSED is the worker's timer stopped mid-visit,
+                    STREAM_PAUSED is the stream on hold. */}
+                {!isCardCompact && !isTrainee && !isPeek && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && (!isTentative || (forAdmin && (isAdmin || isSuper))) && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || (occ.status as string) === "STREAM_PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="2" px="3" pt="0">
                     {/* HStack (not VStack) so Manage in Services lands on
                         the same row as the per-status primary action
@@ -9534,6 +9616,23 @@ export default function JobsTab({
                         >
                           Reschedule
                         </Button>
+                      )}
+                      {/* Pause / resume / edit-pause for this recurring
+                          stream. Identical to the Services cluster — same
+                          component, same dialogs, same confirms — because
+                          both tabs show the same occurrences and an operator
+                          should not have to remember which tab can do what.
+                          Repeating streams only: a one-off has nothing to
+                          hold, you either do it or cancel it. */}
+                      {!isTaskOrReminder && !isAnnouncement && !isOffline
+                        && ((occ as any).frequencyDays ?? (occ as any).job?.frequencyDays ?? null) !== null && (
+                        <StreamPauseActions
+                          occ={occ as any}
+                          canManage={canManageStreams}
+                          controls={streamControls}
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
                       )}
                                             {/* Manage Team — two paths:
                           (1) Pre-start: claimer OR admin/super, before the
@@ -11693,6 +11792,9 @@ export default function JobsTab({
         open={!!parcelFor}
         onClose={() => setParcelFor(null)}
       />
+      {/* Pause / edit-pause / resume — the same
+          components Services renders. See StreamPauseControls. */}
+      {streamControls.dialogs}
     </Box>
   );
 }

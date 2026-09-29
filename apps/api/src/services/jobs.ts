@@ -31,8 +31,10 @@ import type { ServicesJobs } from "../types/services";
  * The warning now persists until an admin explicitly suppresses it
  * (`JobOccurrence.nextVisitWarningSuppressedAt`), which is audited and
  * reversible, or until the stall resolves and the next occurrence
- * actually generates. Pausing the Job also clears it — a PAUSED job
- * never enters the candidate set at all.
+ * actually generates. Archiving the Job also clears it — an ARCHIVED job
+ * never enters the candidate set at all. (This used to say "pausing",
+ * which did the same thing through the same helpers; job-level pause is
+ * gone and archive is the one operation that ends a service.)
  *
  * Consequence worth knowing: the "Expired N" chip and the expired-ghost
  * filter are now unbounded in time, so any client date preset used to
@@ -69,6 +71,11 @@ import { captureOccurrenceWeather } from "./occurrenceWeather";
 import { applyEstimateAddressParts, type EstimateAddressParts } from "../lib/estimateAddress";
 import { carryInstructionsToNewOccurrence } from "../lib/instructionCarry";
 import { computeBreakdown } from "@repo/money";
+import {
+  ACTIVE_STREAM_STATUSES,
+  UNCODED_PAUSE_REASON,
+  type RepeatingSummary,
+} from "./pauseReasons";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pause / resume side-effect helpers
@@ -101,7 +108,14 @@ import { computeBreakdown } from "@repo/money";
  * `sideEffectAction` distinguishes pause from archive in the audit
  * trail — defaults to the pause label so existing callers stay stable.
  */
-export async function applyJobPauseSideEffectsInTx(
+/** Delete every scheduled visit on a job.
+ *
+ *  Was `applyJobPauseSideEffectsInTx`, back when pausing a job was a thing.
+ *  It never described a pause — it describes clearing the schedule — and
+ *  after job-level pause was removed its only callers are archive paths, so
+ *  the old name pointed at a feature that no longer exists.
+ */
+export async function clearScheduledVisitsInTx(
   tx: Prisma.TransactionClient,
   currentUserId: string,
   jobId: string,
@@ -148,8 +162,10 @@ export async function applyJobPauseSideEffectsInTx(
  *
  * Does NOT flip Job.status — same contract as the stop helper.
  *
- * `sideEffectAction` distinguishes unpause from unarchive in the audit
- * trail — defaults to the unpause label so existing callers stay stable.
+ * `sideEffectAction` names, in the audit trail, WHICH restore did this.
+ * Required rather than defaulted: it used to fall back to an unpause label,
+ * and job-level unpause no longer exists — so the default had become a name
+ * for something that cannot happen, silently stamped on unarchive rows.
  */
 /**
  * Where a resumed Job's next visit lands: step forward from the last
@@ -174,12 +190,19 @@ export function computeResumeStartAt(lastStartAt: Date, freq: number, now: Date 
   return nextStart;
 }
 
-export async function applyJobResumeSideEffectsInTx(
+/** Regenerate the next occurrence on a job's recurring chain.
+ *
+ *  Was `applyJobResumeSideEffectsInTx`. Same reasoning as above: its callers
+ *  are unarchive and the estimate-acceptance path, not a resume.
+ */
+export async function rebuildRecurringChainInTx(
   tx: Prisma.TransactionClient,
   currentUserId: string,
   jobId: string,
+  // Ordered before the optional meta so it can be required — see the note
+  // above on why this must not have a default.
+  sideEffectAction: string,
   extraAuditMeta?: Record<string, unknown>,
-  sideEffectAction: string = "UNPAUSED_REGENERATED_NEXT_OCCURRENCE",
 ): Promise<void> {
   const job = await tx.job.findUnique({
     where: { id: jobId },
@@ -713,6 +736,60 @@ export const jobs: ServicesJobs = {
       },
     });
 
+    // REPEATING SUMMARY PER JOB SERVICE.
+    //
+    // A job service is only a default — what actually happens is its
+    // repeating streams, and a service whose every stream is on hold is not
+    // "active" in any sense the operator cares about. So each card states
+    // how many repeating streams it has, how many are live, and how many are
+    // paused (with the reasons), instead of leaning on Job.status, which
+    // since job-pause was removed says nothing about whether work is
+    // scheduled.
+    //
+    // Fetched as a flat list rather than a groupBy because whether an
+    // occurrence repeats depends on its own frequencyDays falling back to
+    // the job's — a grouped count cannot express that fallback. Bounded by
+    // the active-status filter: a job has a handful of live occurrences, not
+    // a history's worth.
+    const jobIds = rows.map((r) => r.id);
+    const liveOccs = jobIds.length
+      ? await prisma.jobOccurrence.findMany({
+          where: { jobId: { in: jobIds }, status: { in: [...ACTIVE_STREAM_STATUSES] } },
+          select: {
+            jobId: true,
+            status: true,
+            frequencyDays: true,
+            streamPauseReasonCode: true,
+          },
+        })
+      : [];
+    const jobFreq = new Map(rows.map((r) => [r.id, r.frequencyDays]));
+    const summaries = new Map<string, RepeatingSummary>();
+    for (const o of liveOccs) {
+      // jobId is nullable on JobOccurrence — standalone tasks have no job.
+      // The `in` filter already excluded them; this narrows the type.
+      if (!o.jobId) continue;
+      // Repeating means it recurs: the occurrence's own cadence when it
+      // overrides, otherwise the service's. A one-off has neither and is
+      // not part of this count.
+      if ((o.frequencyDays ?? jobFreq.get(o.jobId) ?? null) === null) continue;
+      const s =
+        summaries.get(o.jobId) ??
+        { total: 0, active: 0, paused: 0, pausedReasonCodes: [] as string[] };
+      s.total += 1;
+      if (o.status === JobOccurrenceStatus.STREAM_PAUSED) {
+        s.paused += 1;
+        // Null for streams paused before the taxonomy existed. Kept as an
+        // explicit bucket so the card's reason list still accounts for the
+        // pause rather than dropping it.
+        const code = o.streamPauseReasonCode ?? UNCODED_PAUSE_REASON;
+        if (!s.pausedReasonCodes.includes(code)) s.pausedReasonCodes.push(code);
+      } else {
+        s.active += 1;
+      }
+      summaries.set(o.jobId, s);
+    }
+
     return rows.map(({ _count, occurrences, ...j }) => ({
       ...j,
       notes: j.notes,
@@ -720,6 +797,8 @@ export const jobs: ServicesJobs = {
       nextOccurrence: occurrences[0] ?? null,
       assigneeCount: _count.defaultAssignees,
       occurrenceCount: _count.occurrences,
+      repeatingSummary:
+        summaries.get(j.id) ?? { total: 0, active: 0, paused: 0, pausedReasonCodes: [] },
     }));
   },
 
@@ -854,20 +933,12 @@ export const jobs: ServicesJobs = {
         } as any,
       });
 
-      // When pausing, remove future scheduled repeating occurrences.
-      // Shared with `applyJobPauseSideEffectsInTx` so the bulk-pause
-      // client action produces identical side effects.
-      if (payload.status === "PAUSED") {
-        await applyJobPauseSideEffectsInTx(tx, currentUserId, id);
-      }
-
-      // When unpausing (PAUSED → ACCEPTED), rebuild the recurring chain
-      // via the shared helper. See `applyJobResumeSideEffectsInTx` for
-      // the algorithm; extracting it lets the bulk-resume client action
-      // produce identical results.
-      if (prior?.status === JobStatus.PAUSED && payload.status === JobStatus.ACCEPTED) {
-        await applyJobResumeSideEffectsInTx(tx, currentUserId, id);
-      }
+      // NO PAUSE BRANCH. Job-level pause is gone — it deleted every
+      // scheduled visit and rebuilt the chain on resume, which is exactly
+      // what archive/unarchive already do through the same two helpers.
+      // Holding a recurring service is now done by pausing the repeating
+      // OCCURRENCE, which keeps the visit, records why, and resumes onto a
+      // date the operator picks. See services/occurrenceStreamPause.ts.
 
       await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
         id,
@@ -3841,7 +3912,7 @@ export const jobs: ServicesJobs = {
       // worker should be dispatched to it. Same helper as pause with
       // a distinct audit label so the two side effects are
       // distinguishable in the trail.
-      await applyJobPauseSideEffectsInTx(
+      await clearScheduledVisitsInTx(
         tx,
         currentUserId,
         jobId,
@@ -3890,12 +3961,12 @@ export const jobs: ServicesJobs = {
       // so the operator doesn't have to manually click "Generate Next"
       // on a formerly-archived Job. Same helper as unpause with a
       // distinct audit label.
-      await applyJobResumeSideEffectsInTx(
+      await rebuildRecurringChainInTx(
         tx,
         currentUserId,
         jobId,
-        opts?.cascadeGroupId ? { cascadeGroupId: opts.cascadeGroupId } : undefined,
         "UNARCHIVED_REGENERATED_NEXT_OCCURRENCE",
+        opts?.cascadeGroupId ? { cascadeGroupId: opts.cascadeGroupId } : undefined,
       );
 
       await writeAudit(tx, AUDIT.JOB.UNARCHIVED, currentUserId, {
