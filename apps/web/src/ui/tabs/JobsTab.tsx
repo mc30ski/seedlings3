@@ -10957,6 +10957,10 @@ export default function JobsTab({
           defaultAmount={totalPrice(acceptPaymentOcc)}
           basePrice={acceptPaymentOcc.price ?? null}
           addonsTotal={addonTotal(acceptPaymentOcc)}
+          // defaultAmount above (totalPrice) already includes materials, so
+          // without this the dialog's own "= Invoice" line would come out
+          // lower than the amount it pre-filled and flag a false mismatch.
+          materialChargesTotal={materialChargeTotal(acceptPaymentOcc)}
           totalInvoiceCharges={(acceptPaymentOcc.invoiceCharges ?? []).reduce((s, e) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}

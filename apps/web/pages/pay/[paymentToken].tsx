@@ -450,33 +450,7 @@ function PaymentPageInner() {
               {data.serviceDate && (
                 <Text fontSize="sm" color="fg.muted">{fmtInvoiceDate(data.serviceDate)}</Text>
               )}
-              {/* The itemization. Rendered straight from the server's lines —
-                  no arithmetic here, because they already sum to amountDue by
-                  construction and a second implementation is how a total
-                  starts disagreeing with its parts. */}
-              {data.lines?.length > 0 && (
-                <VStack align="stretch" gap={1} mt={2} pt={2} borderTopWidth="1px" borderColor="gray.200">
-                  {data.lines.map((ln, i) => (
-                    <HStack key={i} align="baseline" justify="space-between" gap={3}>
-                      <Box minW={0}>
-                        <Text fontSize="sm">{ln.label}</Text>
-                        {ln.detail && (
-                          <Text fontSize="xs" color="fg.muted">{ln.detail}</Text>
-                        )}
-                      </Box>
-                      {/* tabular-nums so the amounts line up in a column,
-                          matching the preview. */}
-                      <Text fontSize="sm" fontVariantNumeric="tabular-nums" whiteSpace="nowrap">
-                        {dollar(ln.amount)}
-                      </Text>
-                    </HStack>
-                  ))}
-                </VStack>
-              )}
-              <HStack mt={2} pt={2} borderTopWidth={data.lines?.length > 0 ? "1px" : undefined} borderColor="gray.300" align="baseline" justify="space-between">
-                <Text fontSize="sm" color="fg.muted">Total due</Text>
-                <Text fontSize="2xl" fontWeight="bold" color="teal.700">{dollar(data.amountDue)}</Text>
-              </HStack>
+              <InvoiceBreakdown lines={data.lines} amountDue={data.amountDue} />
             </VStack>
           </Box>
         </Box>
@@ -1485,6 +1459,75 @@ function SentConfirmModal({
 }
 
 
+/**
+ * The invoice itemization and its total.
+ *
+ * ONE implementation, rendered by the main invoice card and again by the
+ * post-payment recap. Rendered straight from the server's lines — there is no
+ * arithmetic here, because they already sum to `amountDue` by construction.
+ *
+ * That is not fussiness. The approval screens each re-derived "the invoice"
+ * as price + add-ons, silently dropping the material charges, and a client
+ * who had paid in full showed up as having overpaid by exactly the materials.
+ * A second copy of a total is how the total starts disagreeing with its parts.
+ */
+function InvoiceBreakdown({
+  lines,
+  amountDue,
+  totalLabel = "Total due",
+  compact = false,
+}: {
+  lines: { label: string; detail: string | null; amount: number }[];
+  amountDue: number;
+  /** "Total due" while they still owe it; something past-tense once paid. */
+  totalLabel?: string;
+  /** Recap styling: smaller total, muted, since it is a reminder rather
+   *  than the call to action. */
+  compact?: boolean;
+}) {
+  const hasLines = (lines?.length ?? 0) > 0;
+  return (
+    <>
+      {hasLines && (
+        <VStack align="stretch" gap={1} mt={2} pt={2} borderTopWidth="1px" borderColor="gray.200">
+          {lines.map((ln, i) => (
+            <HStack key={i} align="baseline" justify="space-between" gap={3}>
+              <Box minW={0}>
+                <Text fontSize="sm">{ln.label}</Text>
+                {ln.detail && (
+                  <Text fontSize="xs" color="fg.muted">{ln.detail}</Text>
+                )}
+              </Box>
+              {/* tabular-nums so the amounts line up in a column. */}
+              <Text fontSize="sm" fontVariantNumeric="tabular-nums" whiteSpace="nowrap">
+                {dollar(ln.amount)}
+              </Text>
+            </HStack>
+          ))}
+        </VStack>
+      )}
+      <HStack
+        mt={2}
+        pt={2}
+        borderTopWidth={hasLines ? "1px" : undefined}
+        borderColor="gray.300"
+        align="baseline"
+        justify="space-between"
+      >
+        <Text fontSize="sm" color="fg.muted">{totalLabel}</Text>
+        <Text
+          fontSize={compact ? "lg" : "2xl"}
+          fontWeight="bold"
+          color={compact ? "fg.default" : "teal.700"}
+          fontVariantNumeric="tabular-nums"
+        >
+          {dollar(amountDue)}
+        </Text>
+      </HStack>
+    </>
+  );
+}
+
 function SelfReportedView({ data, method, methodLabel, onOpenPhoto }: { data: ResolveResponse; method: MethodKey | null; methodLabel: string | null; onOpenPhoto: (idx: number) => void }) {
   const { businessName } = useBranding();
   return (
@@ -1528,6 +1571,22 @@ function SelfReportedView({ data, method, methodLabel, onOpenPhoto }: { data: Re
               ))}
             </SimpleGrid>
           )}
+          {/* WHAT THEY JUST PAID FOR, one more time. They have scrolled past
+              the invoice to get here and are being asked to confirm a figure;
+              making them scroll back up to check what it covered is the wrong
+              way round. Same component as the card above, so the recap cannot
+              drift from the invoice it is recapping. */}
+          <Box pt={1}>
+            <Text fontSize="xs" fontWeight="semibold" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
+              What this covers
+            </Text>
+            <InvoiceBreakdown
+              lines={data.lines}
+              amountDue={data.amountDue}
+              totalLabel="Invoice total"
+              compact
+            />
+          </Box>
           <AccountNudge token={typeof window !== "undefined" ? new URL(window.location.href).pathname.split("/").pop() ?? "" : ""} />
         </VStack>
       </Card.Body>

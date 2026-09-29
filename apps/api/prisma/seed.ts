@@ -27,13 +27,38 @@ neonConfig.webSocketConstructor = ws;
 const adapter = new PrismaNeon({ connectionString: dbUrl });
 const prisma = new PrismaClient({ adapter });
 
-// ── Existing user IDs (never modified) ──────────────────────────────────────
-const ADMIN_WORKER_ID   = "cmnry8iih000k5acx7hf27aay";
-const CONTRACTOR_ID     = "cmnrylyaz000s5abyeyg77m4x";
-const EMPLOYEE_ID       = "cmnrz00fd002d5abyyr88byen";
-const TRAINEE_ID        = "cmnrzapcl003g5abybrzttuxs";
-const CLIENT_USER_ID    = "cmnrzcwxc00495abyodg1qnuy";
-const MICHAEL_ID        = "cmexiwrfs003kvdysrjteo2hy";
+// ── Seed user IDs ───────────────────────────────────────────────────────────
+//
+// RESOLVED BY EMAIL AT RUN TIME, with these as the fallback.
+//
+// They used to be plain constants, and the seed assumed the matching User
+// rows existed — `clearDatabase()` deliberately preserves User/UserRole
+// because those are Clerk-linked. That holds right up until the rows are
+// recreated: a Clerk sign-in against an empty User table (the Playwright
+// auth setup does exactly this) makes them again with FRESH cuids, and from
+// then on every seed dies on the first foreign key —
+//
+//   Foreign key constraint violated: Group_claimerUserId_fkey
+//
+// — with nothing to say which id was wrong or why. The email is the stable
+// identity here; the cuid never was. Fallbacks are kept so a database that
+// still has the original rows behaves exactly as before.
+let ADMIN_WORKER_ID   = "cmnry8iih000k5acx7hf27aay";
+let CONTRACTOR_ID     = "cmnrylyaz000s5abyeyg77m4x";
+let EMPLOYEE_ID       = "cmnrz00fd002d5abyyr88byen";
+let TRAINEE_ID        = "cmnrzapcl003g5abybrzttuxs";
+let CLIENT_USER_ID    = "cmnrzcwxc00495abyodg1qnuy";
+let MICHAEL_ID        = "cmexiwrfs003kvdysrjteo2hy";
+
+/** Stable identity for each seed user. Email, because it survives the row
+ *  being recreated by a Clerk sign-in; the id does not. */
+const SEED_USER_EMAILS = {
+  ADMIN_WORKER: "admin+admin@seedlingslawncare.com",
+  CONTRACTOR:   "admin+contractor@seedlingslawncare.com",
+  EMPLOYEE:     "admin+employee@seedlingslawncare.com",
+  TRAINEE:      "admin+trainee@seedlingslawncare.com",
+  MICHAEL:      "mc30ski@gmail.com",
+} as const;
 
 const CLIENT_CLERK_ID   = "user_3C8aJI7a58wmVbrK4Ao3pZRp3RF";
 const PENDING_CLIENT_CLERK_ID = "user_3CJXY4nnIzxamLgzfpLwQLS0dyR";
@@ -42,8 +67,102 @@ const PENDING_CLIENT_CLERK_ID = "user_3CJXY4nnIzxamLgzfpLwQLS0dyR";
 // the admin re-link worklist on the Clients tab.
 const PHANTOM_CLIENT_CLERK_ID = "user_seed_phantom_clientacct_001";
 
-// Workers available for assignment (not Michael — overseer)
-const WORKERS = [ADMIN_WORKER_ID, CONTRACTOR_ID, EMPLOYEE_ID, TRAINEE_ID];
+// Workers available for assignment (not Michael — overseer). Rebuilt by
+// resolveSeedUserIds() once the real ids are known — a module-scope array
+// would otherwise capture the fallbacks before they are resolved.
+let WORKERS = [ADMIN_WORKER_ID, CONTRACTOR_ID, EMPLOYEE_ID, TRAINEE_ID];
+
+/** Point the id constants at the User rows that actually exist.
+ *
+ *  Runs before anything reads them. A missing user is reported by NAME and
+ *  email rather than left to surface as a foreign-key error thirty tables
+ *  later — the failure this replaces gave no clue which of six ids was stale.
+ */
+async function resolveSeedUserIds() {
+  const rows = await prisma.user.findMany({ select: { id: true, email: true, clerkUserId: true } });
+  const byEmail = new Map(rows.map((u) => [(u.email ?? "").toLowerCase(), u.id]));
+  const missing: string[] = [];
+  const pick = (label: string, email: string, fallback: string) => {
+    const hit = byEmail.get(email.toLowerCase());
+    if (!hit) { missing.push(`${label} <${email}>`); return fallback; }
+    return hit;
+  };
+  ADMIN_WORKER_ID = pick("ADMIN_WORKER", SEED_USER_EMAILS.ADMIN_WORKER, ADMIN_WORKER_ID);
+  CONTRACTOR_ID   = pick("CONTRACTOR",   SEED_USER_EMAILS.CONTRACTOR,   CONTRACTOR_ID);
+  EMPLOYEE_ID     = pick("EMPLOYEE",     SEED_USER_EMAILS.EMPLOYEE,     EMPLOYEE_ID);
+  TRAINEE_ID      = pick("TRAINEE",      SEED_USER_EMAILS.TRAINEE,      TRAINEE_ID);
+  MICHAEL_ID      = pick("MICHAEL",      SEED_USER_EMAILS.MICHAEL,      MICHAEL_ID);
+  // The client-portal user is Clerk-identified, not email-identified — and
+  // unlike the workers the seed CREATES it, the same way it already creates
+  // the pending-client and phantom-client accounts below. Without this the
+  // seed died on OccurrenceChangeRequest_requestedById_fkey in any database
+  // where nobody had signed in through the client portal yet.
+  const clientUser = await prisma.user.upsert({
+    where: { clerkUserId: CLIENT_CLERK_ID },
+    create: {
+      clerkUserId: CLIENT_CLERK_ID,
+      email: "admin+client@seedlingslawncare.com",
+      firstName: "Client",
+      lastName: "User",
+      displayName: "Client User",
+      isApproved: true,
+    },
+    update: {},
+    select: { id: true },
+  });
+  CLIENT_USER_ID = clientUser.id;
+
+  WORKERS = [ADMIN_WORKER_ID, CONTRACTOR_ID, EMPLOYEE_ID, TRAINEE_ID];
+
+  // SHAPE THEM, DO NOT ASSUME THEY ARE SHAPED.
+  //
+  // A Clerk sign-in creates a BARE User row: no roles, no workerType, not
+  // approved. The seed used to take roles and worker types as given, which
+  // held only because someone had set them by hand once. When the rows were
+  // recreated the seed got a long way in and then failed inside a service
+  // call — "You don't have permission to pull from inventory" — which reads
+  // like a bug in the supply code rather than a user missing a role.
+  //
+  // Idempotent: this is the shape every seeded fixture below assumes.
+  const shape: Array<{ id: string; type: "EMPLOYEE" | "CONTRACTOR" | "TRAINEE"; roles: string[] }> = [
+    { id: ADMIN_WORKER_ID, type: "EMPLOYEE",   roles: ["WORKER", "ADMIN"] },
+    { id: CONTRACTOR_ID,   type: "CONTRACTOR", roles: ["WORKER"] },
+    { id: EMPLOYEE_ID,     type: "EMPLOYEE",   roles: ["WORKER"] },
+    { id: TRAINEE_ID,      type: "TRAINEE",    roles: ["WORKER"] },
+    // Michael is the owner: SUPER, and a worker type so payroll math has one.
+    { id: MICHAEL_ID,      type: "EMPLOYEE",   roles: ["WORKER", "ADMIN", "SUPER"] },
+  ];
+  for (const u of shape) {
+    await prisma.user.update({
+      where: { id: u.id },
+      data: { workerType: u.type as any, isApproved: true },
+    });
+    for (const role of u.roles) {
+      await prisma.userRole.upsert({
+        where: { userId_role: { userId: u.id, role: role as any } },
+        create: { userId: u.id, role: role as any },
+        update: {},
+      });
+    }
+    // Roles the fixture does NOT grant must be absent, or a database that
+    // once had a broader grant keeps it and the role gates read as passing
+    // for the wrong user.
+    await prisma.userRole.deleteMany({
+      where: { userId: u.id, role: { notIn: u.roles as any } },
+    });
+  }
+  console.log("  Ensured roles + worker types on the 5 seed users.");
+
+  if (missing.length) {
+    throw new Error(
+      `Seed users not found in this database:\n  ${missing.join("\n  ")}\n\n` +
+      `These are created by signing in through Clerk, not by the seed — ` +
+      `clearDatabase() preserves User rows for exactly that reason. Sign in ` +
+      `as each, or run the Playwright auth setup, then reseed.`,
+    );
+  }
+  console.log("  Resolved seed user IDs from emails.");
+}
 
 // ── Date helpers ────────────────────────────────────────────────────────────
 const NOW = new Date();
@@ -297,6 +416,9 @@ async function applySettingSections() {
 
 // ── Seed database ───────────────────────────────────────────────────────────
 async function seedDatabase() {
+  // MUST BE FIRST — every fixture below references these ids.
+  await resolveSeedUserIds();
+
   // ── Pending client user (upsert so re-seed resets approval state) ────────
   console.log("  Ensuring pending client user...");
   await prisma.user.upsert({
@@ -1311,10 +1433,20 @@ async function seedDatabase() {
     { jobId: martinezCabinMonthly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(20, 8), endAt: addMinutes(daysAgo(20, 8), 90), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 120.0, estimatedMinutes: 90, startedAt: daysAgo(20, 8), completedAt: addMinutes(daysAgo(20, 8), 85), paymentRequestToken: "demo-token-martinez-cabin-pending", paymentRequestTokenCreatedAt: daysAgo(0, 8), paymentRequestSentAt: daysAgo(0, 8), paymentRequestFirstSentAt: daysAgo(20, 8) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
+  // PAID IN FULL, INCLUDING THE MATERIALS — 120 labor + 25 spray = 145.
+  //
+  // This reproduces the exact production shape that exposed the approval
+  // screens computing "the invoice" as price + add-ons: a client who paid
+  // their invoice to the penny looked like they had OVERPAID by exactly the
+  // material charge, and the dialog offered to hand it to the crew as a tip.
+  // Dev had no visit with materials awaiting approval, which is why a money
+  // bug this visible survived every local test. See the matching entry in
+  // invoiceChargeData below — remove one and this fixture stops meaning
+  // anything.
   await prisma.payment.create({
     data: {
       occurrenceId: cMartinezCabin.id,
-      amountPaid: 120.0,
+      amountPaid: 145.0,
       method: "zelle",
       confirmed: false,
       selfReported: true,
@@ -1873,6 +2005,9 @@ async function seedDatabase() {
     { occId: cThompson7.id, userId: CONTRACTOR_ID, cost: 15.0, desc: "Hedge trimmer fuel mix", category: "Supplies", actualCost: 11.8, sharedReceipt: "lowes-run" },
     // No actualCost — job profit must render as an upper bound.
     { occId: cObrien7.id, userId: EMPLOYEE_ID, cost: 6.0, desc: "Trash bags for debris", category: "Supplies" },
+    // The awaiting-approval visit above. Its payment is 145 = 120 + this 25,
+    // so the approval screen must show NO overpayment and offer no tip.
+    { occId: cMartinezCabin.id, userId: EMPLOYEE_ID, cost: 25.0, desc: "Spot spray in gravel driveway", category: "Supplies", actualCost: 18.0 },
   ];
 
   // ── Add-on services ───────────────────────────────────────────────────────

@@ -2431,6 +2431,13 @@ export const payments: ServicesPayments = {
             completedAt: true,
             price: true,
             addons: { select: { price: true } },
+            // MATERIAL CHARGES. Without these the approval screens cannot
+            // compute the invoice the client was actually sent — they were
+            // summing price + addons and calling it the invoice, so a client
+            // who paid in full looked like they had overpaid by exactly the
+            // materials, and the dialog offered to give that money away as a
+            // tip. `cost` is the CHARGE (see InvoiceCharge.cost).
+            invoiceCharges: { select: { cost: true } },
             // Used by the Approve confirm dialog to decide whether to
             // promise "next occurrence will be scheduled" — only true for
             // repeating jobs with a frequency on the occurrence or job.
