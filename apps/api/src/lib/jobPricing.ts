@@ -28,70 +28,25 @@
 // sites to ask which era they are in.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The shape any caller must supply. Deliberately structural rather than a
- *  Prisma type, so a partial `select` satisfies it and the compiler tells you
- *  when you forgot to fetch the lines. */
-export type PricedOccurrence = {
-  price: number | null;
-  addons?: Array<{ price: number | null }> | null;
-  /** The client's invoice lines. `cost` is the CHARGE — see
-   *  InvoiceCharge.cost in the schema. */
-  invoiceCharges?: Array<{ cost: number }> | null;
-};
+/** The three totals now live in @repo/money so the web can import the SAME
+ *  arithmetic instead of re-deriving it. Re-exported here because the API
+ *  has dozens of call sites pointing at this module, and because the
+ *  client-facing invoice LINES below still belong to the API. */
+import { type PricedOccurrence } from "@repo/money";
 
+/** Local rounding for the invoice-LINE builders below. The totals use the
+ *  shared package's own. */
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Add-ons are extra WORK, so they are in the pool. The distinction that
- *  matters is work vs materials, never service vs charge. */
-export function addonTotal(occ: PricedOccurrence): number {
-  return round2((occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0));
-}
-
-/** Material lines, at what the CLIENT is charged. */
-export function materialChargeTotal(occ: PricedOccurrence): number {
-  return round2((occ.invoiceCharges ?? []).reduce((s, e) => s + (e.cost ?? 0), 0));
-}
-
-/**
- * Labor plus the work add-ons. The base the other two are built from, and by
- * itself the answer to neither question.
- */
-export function laborAndServices(occ: PricedOccurrence): number {
-  return round2((occ.price ?? 0) + addonTotal(occ));
-}
-
-/**
- * What the crew splits, before margin and per-worker fees.
- *
- * Labor plus the work add-ons — materials are billed to the client on top and
- * never touch it. Verify against the payout engine, which is authoritative:
- * `computeBreakdown(collected, charges, …)` computes `N = collected − charges`,
- * so feeding it the itemized invoice yields exactly this figure.
- *
- *   collected = 160, charges = 60  →  the crew is paid 100.
- *
- * The build gate asserts this against `computeBreakdown` rather than against a
- * hand-typed number, because a typed number is how the last bug here got
- * locked in.
- */
-export function crewPool(occ: PricedOccurrence): number {
-  return laborAndServices(occ);
-}
-
-/**
- * What the client owes: the work, plus the materials billed on top.
- */
-export function invoiceTotal(occ: PricedOccurrence): number {
-  return round2(laborAndServices(occ) + materialChargeTotal(occ));
-}
-
-/** What we actually paid for the materials on this visit, where it is known.
- *  Informational only — never in the invoice, never in the payout. */
-export function materialCostTotal(
-  occ: { invoiceCharges?: Array<{ actualCost: number | null }> | null },
-): number {
-  return round2((occ.invoiceCharges ?? []).reduce((s, e) => s + (e.actualCost ?? 0), 0));
-}
+export {
+  type PricedOccurrence,
+  addonTotal,
+  materialChargeTotal,
+  laborAndServices,
+  crewPool,
+  invoiceTotal,
+  materialCostTotal,
+} from "@repo/money";
 
 // ── Client-facing labels ─────────────────────────────────────────────────────
 

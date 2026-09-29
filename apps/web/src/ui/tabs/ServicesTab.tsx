@@ -52,6 +52,7 @@ import {
   ALL_PAUSE_REASONS,
 } from "@/src/ui/components/StreamPauseControls";
 import { usePauseReasons, pauseReasonLabel } from "@/src/lib/pauseReasons";
+import { invoiceTotal, addonTotal, materialChargeTotal } from "@repo/money";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
@@ -3530,9 +3531,12 @@ export default function ServicesTab({
           }}
           endpoint={`/api/admin/occurrences/${acceptPaymentOcc.id}/accept-payment`}
           occurrenceId={acceptPaymentOcc.id}
-          defaultAmount={(() => { const base = acceptPaymentOcc.price ?? 0; const addons = ((acceptPaymentOcc as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0); return base + addons || null; })()}
+          // The FULL invoice, materials included — this pre-fills the amount
+          // field, and defaulting to work-only quietly under-collects.
+          defaultAmount={invoiceTotal(acceptPaymentOcc as any) || null}
           basePrice={acceptPaymentOcc.price ?? null}
-          addonsTotal={((acceptPaymentOcc as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0)}
+          addonsTotal={addonTotal(acceptPaymentOcc as any)}
+          materialChargesTotal={materialChargeTotal(acceptPaymentOcc as any)}
           totalInvoiceCharges={(acceptPaymentOcc.invoiceCharges ?? []).reduce((s: number, e: any) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}

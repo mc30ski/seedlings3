@@ -1356,3 +1356,113 @@ describe("[build-gate] a tip is never dropped", () => {
     expect(SRC).toMatch(/Tips stay OUT of netPaid/);
   });
 });
+
+describe("[build-gate] the invoice is never re-derived by hand", () => {
+  const web = (rel: string) =>
+    readFileSync(join(__dirname, "../../../web/src/", rel), "utf8");
+  const PAY = readFileSync(join(__dirname, "payments.ts"), "utf8");
+
+  // WHAT WENT WRONG. Four surfaces computed "the invoice" as
+  // `price + addons`. That is the CREW POOL — materials are billed to the
+  // client on top and never enter it. So a client who paid their invoice in
+  // full looked like they had overpaid by exactly the material charges:
+  //
+  //   Melissa O'Hara, 2026-09-16 — invoice $145 = $0 labor + $120 hedging
+  //   + $25 spray. The approval screen showed "Invoice $120 · collecting
+  //   $145" and offered to hand the $25 to the crew as a tip. Marking it
+  //   would have paid them from a $95 pool instead of $120.
+  //
+  // The accept dialog made the mirror error: it PRE-FILLED $120 as the
+  // amount to collect, which under-collects and underpays the crew.
+  //
+  // The server was never wrong — it derives the pool as `collected − charges`
+  // from its own data. Only the screens were. The fix is one shared
+  // implementation in @repo/money, and these rules keep it that way.
+
+  it("the approval select fetches the material lines", () => {
+    // Without these the web CANNOT compute the real invoice, and the shared
+    // type will not complain — every field on PricedOccurrence is optional,
+    // so a missing select silently returns a smaller number. This rule is
+    // the guard that structural typing cannot be.
+    const i = PAY.indexOf("async listPending");
+    expect(i, "the pending-payments query must exist").toBeGreaterThan(-1);
+    const sel = PAY.slice(i, i + 2500);
+    expect(sel, "pending payments must return the material charges")
+      .toMatch(/invoiceCharges:\s*\{\s*select:\s*\{\s*cost:\s*true/);
+  });
+
+  it("no payment surface sums price + addons and calls it the invoice", () => {
+    for (const f of [
+      "ui/components/PendingApprovalsSection.tsx",
+      "ui/dialogs/AcceptPaymentDialog.tsx",
+      "ui/dialogs/AdjustPaymentDialog.tsx",
+    ]) {
+      const src = web(f);
+      // The shape of the bug: a reduce over addons landing in something
+      // named for the invoice or the expected amount.
+      expect(
+        src,
+        `${f} must not hand-roll an invoice total — import it from @repo/money`,
+      ).not.toMatch(
+        // `[:=]`, not just `=`. The bug that shipped was an object PROPERTY
+        // (`invoiceTotal:` inside tipInputsFor), and an assignment-only
+        // pattern sailed straight past it — verified by running this regex
+        // against the original source before trusting it.
+        /(invoiceTotal|expected)\s*[:=][\s\S]{0,140}addons[\s\S]{0,90}reduce/,
+      );
+    }
+  });
+
+  it("the accept dialog's invoice includes materials", () => {
+    const DLG = web("ui/dialogs/AcceptPaymentDialog.tsx");
+    expect(DLG, "the dialog must take the material total")
+      .toMatch(/materialChargesTotal/);
+    expect(DLG, "and add it into the invoice it displays and defaults to")
+      .toMatch(/const invoiceTotal =[^\n]*materialChargesTotal/);
+    // Both callers must supply it, or the dialog silently shows the pool.
+    for (const f of ["ui/tabs/ServicesTab.tsx", "ui/tabs/JobsTab.tsx"]) {
+      expect(web(f), `${f} must pass materialChargesTotal`)
+        .toMatch(/materialChargesTotal=\{/);
+    }
+  });
+
+  it("the pay page renders one breakdown, not two", () => {
+    // The client sees the itemization twice — in the invoice card and again
+    // in the post-payment recap — and the two must be the same component.
+    // A hand-copied second list is how a recap starts disagreeing with the
+    // invoice it is recapping, which is this file's whole subject.
+    const PAY = readFileSync(
+      join(__dirname, "../../../web/pages/pay/[paymentToken].tsx"),
+      "utf8",
+    );
+    expect(PAY, "the breakdown must be a component").toMatch(
+      /function InvoiceBreakdown\(/,
+    );
+    const uses = PAY.match(/<InvoiceBreakdown\b/g) ?? [];
+    expect(uses.length, "both the invoice card and the recap must use it")
+      .toBeGreaterThanOrEqual(2);
+    // It renders the server's lines verbatim; any arithmetic here is a
+    // second opinion about a number the server already settled.
+    const i = PAY.indexOf("function InvoiceBreakdown(");
+    const body = PAY.slice(i, PAY.indexOf("function SelfReportedView", i));
+    expect(body, "the breakdown must not compute a total of its own")
+      .not.toMatch(/reduce\(/);
+  });
+
+  it("the totals have exactly one implementation", () => {
+    const MONEY = readFileSync(
+      join(__dirname, "../../../../packages/money/jobPricing.ts"),
+      "utf8",
+    );
+    for (const fn of ["invoiceTotal", "laborAndServices", "materialChargeTotal"]) {
+      expect(MONEY, `${fn} lives in @repo/money`).toMatch(
+        new RegExp(`export function ${fn}\\(`),
+      );
+    }
+    // The API re-exports rather than redefining.
+    const API = readFileSync(join(__dirname, "../lib/jobPricing.ts"), "utf8");
+    expect(API, "the API must not redefine invoiceTotal")
+      .not.toMatch(/export function invoiceTotal\(/);
+    expect(API, "it re-exports the shared one").toMatch(/from "@repo\/money"/);
+  });
+});

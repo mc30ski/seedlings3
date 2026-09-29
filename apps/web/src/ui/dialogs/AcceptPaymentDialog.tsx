@@ -74,6 +74,10 @@ type Props = {
   basePrice?: number | null;
   /** Total addon amount — for breakdown display */
   addonsTotal?: number;
+  /** Material lines billed on top of the work. Without this the dialog shows
+   *  — and pre-fills — the CREW POOL as though it were the invoice, which
+   *  under-collects by exactly the materials. */
+  materialChargesTotal?: number;
   totalInvoiceCharges?: number;
   commissionPercent?: number;
   marginPercent?: number;
@@ -121,6 +125,7 @@ export default function AcceptPaymentDialog({
   defaultAmount,
   basePrice,
   addonsTotal = 0,
+  materialChargesTotal = 0,
   totalInvoiceCharges = 0,
   commissionPercent = 0,
   marginPercent = 0,
@@ -821,7 +826,11 @@ export default function AcceptPaymentDialog({
                 {(() => {
                   const parsed = parseFloat(amountPaid);
                   const enteredAmount = Number.isFinite(parsed) ? parsed : 0;
-                  const invoiceTotal = (basePrice ?? 0) + addonsTotal;
+                  // Work PLUS materials. This was `basePrice + addonsTotal`
+                  // — the crew pool wearing the invoice's name — so a visit
+                  // with materials displayed, and defaulted to collecting,
+                  // less than the client was actually billed.
+                  const invoiceTotal = (basePrice ?? 0) + addonsTotal + materialChargesTotal;
                   const differs = Math.abs(enteredAmount - invoiceTotal) > 0.01 && enteredAmount > 0;
                   return (
                     <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
@@ -834,6 +843,12 @@ export default function AcceptPaymentDialog({
                           <Text>+ Add-ons</Text>
                           <Text>${addonsTotal.toFixed(2)}</Text>
                         </HStack>
+                        {materialChargesTotal > 0 && (
+                          <HStack justify="space-between" color="fg.muted">
+                            <Text>+ Materials</Text>
+                            <Text>${materialChargesTotal.toFixed(2)}</Text>
+                          </HStack>
+                        )}
                         <HStack justify="space-between" color="fg.muted">
                           <Text>= Invoice</Text>
                           <Text>${invoiceTotal.toFixed(2)}</Text>

@@ -7,6 +7,7 @@
 
 import { fmtDateOpts } from "@/src/lib/dates";
 import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
+import { addonTotal as _addonTotal, materialChargeTotal as _materialChargeTotal } from "@repo/money";
 
 /** Human-friendly duration ("1h 24m" / "36m"). */
 export function formatDuration(minutes: number): string {
@@ -44,10 +45,11 @@ export function assigneeSortOrder(a: { assignedById?: string | null; userId: str
   return 1;
 }
 
-/** Sum of add-on prices on the occurrence (0 when none). */
-export function addonTotal(occ: any): number {
-  return (occ.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
-}
+/** The three totals come from @repo/money — one implementation, shared with
+ *  the API. They were reimplemented here (correctly) and in four other places
+ *  (three of them wrong: they omitted materials and called the result the
+ *  invoice). Re-exported so existing importers of this module keep working. */
+export { addonTotal, materialChargeTotal, materialCostTotal } from "@repo/money";
 
 /** Whether the claimer can still edit billables (expenses, add-ons).
  *  Full edit through completion + PENDING_PAYMENT-before-committed;
@@ -67,17 +69,7 @@ export function occInEditableState(occ: any): boolean {
   }
 }
 
-/** Sum of what the CLIENT is charged for material lines. `cost` is the
- *  CHARGE — see InvoiceCharge.cost in schema.prisma. */
-export function materialChargeTotal(occ: any): number {
-  return (occ?.invoiceCharges ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
-}
 
-/** What we actually paid for those lines, where recorded. ADMIN-ONLY —
- *  never render this on a client-facing surface. */
-export function materialCostTotal(occ: any): number {
-  return (occ?.invoiceCharges ?? []).reduce((s: number, e: any) => s + (e.actualCost ?? 0), 0);
-}
 
 /**
  * What the crew splits, before margin and per-worker fees.
@@ -88,7 +80,7 @@ export function materialCostTotal(occ: any): number {
  * authoritative and this exists so the card can project without a round trip.
  */
 export function crewPool(occ: any): number {
-  return ((occ.price || null) ?? (occ.proposalAmount || null) ?? 0) + addonTotal(occ);
+  return ((occ.price || null) ?? (occ.proposalAmount || null) ?? 0) + _addonTotal(occ);
 }
 
 /**
@@ -98,8 +90,8 @@ export function crewPool(occ: any): number {
  */
 export function totalPrice(occ: any): number | null {
   const base = (occ.price || null) ?? (occ.proposalAmount || null);
-  const addons = addonTotal(occ);
-  const materials = materialChargeTotal(occ);
+  const addons = _addonTotal(occ);
+  const materials = _materialChargeTotal(occ);
   if (base == null) {
     const rest = addons + materials;
     return rest > 0 ? rest : null;

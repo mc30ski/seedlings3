@@ -32,6 +32,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AdjustPaymentDialog from "@/src/ui/dialogs/AdjustPaymentDialog";
+import { invoiceTotal } from "@repo/money";
 import { PaymentContactsLine } from "@/src/ui/components/PaymentContactsLine";
 import { PaymentPropertyLine } from "@/src/ui/components/PaymentPropertyLine";
 import { bumpAdminPayments } from "@/src/lib/bus";
@@ -52,6 +53,9 @@ type PendingRow = {
     completedAt: string | null;
     price: number | null;
     addons: { price: number }[];
+    /** Material lines billed to the client on top of the work. Omitting these
+     *  is what made a fully-paid invoice look overpaid — see @repo/money. */
+    invoiceCharges?: { cost: number }[];
     frequencyDays: number | null;
     isOneOff: boolean;
     workflow: string | null;
@@ -98,11 +102,11 @@ function tipInputsFor(r: PendingRow) {
     amountPaid: r.amountPaid,
     method: r.method,
     processorFeeAmount: r.processorFeeAmount,
-    // Invoice total = base price + add-ons. Anything above it is the
-    // overpayment a tip can be carved from.
-    invoiceTotal:
-      (r.occurrence.price ?? 0) +
-      (r.occurrence.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0),
+    // THE INVOICE THE CLIENT WAS SENT — work plus materials. This used to
+    // hand-roll `price + addons`, which is the CREW POOL, not the invoice.
+    // The gap equalled the material charges, so every visit with materials
+    // showed a phantom overpayment and offered to pay it out as a tip.
+    invoiceTotal: invoiceTotal(r.occurrence),
     assignees: (r.occurrence.assignees ?? []).map((a) => ({
       userId: a.userId,
       displayName: a.user?.displayName ?? a.user?.email ?? "Worker",
@@ -355,7 +359,9 @@ export default function PendingApprovalsSection({ onReady }: {
             const clientName = r.occurrence.job?.property?.client?.displayName ?? null;
             const reporter = r.collectedBy?.displayName ?? r.collectedBy?.email ?? null;
             const reporterLabel = reporter ? `worker (${reporter})` : "client";
-            const expected = (r.occurrence.price ?? 0) + (r.occurrence.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+            // Same bug as tipInputsFor had: this drove an "amount differs"
+            // badge that fired on every visit carrying material charges.
+            const expected = invoiceTotal(r.occurrence);
             const amountDiffers = Math.abs(r.amountPaid - expected) > 0.01;
             return (
               <Box

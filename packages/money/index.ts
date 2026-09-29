@@ -14,4 +14,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export * from "./payoutMath";
+export * from "./jobPricing";
 export * from "./forecastModel";
