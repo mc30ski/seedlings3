@@ -42,8 +42,16 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
-import StreamPauseDialog from "@/src/ui/dialogs/StreamPauseDialog";
 import RepeatingPauseInfoLine from "@/src/ui/components/RepeatingPauseInfoLine";
+import {
+  useStreamPauseControls,
+  StreamPauseActions,
+  StreamPauseFilter,
+  passesPauseFilter,
+  summarizeRepeatings,
+  ALL_PAUSE_REASONS,
+} from "@/src/ui/components/StreamPauseControls";
+import { usePauseReasons, pauseReasonLabel } from "@/src/lib/pauseReasons";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
@@ -124,6 +132,9 @@ export default function ServicesTab({
   >(null);
 
   const { isAvail, forAdmin, isSuper, isAdmin } = determineRoles(me, purpose);
+  // Pausing a stream stops work someone else is scheduled for, and a worker
+  // has no view of that consequence — admin/super only.
+  const canManageStreams = !!(isAdmin || isSuper);
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -143,6 +154,18 @@ export default function ServicesTab({
   // service (status = STREAM_PAUSED). When on, everything else hides.
   // Useful for reviewing what's on hold across the whole feed.
   const [pausedRepeatingOnly, setPausedRepeatingOnly] = useState(false);
+  // Narrows a paused-only list to one taxonomy reason ("show me everything
+  // on hold for non-payment"). Meaningless without the paused filter on, so
+  // the control is disabled — not hidden — while that toggle is off.
+  const [pauseReasonFilter, setPauseReasonFilter] = useState<string>(ALL_PAUSE_REASONS);
+  // REPEATING FILTER. Job.status says a service is Accepted; it does not say
+  // whether anything is actually scheduled. Since job-pause was removed
+  // that gap is the whole question — "Accepted, every stream on hold" and
+  // "Accepted, running weekly" used to be distinguishable by status and no
+  // longer are. Reads repeatingSummary off the list row, so it costs no
+  // extra fetch.
+  const [repeatingFilter, setRepeatingFilter] = usePersistedState<string[]>("services_repeating", ["ALL"]);
+  const pauseReasons = usePauseReasons();
   // Job IDs to restrict the top-level list to when the operator entered
   // via the "Paused repeating to review" alert / task-row. Populated by
   // the streamReview effect below. Null = no restriction (normal
@@ -213,6 +236,29 @@ export default function ServicesTab({
   const jobStatusItems = useMemo(
     () => jobStatusStates.map((s) => ({ label: s === "ALL" ? "All Job Statuses" : prettyStatus(s), value: s })),
     []
+  );
+  const repeatingItems = useMemo(
+    () => [
+      { label: "Any repeating state", value: "ALL" },
+      { label: "Has a live repeating visit", value: "HAS_ACTIVE" },
+      // "Every repeating visit paused" is the state the old job-level PAUSED
+      // named: the service reads Accepted and nothing is going to happen.
+      // Deliberately NOT "has ANY paused visit" — the Paused chip beside this
+      // control already answers that, and two controls for one question is
+      // how an operator ends up unable to tell which one is in effect.
+      { label: "Every repeating visit paused", value: "ALL_PAUSED" },
+      { label: "No repeating visit", value: "NONE" },
+    ],
+    [],
+  );
+  // A value persisted before the options changed would filter the list with
+  // no chip naming it — read it as unset instead.
+  const repeatingValue = repeatingItems.some((i) => i.value === repeatingFilter[0])
+    ? repeatingFilter[0]
+    : "ALL";
+  const repeatingCollection = useMemo(
+    () => createListCollection({ items: repeatingItems }),
+    [repeatingItems],
   );
   const jobStatusCollection = useMemo(
     () => createListCollection({ items: jobStatusItems }),
@@ -351,86 +397,27 @@ export default function ServicesTab({
 
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
-  // Stream-pause dialog state — one piece of state powers all three
-  // operations (pause / update / resume). Parent decides which mode
-  // to open based on the current occurrence status. Setting to null
-  // closes the dialog.
-  type StreamDialogState =
-    | { mode: "pause"; occ: JobOccurrenceFull }
-    | { mode: "update"; occ: JobOccurrenceFull }
-    | { mode: "resume"; occ: JobOccurrenceFull };
-  const [streamDialog, setStreamDialog] = useState<StreamDialogState | null>(null);
-  const [streamBusy, setStreamBusy] = useState(false);
-
-  // Compute a default new-start-date for the resume dialog. Uses the
-  // occurrence's own `frequencyDays` (or the Job's default) to shift
-  // today forward one cadence, so the operator's "restart it soon" pick
-  // matches natural cadence math.
-  function defaultResumeStartAt(occ: JobOccurrenceFull, jobFreq: number | null | undefined): string {
-    const freq = (occ.frequencyDays as number | null | undefined) ?? jobFreq ?? 14;
-    // ET-anchored day math via the canonical helper — .setDate() would
-    // drift on DST edges. Result is YYYY-MM-DD in ET.
-    return bizAddDays(bizToday(), freq);
-  }
-
-  async function submitStreamPause(reason: string | null, reminderAt: string | null) {
-    if (!streamDialog) return;
-    setStreamBusy(true);
-    try {
-      await apiPost(`/api/admin/occurrences/${streamDialog.occ.id}/stream-pause`, {
-        reason,
-        reminderAt,
-      });
-      publishInlineMessage({ type: "SUCCESS", text: "Repeating service paused." });
-      setStreamDialog(null);
-      // Bump the alerts badge — see pages/index.tsx listener.
-      window.dispatchEvent(new CustomEvent("seedlings:stream-pauses-changed"));
+  // Pausing a repeating service — the shared implementation. Services and
+  // Work→Jobs must offer the same actions with the same copy, so the dialogs,
+  // the writes and the reason filter all live in StreamPauseControls.
+  const streamControls = useStreamPauseControls({
+    // THE DETAIL, NOT JUST THE LIST. Occurrence rows on this tab come from
+    // jobDetails[jobId], which load() does not touch — so refreshing only
+    // the list left the card holding the pre-write occurrence. "Dismiss
+    // paused reminder" reported success and reopening "Edit pause" still
+    // showed the old date. Same forced refresh every other occurrence
+    // mutation here does (see patchOccurrenceStatus).
+    onChanged: async (occ) => {
       await load(false);
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to pause repeating.", err) });
-    } finally {
-      setStreamBusy(false);
-    }
-  }
+      const jobId =
+        occ.jobId ??
+        Object.keys(jobDetails).find((id) =>
+          (jobDetails[id]?.occurrences ?? []).some((o: JobOccurrenceFull) => o.id === occ.id),
+        );
+      if (jobId) await loadDetail(jobId, true);
+    },
+  });
 
-  async function submitStreamPauseUpdate(reason: string | null, reminderAt: string | null) {
-    if (!streamDialog) return;
-    setStreamBusy(true);
-    try {
-      await apiPatch(`/api/admin/occurrences/${streamDialog.occ.id}/stream-pause`, {
-        reason,
-        reminderAt,
-      });
-      publishInlineMessage({ type: "SUCCESS", text: "Repeating pause updated." });
-      setStreamDialog(null);
-      // Bump the alerts badge — see pages/index.tsx listener.
-      window.dispatchEvent(new CustomEvent("seedlings:stream-pauses-changed"));
-      await load(false);
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to update repeating pause.", err) });
-    } finally {
-      setStreamBusy(false);
-    }
-  }
-
-  async function submitStreamResume(newStartAt: string) {
-    if (!streamDialog) return;
-    setStreamBusy(true);
-    try {
-      await apiPost(`/api/admin/occurrences/${streamDialog.occ.id}/stream-resume`, {
-        newStartAt,
-      });
-      publishInlineMessage({ type: "SUCCESS", text: "Repeating service resumed." });
-      setStreamDialog(null);
-      // Bump the alerts badge — see pages/index.tsx listener.
-      window.dispatchEvent(new CustomEvent("seedlings:stream-pauses-changed"));
-      await load(false);
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to resume repeating.", err) });
-    } finally {
-      setStreamBusy(false);
-    }
-  }
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
   const [serviceTypes, setServiceTypes] = useState<ServiceTypeConfig[]>(DEFAULT_SERVICE_TYPES);
@@ -797,114 +784,12 @@ export default function ServicesTab({
   async function confirmJobStatus(job: JobListItem, newStatus: string) {
     const label = serviceLabel(job);
 
-    if (newStatus === "PAUSED" || (newStatus === "ACCEPTED" && job.status === "PAUSED")) {
-      let preview: {
-        scheduledToRemove: number;
-        nextScheduledAt: string | null;
-        resumeWouldScheduleAt: string | null;
-        frequencyDays: number | null;
-      } | null = null;
-      try {
-        preview = await apiGet(`/api/admin/jobs/${job.id}/pause-preview`);
-      } catch {
-        // A preview that won't load must not block the action — the dialog
-        // just falls back to describing the behaviour without the numbers.
-      }
-
-      if (newStatus === "PAUSED") {
-        const n = preview?.scheduledToRemove ?? null;
-        setConfirmAction({
-          title: "Pause this service?",
-          message: "",
-          messageNode: (
-            <VStack align="stretch" gap={2}>
-              <Text fontSize="sm">
-                Stop scheduling visits for <b>{label}</b>.
-              </Text>
-              <Text fontSize="sm">
-                {n === null
-                  ? "Any visit already on the schedule for this service will be removed."
-                  : n === 0
-                    ? "There are no scheduled visits to remove."
-                    : n === 1
-                      ? `The scheduled visit${preview?.nextScheduledAt ? ` on ${fmtDate(preview.nextScheduledAt)}` : ""} will be removed.`
-                      : `${n} scheduled visits will be removed.`}{" "}
-                Visits already in progress, completed or paid are untouched.
-              </Text>
-              <Text fontSize="sm" color="fg.muted">
-                No new visits post while it&rsquo;s paused, and it raises no
-                &ldquo;next visit not scheduled&rdquo; warnings. Resuming
-                schedules the next visit forward from today &mdash; you
-                won&rsquo;t get a backlog of missed ones.
-              </Text>
-              {/* The non-destructive alternative. Pausing the SERVICE and
-                  pausing the REPEATING VISIT are near-identical gestures
-                  with opposite consequences for the scheduled visit: one
-                  deletes it, the other holds it exactly where it is. An
-                  operator who only wants to skip ahead is one button away
-                  from the wrong one, so the dialog has to name the other. */}
-              <Box
-                px={3}
-                py={2.5}
-                bg="blue.subtle"
-                color="blue.fg"
-                borderRadius="md"
-                borderLeftWidth="3px"
-                borderColor="blue.solid"
-              >
-                <Text fontSize="xs" fontWeight="semibold" mb={1}>
-                  Want to keep the scheduled visit?
-                </Text>
-                <Text fontSize="xs" lineHeight="1.5">
-                  Use <b>Pause repeating</b> on the visit itself instead. That
-                  holds the visit in place &mdash; nothing is deleted &mdash;
-                  and freezes the cycle there until you resume it on a date you
-                  pick. Pausing the service is for stopping it altogether.
-                </Text>
-              </Box>
-            </VStack>
-          ),
-          // Shown unconditionally, and worded so it is true whether or not
-          // anything is on the schedule right now. Hiding it when the count
-          // happened to be zero meant the one irreversible fact about
-          // pausing was taught only to operators who tripped over it.
-          warning:
-            "Pausing removes any scheduled visit, and that cannot be undone \u2014 resuming creates a new visit on the next cycle date, not the one that was removed.",
-          confirmLabel: "Pause service",
-          colorPalette: "yellow",
-          onConfirm: async () => await patchJobStatus(job, "PAUSED"),
-        });
-        return;
-      }
-
-      const when = preview?.resumeWouldScheduleAt;
-      setConfirmAction({
-        title: "Resume this service?",
-        message: "",
-        messageNode: (
-          <VStack align="stretch" gap={2}>
-            <Text fontSize="sm">
-              Start scheduling visits for <b>{label}</b> again.
-            </Text>
-            <Text fontSize="sm">
-              {when
-                ? <>The next visit will be scheduled for <b>{fmtDate(when)}</b>.</>
-                : "The next visit will be scheduled on the service\u2019s normal cycle."}
-              {preview?.frequencyDays
-                ? ` It repeats every ${preview.frequencyDays} days from there.`
-                : ""}
-            </Text>
-          </VStack>
-        ),
-        confirmLabel: "Resume service",
-        colorPalette: "green",
-        onConfirm: async () => await patchJobStatus(job, "ACCEPTED"),
-      });
-      return;
-    }
-
-    // PROPOSED → ACCEPTED. No preview to fetch; the point of confirming is
-    // that accepting is what starts the service scheduling at all.
+    // PROPOSED → ACCEPTED is all that remains. The pause and resume branches
+    // that used to live here are gone with job-level pause: they fetched a
+    // preview of how many scheduled visits would be DELETED, warned that it
+    // could not be undone, and steered the operator toward pausing the
+    // repeating visit instead. That steer is now the only option, so the
+    // dialog it lived in has nothing left to say.
     setConfirmAction({
       title: "Accept this service?",
       message: `Accept ${label}. It starts scheduling visits on its normal cycle.`,
@@ -914,14 +799,39 @@ export default function ServicesTab({
     });
   }
 
+
   function confirmArchiveJob(job: JobListItem) {
     setConfirmAction({
       title: "Archive this service?",
       message: `Archive ${serviceLabel(job)}. It stops scheduling, leaves the Services list, and its scheduled visits are removed. Past visits and their payments are kept.`,
-      warning: "Archiving is how a service ends. To stop it temporarily, use Pause instead — that keeps it on the list and resumes onto the next cycle date.",
+      warning:
+        "Archiving is how a service ENDS. To stop it temporarily, pause its repeating visit instead — that keeps the visit in place, records why you stopped, and resumes onto a date you choose. Archiving can be undone from Archived services, but the scheduled visits it removes do not come back.",
       confirmLabel: "Archive service",
       colorPalette: "red",
       onConfirm: async () => await archiveJob(job.id),
+    });
+  }
+
+  /** Bring an archived service back. Rebuilds the recurring chain server-side
+   *  (services/jobs.ts unarchiveJob) so the operator does not have to click
+   *  "Generate Next" — the parity with the old unpause. */
+  function confirmUnarchiveJob(job: JobListItem) {
+    setConfirmAction({
+      title: "Unarchive this service?",
+      message: `Bring ${serviceLabel(job)} back. It returns to Accepted and starts scheduling visits again on its normal cycle.`,
+      warning:
+        "The scheduled visits that archiving removed do not come back — a fresh next visit is generated instead. Past visits and their payments were never touched.",
+      confirmLabel: "Unarchive service",
+      colorPalette: "green",
+      onConfirm: async () => {
+        try {
+          await apiPost(`/api/admin/jobs/${job.id}/unarchive`, {});
+          await load(false);
+          publishInlineMessage({ type: "SUCCESS", text: "Service unarchived. Next visit generated." });
+        } catch (err) {
+          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Unarchive failed.", err) });
+        }
+      },
     });
   }
 
@@ -1084,10 +994,15 @@ export default function ServicesTab({
     }
 
     let rows = items;
-    // showArchived = exclusive filter ("Archived only"). Off = hide archived (default).
-    if (showArchived) rows = rows.filter((i) => i.status === "ARCHIVED");
-    else rows = rows.filter((i) => i.status !== "ARCHIVED");
     const jsf = jobStatusFilter[0];
+    // showArchived = exclusive filter ("Archived only"). Off = hide archived
+    // (default) — UNLESS the job-status filter is itself asking for
+    // ARCHIVED. Those two combined used to cancel out and return nothing,
+    // which made "Archived services" unreachable from the status dropdown —
+    // and the archive confirm tells the operator that is where to go to
+    // undo it.
+    if (showArchived || jsf === "ARCHIVED") rows = rows.filter((i) => i.status === "ARCHIVED");
+    else rows = rows.filter((i) => i.status !== "ARCHIVED");
     if (jsf !== "ALL") rows = rows.filter((i) => i.status === jsf);
     if (kind[0] !== "ALL") rows = rows.filter((i) => i.kind === kind[0]);
     const qlc = q.trim().toLowerCase();
@@ -1101,8 +1016,36 @@ export default function ServicesTab({
     if (vipOnly) {
       rows = rows.filter((r) => !!(r.property?.client as any)?.isVip);
     }
+    // PAUSED FILTER NARROWS THE SERVICE LIST, NOT JUST THE VISITS INSIDE IT.
+    // It used to only hide non-paused occurrences within an expanded card,
+    // so turning "Paused" on left all 27 services on screen and the operator
+    // had to open each one to find out which were actually holding work —
+    // which is the opposite of what the filter is for. Uses the same
+    // repeatingSummary the card badge reads, so the list and the badge can't
+    // disagree.
+    if (pausedRepeatingOnly) {
+      rows = rows.filter((r) => {
+        const rs = r.repeatingSummary;
+        if (!rs || rs.paused === 0) return false;
+        if (pauseReasonFilter === ALL_PAUSE_REASONS) return true;
+        return rs.pausedReasonCodes.includes(pauseReasonFilter);
+      });
+    }
+    const rf = repeatingValue;
+    if (rf !== "ALL") {
+      rows = rows.filter((r) => {
+        const rs = r.repeatingSummary ?? { total: 0, active: 0, paused: 0, pausedReasonCodes: [] };
+        if (rf === "HAS_ACTIVE") return rs.active > 0;
+        // "Every repeating visit paused" is the state the old job-level
+        // PAUSED used to name, and the one worth finding: the service looks
+        // Accepted and nothing is going to happen.
+        if (rf === "ALL_PAUSED") return rs.total > 0 && rs.active === 0;
+        if (rf === "NONE") return rs.total === 0;
+        return true;
+      });
+    }
     return rows;
-  }, [items, q, kind, jobStatusFilter, showArchived, vipOnly, reviewTargetJobIds]);
+  }, [items, q, kind, jobStatusFilter, showArchived, vipOnly, repeatingValue, pausedRepeatingOnly, pauseReasonFilter, reviewTargetJobIds]);
 
   // HOISTED ABOVE THE LOADING GATES ON PURPOSE.
   // The help panel is static copy — it does not depend on anything this tab
@@ -1122,10 +1065,25 @@ export default function ServicesTab({
             has run its course.
           </ExplainerText>
           <ExplainerText>
-            <Em>Pausing a stream</Em> holds one recurring line (hedging, say) while the others
-            under the same service keep running. The client change-request queue at the top is
-            where reschedule and skip requests land. Deleting an archived service or visit
-            outright is <Em>super-only</Em>.
+            <Em>Pausing a repeating visit</Em> holds one recurring line (hedging, say) while
+            the others under the same service keep running. You pick a reason from the list and
+            a date to check back; a note is optional and always available. The visit keeps the
+            date it was scheduled for, so it stays where you expect it in the feed, and every
+            pause is kept as history — reasons survive resuming. Filter the feed to paused and
+            narrow it by reason to see everything on hold. The same buttons and dialogs are on
+            the Work → Jobs tab.
+          </ExplainerText>
+          <ExplainerText>
+            There is <Em>no pause on the service itself</Em>. It used to exist and it deleted
+            every scheduled visit and rebuilt the chain on resume — the same thing Archive
+            does. To end a service, archive it; to stop one for a while, pause its repeating
+            visit. An archived service can be brought back with <Em>Unarchive</Em> (pick
+            Archived in the status filter to find it), which returns it to Accepted and
+            generates a fresh next visit.
+          </ExplainerText>
+          <ExplainerText>
+            The client change-request queue at the top is where reschedule and skip requests
+            land. Deleting an archived service or visit outright is <Em>super-only</Em>.
           </ExplainerText>
           {isSuper && (
             <RoleSection role="Super">
@@ -1238,6 +1196,22 @@ export default function ServicesTab({
               {jobStatusItems.find((i) => i.value === jobStatusFilter[0])?.label}
             </Badge>
           )}
+          {repeatingValue !== "ALL" && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {repeatingItems.find((i) => i.value === repeatingValue)?.label}
+            </Badge>
+          )}
+          {/* The Paused toggle is a filter like any other and has to say so
+              here, or an operator who left it on sees a short list with
+              nothing in the summary explaining why. Carries the reason when
+              one is picked, since that narrows it further. */}
+          {pausedRepeatingOnly && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {pauseReasonFilter === ALL_PAUSE_REASONS
+                ? "Has a paused repeating visit"
+                : `Paused · ${pauseReasonLabel(pauseReasonFilter, pauseReasons) ?? pauseReasonFilter}`}
+            </Badge>
+          )}
           {occStatusFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="teal" variant="solid">
               {occStatusItems.find((i) => i.value === occStatusFilter[0])?.label}
@@ -1253,7 +1227,7 @@ export default function ServicesTab({
           {showArchived && <Badge size="sm" colorPalette="gray" variant="solid">Archived only</Badge>}
           {highlightId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 job service</Badge>}
           {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
-          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !skippedNextOnly && !vipOnly && !showCanceled && !showArchived && !highlightId && !q && datePreset) && (
+          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && repeatingValue === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !skippedNextOnly && !vipOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightId && !q && datePreset) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -1262,6 +1236,10 @@ export default function ServicesTab({
               onClick={() => {
                 setKind(["ALL"]);
                 setJobStatusFilter(["ALL"]);
+                setRepeatingFilter(["ALL"]);
+                setPausedRepeatingOnly(false);
+                setPauseReasonFilter(ALL_PAUSE_REASONS);
+                setReviewTargetJobIds(null);
                 setOccStatusFilter(["ALL"]);
                 setTypeFilter(["ALL"]);
                 setOverdueActive(false);
@@ -1329,6 +1307,32 @@ export default function ServicesTab({
           <Select.Positioner>
             <Select.Content>
               {jobStatusItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        {/* What is actually scheduled, as opposed to what the service says
+            it is. See repeatingFilter. */}
+        <Select.Root
+          collection={repeatingCollection}
+          value={[repeatingValue]}
+          onValueChange={(e) => setRepeatingFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: repeatingValue !== "ALL" ? "var(--chakra-colors-blue-muted)" : "var(--chakra-colors-blue-subtle)", border: repeatingValue !== "ALL" ? "1px solid var(--chakra-colors-blue-strong)" : "1px solid var(--chakra-colors-blue-emphasized)", borderRadius: "6px" }} title="Repeating visits">
+              <Repeat size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {repeatingItems.map((it) => (
                 <Select.Item key={it.value} item={it.value}>
                   <Select.ItemText>{it.label}</Select.ItemText>
                 </Select.Item>
@@ -1435,30 +1439,22 @@ export default function ServicesTab({
         >
           <Ban size={14} />
         </Button>
-        <Button
-          size="sm"
-          variant={pausedRepeatingOnly ? "solid" : "outline"}
-          px="2"
-          onClick={() => {
-            const next = !pausedRepeatingOnly;
-            setPausedRepeatingOnly(next);
-            // Toggling off (or manually turning on from the toolbar)
-            // exits the "review-only" job restriction so the operator
-            // sees the whole feed / every paused stream, not just the
-            // reminder-due ones the alert deep-linked to.
-            setReviewTargetJobIds(null);
-          }}
-          title={pausedRepeatingOnly ? "Show all occurrences" : "Show only paused repeating"}
-          css={pausedRepeatingOnly ? {
-            background: "var(--chakra-colors-purple-subtle)",
-            color: "var(--chakra-colors-purple-fg)",
-            border: "1px solid var(--chakra-colors-purple-strong)",
-            "&:hover": { background: "var(--chakra-colors-purple-muted)" },
-          } : undefined}
-        >
-          <Repeat size={14} />
-          <Text as="span" fontSize="xs" ml={1}>Paused</Text>
-        </Button>
+        {/* PAUSE STATE — one control for "only held visits" and "which
+            reason". Same component Work → Jobs uses. */}
+        {canManageStreams && (
+          <StreamPauseFilter
+            active={pausedRepeatingOnly}
+            reasonCode={pauseReasonFilter}
+            onChange={({ active, reasonCode }) => {
+              setPausedRepeatingOnly(active);
+              setPauseReasonFilter(reasonCode);
+              // Turning it off exits the "review-only" job restriction the
+              // reminder alert sets, so the operator sees the whole feed.
+              if (!active) setReviewTargetJobIds(null);
+            }}
+            reasons={pauseReasons}
+          />
+        )}
         <Button
           size="sm"
           variant={overdueActive ? "solid" : "outline"}
@@ -1602,7 +1598,7 @@ export default function ServicesTab({
         </Select.Root>
       </HStack>
 
-      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || showCanceled || showArchived || datePreset || dateFrom || dateTo || highlightId) && (
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || repeatingValue !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || showCanceled || showArchived || pausedRepeatingOnly || datePreset || dateFrom || dateTo || highlightId) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
             <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
@@ -1636,6 +1632,22 @@ export default function ServicesTab({
               {jobStatusItems.find((i) => i.value === jobStatusFilter[0])?.label}
             </Badge>
           )}
+          {repeatingValue !== "ALL" && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {repeatingItems.find((i) => i.value === repeatingValue)?.label}
+            </Badge>
+          )}
+          {/* The Paused toggle is a filter like any other and has to say so
+              here, or an operator who left it on sees a short list with
+              nothing in the summary explaining why. Carries the reason when
+              one is picked, since that narrows it further. */}
+          {pausedRepeatingOnly && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {pauseReasonFilter === ALL_PAUSE_REASONS
+                ? "Has a paused repeating visit"
+                : `Paused · ${pauseReasonLabel(pauseReasonFilter, pauseReasons) ?? pauseReasonFilter}`}
+            </Badge>
+          )}
           {occStatusFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="teal" variant="solid">
               {occStatusItems.find((i) => i.value === occStatusFilter[0])?.label}
@@ -1662,7 +1674,7 @@ export default function ServicesTab({
               Filtered to 1 job service
             </Badge>
           )}
-          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !showCanceled && !showArchived && !highlightId && datePreset) && (
+          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && repeatingValue === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !showCanceled && !showArchived && !pausedRepeatingOnly && !highlightId && datePreset) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -1671,6 +1683,10 @@ export default function ServicesTab({
               onClick={() => {
                 setKind(["ALL"]);
                 setJobStatusFilter(["ALL"]);
+                setRepeatingFilter(["ALL"]);
+                setPausedRepeatingOnly(false);
+                setPauseReasonFilter(ALL_PAUSE_REASONS);
+                setReviewTargetJobIds(null);
                 setOccStatusFilter(["ALL"]);
                 setTypeFilter(["ALL"]);
                 setOverdueActive(false);
@@ -1694,12 +1710,20 @@ export default function ServicesTab({
         {(() => {
           const accepted = items.filter((j) => j.status === "ACCEPTED").length;
           const proposed = items.filter((j) => j.status === "PROPOSED").length;
-          const paused = items.filter((j) => j.status === "PAUSED").length;
+          // SERVICES HOLDING A REPEATING VISIT, not services in a paused
+          // status — there is no such status any more. This counted
+          // Job.status === "PAUSED" and then, briefly, a hardcoded 0, which
+          // read as "nothing is on hold" while five streams were.
+          const paused = items.filter((j) => (j.repeatingSummary?.paused ?? 0) > 0).length;
           const archived = items.filter((j) => j.status === "ARCHIVED").length;
           return (
             <>
               <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">{accepted} Active</Badge>
               <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">{proposed} Proposed</Badge>
+              {/* Read-only, like its neighbours. It was briefly a toggle,
+                  which made one badge in a row of four behave differently
+                  from the rest for no reason the operator could see — the
+                  Paused chip in the filter bar is the control. */}
               <Badge colorPalette="yellow" variant="subtle" fontSize="xs" px="2" borderRadius="full">{paused} Paused</Badge>
               <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">{archived} Archived</Badge>
             </>
@@ -1733,8 +1757,10 @@ export default function ServicesTab({
                 if (highlightOccId && o.id === highlightOccId) return true;
                 // Paused-repeating filter — when on, hide everything
                 // that isn't STREAM_PAUSED so the operator can scan the
-                // full set of on-hold streams across the feed.
-                if (pausedRepeatingOnly && (o.status as string) !== "STREAM_PAUSED") return false;
+                // full set of on-hold streams across the feed, optionally
+                // narrowed to one reason. Shared with Work→Jobs so the two
+                // tabs can't disagree on what a reason filter matches.
+                if (!passesPauseFilter(o as any, pausedRepeatingOnly, pauseReasonFilter)) return false;
                 if (!showArchived && o.status === "ARCHIVED") return false;
                 if (!showCanceled && o.status === "CANCELED") return false;
                 if (!showAllOccs.has(job.id) && o.startAt) {
@@ -1874,6 +1900,44 @@ export default function ServicesTab({
                       ? `Default frequency: every ${job.frequencyDays} day${job.frequencyDays !== 1 ? "s" : ""}`
                       : "Default frequency: not set"}
                   </Text>
+                  {/* WHAT IS ACTUALLY SCHEDULED. The service itself is only a
+                      default; its repeating streams are the work. A service
+                      with every stream on hold used to read as "paused" via
+                      Job.status — that status is gone, so the card states the
+                      live and held counts, and names why the held ones are
+                      held. */}
+                  {(() => {
+                    const rs = job.repeatingSummary;
+                    if (!rs || rs.total === 0) return null;
+                    const reasonText = rs.pausedReasonCodes
+                      .map((c) =>
+                        c === "__UNCODED__"
+                          ? "reason not recorded"
+                          : (pauseReasonLabel(c, pauseReasons) ?? c),
+                      )
+                      .join(", ");
+                    return (
+                      <HStack gap={2} flexWrap="wrap" fontSize="xs">
+                        <Text color="fg.muted">
+                          {rs.total} repeating {rs.total === 1 ? "stream" : "streams"}
+                          {" · "}
+                          {rs.active} active
+                        </Text>
+                        {rs.paused > 0 && (
+                          <Badge
+                            colorPalette="purple"
+                            variant="subtle"
+                            fontSize="xs"
+                            px="2"
+                            borderRadius="full"
+                            title={reasonText ? `Paused: ${reasonText}` : undefined}
+                          >
+                            {rs.paused} paused{reasonText ? ` · ${reasonText}` : ""}
+                          </Badge>
+                        )}
+                      </HStack>
+                    );
+                  })()}
                   {job.notes && (
                     <TruncatedText>{job.notes}</TruncatedText>
                   )}
@@ -2010,31 +2074,34 @@ export default function ServicesTab({
                         setBusyId={setStatusButtonBusyId}
                       />
                     )}
-                    {job.status === "ACCEPTED" && (
+                    {/* NO PAUSE HERE ANY MORE. Pausing a job deleted every
+                        scheduled visit and rebuilt the chain on resume — the
+                        same thing Archive does, through the same helpers, but
+                        sitting on the card where it read as the gentle option.
+                        To hold a service, pause its repeating visit below:
+                        that keeps the visit, records why, and resumes onto a
+                        date you choose. */}
+                    {/* UNARCHIVE — the way back. Archiving is how a service
+                        ends, but it is also what the old job-pause did, so
+                        every service paused before that was removed is now
+                        archived and has to have a way home. Returns the
+                        service to ACCEPTED and rebuilds its recurring chain,
+                        which is exactly what unpause used to do. The visits
+                        archiving deleted do not come back, so the confirm
+                        says so. */}
+                    {job.status === "ARCHIVED" && (
                       <StatusButton
-                        id="job-pause"
+                        id="job-unarchive"
                         itemId={job.id}
-                        label="Pause"
-                        onClick={async () => confirmJobStatus(job, "PAUSED")}
-                        variant="outline"
-                        colorPalette="yellow"
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
-                    {job.status === "PAUSED" && (
-                      <StatusButton
-                        id="job-resume"
-                        itemId={job.id}
-                        label="Resume"
-                        onClick={async () => confirmJobStatus(job, "ACCEPTED")}
+                        label="Unarchive"
+                        onClick={async () => confirmUnarchiveJob(job)}
                         variant="outline"
                         colorPalette="green"
                         busyId={statusButtonBusyId}
                         setBusyId={setStatusButtonBusyId}
                       />
                     )}
-                    {(job.status === "ACCEPTED" || job.status === "PAUSED") && (
+                    {job.status === "ACCEPTED" && (
                       <StatusButton
                         id="job-archive"
                         itemId={job.id}
@@ -2138,8 +2205,9 @@ export default function ServicesTab({
                                   </Text>
                                   <Text fontSize="xs" color="red.fg">
                                     {(occ.payment as any).nextOccurrenceSkipReason === "no_frequency_set" && "No repeat frequency set."}
-                                    {(occ.payment as any).nextOccurrenceSkipReason === "job_paused" && "Job service is paused."}
+                                    {(occ.payment as any).nextOccurrenceSkipReason === "job_paused" && "The job service was paused at the time."}
                                     {(occ.payment as any).nextOccurrenceSkipReason === "duplicate_exists" && "Scheduled occurrence already exists on next date."}
+                                    {(occ.payment as any).nextOccurrenceSkipReason === "next_visit_held" && "The next visit already exists and is paused."}
                                     {(occ.payment as any).nextOccurrenceSkipReason === "occurrence_or_job_not_found" && "Could not find job service."}
                                   </Text>
                                 </Box>
@@ -2809,7 +2877,7 @@ export default function ServicesTab({
                               when to check back. Renders nothing when
                               the occurrence isn't repeating-paused, so
                               it's safe to drop in unconditionally. */}
-                          <RepeatingPauseInfoLine occ={occ as any} />
+                          <RepeatingPauseInfoLine occ={occ as any} reasons={pauseReasons} />
                         </VStack>
 
 
@@ -3134,104 +3202,18 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {/* Stream pause on a SCHEDULED occurrence —
-                                temporarily hold this recurring stream
-                                (e.g. hedging) without affecting the
-                                Job's other streams (e.g. mowing). See
-                                services/occurrenceStreamPause.ts */}
-                            {occ.status === "SCHEDULED" && (
-                              <StatusButton
-                                id="occ-stream-pause"
-                                itemId={occ.id}
-                                label="Pause repeating"
-                                onClick={async () => {
-                                  setStreamDialog({ mode: "pause", occ });
-                                }}
-                                variant="outline"
-                                colorPalette="purple"
-                                busyId={statusButtonBusyId}
-                                setBusyId={setStatusButtonBusyId}
-                              />
-                            )}
-                            {(occ.status as string) === "STREAM_PAUSED" && (
-                              <>
-                                <StatusButton
-                                  id="occ-stream-resume"
-                                  itemId={occ.id}
-                                  label="Resume repeating"
-                                  onClick={async () => {
-                                    setStreamDialog({ mode: "resume", occ });
-                                  }}
-                                  variant="outline"
-                                  colorPalette="green"
-                                  busyId={statusButtonBusyId}
-                                  setBusyId={setStatusButtonBusyId}
-                                />
-                                <StatusButton
-                                  id="occ-stream-edit-pause"
-                                  itemId={occ.id}
-                                  label="Edit pause"
-                                  onClick={async () => {
-                                    setStreamDialog({ mode: "update", occ });
-                                  }}
-                                  variant="outline"
-                                  colorPalette="purple"
-                                  busyId={statusButtonBusyId}
-                                  setBusyId={setStatusButtonBusyId}
-                                />
-                                {/* Dismiss the reminder without resuming.
-                                    Clears streamResumeReminderAt so the
-                                    row drops out of the "Paused repeating
-                                    to review" alert, but keeps
-                                    streamPausedAt / streamPauseReason
-                                    intact so the pause and its history
-                                    are preserved. For the "client hasn't
-                                    given a real return date, stop bugging
-                                    me but I still want to be able to
-                                    find this later" workflow. */}
-                                {!!(occ as any).streamResumeReminderAt && (
-                                  <StatusButton
-                                    id="occ-stream-dismiss-reminder"
-                                    itemId={occ.id}
-                                    label="Dismiss paused reminder"
-                                    onClick={async () => {
-                                      setConfirmAction({
-                                        title: "Dismiss this paused reminder?",
-                                        message:
-                                          "This clears the reminder date and removes this from the \"Paused repeating to review\" list. The stream stays paused with its reason and history intact — you can still search for it and resume it later.",
-                                        confirmLabel: "Dismiss paused reminder",
-                                        colorPalette: "purple",
-                                        onConfirm: async () => {
-                                          try {
-                                            await apiPatch(
-                                              `/api/admin/occurrences/${occ.id}/stream-pause`,
-                                              { reminderAt: null },
-                                            );
-                                            publishInlineMessage({
-                                              type: "SUCCESS",
-                                              text: "Paused reminder dismissed. Stream is still paused.",
-                                            });
-                                            window.dispatchEvent(
-                                              new CustomEvent("seedlings:stream-pauses-changed"),
-                                            );
-                                            await load(false);
-                                          } catch (err) {
-                                            publishInlineMessage({
-                                              type: "ERROR",
-                                              text: getErrorMessage("Couldn't dismiss the reminder.", err),
-                                            });
-                                          }
-                                        },
-                                      });
-                                    }}
-                                    variant="outline"
-                                    colorPalette="purple"
-                                    busyId={statusButtonBusyId}
-                                    setBusyId={setStatusButtonBusyId}
-                                  />
-                                )}
-                              </>
-                            )}
+                            {/* Pause / resume / edit-pause for this one
+                                recurring stream. Shared with Work→Jobs —
+                                see StreamPauseControls. Holding a stream
+                                leaves the job service and its other streams
+                                (e.g. mowing while hedging is paused) alone. */}
+                            <StreamPauseActions
+                              occ={occ as any}
+                              canManage={canManageStreams}
+                              controls={streamControls}
+                              busyId={statusButtonBusyId}
+                              setBusyId={setStatusButtonBusyId}
+                            />
                             {occ.status === "IN_PROGRESS" && (
                               <StatusButton
                                 id="occ-cancel"
@@ -3790,61 +3772,9 @@ export default function ServicesTab({
         jobTagsConfig={serviceTypes}
       />
 
-      {/* Stream-pause / update / resume dialogs — one component handles
-          all three modes; the parent decides which via the state. */}
-      {streamDialog?.mode === "pause" && (
-        <StreamPauseDialog
-          open
-          mode="pause"
-          occurrenceLabel={
-            ((streamDialog.occ as any).jobType as string | null) ||
-            (streamDialog.occ.title as string | null) ||
-            "recurring service"
-          }
-          busy={streamBusy}
-          onCancel={() => { if (!streamBusy) setStreamDialog(null); }}
-          onConfirm={async ({ reason, reminderAt }) => submitStreamPause(reason, reminderAt)}
-        />
-      )}
-      {streamDialog?.mode === "update" && (
-        <StreamPauseDialog
-          open
-          mode="update"
-          occurrenceLabel={
-            ((streamDialog.occ as any).jobType as string | null) ||
-            (streamDialog.occ.title as string | null) ||
-            "recurring service"
-          }
-          currentReason={(streamDialog.occ as any).streamPauseReason ?? null}
-          currentReminderAt={
-            (streamDialog.occ as any).streamResumeReminderAt
-              ? bizDateKey((streamDialog.occ as any).streamResumeReminderAt)
-              : null
-          }
-          busy={streamBusy}
-          onCancel={() => { if (!streamBusy) setStreamDialog(null); }}
-          onConfirm={async ({ reason, reminderAt }) => submitStreamPauseUpdate(reason, reminderAt)}
-        />
-      )}
-      {streamDialog?.mode === "resume" && (
-        <StreamPauseDialog
-          open
-          mode="resume"
-          occurrenceLabel={
-            ((streamDialog.occ as any).jobType as string | null) ||
-            (streamDialog.occ.title as string | null) ||
-            "recurring service"
-          }
-          defaultNewStartAt={defaultResumeStartAt(
-            streamDialog.occ,
-            // Look up job frequency from the joined job field.
-            (streamDialog.occ as any).job?.frequencyDays ?? null,
-          )}
-          busy={streamBusy}
-          onCancel={() => { if (!streamBusy) setStreamDialog(null); }}
-          onConfirm={async ({ newStartAt }) => submitStreamResume(newStartAt)}
-        />
-      )}
+      {/* Pause / edit-pause / resume dialogs — the same
+          components Work→Jobs renders. See StreamPauseControls. */}
+      {streamControls.dialogs}
 
     </Box>
   );

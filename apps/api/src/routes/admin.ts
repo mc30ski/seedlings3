@@ -1652,7 +1652,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       orderBy: { startAt: "asc" },
     });
 
-    // Mirrors applyJobResumeSideEffectsInTx's anchor: the most recent
+    // Mirrors rebuildRecurringChainInTx's anchor: the most recent
     // STANDARD, non-one-off occurrence, whatever its status.
     const lastOcc = await prisma.jobOccurrence.findFirst({
       where: { jobId, workflow: "STANDARD", isOneOff: false },
@@ -2571,18 +2571,34 @@ export default async function adminRoutes(app: FastifyInstance) {
   // Stream pause on a single recurring occurrence — pauses just the
   // stream (e.g. hedging) while other streams under the same Job (mow)
   // keep running. See services/occurrenceStreamPause.ts for semantics.
+  // The pause-reason taxonomy, for the dropdown. adminGuard rather than
+  // superGuard: anyone who can pause a stream needs the list to pause with.
+  app.get("/admin/pause-reasons", adminGuard, async () => {
+    const { listPauseReasons } = await import("../services/pauseReasons");
+    const all = await listPauseReasons();
+    // Retired reasons still resolve for historical rows but are not offered
+    // for new pauses.
+    return { reasons: all.filter((r) => !r.retired) };
+  });
+
   app.post(
     "/admin/occurrences/:occurrenceId/stream-pause",
     adminGuard,
     async (req: any) => {
       const body = req.body || {};
+      const reasonCode = typeof body.reasonCode === "string" ? body.reasonCode.trim() : "";
+      if (!reasonCode) {
+        throw app.httpErrors.badRequest(
+          "Pick a reason for pausing — it is what makes a paused service findable again.",
+        );
+      }
       const reason = typeof body.reason === "string" ? body.reason : null;
       const reminderAt = body.reminderAt ? new Date(body.reminderAt) : null;
       const { pauseStream } = await import("../services/occurrenceStreamPause");
       return pauseStream(
         await currentUserId(req),
         String(req.params.occurrenceId),
-        { reason, reminderAt },
+        { reasonCode, reason, reminderAt },
       );
     },
   );
@@ -2597,7 +2613,10 @@ export default async function adminRoutes(app: FastifyInstance) {
       const body = req.body || {};
       // Distinguish "field absent" (leave alone) from "field null"
       // (clear). Match the service function's signature.
-      const opts: { reason?: string | null; reminderAt?: Date | null } = {};
+      const opts: { reasonCode?: string; reason?: string | null; reminderAt?: Date | null } = {};
+      if (typeof body.reasonCode === "string" && body.reasonCode.trim()) {
+        opts.reasonCode = body.reasonCode.trim();
+      }
       if ("reason" in body) {
         opts.reason = typeof body.reason === "string" ? body.reason : null;
       }
@@ -4871,6 +4890,14 @@ Respond ONLY with valid JSON in this exact format:
         throw app.httpErrors.badRequest(err?.message || "Invalid EXPENSE_CATEGORIES JSON.");
       }
     }
+    if (key === "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS") {
+      const { validatePauseReasonsJson } = await import("../services/pauseReasons");
+      try {
+        validatePauseReasonsJson(value);
+      } catch (err: any) {
+        throw app.httpErrors.badRequest(err?.message || "Invalid REPEATING_JOB_OCCURRENCE_PAUSE_REASONS JSON.");
+      }
+    }
     if (key === "PAYMENT_FROM_OPTIONS") {
       const { validatePaymentFromOptionsJson } = await import("../services/paymentFromOptions");
       try {
@@ -5673,7 +5700,7 @@ Respond ONLY with valid JSON in this exact format:
       const seen = new Set<string>();
       for (const o of closed) {
         if (!o.jobId || hasScheduled.has(o.jobId) || seen.has(o.jobId)) continue;
-        if (o.job?.status === "ARCHIVED" || o.job?.status === "PAUSED") continue;
+        if (o.job?.status === "ARCHIVED") continue;
         if (hasStreamPaused.has(o.jobId)) continue;
         if (!o.job?.frequencyDays || o.job.frequencyDays <= 0) continue;
         seen.add(o.jobId);
@@ -6073,7 +6100,7 @@ Respond ONLY with valid JSON in this exact format:
           occ.workflow !== "ONE_OFF" &&
           occ.workflow !== "ESTIMATE" &&
           occ.job &&
-          occ.job.status !== "PAUSED";
+          occ.job.status !== "ARCHIVED";
         if (isRecurring && effectiveFreq && occ.job) {
           const baseDate = occ.startAt ? new Date(occ.startAt) : new Date();
           const nextStart = new Date(baseDate);

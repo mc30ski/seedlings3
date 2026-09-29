@@ -2535,13 +2535,14 @@ describe("[build-gate] an alert count and the filter it opens agree", () => {
 
 describe("[build-gate] Job status buttons confirm before they fire", () => {
   // Standing project rule: every mutation button gets a ConfirmDialog. The
-  // Services tab's four Job status buttons shipped without one and mutated
-  // on a single tap — on a phone, in a list of near-identical rows.
+  // Services tab's Job status buttons shipped without one and mutated on a
+  // single tap — on a phone, in a list of near-identical rows.
   //
-  // Pause is the one that actually costs something: it DELETES every
-  // SCHEDULED occurrence on the service. Resuming does not bring them back;
-  // it creates one fresh visit on the next cycle date. A mis-tap is a
-  // deleted visit, and the old UI gave no warning and no undo.
+  // ARCHIVE is now the one that costs something. It deletes every SCHEDULED
+  // occurrence on the service, and unarchiving does not bring them back — it
+  // creates one fresh visit on the next cycle date. These rules used to guard
+  // the job-level PAUSE dialog, which did exactly the same thing under a
+  // gentler name; that button is gone, and its lesson moved here.
   const TAB = web("ui/tabs/ServicesTab.tsx");
 
   /** The onClick expression for a StatusButton with this label. */
@@ -2554,81 +2555,267 @@ describe("[build-gate] Job status buttons confirm before they fire", () => {
     return m![1];
   }
 
-  it("Pause, Resume, Accept and Archive all route through a confirm", () => {
-    for (const label of ["Pause", "Resume", "Accept"]) {
-      expect(
-        onClickFor(label),
-        `the ${label} button must open a confirm, not call patchJobStatus directly`,
-      ).toMatch(/confirmJobStatus\(/);
-    }
+  it("Accept and Archive route through a confirm", () => {
+    expect(
+      onClickFor("Accept"),
+      "the Accept button must open a confirm, not call patchJobStatus directly",
+    ).toMatch(/confirmJobStatus\(/);
     expect(
       onClickFor("Archive"),
       "the Archive button must open a confirm, not call archiveJob directly",
     ).toMatch(/confirmArchiveJob\(/);
   });
 
-  it("the pause confirm says how many visits it will delete", () => {
-    // Confirming without saying what is destroyed is just a speed bump.
-    // Scoped to the pause dialog's own body — matching `scheduledToRemove`
-    // anywhere in the file passes on the type declaration alone, which is
-    // true even if the dialog never renders it.
-    const start = TAB.indexOf('if (newStatus === "PAUSED") {');
-    expect(start, "the pause confirm branch must exist").toBeGreaterThan(-1);
-    const end = TAB.indexOf('confirmLabel: "Pause service"', start);
-    expect(end, "the pause confirm must have its button").toBeGreaterThan(start);
-    const body = TAB.slice(start, end);
-    expect(body, "the slice must cover the dialog title").toMatch(/Pause this service\?/);
+  it("job-level pause does not come back", () => {
+    // It deleted every scheduled visit and rebuilt the chain on resume —
+    // the same operation as archive, through the same two helpers, but
+    // sitting on the card where it read as the reversible option. Holding a
+    // service is now done by pausing its repeating visit, which keeps the
+    // visit and records why.
+    expect(TAB, 'the job "Pause" button must not return')
+      .not.toMatch(/id="job-pause"/);
+    expect(TAB, 'nor the job "Resume" button')
+      .not.toMatch(/id="job-resume"/);
+    expect(TAB, "and nothing may set a Job to PAUSED")
+      .not.toMatch(/patchJobStatus\([^)]*"PAUSED"/);
+  });
 
-    expect(body, "the dialog body must read the count from the server preview")
-      .toMatch(/scheduledToRemove/);
-    // No assertion on the prose itself. "will be removed" appears in the
-    // zero/one/many branches, so pinning it passes while any two of the
-    // three are gutted — a check that cannot fail is worse than none.
-    expect(body, "the dialog must warn that resuming does not bring them back")
-      .toMatch(/cannot be undone/);
-    // UNCONDITIONALLY. It was once gated on the count being > 0, so the one
-    // irreversible fact about pausing was shown only to operators who
-    // already had a visit about to be deleted. A `warning:` whose value
-    // depends on the count is the shape of that bug.
+  it("the archive confirm says what it destroys, unconditionally", () => {
+    // Confirming without saying what is destroyed is just a speed bump. The
+    // warning must not be conditional on a count — it was once gated that
+    // way on the old pause dialog, so the one irreversible fact was shown
+    // only to operators who already had a visit about to be deleted.
+    const start = TAB.indexOf("function confirmArchiveJob(");
+    expect(start, "the archive confirm must exist").toBeGreaterThan(-1);
+    const body = TAB.slice(start, TAB.indexOf("async function patchJobStatus", start));
+
+    expect(body, "the dialog must say the scheduled visits are removed")
+      .toMatch(/scheduled visits are removed/);
+    expect(body, "and that removal does not come back on unarchive")
+      .toMatch(/do not come back/);
     expect(
       body.slice(body.indexOf("warning:")),
-      "the pause warning must not be conditional on the scheduled count",
+      "the archive warning must not be conditional",
     ).not.toMatch(/warning:[\s\S]{0,120}\?[\s\S]{0,240}:\s*undefined/);
   });
 
-  it("the pause confirm names the non-destructive alternative", () => {
-    // "Pause service" and "Pause repeating" are adjacent gestures with
+  it("the archive confirm names the non-destructive alternative", () => {
+    // Archiving and pausing the repeating visit are adjacent gestures with
     // opposite consequences for the scheduled visit — one deletes it, one
-    // holds it in place. Someone who only means to skip a cycle is one
-    // button away from the destructive one, so the destructive dialog has
-    // to name the other by the label it actually wears.
-    const start = TAB.indexOf('if (newStatus === "PAUSED") {');
-    const end = TAB.indexOf('confirmLabel: "Pause service"', start);
-    const body = TAB.slice(start, end);
-    expect(body, "the dialog must point at Pause repeating by name")
-      .toMatch(/Pause repeating/);
-    expect(body, "and say plainly that it deletes nothing")
-      .toMatch(/nothing is deleted/);
-    expect(body, "as an informational callout, not a second warning")
-      .toMatch(/bg="blue\.subtle"/);
-    // The label it points at must be the label that exists.
-    expect(TAB, 'the "Pause repeating" button must exist to be pointed at')
-      .toMatch(/label="Pause repeating"/);
+    // holds it in place. The destructive dialog has to name the other.
+    const start = TAB.indexOf("function confirmArchiveJob(");
+    const body = TAB.slice(start, TAB.indexOf("async function patchJobStatus", start));
+    expect(body, "the dialog must point at pausing the repeating visit")
+      .toMatch(/pause its repeating visit/);
+    // The button lives in the shared cluster now, not inline in this tab —
+    // so the alternative the dialog names is reachable only if the tab
+    // actually mounts that cluster.
+    expect(TAB, "the shared pause cluster must be mounted to be pointed at")
+      .toMatch(/<StreamPauseActions/);
+    expect(
+      web("ui/components/StreamPauseControls.tsx"),
+      'the "Pause repeating" button must exist in the shared cluster',
+    ).toMatch(/label="Pause repeating"/);
   });
 
-  it("the resume date comes from the code that will set it", () => {
-    // A preview that re-derives the cycle date independently drifts from the
-    // mutation and starts quietly lying about the date.
-    const JOBS = readFileSync(join(__dirname, "./jobs.ts"), "utf8");
-    const ADMIN = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
-    expect(JOBS, "the resume-date helper must be exported for reuse")
-      .toMatch(/export function computeResumeStartAt\(/);
-    expect(
-      JOBS,
-      "applyJobResumeSideEffectsInTx must use the shared helper, not its own copy",
-    ).toMatch(/const nextStart = computeResumeStartAt\(/);
-    expect(ADMIN, "the preview route must use the same helper")
-      .toMatch(/computeResumeStartAt\(/);
+  it("an archived service can be brought back", () => {
+    // Archive is what job-level pause turned out to be, so every service
+    // paused before pause was removed is now archived — and the archive
+    // confirm promises it can be undone. Without a caller for the unarchive
+    // route that promise is false and the service is stranded.
+    expect(TAB, "the Unarchive button must exist")
+      .toMatch(/id="job-unarchive"/);
+    expect(onClickFor("Unarchive"), "and route through a confirm")
+      .toMatch(/confirmUnarchiveJob\(/);
+    expect(TAB, "which must POST the unarchive route")
+      .toMatch(/jobs\/\$\{job\.id\}\/unarchive/);
+    // Reachable: the status filter and the archived-only toggle used to
+    // cancel each other out, so picking ARCHIVED returned an empty list and
+    // the "find it in Archived services" instruction went nowhere.
+    expect(TAB, "and archived services must be reachable from the status filter")
+      .toMatch(/showArchived \|\| jsf === "ARCHIVED"/);
+  });
+
+  it("Services and Jobs use the same pause components", () => {
+    // Both tabs list the same occurrences. When each had its own buttons and
+    // its own dialog wiring, the copy, the confirms and the reason filter
+    // drifted — and an operator had to remember which tab could do what.
+    const JOBS = web("ui/tabs/JobsTab.tsx");
+    for (const [name, src] of [["ServicesTab", TAB], ["JobsTab", JOBS]] as const) {
+      expect(src, `${name} must mount the shared action cluster`)
+        .toMatch(/<StreamPauseActions/);
+      expect(src, `${name} must render the shared dialogs`)
+        .toMatch(/streamControls\.dialogs/);
+      expect(src, `${name} must use the shared reason filter`)
+        .toMatch(/passesPauseFilter\(/);
+      // Hand-rolling the dialog again is how the two drifted the first time.
+      expect(src, `${name} must not wire StreamPauseDialog directly`)
+        .not.toMatch(/<StreamPauseDialog/);
+    }
+  });
+
+  it("a held repeating visit still has an action row in Work → Jobs", () => {
+    // The Jobs card's action footer renders only for a whitelist of
+    // statuses, and STREAM_PAUSED was not on it — so the purple "Repeating
+    // service paused" panel appeared on a card with no way to resume it,
+    // edit the reason, or dismiss the reminder. The panel and the actions
+    // are written far apart in the file; nothing else joins them.
+    const JOBS = web("ui/tabs/JobsTab.tsx");
+    const i = JOBS.indexOf("{/* Action footer");
+    expect(i, "the action footer must exist").toBeGreaterThan(-1);
+    const gate = JOBS.slice(i, JOBS.indexOf("<Card.Footer", i));
+    expect(gate, "a held repeating visit must reach the action row")
+      .toMatch(/=== "STREAM_PAUSED"/);
+  });
+
+  it("the pause-reason taxonomy is operator-editable, like every other taxonomy", () => {
+    // A mandatory dropdown the operator cannot edit is a deploy request
+    // every time the season throws up a new reason — which is exactly why
+    // taxonomies in this app are Settings and not enums.
+    const SETTINGS = web("ui/tabs/SettingsTab.tsx");
+    const KEY = "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS";
+    expect(SETTINGS, "a dedicated editor, not the raw JSON box")
+      .toMatch(new RegExp(`s\\.key === "${KEY}"[\\s\\S]{0,200}<PauseReasonsEditor`));
+    // Every surface holds the taxonomy in a module-scope cache, so a save
+    // that does not drop it leaves the job cards showing the old labels.
+    expect(SETTINGS, "saving must drop the client-side taxonomy cache")
+      .toMatch(new RegExp(`key === "${KEY}"[\\s\\S]{0,240}invalidatePauseReasons`));
+    // The key doubles as the card title via prettySettingName(), so it is
+    // operator-facing copy, not just an identifier.
+    const SEED = readFileSync(join(__dirname, "../../prisma/seed.ts"), "utf8");
+    expect(SEED, "the taxonomy belongs in Catalogs & Taxonomies")
+      .toMatch(new RegExp(`${KEY}: "catalogs"`));
+    // An edit that cannot be rejected is an edit that corrupts the dropdown.
+    const ROUTES = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+    expect(ROUTES, "the server must validate the payload before storing it")
+      .toMatch(new RegExp(`key === "${KEY}"[\\s\\S]{0,300}validatePauseReasonsJson`));
+  });
+
+  it("a pause write refreshes what Services actually renders", () => {
+    // Services renders occurrence rows from a PER-JOB detail fetch, not from
+    // the job list — so reloading only the list leaves the card holding the
+    // pre-write occurrence. That shipped: clearing a reminder reported
+    // success, the reminder was gone from the database, and reopening "Edit
+    // pause" still showed the old date. Every other occurrence mutation on
+    // this tab already forces loadDetail; the pause ones must too.
+    const i = TAB.indexOf("useStreamPauseControls({");
+    expect(i, "Services must own a pause controller").toBeGreaterThan(-1);
+    const wiring = TAB.slice(i, i + 900);
+    expect(wiring, "the list alone is not what this tab renders occurrences from")
+      .toMatch(/loadDetail\(/);
+    // The controller hands back the occurrence precisely so the caller can
+    // find the right job to refresh; a no-arg callback cannot.
+    const CTRL = web("ui/components/StreamPauseControls.tsx");
+    expect(CTRL, "onChanged must receive the occurrence that changed")
+      .toMatch(/onChanged: \(occ: StreamPauseOcc\)/);
+    expect(CTRL, "and every write must pass it back")
+      .toMatch(/await onChanged\(occ\)/);
+  });
+
+  it("the reminder is edited where it lives, not by a button of its own", () => {
+    // Clearing a reminder used to be its own action-row button with its own
+    // confirm, sitting beside the dialog that already owned that same date.
+    // Two controls for one field, in two places, and the one that could only
+    // ever remove it was the more prominent of the two.
+    const CTRL = web("ui/components/StreamPauseControls.tsx");
+    expect(CTRL, "no action-row button may own the reminder")
+      .not.toMatch(/occ-stream-dismiss-reminder/);
+    const DLG = web("ui/dialogs/StreamPauseDialog.tsx");
+    expect(DLG, "the edit dialog must offer a Clear on the reminder field")
+      .toMatch(/setReminderAt\(""\)/);
+    // NO EMPTY DATE INPUT. What a cleared <input type="date"> looks like is
+    // the browser's call, and they disagree — one paints "mm/dd/yyyy" and
+    // another paints TODAY, which is a date the operator did not choose
+    // sitting in a field the dialog's own helper text says is empty. The
+    // empty state has to be our own markup, so it renders the same
+    // everywhere. Forcing a repaint does not fix this; the repaint is what
+    // produces today.
+    expect(DLG, "an empty reminder must not render a date control at all")
+      .toMatch(/reminderAt \? \([\s\S]{0,400}type="date"/);
+    expect(DLG, "and must offer its own empty state instead")
+      .toMatch(/No reminder set/);
+    // Clearing has to reach the server as an explicit null; an omitted field
+    // means "leave alone" (see updateStreamPause), so an empty string that
+    // was not normalized would silently keep the old date.
+    expect(DLG, "an empty reminder must be sent as null, not omitted")
+      .toMatch(/reminderAt: reminderAt \|\| null/);
+  });
+
+  it("pause state is one control, in both tabs", () => {
+    // It was a toggle button plus a reason dropdown side by side: two
+    // controls and two chunks of toolbar for one question, and they could
+    // sit in states that read oddly together — a reason showing
+    // "Non-payment" beside a toggle that was off. Off is an option in the
+    // same list now, so there is one value and no way to disagree.
+    const CTRL = web("ui/components/StreamPauseControls.tsx");
+    expect(CTRL, "the toggle-plus-dropdown pair must not come back")
+      .not.toMatch(/StreamPauseReasonFilter/);
+    expect(CTRL, "the trigger carries no text — the chip row names the reason")
+      .not.toMatch(/triggerLabel/);
+    // Services spends the Repeat glyph on its repeating-STATE filter; the two
+    // sat side by side reading as the same control.
+    expect(CTRL, "the pause filter uses the app's pause glyph, not Repeat")
+      .toMatch(/PauseCircle/);
+    for (const [name, src] of [
+      ["ServicesTab", TAB],
+      ["JobsTab", web("ui/tabs/JobsTab.tsx")],
+    ] as const) {
+      expect(src, `${name} must use the combined control`)
+        .toMatch(/<StreamPauseFilter/);
+      expect(src, `${name} must not keep the old pair`)
+        .not.toMatch(/<StreamPauseReasonFilter/);
+    }
+  });
+
+  it("approving a payment cannot double-book a held stream", () => {
+    // The guard that stops approvePayment creating a next visit only looked
+    // for SCHEDULED, so a held visit on the computed day was invisible to it
+    // and a SECOND visit landed beside the held one — the operator believing
+    // the stream was stopped while the client got a visit anyway.
+    const PAY = readFileSync(join(__dirname, "./payments.ts"), "utf8");
+    const i = PAY.indexOf("const existingNext = await tx.jobOccurrence.findFirst(");
+    expect(i, "the duplicate guard must exist").toBeGreaterThan(-1);
+    const guard = PAY.slice(i, i + 500);
+    expect(guard, "a held visit counts as an existing next visit")
+      .toMatch(/JobOccurrenceStatus\.STREAM_PAUSED/);
+    // And the operator must be told WHICH it was — "a visit already exists"
+    // on a held stream reads as though the schedule is running.
+    expect(PAY, "a held next visit needs its own skip reason")
+      .toMatch(/next_visit_held/);
+    for (const f of ["lib/paymentMessages.ts", "ui/tabs/ServicesTab.tsx", "ui/tabs/JobsTab.tsx"]) {
+      expect(web(f), `${f} must render the held-next-visit skip reason`)
+        .toMatch(/next_visit_held/);
+    }
+  });
+
+  it("only admin or super can hold a repeating visit", () => {
+    // Holding a stream silently stops work another worker is scheduled for,
+    // and they have no surface that shows the consequence.
+    const CTRL = web("ui/components/StreamPauseControls.tsx");
+    expect(CTRL, "the cluster must render nothing without permission")
+      .toMatch(/if \(!canManage\) return null;/);
+    for (const [name, src] of [
+      ["ServicesTab", TAB],
+      ["JobsTab", web("ui/tabs/JobsTab.tsx")],
+    ] as const) {
+      expect(src, `${name} must gate the cluster on admin or super`)
+        .toMatch(/canManageStreams = !!\(isAdmin \|\| isSuper\)/);
+      expect(src, `${name} must pass that gate in`)
+        .toMatch(/canManage=\{canManageStreams\}/);
+    }
+  });
+
+  it("pausing a repeating visit requires a categorised reason", () => {
+    // Free text alone cannot be filtered or counted, and finding these again
+    // — next spring, by reason — is the whole point of the feature. The one
+    // pause that predates the taxonomy has a note and no code, and it has
+    // been invisible to every surface that resurfaces pauses since July.
+    const DLG = web("ui/dialogs/StreamPauseDialog.tsx");
+    expect(DLG, "the dialog must offer the taxonomy").toMatch(/usePauseReasons\(\)/);
+    expect(DLG, "and must not allow confirming without a code")
+      .toMatch(/canConfirm[\s\S]{0,160}!!reasonCode/);
+    expect(DLG, "the free-text note stays available alongside it")
+      .toMatch(/Note \(optional\)/);
   });
 });
 
@@ -4651,7 +4838,12 @@ describe("[build-gate] a forced next visit is the same visit approval would make
     // entire reason force-next is usable for "add a service to the next
     // visit before this one is paid".
     const P = svc("./payments.ts");
-    const at = P.indexOf('nextOccurrenceSkipReason = "duplicate_exists"');
+    // Anchored on the assignment that IS the behaviour under test — the
+    // matched row being adopted as-is. It used to anchor on the literal
+    // `nextOccurrenceSkipReason = "duplicate_exists"`, which broke the day
+    // that assignment became conditional (a held next visit reports a
+    // different reason). The anchor was incidental; this one is the subject.
+    const at = P.indexOf("nextOccurrence = existingNext;");
     expect(at, "the dedupe branch must exist").toBeGreaterThan(-1);
     // The builder is called in the ELSE branch only, so a matched row is
     // returned untouched.

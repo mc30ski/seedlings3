@@ -2058,11 +2058,12 @@ chip: false, bucket: t.bucket }));
   // that handler is actually mounted when the event fires. A previous
   // change routed this to "jobs" which silently broke the button.
   setupSearchEvent("jobsTabToServicesTabSearch", { admin: "services", worker: null });
-  // clientsTabToServicesTabSearch — "N services paused" click on the
-  // ClientsTab card. Routes to Services; ServicesTab's :run listener
-  // sets q to the client's displayName AND flips jobStatusFilter to
-  // ["PAUSED"] so the operator lands directly on that client's paused
-  // job list.
+  // clientsTabToServicesTabSearch — the "Job services" button on the
+  // ClientsTab card (which also carries the paused-repeating count).
+  // Routes to Services; ServicesTab's :run listener sets q to the
+  // client's displayName and clears the status filter — the operator came
+  // to pause or resume a repeating service, so the running ones are
+  // exactly what they need to see.
   setupSearchEvent("clientsTabToServicesTabSearch", { admin: "services", worker: null });
 
   // Payments "Job" link → Jobs tab, highlighted to the exact occurrence the

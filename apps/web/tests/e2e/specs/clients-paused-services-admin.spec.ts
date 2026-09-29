@@ -7,19 +7,26 @@ import {
 } from "../helpers/db";
 
 /**
- * Regression: the "N services paused" affordance on Admin →
- * Directory → Clients. Verifies:
+ * Regression: the paused-count affordance on Admin → Directory → Clients.
+ * Verifies:
  *
- *   1. When a client has ≥1 PAUSED Job, a "N paused" pill renders on the
- *      client card.
- *   2. The pill is clickable and hands off to Admin → Work → Services
- *      with q = client name AND jobStatusFilter = PAUSED.
- *   3. The "Paused services only" filter toggle narrows the Clients list
- *      to only clients with ≥1 paused Job.
+ *   1. When a client has ≥1 repeating visit on hold, the "Job services"
+ *      button on the client card carries the count.
+ *   2. Clicking it hands off to Admin → Work → Services with q = client
+ *      name and NO pre-applied job-status filter.
+ *   3. The "Paused repeating only" toggle narrows the Clients list to
+ *      only clients with ≥1 held repeating visit.
  *
- * Runs under `super` project — the ClientsTab pause/resume affordances
- * live under the Admin category, but the Super storage state has the
- * ADMIN role too so the same UI is reachable.
+ * WHAT THIS USED TO ASSERT, and why it changed: the count came from Jobs
+ * in status PAUSED. Job-level pause is gone — it deleted every scheduled
+ * visit and rebuilt the chain on resume, which is what Archive already
+ * did — and `PAUSED` is no longer a JobStatus value, so the fixture this
+ * spec used to create would now fail at the database. The state the
+ * Clients tab is reporting has moved to the occurrence:
+ * JobOccurrence.status = STREAM_PAUSED.
+ *
+ * Runs under `super` project — the affordance lives under the Admin
+ * category, but the Super storage state has the ADMIN role too.
  */
 
 let prisma: PrismaClient;
@@ -47,10 +54,10 @@ async function gotoAdminClients(page: any) {
   await page.waitForLoadState("networkidle");
 }
 
-test.describe("Clients tab — paused services affordance", () => {
-  test("Client with paused Jobs shows count pill, click jumps to Services filtered to that client + PAUSED", async ({ page }) => {
-    // Two scratch clients — one WITH a paused job, one WITHOUT — so the
-    // filter toggle has something to hide.
+test.describe("Clients tab — paused repeating affordance", () => {
+  test("Client holding a repeating visit shows the count, and clicking through lands on that client's services at every status", async ({ page }) => {
+    // Two scratch clients — one WITH a held repeating visit, one WITHOUT —
+    // so the filter toggle has something to hide.
     const CLIENT_WITH = `E2E Paused Client ${Date.now()}`;
     const CLIENT_WITHOUT = `E2E Unpaused Client ${Date.now()}`;
 
@@ -63,8 +70,9 @@ test.describe("Clients tab — paused services affordance", () => {
       contacts: [{ firstName: "Active", lastName: "Contact", isPrimary: true }],
     });
 
-    // Attach a Property + a PAUSED Job to the "with" client. The Job
-    // status is what the /admin/clients count aggregates on.
+    // Attach a Property + a Job + a STREAM_PAUSED occurrence to the "with"
+    // client. The OCCURRENCE status is what the /admin/clients count
+    // aggregates on — the Job just has to be non-ARCHIVED to be counted.
     const property = await prisma.property.create({
       data: {
         clientId: withScratch.clientId,
@@ -81,8 +89,22 @@ test.describe("Clients tab — paused services affordance", () => {
       data: {
         propertyId: property.id,
         kind: "SINGLE_ADDRESS",
-        status: "PAUSED",
-        description: "E2E paused job",
+        status: "ACCEPTED",
+        // Repeating: a one-off has no stream to hold.
+        frequencyDays: 14,
+        description: "E2E paused repeating job",
+      },
+    });
+    const occurrence = await prisma.jobOccurrence.create({
+      data: {
+        jobId: job.id,
+        kind: "SINGLE_ADDRESS",
+        workflow: "STANDARD",
+        status: "STREAM_PAUSED",
+        startAt: new Date(),
+        streamPausedAt: new Date(),
+        streamPauseReasonCode: "non_payment",
+        streamPauseReason: "E2E fixture — held for non-payment",
       },
     });
 
@@ -109,7 +131,7 @@ test.describe("Clients tab — paused services affordance", () => {
       await expect(jobServicesBtn).toBeVisible({ timeout: 15_000 });
       await expect(
         jobServicesBtn,
-        "the paused count must still be on the button for a client with paused work",
+        "the paused count must still be on the button for a client with a held repeating visit",
       ).toHaveText(/Job services.*1/);
 
       // The unpaused client gets the same button with NO count — the button
@@ -150,14 +172,16 @@ test.describe("Clients tab — paused services affordance", () => {
       // 3. Back to Clients — toggle "Paused only" and the unpaused
       // client should disappear from the list.
       await gotoAdminClients(page);
-      const pausedToggle = page.getByRole("button", { name: /Show only clients with paused services|Showing only clients with paused services/i });
+      const pausedToggle = page.getByRole("button", { name: /(Show|Showing) only clients with a paused repeating service/i });
       await expect(pausedToggle).toBeVisible({ timeout: 15_000 });
       await pausedToggle.click();
       // The paused-services client remains visible; the un-paused one is hidden.
       await expect(page.getByText(CLIENT_WITH).first()).toBeVisible();
       await expect(page.getByText(CLIENT_WITHOUT)).toHaveCount(0);
     } finally {
-      // Cleanup: delete Job first (Job blocks Property), Property blocks Client.
+      // Cleanup, innermost first: occurrence blocks Job, Job blocks
+      // Property, Property blocks Client.
+      await prisma.jobOccurrence.deleteMany({ where: { id: occurrence.id } });
       await prisma.job.deleteMany({ where: { id: job.id } });
       await prisma.property.deleteMany({ where: { id: property.id } });
       await deleteScratchClient(prisma, withScratch.clientId);

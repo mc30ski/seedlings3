@@ -38,8 +38,15 @@ export type PaymentVerb =
 const SKIP_REASON_TEXT: Record<string, string> = {
   one_off: "This is a one-off job, so no next occurrence was created.",
   no_frequency_set: "No next occurrence created — no repeat frequency is set on the job.",
-  job_paused: "No next occurrence created — the job service is paused.",
+  // HISTORICAL ONLY. Job-level pause is gone, so nothing writes this
+  // reason any more — but Payment rows recorded before it was removed still
+  // carry it, and a skip reason that renders as nothing reads as a bug.
+  job_paused: "No next occurrence created — the job service was paused at the time (job-level pause has since been removed).",
   duplicate_exists: "No next occurrence created — a scheduled visit already exists on the same date.",
+  // The next visit exists but is on hold, so nothing was created AND nothing
+  // is going to happen. Distinct from duplicate_exists, which means the
+  // schedule is running normally.
+  next_visit_held: "No next occurrence created — the next visit is already on the books and currently paused.",
   occurrence_or_job_not_found: "No next occurrence created — could not find the job service.",
 };
 

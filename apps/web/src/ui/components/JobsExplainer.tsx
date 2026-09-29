@@ -12,7 +12,9 @@
 //   • "When payment is accepted, the next occurrence is created" — it is
 //     created when the payment is APPROVED, dated from the visit's own
 //     startAt + frequency (not from the approval), and skipped outright when
-//     the job is paused, archived, one-off, or a next visit already exists.
+//     the job is archived, one-off, or a next visit already exists. (It used
+//     to say "paused" too — job-level pause is gone; holding work is now a
+//     repeating pause on the visit itself.)
 //   • "the Job Service's default team" — a default CREW wins over the
 //     per-user defaults, and an archived default crew leaves it unassigned.
 //   • "Only the claimer can start, complete, accept payment" — or an admin.
@@ -211,8 +213,10 @@ export default function JobsExplainer({
         the cadence — not from the day approval landed, so a late approval does not push the
         schedule. If that date has already passed it snaps forward to today. The job&rsquo;s
         default crew is put on it; failing that, its default assignees; failing both, it is
-        left unassigned for someone to claim. No next visit is created if the job is paused or
-        archived, or if one is already on the books.
+        left unassigned for someone to claim. No next visit is created if the job service is
+        archived, or if one is already on the books. To stop a repeating visit for a while
+        without ending the service, <Em>pause the repeating visit</Em> — you pick a reason and
+        a date to check back, and resuming puts it on a date you choose.
       </TypeCard>
 
       <TypeCard
@@ -350,9 +354,12 @@ export default function JobsExplainer({
       </VStack>
 
       <ExplainerText>
-        A repeating service that has been <Em>paused</Em> as a whole is a different thing from
-        the deep-orange paused card above: it keeps its normal colour and shows a purple pause
-        circle where the action button would be. Tap it for the details.
+        A repeating visit that has been <Em>paused</Em> is a different thing from the
+        deep-orange paused card above, which is a worker&rsquo;s timer stopped mid-visit. A
+        held repeating visit keeps its normal colour and shows a purple pause circle where the
+        action button would be — tap it for the reason, the note, and when to check back. An
+        admin can pause, resume or edit the reason from either this tab or Services; the
+        actions and dialogs are the same in both.
       </ExplainerText>
 
       {/* ── Ghosts ── */}

@@ -19,6 +19,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import { usePauseReasons, pauseReasonLabel } from "@/src/lib/pauseReasons";
 
 type DueRow = {
   id: string;
@@ -26,6 +27,7 @@ type DueRow = {
   jobType: string | null;
   streamPausedAt: string | null;
   streamPauseReason: string | null;
+  streamPauseReasonCode?: string | null;
   streamResumeReminderAt: string | null;
   job: {
     id: string;
@@ -47,6 +49,7 @@ export default function RepeatingPausesDueSection({
 }) {
   const [items, setItems] = useState<DueRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const reasons = usePauseReasons();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -112,6 +115,13 @@ export default function RepeatingPausesDueSection({
                     <> · reminder {fmtDate(row.streamResumeReminderAt)}</>
                   )}
                 </Text>
+                {/* The categorised reason first — it is what the filters
+                    and counts are built on, and it reads as a label. */}
+                {pauseReasonLabel(row.streamPauseReasonCode, reasons) && (
+                  <Text fontSize="xs" fontWeight="semibold" color="purple.fg">
+                    {pauseReasonLabel(row.streamPauseReasonCode, reasons)}
+                  </Text>
+                )}
                 {row.streamPauseReason && (
                   <Text fontSize="xs" color="purple.fg" fontStyle="italic">
                     "{row.streamPauseReason}"

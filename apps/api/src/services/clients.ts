@@ -14,8 +14,8 @@ import { action } from "../lib/services";
 import { ServiceError } from "../lib/errors";
 import { randomBytes } from "crypto";
 import {
-  applyJobPauseSideEffectsInTx,
-  applyJobResumeSideEffectsInTx,
+  clearScheduledVisitsInTx,
+  rebuildRecurringChainInTx,
 } from "./jobs";
 
 function normalizePhone(raw?: string | null): string | null {
@@ -185,30 +185,40 @@ export const clients: ServicesClients = {
     });
 
     // Per-client count of Jobs in PAUSED status. Powers the count on the
-    // "Job services" button + the "paused services only" filter on
-    // Admin → Directory → Clients. Every paused Job counts however it got
-    // there — the client card answers "is anything stopped for this
-    // client?", not a breakdown by cause.
+    // "Job services" button + the "paused repeating only" filter on
+    // Admin → Directory → Clients. Every held repeating visit counts however
+    // it got there — the client card answers "is anything stopped for this
+    // client?", not a breakdown by reason.
     //
-    // Only counts paused jobs whose CLIENT and PROPERTY are both ACTIVE.
-    // "Paused services" is meaningless for an archived client (they're
+    // Only counts holds whose CLIENT and PROPERTY are both ACTIVE. A held
+    // service is meaningless for an archived client (they're
     // no longer receiving services at all) or an archived property (that
     // location is retired). Without these predicates the "Paused
     // services only" filter surfaces archived clients whose old paused
     // jobs are effectively defunct — operator screenshot 2026-07-11
     // caught Claire (Archived) appearing in the filter.
     const clientIds = rows.map((r) => r.id);
+    // COUNTS PAUSED REPEATING VISITS, not paused jobs.
+    //
+    // Job-level pause is gone, so this used to count a status that no longer
+    // exists — the pill would have read 0 for everyone forever. The question
+    // the Clients tab is asking ("who has services on hold?") is unchanged;
+    // only where that state lives has moved, from Job.status to the
+    // occurrence. Archived jobs are excluded for the same reason archived
+    // clients and properties are: a hold on a dead relationship is not a hold.
     const pausedByClient = new Map<string, number>();
     if (clientIds.length > 0) {
       const pausedRows = await prisma.$queryRaw<
         Array<{ clientId: string; count: bigint }>
       >`
         SELECT p."clientId" AS "clientId", COUNT(*)::bigint AS count
-        FROM "Job" j
+        FROM "JobOccurrence" o
+        JOIN "Job" j ON j.id = o."jobId"
         JOIN "Property" p ON j."propertyId" = p.id
         JOIN "Client" c ON c.id = p."clientId"
         WHERE p."clientId" = ANY(${clientIds}::text[])
-          AND j."status" = 'PAUSED'
+          AND o."status" = 'STREAM_PAUSED'
+          AND j."status" <> 'ARCHIVED'
           AND p."status" = 'ACTIVE'
           AND c."status" = 'ACTIVE'
         GROUP BY p."clientId"
@@ -232,7 +242,7 @@ export const clients: ServicesClients = {
 
         contactCount: _count.contacts,
         propertyCount: _count.properties,
-        pausedJobsCount: pausedByClient.get(c.id) ?? 0,
+        pausedRepeatingCount: pausedByClient.get(c.id) ?? 0,
         primaryContact,
       };
     });
@@ -352,7 +362,7 @@ export const clients: ServicesClients = {
           // Archive side effects — delete future SCHEDULED STANDARD
           // occurrences on this Job (parity with pause). Prevents worker
           // dispatch to an archived client's property.
-          await applyJobPauseSideEffectsInTx(
+          await clearScheduledVisitsInTx(
             tx,
             currentUserId,
             j.id,
@@ -428,12 +438,12 @@ export const clients: ServicesClients = {
           // (one fresh SCHEDULED occurrence) so the operator doesn't
           // have to manually click "Generate Next" per Job. Parity
           // with unpause.
-          await applyJobResumeSideEffectsInTx(
+          await rebuildRecurringChainInTx(
             tx,
             currentUserId,
             j.id,
-            { cascadeGroupId, triggeredBy: "client_unarchive", clientId: id, propertyId: p.id },
             "UNARCHIVED_REGENERATED_NEXT_OCCURRENCE",
+            { cascadeGroupId, triggeredBy: "client_unarchive", clientId: id, propertyId: p.id },
           );
           await writeAudit(tx, AUDIT.JOB.UNARCHIVED, currentUserId, {
             jobId: j.id,

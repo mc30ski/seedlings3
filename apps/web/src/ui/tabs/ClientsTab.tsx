@@ -108,9 +108,11 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
   const [vipOnly, setVipOnly] = useState(false);
-  // "Paused services only" — narrows the list to clients with at least
-  // one PAUSED Job. Not persisted (transient operator gesture — after a
-  // pause action, they toggle this on to audit, then toggle it back off).
+  // "Paused repeating only" — narrows the list to clients with at least
+  // one repeating service on hold. Was a count of PAUSED Jobs; job-service
+  // pause is gone (it was archiving under a second name), so the number
+  // comes from STREAM_PAUSED occurrences now. Not persisted (transient
+  // operator gesture — toggle on to audit, toggle back off).
   const [pausedOnly, setPausedOnly] = useState(false);
   const [tagFilter, setTagFilter] = useState<string>("ALL");
 
@@ -281,7 +283,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
     }
 
     if (pausedOnly) {
-      rows = rows.filter((r) => (r.pausedJobsCount ?? 0) > 0);
+      rows = rows.filter((r) => (r.pausedRepeatingCount ?? 0) > 0);
     }
 
     if (tagFilter !== "ALL") {
@@ -569,7 +571,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             variant={pausedOnly ? "solid" : "outline"}
             px="2"
             onClick={() => setPausedOnly(!pausedOnly)}
-            title={pausedOnly ? "Showing only clients with paused services" : "Show only clients with paused services"}
+            title={pausedOnly ? "Showing only clients with a paused repeating service" : "Show only clients with a paused repeating service"}
             css={pausedOnly ? {
               background: "var(--chakra-colors-yellow-subtle)",
               color: "var(--chakra-colors-yellow-fg)",
@@ -643,7 +645,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
           )}
           {pausedOnly && (
             <Badge size="sm" colorPalette="yellow" variant="subtle">
-              Paused services only
+              Paused repeating only
             </Badge>
           )}
           {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && !vipOnly && !pausedOnly && !q && !highlightId) && (
@@ -703,7 +705,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             const isVip = !!(c as any).isVip;
             const isArchived = c.status === "ARCHIVED";
             const tags = forAdmin ? parseAdminTags((c as any).adminTags) : [];
-            const paused = c.pausedJobsCount ?? 0;
+            const paused = c.pausedRepeatingCount ?? 0;
 
             // Border does the work a badge row used to. Unreachable is the
             // only one that needs chasing, so it outranks VIP.
@@ -755,7 +757,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                   {prettyStatus(c.type)}
                   {" \u00b7 "}
                   {activeContacts.length} contact{activeContacts.length === 1 ? "" : "s"}
-                  {paused > 0 ? ` \u00b7 ${paused} service${paused === 1 ? "" : "s"} paused` : ""}
+                  {paused > 0 ? ` \u00b7 ${paused} repeating ${paused === 1 ? "service" : "services"} paused` : ""}
                 </Text>
                 {tags.length > 0 && (
                   <HStack gap="4px" wrap="wrap" pt={0.5}>
@@ -839,7 +841,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                         size="xs"
                         variant="outline"
                         px="2"
-                        colorPalette={(c.pausedJobsCount ?? 0) > 0 ? "yellow" : undefined}
+                        colorPalette={(c.pausedRepeatingCount ?? 0) > 0 ? "yellow" : undefined}
                         onClick={() =>
                           openEventSearch(
                             "clientsTabToServicesTabSearch",
@@ -849,18 +851,18 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                           )
                         }
                         title={
-                          (c.pausedJobsCount ?? 0) > 0
-                            ? `Open this client's job services — ${c.pausedJobsCount} currently paused`
-                            : "Open this client's job services to pause or resume them"
+                          (c.pausedRepeatingCount ?? 0) > 0
+                            ? `Open this client's job services — ${c.pausedRepeatingCount} repeating ${(c.pausedRepeatingCount ?? 0) === 1 ? "service" : "services"} currently paused`
+                            : "Open this client's job services to pause or resume a repeating service"
                         }
                       >
                         <Wrench size={12} />
                         Job services
-                        {(c.pausedJobsCount ?? 0) > 0 && (
+                        {(c.pausedRepeatingCount ?? 0) > 0 && (
                           <>
                             {" · "}
                             <PauseCircle size={12} />
-                            {c.pausedJobsCount}
+                            {c.pausedRepeatingCount}
                           </>
                         )}
                       </Button>

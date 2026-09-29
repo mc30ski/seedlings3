@@ -1990,8 +1990,6 @@ export const payments: ServicesPayments = {
         nextOccurrenceSkipReason = "occurrence_or_job_not_found";
       } else if (!effectiveFreq) {
         nextOccurrenceSkipReason = "no_frequency_set";
-      } else if (fullOcc.job.status === "PAUSED") {
-        nextOccurrenceSkipReason = "job_paused";
       } else if (fullOcc.job.status === "ARCHIVED") {
         // Archived Jobs must not spawn phantom next occurrences on a
         // closed relationship. Prior to this guard, approving a lingering
@@ -2006,7 +2004,6 @@ export const payments: ServicesPayments = {
         fullOcc &&
         fullOcc.job &&
         effectiveFreq &&
-        fullOcc.job.status !== "PAUSED" &&
         fullOcc.job.status !== "ARCHIVED" &&
         !fullOcc.isOneOff &&
         fullOcc.workflow !== "ONE_OFF"
@@ -2031,10 +2028,22 @@ export const payments: ServicesPayments = {
         // same day. Day-window match catches those AND mirrors how a human
         // would think about "we already have a visit booked that day."
         const nextDayKey = etFormatDate(nextStart);
+        // STREAM_PAUSED counts as an existing next visit, not just SCHEDULED.
+        // A held visit is still a visit on the books — it is simply on hold —
+        // and this guard could not see it, so approving an older payment while
+        // the stream was held dropped a SECOND visit on the same day right
+        // next to the held one. The operator would believe the stream was
+        // stopped and the client would get a visit anyway.
+        //
+        // rebuildRecurringChainInTx's dedupe already counted both (see the
+        // note there); this path predates the stream-pause feature and never
+        // got the same treatment.
         const existingNext = await tx.jobOccurrence.findFirst({
           where: {
             jobId: fullOcc.jobId,
-            status: JobOccurrenceStatus.SCHEDULED,
+            status: {
+              in: [JobOccurrenceStatus.SCHEDULED, JobOccurrenceStatus.STREAM_PAUSED],
+            },
             startAt: { gte: etMidnight(nextDayKey), lte: etEndOfDay(nextDayKey) },
             workflow: "STANDARD",
             isOneOff: false,
@@ -2042,7 +2051,12 @@ export const payments: ServicesPayments = {
         });
         if (existingNext) {
           nextOccurrence = existingNext;
-          nextOccurrenceSkipReason = "duplicate_exists";
+          // Say WHICH it was. "A visit already exists" on a held stream reads
+          // as though the schedule is running when it is deliberately stopped.
+          nextOccurrenceSkipReason =
+            existingNext.status === JobOccurrenceStatus.STREAM_PAUSED
+              ? "next_visit_held"
+              : "duplicate_exists";
         } else {
           // Same builder the admin force-next path uses — see
           // createNextOccurrenceFrom. Everything that rides along with a new

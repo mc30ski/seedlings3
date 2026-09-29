@@ -15,6 +15,7 @@ import { prisma } from "../db/prisma";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { ServiceError } from "../lib/errors";
+import { resolvePauseReason } from "./pauseReasons";
 
 /**
  * Transition SCHEDULED → STREAM_PAUSED on a single occurrence. Both
@@ -24,8 +25,14 @@ import { ServiceError } from "../lib/errors";
 export async function pauseStream(
   currentUserId: string,
   occurrenceId: string,
-  opts: { reason?: string | null; reminderAt?: Date | null },
+  /** `reasonCode` is REQUIRED — a pause you cannot categorise is a pause you
+   *  cannot find again, and finding them again (next spring, by reason) is
+   *  the whole point. The free-text `reason` stays optional alongside it. */
+  opts: { reasonCode: string; reason?: string | null; reminderAt?: Date | null },
 ) {
+  // Resolved OUTSIDE the transaction: it reads a Setting, and a bad code
+  // should fail before anything is written.
+  const reason = await resolvePauseReason(opts.reasonCode);
   return prisma.$transaction(async (tx) => {
     const occ = await tx.jobOccurrence.findUnique({
       where: { id: occurrenceId },
@@ -51,13 +58,35 @@ export async function pauseStream(
         streamPausedAt: new Date(),
         streamPausedById: currentUserId,
         streamPauseReason: opts.reason?.trim() || null,
+        streamPauseReasonCode: reason.code,
         streamResumeReminderAt: opts.reminderAt ?? null,
+      },
+    });
+
+    // HISTORY. The fields above are cleared on resume, which is right for
+    // "is this paused now" and useless for "what did we lose to the season
+    // last winter". The label is snapshotted, not joined, so retiring a
+    // reason next year cannot rewrite what this pause said.
+    // audit-allow: the history row IS the record, written in the same
+    // transaction as the STREAM_PAUSED audit below, which already carries the
+    // reason code, label, note and reminder. A second audit row describing
+    // the same act would double-count every pause in the trail.
+    await tx.jobOccurrencePauseEvent.create({
+      data: {
+        occurrenceId,
+        reasonCode: reason.code,
+        reasonLabel: reason.label,
+        note: opts.reason?.trim() || null,
+        pausedById: currentUserId,
+        reminderAt: opts.reminderAt ?? null,
       },
     });
 
     await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
       occurrenceId,
       action: "STREAM_PAUSED",
+      reasonCode: reason.code,
+      reasonLabel: reason.label,
       reason: opts.reason?.trim() || null,
       reminderAt: opts.reminderAt?.toISOString() ?? null,
     });
@@ -74,8 +103,10 @@ export async function pauseStream(
 export async function updateStreamPause(
   currentUserId: string,
   occurrenceId: string,
-  opts: { reason?: string | null; reminderAt?: Date | null },
+  opts: { reasonCode?: string; reason?: string | null; reminderAt?: Date | null },
 ) {
+  // Validate the code before opening a transaction, same as pauseStream.
+  const resolved = opts.reasonCode ? await resolvePauseReason(opts.reasonCode) : null;
   return prisma.$transaction(async (tx) => {
     const occ = await tx.jobOccurrence.findUnique({
       where: { id: occurrenceId },
@@ -97,6 +128,9 @@ export async function updateStreamPause(
     if (opts.reason !== undefined) {
       data.streamPauseReason = opts.reason?.trim() || null;
     }
+    if (opts.reasonCode !== undefined && opts.reasonCode) {
+      data.streamPauseReasonCode = opts.reasonCode;
+    }
     if (opts.reminderAt !== undefined) {
       data.streamResumeReminderAt = opts.reminderAt;
     }
@@ -104,6 +138,19 @@ export async function updateStreamPause(
     const record = await tx.jobOccurrence.update({
       where: { id: occurrenceId },
       data,
+    });
+
+    // Keep the open history row in step with the live fields — otherwise a
+    // corrected reason shows on the card and the old one is what gets counted.
+    // audit-allow: mirrors the live-field edit onto the open history row in
+    // the same transaction as the STREAM_PAUSE_UPDATED audit below.
+    await tx.jobOccurrencePauseEvent.updateMany({
+      where: { occurrenceId, resumedAt: null },
+      data: {
+        ...(resolved ? { reasonCode: resolved.code, reasonLabel: resolved.label } : {}),
+        ...(opts.reason !== undefined ? { note: opts.reason?.trim() || null } : {}),
+        ...(opts.reminderAt !== undefined ? { reminderAt: opts.reminderAt } : {}),
+      },
     });
 
     await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
@@ -160,7 +207,27 @@ export async function resumeStream(
         streamPausedAt: null,
         streamPausedById: null,
         streamPauseReason: null,
+        streamPauseReasonCode: null,
         streamResumeReminderAt: null,
+      },
+    });
+
+    // Close the open history row rather than deleting it. The live fields
+    // above are cleared because "is this paused" must answer no; the reason
+    // survives here so "what did we pause for the season, and did it come
+    // back?" stays answerable.
+    //
+    // updateMany, not update: a row paused before this table existed has no
+    // open event, and resuming it must not throw.
+    // audit-allow: stamps the open history row closed inside the same
+    // transaction as the STREAM_RESUMED audit below, which records who
+    // resumed and onto what date.
+    await tx.jobOccurrencePauseEvent.updateMany({
+      where: { occurrenceId, resumedAt: null },
+      data: {
+        resumedAt: new Date(),
+        resumedById: currentUserId,
+        resumedOntoAt: newStartAt,
       },
     });
 
@@ -198,6 +265,10 @@ export async function listDueStreamPauseReminders() {
       jobType: true,
       streamPausedAt: true,
       streamPauseReason: true,
+      // The categorised reason, so the Tasks card says WHY without the
+      // operator opening the row. The free-text note beside it is the
+      // detail, not a substitute.
+      streamPauseReasonCode: true,
       streamResumeReminderAt: true,
       job: {
         select: {
