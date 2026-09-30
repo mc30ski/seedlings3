@@ -26,6 +26,7 @@ import {
 } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
+import { enforceClaimerInvariant } from "../lib/claimerInvariant";
 import { Prisma, Role as RoleVal } from "@prisma/client";
 import {
   JobKind,
@@ -6184,6 +6185,7 @@ Respond ONLY with valid JSON in this exact format:
                 })),
                 skipDuplicates: true,
               });
+              await enforceClaimerInvariant(tx, nextOcc.id, uid);
             }
           }
         }

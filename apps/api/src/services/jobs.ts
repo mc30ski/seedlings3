@@ -54,6 +54,7 @@ export const GHOST_EXPIRING_SOON_DAYS = 3;
 import { AUDIT } from "../lib/auditActions";
 import { invoiceTotal } from "../lib/jobPricing";
 import { writeAudit } from "../lib/auditLogger";
+import { enforceClaimerInvariant } from "../lib/claimerInvariant";
 import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween, etAddDays, type EtDateKey } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import {
@@ -324,6 +325,7 @@ export async function rebuildRecurringChainInTx(
       skipDuplicates: true,
     });
   }
+  await enforceClaimerInvariant(tx, nextOcc.id, currentUserId);
   await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
     id: jobId,
     action: sideEffectAction,
@@ -1054,6 +1056,7 @@ export const jobs: ServicesJobs = {
           })),
           skipDuplicates: true,
         });
+        await enforceClaimerInvariant(tx, occ.id, currentUserId);
       }
 
       // Copy job's default property photo instructions to the new occurrence
@@ -1091,6 +1094,8 @@ export const jobs: ServicesJobs = {
       });
 
       // Auto-assign creator
+      // claimer-invariant-allow: the creator is the sole row and is self-assigned
+      // (assignedById === userId), so the invariant holds by construction.
       await tx.jobOccurrenceAssignee.create({
         data: {
           occurrenceId: occ.id,
@@ -1125,6 +1130,8 @@ export const jobs: ServicesJobs = {
         } as any,
       });
 
+      // claimer-invariant-allow: the creator is the sole row and is self-assigned
+      // (assignedById === userId), so the invariant holds by construction.
       await tx.jobOccurrenceAssignee.create({
         data: {
           occurrenceId: occ.id,
@@ -1160,6 +1167,8 @@ export const jobs: ServicesJobs = {
       });
 
       // Auto-assign the creator as claimer
+      // claimer-invariant-allow: the creator is the sole row and is self-assigned
+      // (assignedById === userId), so the invariant holds by construction.
       await tx.jobOccurrenceAssignee.create({
         data: {
           occurrenceId: occ.id,
@@ -1282,6 +1291,8 @@ export const jobs: ServicesJobs = {
       }
 
       // Auto-assign the creator as claimer
+      // claimer-invariant-allow: the creator is the sole row and is self-assigned
+      // (assignedById === userId), so the invariant holds by construction.
       await tx.jobOccurrenceAssignee.create({
         data: {
           occurrenceId: occ.id,
@@ -1395,6 +1406,8 @@ export const jobs: ServicesJobs = {
       });
 
       // Auto-assign the creator as claimer
+      // claimer-invariant-allow: the creator is the sole row and is self-assigned
+      // (assignedById === userId), so the invariant holds by construction.
       await tx.jobOccurrenceAssignee.create({
         data: {
           occurrenceId: occ.id,
@@ -1537,6 +1550,8 @@ export const jobs: ServicesJobs = {
         });
       }
 
+      await enforceClaimerInvariant(tx, occ.id, adminUserId);
+
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
         occurrenceId: occ.id,
         type: "LIGHT_ESTIMATE",
@@ -1628,15 +1643,22 @@ export const jobs: ServicesJobs = {
           });
         }
         if (toAdd.length > 0) {
+          // assignedById names the claimer. `actorUserId` here meant an admin
+          // editing the team produced workers assigned by a non-member, and a
+          // visit with no claimer when the team started empty.
+          const survivors = occ.assignees.filter((a: any) => desired.includes(a.userId));
+          const claimer = survivors.find((a: any) => a.assignedById === a.userId && a.role !== "observer");
+          const claimerId = claimer?.userId ?? toAdd[0];
           await tx.jobOccurrenceAssignee.createMany({
             data: toAdd.map((uid) => ({
               occurrenceId,
               userId: uid,
-              assignedById: actorUserId,
+              assignedById: uid === claimerId ? uid : claimerId,
             })),
           });
         }
       }
+      await enforceClaimerInvariant(tx, occurrenceId, actorUserId);
 
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, actorUserId, {
         occurrenceId,
@@ -2015,6 +2037,8 @@ export const jobs: ServicesJobs = {
       }
 
       if (data.status === JobOccurrenceStatus.CANCELED) {
+        // claimer-invariant-allow: clears the whole team, which leaves the
+        // occurrence UNCLAIMED — a legal state, not a claimer-less one.
         await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
       }
 
@@ -2140,6 +2164,8 @@ export const jobs: ServicesJobs = {
             // SCHEDULED, never started). If a worker already claimed or
             // started it, we leave it alone so their work isn't blown away.
             if (nextOcc && !nextOcc.startedAt) {
+              // claimer-invariant-allow: the occurrence itself is deleted three
+              // lines down; there is no surviving team to hold a claimer.
               await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId: nextOcc.id } });
               await tx.pinnedOccurrence.deleteMany({ where: { occurrenceId: nextOcc.id } });
               await tx.likedOccurrence.deleteMany({ where: { occurrenceId: nextOcc.id } });
@@ -2287,19 +2313,32 @@ export const jobs: ServicesJobs = {
         where: { occurrenceId },
         orderBy: { assignedAt: "asc" },
       });
-      const existingClaimer = existing.find((a) => a.assignedById === a.userId);
+      const existingByUser = new Map(existing.map((a) => [a.userId, a]));
+      const existingClaimer = existing.find((a) => a.assignedById === a.userId && a.role !== "observer");
+      // An observer is never eligible to be claimer, so don't hand them the
+      // role just for being first in the list.
+      const eligible = input.assigneeUserIds.filter((uid) => existingByUser.get(uid)?.role !== "observer");
       const claimerId = existingClaimer && input.assigneeUserIds.includes(existingClaimer.userId)
         ? existingClaimer.userId
-        : input.assigneeUserIds[0];
+        : eligible[0] ?? input.assigneeUserIds[0];
 
-      await tx.jobOccurrenceAssignee.createMany({
-        data: input.assigneeUserIds.map((uid) => ({
-          occurrenceId,
-          userId: uid,
-          assignedById: uid === claimerId ? uid : claimerId,
-        })),
-        skipDuplicates: true,
-      });
+      // upsert, NOT createMany({ skipDuplicates: true }). createMany can only
+      // INSERT, and @@unique([occurrenceId, userId]) means everyone who
+      // already had a row was silently skipped — so promoting the survivor of
+      // a team change to claimer did nothing and left the visit claimer-less
+      // and unstartable. See lib/claimerInvariant.ts.
+      for (const uid of input.assigneeUserIds) {
+        const prior = existingByUser.get(uid);
+        // Observers carry no claimer relationship (changeAssigneeRole nulls
+        // their assignedById); leave an existing observer's row alone.
+        if (prior?.role === "observer") continue;
+        const assignedById = uid === claimerId ? uid : claimerId;
+        await tx.jobOccurrenceAssignee.upsert({
+          where: { occurrenceId_userId: { occurrenceId, userId: uid } },
+          create: { occurrenceId, userId: uid, assignedById },
+          update: { assignedById },
+        });
+      }
 
       // PENDING_PAYMENT snapshot reset. completionSplits + promisedPayouts
       // are written when the operator hits "Initiate Payment" OR when a
@@ -2322,6 +2361,8 @@ export const jobs: ServicesJobs = {
           data: { completionSplits: Prisma.JsonNull, promisedPayouts: Prisma.JsonNull },
         });
       }
+
+      await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
 
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
         occurrenceId,
@@ -3066,9 +3107,21 @@ export const jobs: ServicesJobs = {
       });
       if (existing) return { added: false as const, reason: "already_assigned" };
 
+      // assignedById names the CLAIMER, not whoever clicked. Stamping the
+      // actor here made an admin-added worker a non-claimer on a visit that
+      // had no claimer at all — nobody could then start it. See
+      // lib/claimerInvariant.ts.
+      const priorRows = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
+      const priorClaimer = priorRows.find((a) => a.assignedById === a.userId && a.role !== "observer");
+      const assignedById = role === "observer"
+        ? null
+        : priorClaimer?.userId ?? targetUserId;
+
       await tx.jobOccurrenceAssignee.create({
-        data: { occurrenceId, userId: targetUserId, assignedById: currentUserId, role: role ?? null },
+        data: { occurrenceId, userId: targetUserId, assignedById, role: role ?? null },
       });
+
+      await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
 
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
         occurrenceId,
@@ -3097,9 +3150,22 @@ export const jobs: ServicesJobs = {
         throw new ServiceError("INVALID_INPUT", "Use unclaim to remove yourself.", 400);
       }
 
+      // Mirrors adminRemoveOccurrenceAssignee. Without this an admin could
+      // delete the claimer out from under a team and leave the survivors
+      // unable to start the visit, with nothing on screen explaining why.
+      const rowsBefore = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
+      const targetRow = rowsBefore.find((a) => a.userId === targetUserId);
+      const targetIsClaimer = !!targetRow && targetRow.assignedById === targetUserId && targetRow.role !== "observer";
+      const otherWorkers = rowsBefore.filter((a) => a.userId !== targetUserId && a.role !== "observer");
+      if (targetIsClaimer && otherWorkers.length > 0) {
+        throw new ServiceError("CLAIMER_CANNOT_BE_REMOVED", "Reassign the claimer role to someone else before removing this person.", 400);
+      }
+
       await tx.jobOccurrenceAssignee.deleteMany({
         where: { occurrenceId, userId: targetUserId },
       });
+
+      await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
 
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
         occurrenceId,
@@ -3147,6 +3213,8 @@ export const jobs: ServicesJobs = {
         data: { occurrenceId, userId: targetUserId, assignedById, role: role ?? null },
       });
 
+      await enforceClaimerInvariant(tx, occurrenceId, adminUserId);
+
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
         occurrenceId,
         targetUserId,
@@ -3174,6 +3242,8 @@ export const jobs: ServicesJobs = {
       await tx.jobOccurrenceAssignee.deleteMany({
         where: { occurrenceId, userId: targetUserId },
       });
+
+      await enforceClaimerInvariant(tx, occurrenceId, adminUserId);
 
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
         occurrenceId,
@@ -3215,6 +3285,8 @@ export const jobs: ServicesJobs = {
         });
       }
 
+      await enforceClaimerInvariant(tx, occurrenceId, adminUserId);
+
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
         occurrenceId,
         newClaimerUserId,
@@ -3255,6 +3327,8 @@ export const jobs: ServicesJobs = {
         data: updates,
       });
 
+      await enforceClaimerInvariant(tx, occurrenceId, adminUserId);
+
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
         occurrenceId,
         targetUserId,
@@ -3283,6 +3357,8 @@ export const jobs: ServicesJobs = {
         throw new ServiceError("INVALID_STATUS", "Cannot unclaim a job that has already been started.", 409);
       }
 
+      // claimer-invariant-allow: unclaiming removes the whole team on purpose; the
+      // occurrence returns to UNCLAIMED, which is a legal state.
       await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
       // If this was a group-claimed occurrence, clear the link too — removes
       // the Group chip on the card and re-opens the claim chooser for next time.
@@ -3423,9 +3499,13 @@ export const jobs: ServicesJobs = {
               role: m.role === "observer" ? "observer" : null,
               assignedById: currentUserId,
             },
-            update: { role: m.role === "observer" ? "observer" : null },
+            // Repoint an existing row too: `update` used to set only the
+            // role, so a member who was already on the visit kept an
+            // assignedById pointing at whoever put them there.
+            update: { role: m.role === "observer" ? "observer" : null, assignedById: currentUserId },
           });
         }
+        await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
         await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
           occurrenceId,
           action: "claimed-for-group",
@@ -3434,6 +3514,8 @@ export const jobs: ServicesJobs = {
         return { claimed: true as const, groupId: group.id };
       }
 
+      // claimer-invariant-allow: a solo claim writes one self-assigned row
+      // (assignedById === userId) onto an unclaimed visit.
       await tx.jobOccurrenceAssignee.create({
         data: { occurrenceId, userId: currentUserId, assignedById: currentUserId },
       });
@@ -4074,6 +4156,8 @@ export const jobs: ServicesJobs = {
     });
     if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
     return prisma.$transaction(async (tx) => {
+      // claimer-invariant-allow: the occurrence row itself is deleted on the
+      // next line; no team survives to need a claimer.
       await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
       await tx.jobOccurrence.delete({ where: { id: occurrenceId } });
       // Money: destroys a billable occurrence — its price/addons (what the

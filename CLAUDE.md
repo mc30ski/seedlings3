@@ -87,6 +87,18 @@ disagree, one of them is wrong; fix both in the same PR.
 - **Payments build gate invariants must not be relaxed** — see
   `apps/api/src/services/payments-build-gate.test.ts` and the
   documentation in `docs/FINANCIAL_SYSTEM.md`.
+- **An occurrence is UNCLAIMED or has exactly one claimer** — never
+  "has workers, has no claimer". That third state makes the visit
+  unstartable for everyone below admin, with no button and no
+  explanation on the card. Any function writing
+  `JobOccurrenceAssignee` must end by awaiting `enforceClaimerInvariant`
+  ([`apps/api/src/lib/claimerInvariant.ts`](apps/api/src/lib/claimerInvariant.ts))
+  or carry a `// claimer-invariant-allow: <reason>` comment above the
+  write. Enforced by
+  [`apps/api/src/services/claimer-invariant-build-gate.test.ts`](apps/api/src/services/claimer-invariant-build-gate.test.ts).
+  Existing bad rows are repaired with `npm run repair:claimers`
+  (dry run; `-- --apply` writes). Four separate write paths produced
+  this state in production — don't add a fifth.
 - **View-as endpoints must be view-as-aware or explicitly annotated** —
   every `GET /me/*` route in `apps/api/src/routes/` either accepts
   `?viewAsUserId=<id>` (with an ADMIN/SUPER role gate) OR carries a

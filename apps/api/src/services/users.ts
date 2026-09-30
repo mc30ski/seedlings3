@@ -5,6 +5,7 @@ import { verifyToken, createClerkClient } from "@clerk/backend";
 import type { ServicesUsers, Role } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
+import { enforceClaimerInvariant } from "../lib/claimerInvariant";
 import { ServiceError } from "../lib/errors";
 import { resolvePrivileges } from "../lib/privileges";
 import { resolveImpersonation } from "../lib/impersonation";
@@ -272,11 +273,32 @@ export const users: ServicesUsers = {
         contactsUnlinked = cleared.count;
       }
 
+      // JobOccurrenceAssignee.assignedById is `onDelete: SetNull`, so this
+      // delete silently nulls it on every row where the departing user was
+      // the ASSIGNER — at the database level, underneath the service layer.
+      // A visit whose claimer marker was that null loses its claimer and
+      // becomes unstartable for everyone below admin. (Their own assignee
+      // rows can't be the problem: `userId` is `onDelete: Restrict`, so a
+      // user who is still on a job can't be deleted at all.)
+      //
+      // Collect the affected visits BEFORE the delete, repair them after.
+      // See lib/claimerInvariant.ts.
+      const orphanedOccIds = (await tx.jobOccurrenceAssignee.findMany({
+        where: { assignedById: userId },
+        select: { occurrenceId: true },
+        distinct: ["occurrenceId"],
+      })).map((r) => r.occurrenceId);
+
       const userDelete = await tx.user.delete({ where: { id: userId } });
+
+      for (const occurrenceId of orphanedOccIds) {
+        await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
+      }
 
       await writeAudit(tx, AUDIT.USER.DELETED, currentUserId, {
         userRecord: { ...userDelete },
         contactsUnlinked,
+        claimerRepairsChecked: orphanedOccIds.length,
       });
 
       return { deleted: true as const, clerkDeleted, contactsUnlinked };

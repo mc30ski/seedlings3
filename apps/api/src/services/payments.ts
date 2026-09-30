@@ -7,6 +7,7 @@ import { ServiceError } from "../lib/errors";
 import type { ServicesPayments } from "../types/services";
 import { etMidnight, etEndOfDay, etFormatDate, etToday, etInstantFromParts, etHourMinute , type EtDateKey } from "../lib/dates";
 import { writeAudit } from "../lib/auditLogger";
+import { enforceClaimerInvariant } from "../lib/claimerInvariant";
 import { AUDIT } from "../lib/auditActions";
 import { generateLedgerId } from "../lib/ledgerId";
 import { generateReceiptNumber } from "../lib/receiptNumber";
@@ -295,6 +296,9 @@ async function createNextOccurrenceFrom(
       })),
       skipDuplicates: true,
     });
+    // No actor in scope — this runs during automatic chain rollover, so a
+    // repair here is system-initiated. writeAudit accepts a null actor.
+    await enforceClaimerInvariant(tx, created.id, null);
   }
 
   // Carry-alongs: who liked the visit, the property reference photos the
@@ -1420,6 +1424,8 @@ export const payments: ServicesPayments = {
           // Only delete if it hasn't been modified (started, etc.)
           const isUntouched = nextOcc.status === "SCHEDULED" && !nextOcc.startedAt;
           if (isUntouched) {
+            // claimer-invariant-allow: the occurrence is deleted four lines
+            // down; no team survives to need a claimer.
             await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId: nextOcc.id } });
             await tx.pinnedOccurrence.deleteMany({ where: { occurrenceId: nextOcc.id } });
             await tx.likedOccurrence.deleteMany({ where: { occurrenceId: nextOcc.id } });
