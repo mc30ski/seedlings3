@@ -2,6 +2,7 @@ import { prisma } from "../db/prisma";
 import { Prisma } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { writeAudit } from "../lib/auditLogger";
+import { enforceClaimerInvariant } from "../lib/claimerInvariant";
 import { AUDIT } from "../lib/auditActions";
 
 type Tx = Prisma.TransactionClient;
@@ -694,8 +695,16 @@ export const groups = {
       data: { assignedGroupId: groupId },
     });
 
+    // The lead is self-assigned and everyone else points at them. Admin mode
+    // used to stamp `actorUserId` on every row including the lead's, so
+    // attaching a crew as an admin produced a team with no claimer — and the
+    // `update` branch never repaired an existing row's assignedById either.
+    // See lib/claimerInvariant.ts.
+    const leadUserId = mode === "claimer-claim" ? actorUserId : g.claimerUserId;
     for (const r of rows) {
-      const assignedById = mode === "claimer-claim" ? r.userId === actorUserId ? actorUserId : g.claimerUserId : actorUserId;
+      const assignedById = r.role === "observer"
+        ? null
+        : r.userId === leadUserId ? r.userId : leadUserId;
       await tx.jobOccurrenceAssignee.upsert({
         where: { occurrenceId_userId: { occurrenceId, userId: r.userId } },
         create: {
@@ -704,9 +713,10 @@ export const groups = {
           role: r.role,
           assignedById,
         },
-        update: { role: r.role },
+        update: { role: r.role, assignedById },
       });
     }
+    await enforceClaimerInvariant(tx, occurrenceId, actorUserId);
 
     // Money: staffing an occurrence with a crew decides who gets paid for
     // this job, and binds the occurrence to the group whose claimer +
@@ -738,6 +748,8 @@ export const groups = {
       select: { jobId: true, assignedGroupId: true },
     });
 
+    // claimer-invariant-allow: detaching wipes the whole team by design; the
+    // occurrence returns to UNCLAIMED, which is a legal state.
     await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
     await tx.jobOccurrence.update({
       where: { id: occurrenceId },

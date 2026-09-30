@@ -42,7 +42,7 @@ import {
   createListCollection,
   Textarea,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, Camera, CalendarArrowUp, BarChart3, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
+import { AlertCircle, AlertTriangle, Archive, Camera, CalendarArrowUp, BarChart3, Bell, BellOff, Calendar, CalendarRange, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
   Map as MapIcon,
   KeyRound,
 } from "lucide-react";
@@ -5853,6 +5853,11 @@ export default function JobsTab({
       </VStack>
     ) : null;
 
+  // These round quick-action badges carry a BARE `Check`, never `CheckCircle2`.
+  // The Box already draws the circle; lucide's CheckCircle2 (circle-check-big)
+  // draws a second one whose ring is an open arc with the tick breaking out of
+  // the top-right, so nested inside the badge it reads as an off-centre circle
+  // shoved down-left. Same trap for any other glyph that includes its own ring.
   const quickActionButton = pauseIndicator ?? (isTrainee || isPeek ? null : (() => {
               if (needsConfirmation && (isClaimer || forAdmin)) {
                 // ALREADY ASKED changes how the same button reads, without
@@ -5888,7 +5893,7 @@ export default function JobsTab({
                       e.stopPropagation();
                       openConfirmClientDialog(occ);
                     }}
-                  ><CheckCircle2 size={12} /></Box>
+                  ><Check size={13} /></Box>
                 );
               }
               if (isTentative) return null;
@@ -5906,7 +5911,7 @@ export default function JobsTab({
                     <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.solid" color="blue.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Pause / Complete" onClick={(e: any) => {
                       e.stopPropagation();
                       setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
-                    }}><CheckCircle2 size={12} /></Box>
+                    }}><Check size={13} /></Box>
                     {quickActionMenuOcc === occ.id && (
                       <VStack
                         position="fixed"
@@ -5950,7 +5955,7 @@ export default function JobsTab({
                       pricingReferenceTags: [...parseJobTags(occ), ...((occ.addons ?? []) as any[]).map((a: any) => a.tag).filter(Boolean)],
                       onConfirm: (comments: string, amount?: string) => void completeEstimate(occ.id, comments, amount),
                     });
-                  }}><CheckCircle2 size={12} /></Box>
+                  }}><Check size={13} /></Box>
                 );
               }
               if (!isTaskOrReminder && occ.status === "PROPOSAL_SUBMITTED" && isEstimateOcc && (isClaimer || forAdmin)) {
@@ -5959,7 +5964,7 @@ export default function JobsTab({
                     <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="green.solid" color="green.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept / Reject Estimate" onClick={(e: any) => {
                       e.stopPropagation();
                       setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
-                    }}><CheckCircle2 size={12} /></Box>
+                    }}><Check size={13} /></Box>
                     {quickActionMenuOcc === occ.id && (
                       <VStack
                         position="fixed"
@@ -9723,7 +9728,15 @@ export default function JobsTab({
                           changes what the client is billed. Gated on the same
                           editable-state helper, so it disappears once the job
                           is closed. */}
-                      {isClaimer && !isTaskOrReminder && occ.status === "SCHEDULED" && (
+                      {/* `|| forAdmin` is load-bearing, not tidiness. Unclaim was
+                          gated on isClaimer ALONE while every sibling action here
+                          admits forAdmin — so a visit that lost its claimer could
+                          not be unclaimed by anyone, at any role, even though the
+                          server's unclaimOccurrence has an admin bypass. Start was
+                          at least reachable by switching to Admin; this was a dead
+                          end in both views. Gated in
+                          claimer-invariant-build-gate.test.ts. */}
+                      {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && (
                         <StatusButton
                           id="occ-unclaim"
                           itemId={occ.id}

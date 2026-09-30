@@ -80,6 +80,7 @@ split (JobsTab ~11k LOC).
 - [Tips feature — designed, NOT built](project_tips_feature_design.md) — overpayment→tip split, spec agreed.
 - [Forecast tool](project_forecast_tool.md) — Super → Money → Forecast. Built, **never used by the user**. Migration applied to DEV only.
 - [Resolve roles from req.user, never a DB lookup](feedback_role_resolution_from_req_user.md) — a fresh read bypasses view-as and restores real powers.
+- [Claimer invariant — canonical + gated](reference_claimer_invariant.md) — an occurrence is UNCLAIMED or has exactly ONE claimer. "Workers, no claimer" = unstartable for everyone below admin, no button, no reason shown.
 - [View-as endpoints — canonical + gated](reference_view_as_endpoints.md) — every `GET /me/*` takes `?viewAsUserId` or carries `// view-as-allow:`. Shipped 3×.
 - [Worker sensitive-data guardrails](reference_worker_sensitive_data.md) — worker views must NEVER expose email, wage, roles or cost-split percentages.
 - [Auth plugin MUST await recordSignInIfNew](project_auth_plugin_must_await_recordsignin.md) — fire-and-forget strands a Neon transaction and hangs every `/api/me`.
