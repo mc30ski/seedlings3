@@ -23,57 +23,26 @@
 import { useCallback, useEffect, useState } from "react";
 import { Box, Dialog, Portal } from "@chakra-ui/react";
 import { Trophy } from "lucide-react";
+import { apiGet } from "@/src/lib/api";
 import { bizToday } from "@/src/lib/dates";
-import DayBoard, { BOARD_VERSION, type BoardData } from "./DayBoard";
+import DayBoard, { BoardPlaceholder, BOARD_VERSION, type BoardData } from "./DayBoard";
 
 const KEY_PREFIX = "seedlings3:dayboard:seen:";
 /* Stores the BOARD_VERSION the user last saw, not a bare "1" — a version
  * they have never seen reads the same as never having opened it at all. */
 const EVER_PREFIX = "seedlings3:dayboard:ever:";
 
-/** Sample content. Replaced wholesale when the board endpoint lands — see
- *  DayBoard.tsx on why this is all-or-nothing rather than part-real. */
-const SAMPLE: BoardData = {
-  weekLabel: "Week of Sep 28",
-  dayLabel: "Thursday",
-  visitsThisWeek: 47,
-  visitsLastWeek: 38,
-  acres: 31.4,
-  properties: 22,
-  onTimePct: 94,
-  byDay: [
-    { day: "Mon", visits: 9, today: false },
-    { day: "Tue", visits: 11, today: false },
-    { day: "Wed", visits: 8, today: false },
-    { day: "Thu", visits: 10, today: true },
-    { day: "Fri", visits: 9, today: false },
-    { day: "Sat", visits: null, today: false },
-    { day: "Sun", visits: null, today: false },
-  ],
-  roster: [
-    { name: "Pete", initials: "PT", visits: 14, properties: 5, sameDayCloses: 4 },
-    { name: "Maria", initials: "MR", visits: 12, properties: 4, sameDayCloses: 6 },
-    { name: "Luis", initials: "LZ", visits: 11, properties: 5, sameDayCloses: 3 },
-    { name: "Nina", initials: "NW", visits: 7, properties: 3, sameDayCloses: 5 },
-    { name: "Sam", initials: "SB", visits: 3, properties: 2, sameDayCloses: 2 },
-  ],
-  bestWeek: { visits: 52, when: "15 Jun 2026" },
-  streakDays: 14,
-  ticker: [
-    "Pete closed Harrington Lake 11:42",
-    "Maria closed Willowbrook 11:18",
-    "Luis started Martinez Cabin 10:55",
-    "Nina closed Patel Residence 10:31",
-    "Sam closed River Bend 09:47",
-  ],
-  isSample: true,
-};
-
 export default function DayBoardButton({ userId }: { userId?: string | null }) {
   const [open, setOpen] = useState(false);
   /** Bumped on every open so the board remounts and replays its entrance —
    *  otherwise the sting only ever runs the first time in a session. */
   const [runKey, setRunKey] = useState(0);
+  /** Real figures from /api/board. Null until the first load returns, and
+   *  the board renders NOTHING numeric until then. There is deliberately no
+   *  hardcoded fallback: the previous build shipped invented figures and
+   *  invented coworkers to production, where they read as live data. */
+  const [data, setData] = useState<BoardData | null>(null);
+  const [failed, setFailed] = useState(false);
   // THREE states, loudest first:
   //   "new"   — never opened, ever. Someone's first day, or the first day the
   //             board shipped. Gets a ring, a halo and a wiggle: they have no
@@ -101,6 +70,17 @@ export default function DayBoardButton({ userId }: { userId?: string | null }) {
   }, [storageKey, everKey]);
 
   const state: "new" | "today" | "seen" = !everSeen ? "new" : seenToday ? "seen" : "today";
+
+  const loadBoard = useCallback(async () => {
+    setFailed(false);
+    try {
+      setData(await apiGet<BoardData>("/api/board"));
+    } catch {
+      // A scoreboard is not worth an error toast over the whole app. The
+      // dialog says it plainly and offers nothing fake in its place.
+      setFailed(true);
+    }
+  }, []);
 
   const markSeen = useCallback(() => {
     setSeenToday(true);
@@ -133,7 +113,7 @@ export default function DayBoardButton({ userId }: { userId?: string | null }) {
         color={state === "seen" ? "gray.fg" : "green.fg"}
         _hover={{ color: "green.fg" }}
         transition="color 0.1s"
-        onClick={() => { setRunKey((n) => n + 1); setOpen(true); markSeen(); }}
+        onClick={() => { setRunKey((n) => n + 1); setOpen(true); markSeen(); void loadBoard(); }}
         data-board-motion
       >
         {/* NEVER OPENED: an expanding ring pushing out from under the icon.
@@ -201,7 +181,11 @@ export default function DayBoardButton({ userId }: { userId?: string | null }) {
               overflow="visible"
             >
               <Dialog.Body p="0">
-                <DayBoard key={runKey} data={SAMPLE} onDismiss={() => setOpen(false)} />
+                {data ? (
+                  <DayBoard key={runKey} data={data} onDismiss={() => setOpen(false)} />
+                ) : (
+                  <BoardPlaceholder failed={failed} onDismiss={() => setOpen(false)} />
+                )}
               </Dialog.Body>
             </Dialog.Content>
           </Dialog.Positioner>

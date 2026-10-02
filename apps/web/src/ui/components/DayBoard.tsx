@@ -51,7 +51,7 @@ import { Box, HStack, Text, VStack } from "@chakra-ui/react";
  * this or confirm the edit was cosmetic. Bumping re-nags EVERY user, so a
  * comment fix is not a reason to.
  */
-export const BOARD_VERSION = "2";
+export const BOARD_VERSION = "3";
 
 export type BoardWorker = {
   /** Display name. Never an email — worker views must not expose those. */
@@ -69,7 +69,7 @@ export type BoardData = {
   visitsLastWeek: number;
   acres: number | null;
   properties: number;
-  onTimePct: number;
+  onTimePct: number | null;
   /** Mon–Sun. `null` = a day that has not happened yet. */
   byDay: Array<{ day: string; visits: number | null; today: boolean }>;
   roster: BoardWorker[];
@@ -150,6 +150,57 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Shown while /api/board is in flight, and when it fails.
+ *
+ * It renders NO figures. The previous build fell back to a hardcoded SAMPLE
+ * when real data was missing, and that shipped to production looking exactly
+ * like live data — invented coworkers and all. An empty board is honest; a
+ * plausible one is not.
+ */
+export function BoardPlaceholder({ failed, onDismiss }: { failed: boolean; onDismiss?: () => void }) {
+  return (
+    <Box
+      position="relative"
+      borderRadius="20px"
+      p="5px"
+      overflow="hidden"
+      data-board-motion
+      css={{ animation: "seedlings-board-frame 3.4s ease-in-out infinite" }}
+    >
+      <Box bg={C.ground} color={C.ink} borderRadius="15px" p="26px 20px 20px" minH="220px">
+        <VStack align="stretch" gap="14px">
+          <Text fontFamily={NUM} fontWeight="800" fontSize="22px" letterSpacing="1.4px" textTransform="uppercase">
+            Seedlings<Box as="span" color={C.turf}>.</Box>
+          </Text>
+          <Text fontSize="13px" color={C.dim}>
+            {failed ? "Couldn\u2019t load the board just now." : "Counting up the week\u2026"}
+          </Text>
+          {onDismiss && (
+            <Box
+              as="button"
+              w="full"
+              minH="44px"
+              borderRadius="10px"
+              borderWidth="1px"
+              borderColor={C.line}
+              bg={C.panel}
+              color={C.ink}
+              fontSize="13px"
+              fontWeight="600"
+              cursor="pointer"
+              _hover={{ borderColor: "#3d5142" }}
+              onClick={onDismiss}
+            >
+              Close
+            </Box>
+          )}
+        </VStack>
+      </Box>
+    </Box>
+  );
+}
+
 export default function DayBoard({ data, onDismiss }: { data: BoardData; onDismiss?: () => void }) {
   const entered = useEntered();
 
@@ -162,7 +213,7 @@ export default function DayBoard({ data, onDismiss }: { data: BoardData; onDismi
   const bigN = useCountUp(data.visitsThisWeek, 240, 1000);
   const acresN = useCountUp(data.acres ?? 0, 420, 900, 1);
   const propsN = useCountUp(data.properties, 500, 900);
-  const timeN = useCountUp(data.onTimePct, 580, 900);
+  const timeN = useCountUp(data.onTimePct ?? 0, 580, 900);
 
   return (
     /* THE BEZEL — the whole reason this does not read as an unstyled panel.
@@ -354,7 +405,9 @@ export default function DayBoard({ data, onDismiss }: { data: BoardData; onDismi
               <Label>Properties</Label>
             </VStack>
             <VStack align="start" gap="3px">
-              <Text fontFamily={NUM} fontWeight="800" fontSize="30px" lineHeight="1">{timeN}%</Text>
+              <Text fontFamily={NUM} fontWeight="800" fontSize="30px" lineHeight="1">
+                {data.onTimePct == null ? "—" : `${timeN}%`}
+              </Text>
               <Label>On time</Label>
             </VStack>
           </HStack>

@@ -13,6 +13,7 @@ import { invoiceCharges } from "./invoiceCharges";
 import { settings } from "./settings";
 import { supplies } from "./supplies";
 import { groups } from "./groups";
+import { board } from "./board";
 import { companyDocuments } from "./companyDocuments";
 import { timelineEvents } from "./timelineEvents";
 import { banners } from "./banners";
@@ -37,6 +38,7 @@ export const services: Services = {
   settings,
   supplies,
   groups,
+  board,
   companyDocuments,
   timelineEvents,
   banners,

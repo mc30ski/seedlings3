@@ -1355,6 +1355,28 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   // Worker occurrence routes
+  /**
+   * THE BOARD. Team-wide by construction — every worker sees the same card,
+   * which is the point of a scoreboard.
+   *
+   * Accepts `?viewAsUserId` with an ADMIN/SUPER gate purely for consistency
+   * with /dashboard-summary: the payload itself is identical whoever asks, so
+   * there is nothing to re-scope, but silently ignoring the param would make
+   * this the one endpoint that behaves differently under view-as.
+   *
+   * No money and no per-person hours in the response — see services/board.ts.
+   */
+  app.get("/board", workerGuard, async (req: any) => {
+    const callerUid = await currentUserId(req);
+    const { viewAsUserId } = (req.query || {}) as { viewAsUserId?: string };
+    if (viewAsUserId && viewAsUserId !== callerUid) {
+      const caller = await prisma.user.findUnique({ where: { id: callerUid }, include: { roles: true } });
+      const isAdmin = caller?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only admins can view as another worker.");
+    }
+    return services.board.getBoard();
+  });
+
   app.get("/occurrences", workerGuard, async (req: any) => {
     const { from, to, includeOccId, viewAsUserId, workerView } = (req.query || {}) as { from?: string; to?: string; includeOccId?: string; viewAsUserId?: string; workerView?: string };
     // Worker Jobs tab signals `?workerView=1` so peek redaction runs
