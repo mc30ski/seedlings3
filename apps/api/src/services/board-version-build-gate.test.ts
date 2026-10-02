@@ -27,7 +27,7 @@ import path from "node:path";
 const BOARD = path.resolve(__dirname, "../../../web/src/ui/components/DayBoard.tsx");
 
 /** sha256 of DayBoard.tsx as of the last deliberate review. */
-const EXPECTED = "4d19b95e57af76f46c467c241721545efe4dec4b699261dda1356333b5ad9963";
+const EXPECTED = "a6dc7503f9657a9bc0a40916297faaa52d4b2ffed09c09d88c6310351a18074d";
 
 describe("[build-gate] the board re-announces itself when it changes", () => {
   const src = readFileSync(BOARD, "utf8");

@@ -1221,6 +1221,7 @@ export type Services = {
   settings: ServicesSettings;
   supplies: ServicesSupplies;
   groups: typeof import("../services/groups").groups;
+  board: typeof import("../services/board").board;
   companyDocuments: typeof import("../services/companyDocuments").companyDocuments;
   timelineEvents: typeof import("../services/timelineEvents").timelineEvents;
   banners: typeof import("../services/banners").banners;
