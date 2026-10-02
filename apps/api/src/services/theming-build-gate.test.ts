@@ -62,6 +62,18 @@ function uiFiles(): string[] {
       // dark look — glare, viewing distance and burn-in all point there. It is
       // a single self-contained file so this exemption stays narrow.
       if (full.endsWith("/pages/display.tsx")) continue;
+      // THE BOARD, same category, same reasoning, SAME NARROWNESS. It is a
+      // fixed dark broadcast panel — a stadium scoreboard does not repaint
+      // when the lobby does, and the committed dark ground is most of why it
+      // reads as a scoreboard rather than another card. Locked at the user's
+      // request, 2026-10-02, pending a look at it in the real app.
+      //
+      // The exemption covers ONE file. Its trigger (DayBoardButton.tsx) holds
+      // no colour at all and stays fully themed, which is why the board owns
+      // its own dismiss button. If a second file ever needs listing here, that
+      // is the signal this decision is spreading and should be revisited —
+      // raise it rather than adding a line.
+      if (full.endsWith("/src/ui/components/DayBoard.tsx")) continue;
       out.push(full);
     }
   };

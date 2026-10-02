@@ -99,6 +99,7 @@ import ScrollableUnderlineTabs, {
   TabItem,
 } from "../src/ui/components/ScrollableUnderlineTabs";
 import BreadcrumbNav from "@/src/ui/components/BreadcrumbNav";
+import DayBoardButton from "@/src/ui/components/DayBoardButton";
 import RoleChip, { type RoleValue } from "@/src/ui/components/RoleChip";
 import ThemeChip from "@/src/ui/components/ThemeChip";
 import TasksPage from "@/src/ui/pages/TasksPage";
@@ -4855,6 +4856,15 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
           }
           headerRight={
             <HStack gap={2} align="center">
+              {/* THE BOARD. Gated twice on purpose. `isWorker || isAdmin ||
+                  isSuper` keeps it off a signed-in ClientContact, who has none
+                  of those roles; `topTab !== "client"` keeps it off a Super
+                  sitting in client view-as, where the whole point is to mirror
+                  what the client sees. This title bar is shared with the
+                  client shell — an ungated control here renders for clients. */}
+              {(isWorker || isAdmin || isSuper) && topTab !== "client" && (
+                <DayBoardButton userId={me?.id ?? null} />
+              )}
               {/* TRIAL (worker Jobs only): the "How Jobs work" explainer's
                   trigger, moved out of the content area. Inline, that
                   disclosure held a full row at the top of every visit even

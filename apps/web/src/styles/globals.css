@@ -287,6 +287,116 @@ html, body {
   }
 }
 
+/* ── The Board ───────────────────────────────────────────────────────────
+   Keyframes live HERE, not in a `css` prop. Chakra's css prop only resolves
+   a keyframe for the element that declares it (see DisplaysTab's inline
+   `spin`); declaring them on a parent and referencing them from children
+   silently animates nothing — the entrance still ran, so it looked fine and
+   every loop was dead. Component: ui/components/DayBoard.tsx. */
+
+/* Fast pass, then PARKS off-screen for the rest of the cycle. A long
+   duration therefore reads as a periodic glint, not a permanent crawl. */
+@keyframes seedlings-board-sweep {
+  0%   { left: -75%; }
+  16%  { left: 135%; }
+  100% { left: 135%; }
+}
+
+/* Slow wash across the hero so the panel is never quite static. */
+@keyframes seedlings-board-drift {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
+/* The accent rail breathing; also today's bar in the day strip. */
+@keyframes seedlings-board-rail {
+  0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(94, 200, 94, 0.45); }
+  50%      { opacity: 0.72; box-shadow: 0 0 22px rgba(94, 200, 94, 0.9); }
+}
+
+@keyframes seedlings-board-slide {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+@keyframes seedlings-board-flare {
+  0%, 100% { text-shadow: 0 0 0 rgba(242, 173, 66, 0); }
+  50%      { text-shadow: 0 0 18px rgba(242, 173, 66, 0.55); }
+}
+
+@keyframes seedlings-board-glow {
+  0%, 100% { text-shadow: 0 0 0 rgba(94, 200, 94, 0); }
+  50%      { text-shadow: 0 0 30px rgba(94, 200, 94, 0.5); }
+}
+
+/* The board's bezel, breathing. This is the tell that the fixed dark panel
+   is DELIBERATE and not an unstyled surface: a thing that glows is a thing
+   somebody built. Slow (5s) and low-amplitude on purpose — a fast pulse on a
+   whole dialog reads as an error state. */
+@keyframes seedlings-board-frame {
+  0%, 100% {
+    box-shadow: 0 0 22px -2px rgba(94, 200, 94, 0.34),
+                0 26px 70px rgba(0, 0, 0, 0.62);
+  }
+  50% {
+    box-shadow: 0 0 62px 4px rgba(94, 200, 94, 0.85),
+                0 26px 70px rgba(0, 0, 0, 0.62);
+  }
+}
+
+/* A light chasing the perimeter. The bezel glow alone was too timid to read
+   against a near-black backdrop — this one is unmistakable, and a border that
+   something travels around is a border somebody BUILT. That is the whole job:
+   say "this panel ignores your theme on purpose" without a label saying so.
+   Rotating a conic gradient behind a 2px inset works in every browser;
+   @property on an angle does not. */
+@keyframes seedlings-board-chase {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Powers on like a scoreboard rather than fading in like a modal. Safe to
+   silence: the element's BASE styles are the lit, visible state, so killing
+   this animation for reduced motion shows the board, it does not hide it.
+   Never give the base style `opacity: 0` to make this read better. */
+@keyframes seedlings-board-poweron {
+  0%   { opacity: 0;   filter: brightness(2.6) saturate(0.15); }
+  7%   { opacity: 1;   filter: brightness(2.6) saturate(0.15); }
+  15%  { filter: brightness(0.55) saturate(1); }
+  26%  { filter: brightness(1.55); }
+  38%  { filter: brightness(0.82); }
+  100% { opacity: 1;   filter: brightness(1); }
+}
+
+@keyframes seedlings-board-halo {
+  0%        { box-shadow: 0 0 0 0 rgba(94, 200, 94, 0.6); }
+  70%, 100% { box-shadow: 0 0 0 10px rgba(94, 200, 94, 0); }
+}
+
+/* ── The Board's title-bar trigger ───────────────────────────────────────
+   Themed: the halo takes the live theme's green, never a literal.
+   Component: ui/components/DayBoardButton.tsx. */
+
+@keyframes seedlings-dayboard-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.82); }
+}
+
+@keyframes seedlings-dayboard-halo {
+  0%        { box-shadow: 0 0 0 0 var(--chakra-colors-green-solid); opacity: 0.75; }
+  70%, 100% { box-shadow: 0 0 0 14px transparent; opacity: 0; }
+}
+
+/* Sits still, nudges, sits still. Constant motion in a title bar is
+   maddening; an occasional twitch catches the eye without becoming
+   wallpaper. */
+@keyframes seedlings-dayboard-nudge {
+  0%, 72%, 100% { transform: rotate(0deg) scale(1); }
+  78%           { transform: rotate(-11deg) scale(1.14); }
+  84%           { transform: rotate(9deg) scale(1.14); }
+  90%           { transform: rotate(-5deg) scale(1.07); }
+}
+
 /* Anyone who has asked the OS for less motion gets the colour, not the
    movement — the row still reads as the urgent one. */
 @media (prefers-reduced-motion: reduce) {
@@ -301,5 +411,16 @@ html, body {
   [data-guidance-pulse] {
     animation: none !important;
     background-color: var(--chakra-colors-blue-emphasized) !important;
+  }
+  /* The Board keeps its layout and colour, loses the movement. Its entrance
+     runs on transitions, which land on their real values when silenced, so
+     nothing here can strand an element at opacity 0. Folded into THIS block
+     rather than a second one: job-materials-build-gate reads the first
+     reduced-motion block in the file, and a duplicate ahead of it hid the
+     chip rules it checks for. */
+  [data-board-motion],
+  [data-board-motion] * {
+    animation: none !important;
+    transition: none !important;
   }
 }
