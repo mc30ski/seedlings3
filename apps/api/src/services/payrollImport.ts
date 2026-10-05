@@ -315,16 +315,36 @@ function parseSection(rows: string[][], sectionIdx: number): ParsedPayrollPeriod
   let label: string | null = null;
   let headerIdx = -1;
 
+  // TWO SHAPES OF THE SAME SECTION, both supported, neither preferred.
+  //
+  //   Shape A, exports up to ~Oct 2026:
+  //     "Weekly Payroll payroll period"," 09/21/2026 - 09/27/2026"
+  //     "Pay day"," 10/02/2026"
+  //
+  //   Shape B, seen from the 09/28–10/04 run onward:
+  //     "Regular (Weekly Payroll)"
+  //     "Pay period"," 09/28/2026 - 10/04/2026"
+  //     "Pay day"," 10/09/2026"
+  //
+  // Gusto moved the schedule name onto its own line and renamed the period
+  // label from "<Schedule> payroll period" to "Pay period". Shape A is NOT
+  // legacy to be dropped later: re-uploading or replacing an older period
+  // means reading a file Gusto generated months ago, and Gusto has flipped
+  // this once already so it can flip back. Both stay.
   for (let i = sectionIdx + 1; i < rows.length; i++) {
     const first = (rows[i][0] ?? "").trim();
     const second = rows[i][1] ?? "";
 
-    if (/payroll period$/i.test(first)) {
+    if (/payroll period$/i.test(first) || /^pay period$/i.test(first)) {
       const range = parseUsDateRangeToEtDateKeys(second);
       periodStart = range.start;
       periodEnd = range.end;
-      // "Weekly Payroll payroll period" -> "Weekly Payroll"
-      label = first.replace(/\s*payroll period$/i, "").trim() || null;
+      // Shape A carries the schedule in the label: "Weekly Payroll payroll
+      // period" -> "Weekly Payroll". Shape B says only "Pay period" and put
+      // the schedule on its own line, already captured below — so don't
+      // overwrite it with an empty string here.
+      const derived = first.replace(/\s*payroll period$/i, "").trim();
+      if (derived && !/^pay period$/i.test(first)) label = derived;
       continue;
     }
     if (/^pay day$/i.test(first)) {
@@ -334,6 +354,16 @@ function parseSection(rows: string[][], sectionIdx: number): ParsedPayrollPeriod
     if (first === "Last Name") {
       headerIdx = i;
       break;
+    }
+    // Shape B's standalone schedule line, e.g. "Regular (Weekly Payroll)".
+    // Taken ONLY when it is the single populated cell on the row and no
+    // label has been found yet, so a stray line cannot be mistaken for the
+    // schedule name. Kept whole rather than unwrapped to "Weekly Payroll":
+    // the "Regular" prefix distinguishes a scheduled run from an off-cycle
+    // or bonus one, and the field is display-only.
+    if (label === null && first && rows[i].slice(1).every((c) => !(c ?? "").trim())) {
+      label = first;
+      continue;
     }
     // A blank line or an unrecognised label between marker and header is
     // tolerated; anything else means the shape changed underneath us.

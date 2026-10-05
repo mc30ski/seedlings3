@@ -23,6 +23,16 @@ const FIXTURE = readFileSync(
   "utf8",
 );
 
+/** The operator's REAL 09/28-10/04 export, byte for byte. Gusto changed the
+ *  section's shape between this and FIXTURE: the schedule moved to its own
+ *  line and "<Schedule> payroll period" became "Pay period". Both files are
+ *  kept and both are tested — a re-upload of an older period reads a file
+ *  Gusto generated in the old shape, and it has flipped once already. */
+const FIXTURE_PAY_PERIOD = readFileSync(
+  join(__dirname, "__fixtures__", "gusto-payroll-journal-pay-period.csv"),
+  "utf8",
+);
+
 describe("parseCsv", () => {
   it("keeps commas inside quoted fields together", () => {
     // The exact reason split(",") is not an option: the real Work Address
@@ -203,6 +213,59 @@ describe("parseGustoPayrollJournal — real export", () => {
     expect(period.totals.values.grossEarnings).toBe(1290.08);
     expect(period.totals.values.netPay).toBe(1087.44);
     expect(period.totals.values.employerCost).toBe(1397.78);
+  });
+});
+
+describe("parseGustoPayrollJournal — the \"Pay period\" shape", () => {
+  // THE BUG: the import refused this file outright with "Section has no
+  // payroll period line." The parser matched /payroll period$/ on the first
+  // cell, and Gusto renamed that label to "Pay period" while hoisting the
+  // schedule onto a line of its own. A whole pay run could not be imported.
+  it("imports a section whose period line says \"Pay period\"", () => {
+    const periods = parseGustoPayrollJournal(FIXTURE_PAY_PERIOD);
+    expect(periods).toHaveLength(1);
+    expect(periods[0].periodStart).toBe("2026-09-28");
+    expect(periods[0].periodEnd).toBe("2026-10-04");
+    expect(periods[0].payDay).toBe("2026-10-09");
+  });
+
+  it("takes the schedule off its own line, whole", () => {
+    // Kept as "Regular (Weekly Payroll)" rather than unwrapped — the prefix
+    // separates a scheduled run from an off-cycle or bonus one.
+    expect(parseGustoPayrollJournal(FIXTURE_PAY_PERIOD)[0].label).toBe("Regular (Weekly Payroll)");
+  });
+
+  it("still reads the old shape's label out of the period line", () => {
+    expect(parseGustoPayrollJournal(FIXTURE)[0].label).toBe("Weekly Payroll");
+  });
+
+  it("reads the same figures out of the new shape", () => {
+    const [p] = parseGustoPayrollJournal(FIXTURE_PAY_PERIOD);
+    expect(p.entries).toHaveLength(3);
+    const justin = p.entries.find((e) => e.rawLastName === "Torres")!;
+    expect(justin.values.grossEarnings).toBe(118.62);
+    expect(justin.values.netPay).toBe(109.55);
+    expect(justin.values.regularHours).toBe(3.33);
+    expect(p.totals.values.grossEarnings).toBe(237.24);
+    expect(p.totals.values.netPay).toBe(219.09);
+  });
+
+  it("blank is still not zero in the new shape", () => {
+    // Caleb worked no hours: Gusto leaves Regular (Hours) EMPTY and writes
+    // 0.00 for gross. Blank must stay null so an untouched column is never
+    // reported as a measured zero.
+    const caleb = parseGustoPayrollJournal(FIXTURE_PAY_PERIOD)[0]
+      .entries.find((e) => e.rawLastName === "Serrano")!;
+    expect(caleb.values.regularHours).toBeNull();
+    expect(caleb.values.grossEarnings).toBe(0);
+  });
+
+  it("both shapes conserve — rows still sum to Gusto's own totals", () => {
+    for (const f of [FIXTURE, FIXTURE_PAY_PERIOD]) {
+      for (const p of parseGustoPayrollJournal(f)) {
+        expect(checkConservation(p), `${p.periodStart} failed conservation`).toEqual([]);
+      }
+    }
   });
 });
 
