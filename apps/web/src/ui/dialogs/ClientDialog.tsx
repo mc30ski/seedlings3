@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import type { Scope } from "@/src/lib/scope";
 import {
   Box,
   Button,
@@ -16,9 +17,8 @@ import {
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiPost, apiPatch } from "@/src/lib/api";
-import AdminTagPicker, { parseAdminTags } from "@/src/ui/components/AdminTagPicker";
+import InternalTagPicker, { parseInternalTags } from "@/src/ui/components/InternalTagPicker";
 import {
-  Role,
   DialogMode,
   Client,
   ClientStatus,
@@ -40,7 +40,9 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
-  role: Role;
+  /** What the viewer can do. Was `role: Surface` — a role name
+   *  deciding whether fields were editable. */
+  scope?: Scope;
   initial?: Client | null;
   onSaved?: (saved: any) => void;
   preventOutsideClose?: boolean;
@@ -53,7 +55,7 @@ export default function ClientDialog({
   open,
   onOpenChange,
   mode,
-  role,
+  scope,
   initial,
   onSaved,
   preventOutsideClose,
@@ -62,7 +64,9 @@ export default function ClientDialog({
   onBack,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-  const isAdmin = role === "ADMIN";
+  // The capability this dialog's writes actually require, not a
+  // role name. Absent scope fails closed.
+  const canManageClients = !!scope?.can("clients.manage");
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
 
@@ -74,7 +78,7 @@ export default function ClientDialog({
   const [notesInternal, setNotesInternal] = useState("");
   const [isVip, setIsVip] = useState(false);
   const [vipReason, setVipReason] = useState("");
-  const [adminTags, setAdminTags] = useState<string[]>([]);
+  const [internalTags, setInternalTags] = useState<string[]>([]);
 
   const statusItems = useMemo(
     () =>
@@ -119,7 +123,7 @@ export default function ClientDialog({
       setNotesInternal(initial.notesInternal ?? "");
       setIsVip(initial.isVip ?? false);
       setVipReason(initial.vipReason ?? "");
-      setAdminTags(parseAdminTags((initial as any).adminTags));
+      setInternalTags(parseInternalTags((initial as any).internalTags));
     } else {
       setKindValue([initial?.type ?? CLIENT_KIND[0]]);
       setStatusValue([initial?.status ?? CLIENT_STATUS[0]]);
@@ -127,7 +131,7 @@ export default function ClientDialog({
       setNotesInternal(initial?.notesInternal ?? "");
       setIsVip(initial?.isVip ?? false);
       setVipReason(initial?.vipReason ?? "");
-      setAdminTags(parseAdminTags((initial as any)?.adminTags));
+      setInternalTags(parseInternalTags((initial as any)?.internalTags));
     }
   }, [open]);
 
@@ -148,7 +152,7 @@ export default function ClientDialog({
       notesInternal: notesInternal || null,
       isVip,
       vipReason: isVip ? (vipReason.trim() || null) : null,
-      adminTags,
+      internalTags,
     };
 
     if (deferSave) {
@@ -161,7 +165,7 @@ export default function ClientDialog({
     try {
       let saved: Client;
       if (mode === "CREATE") {
-        saved = await apiPost<Client>("/api/admin/clients", payload);
+        saved = await apiPost<Client>("/api/clients", payload);
         publishInlineMessage({
           type: "SUCCESS",
           text: `Client "${payload.displayName}" created.`,
@@ -169,7 +173,7 @@ export default function ClientDialog({
       } else {
         if (!initial?.id) throw new Error("Missing client id");
         saved = await apiPatch<Client>(
-          `/api/admin/clients/${initial.id}`,
+          `/api/clients/${initial.id}`,
           payload
         );
         publishInlineMessage({
@@ -230,7 +234,7 @@ export default function ClientDialog({
                         strategy: "fixed",
                         hideWhenDetached: true,
                       }}
-                      disabled={!isAdmin && mode === "UPDATE"}
+                      disabled={!canManageClients && mode === "UPDATE"}
                     >
                       <Select.Control>
                         <Select.Trigger>
@@ -259,7 +263,7 @@ export default function ClientDialog({
                         strategy: "fixed",
                         hideWhenDetached: true,
                       }}
-                      disabled={!isAdmin && mode === "UPDATE"}
+                      disabled={!canManageClients && mode === "UPDATE"}
                     >
                       <Select.Control>
                         <Select.Trigger>
@@ -320,7 +324,7 @@ export default function ClientDialog({
                     </Box>
                   )}
                 </Box>
-                <AdminTagPicker selected={adminTags} onChange={setAdminTags} />
+                <InternalTagPicker selected={internalTags} onChange={setInternalTags} />
               </VStack>
             </Dialog.Body>
             <DialogErrorAlert error={dlgErr.error} onDismiss={dlgErr.clear} />

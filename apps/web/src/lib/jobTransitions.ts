@@ -5,7 +5,7 @@
 //
 // Each table is shaped as: workflow → currentStatus → array of valid
 // next statuses. Worker (VALID) is a strict subset of admin (ADMIN) —
-// admins can do everything workers can plus a handful of reversals.
+// holders of `schedule.manage` can do everything workers can plus a handful of reversals.
 
 const VALID_TRANSITIONS: Record<string, Record<string, string[]>> = {
   STANDARD: {
@@ -40,7 +40,7 @@ const VALID_TRANSITIONS: Record<string, Record<string, string[]>> = {
   },
 };
 
-const ADMIN_TRANSITIONS: Record<string, Record<string, string[]>> = {
+const MANAGER_TRANSITIONS: Record<string, Record<string, string[]>> = {
   STANDARD: {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
     IN_PROGRESS: ["PAUSED", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
@@ -80,16 +80,17 @@ const ADMIN_TRANSITIONS: Record<string, Record<string, string[]>> = {
  *
  * @param workflow  occurrence workflow ("STANDARD", "ONE_OFF", etc.)
  * @param fromStatus  the occurrence's CURRENT status (the one in the DB)
- * @param isAdmin  if true, includes admin-only reversal transitions
+ * @param canManageSchedule  if true, includes the reversal transitions
+ *                           that `schedule.manage` allows
  */
 export function validNextStatuses(
   workflow: string | null | undefined,
   fromStatus: string | null | undefined,
-  isAdmin: boolean,
+  canManageSchedule: boolean,
 ): string[] {
   if (!fromStatus) return [];
   const wf = (workflow ?? "STANDARD").toUpperCase();
-  const table = isAdmin ? ADMIN_TRANSITIONS : VALID_TRANSITIONS;
+  const table = canManageSchedule ? MANAGER_TRANSITIONS : VALID_TRANSITIONS;
   const targets = table[wf]?.[fromStatus] ?? [];
   // Always include the current status — picking the same value is a no-op
   // and shouldn't be disallowed by the dropdown.

@@ -74,8 +74,8 @@ export function mapsUrl(a: ParcelResult["address"]): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 
-// Under /me/, not /admin/: every approved role may open this. The server
-// decides how much of it to send back — see routes/me.ts.
+// Under `/me/`: any approved caller may open this, and the server decides
+// how much of it to send back — see routes/me.ts.
 export const getPropertyParcel = (propertyId: string, refresh = false) =>
   apiGet<ParcelResult>(`/api/me/properties/${propertyId}/parcel${refresh ? "?refresh=1" : ""}`);
 
@@ -83,7 +83,7 @@ export const getPropertyParcel = (propertyId: string, refresh = false) =>
  * Short-lived signed R2 URL for the overhead image.
  *
  * NOT the API route itself: an `<img src>` sends no Clerk token, so pointing
- * it at the admin-gated endpoint 401s and the image silently fails to render
+ * it at a caller with `schedule.manage`-gated endpoint 401s and the image silently fails to render
  * (observed while prototyping, 2026-09-01). The server hands back an expiring
  * link instead — same pattern as guide assets and property photos.
  */

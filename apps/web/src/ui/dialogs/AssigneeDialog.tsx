@@ -1,4 +1,5 @@
 "use client";
+import type { WorkerType } from "@repo/money";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -22,7 +23,14 @@ import {
 import TeamMemberList, { type TeamMember } from "@/src/ui/components/TeamMemberList";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
-type WorkerLite = { id: string; displayName?: string | null; email?: string | null };
+type WorkerLite = {
+  id: string;
+  displayName?: string | null;
+  email?: string | null;
+  /** Needed by TeamMemberList: only someone on payroll may hold a paid seat.
+   *  Omitting it reads as "unknown" and silently re-enables the control. */
+  workerType?: WorkerType | null;
+};
 
 type Props = {
   open: boolean;
@@ -56,7 +64,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
     setShowRecalcPrompt(false);
     (async () => {
       try {
-        const list = await apiGet<WorkerLite[]>("/api/admin/users?role=WORKER&approved=true");
+        const list = await apiGet<WorkerLite[]>("/api/users?role=WORKER&approved=true");
         setWorkers(Array.isArray(list) ? list : []);
       } catch { setWorkers([]); }
     })();
@@ -67,7 +75,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
     setAddBusy(true);
     try {
       for (const userId of userIds) {
-        const result = await apiPost<{ added: boolean }>(`/api/admin/occurrences/${occurrenceId}/add-assignee`, { userId, role });
+        const result = await apiPost<{ added: boolean }>(`/api/occurrences/${occurrenceId}/add-assignee`, { userId, role });
         if (result.added) {
           const worker = workers.find((w) => w.id === userId);
           if (worker) {
@@ -77,7 +85,12 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
               userId,
               assignedById: isClaimer ? userId : claimerId,
               role,
-              user: { id: userId, displayName: worker.displayName, email: worker.email },
+              user: {
+              id: userId,
+              displayName: worker.displayName,
+              email: worker.email,
+              workerType: worker.workerType,
+            },
             }]);
           }
         }
@@ -94,7 +107,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
     dlgErr.clear();
     setBusyId(userId);
     try {
-      await apiDelete(`/api/admin/occurrences/${occurrenceId}/assignees/${userId}`);
+      await apiDelete(`/api/occurrences/${occurrenceId}/assignees/${userId}`);
       setMembers((prev) => prev.filter((m) => m.userId !== userId));
       setAssigneesChanged(true);
       publishInlineMessage({ type: "SUCCESS", text: "Worker removed." });
@@ -112,7 +125,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
     dlgErr.clear();
     setBusyId(userId);
     try {
-      await apiPost(`/api/admin/occurrences/${occurrenceId}/reassign-claimer`, { userId });
+      await apiPost(`/api/occurrences/${occurrenceId}/reassign-claimer`, { userId });
       setMembers((prev) => prev.map((m) => ({
         ...m,
         assignedById: m.userId === userId ? userId : (m.role === "observer" ? m.assignedById : userId),
@@ -131,7 +144,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
     dlgErr.clear();
     setBusyId(userId);
     try {
-      await apiPatch(`/api/admin/occurrences/${occurrenceId}/assignees/${userId}/role`, { role: newRole ?? undefined });
+      await apiPatch(`/api/occurrences/${occurrenceId}/assignees/${userId}/role`, { role: newRole ?? undefined });
       setMembers((prev) => prev.map((m) => {
         if (m.userId !== userId) return m;
         if (newRole === "observer") return { ...m, role: "observer", assignedById: null };
@@ -207,7 +220,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
                         dlgErr.clear();
                         setRecalcBusy(true);
                         try {
-                          await apiPost(`/api/admin/occurrences/${occurrenceId}/recalculate-splits`);
+                          await apiPost(`/api/occurrences/${occurrenceId}/recalculate-splits`);
                           publishInlineMessage({ type: "SUCCESS", text: "Payment splits recalculated." });
                           onChanged?.();
                           setShowRecalcPrompt(false);

@@ -48,11 +48,11 @@ export default function MyDashboard({
   storageKey?: string;
   /** When set, the section is scoped to this worker instead of the
    *  logged-in user — surfaces the impersonated worker's compliance
-   *  / workday / mileage state so an admin can act on their behalf.
+   *  / workday / mileage state so someone with `schedule.manage` can act on their behalf.
    *  Individual banners consume this prop where they support it. */
   viewAsUserId?: string | null;
   /** Display name for the impersonated worker — drives the section
-   *  title so an admin can see whose dashboard they're looking at
+   *  title so someone with `schedule.manage` can see whose dashboard they're looking at
    *  ("Dashboard: Bob"). */
   viewAsDisplayName?: string | null;
   /** The tab's hero card. Rendered inside the frame directly under the
@@ -80,7 +80,7 @@ export default function MyDashboard({
           self-only surfaces:
           - Mileage endpoints (/api/me/mileage/*) enforce
             `driverUserId === caller` server-side — no view-as
-            override supported (see routes/worker.ts).
+            override supported (see routes/time.ts).
           - Push subscriptions are tied to THIS browser, not to any
             user model.
           Matches the shipped HomeTab behavior of suppressing

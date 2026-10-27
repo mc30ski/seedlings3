@@ -17,8 +17,8 @@
 //   admin   -> any worker, HOURS / GROSS / NET ONLY (no tax breakdown)
 //   super   -> any worker, full detail, plus unmatched rows
 //
-// The admin restriction is applied when BUILDING the payload. Tax columns
-// must never be serialized to an admin client and hidden with CSS.
+// A caller with `payroll.view` restriction is applied when BUILDING the payload. Tax columns
+// must never be serialized to someone with `payroll.view` client and hidden with CSS.
 //
 // DECOUPLED FROM THE FINANCIAL SYSTEM. Nothing here writes Expense, touches
 // P&L, or feeds a tax export — not even employerCost. See the spec for why.
@@ -40,31 +40,45 @@ import {
 
 type Tx = PrismaClient | Prisma.TransactionClient;
 
-/** Who is asking, and therefore how much they get to see. */
+/**
+ * Who is asking, and therefore how much they get to see.
+ *
+ * NAMED FOR THE AUTHORITY, NOT A ROLE.
+ *
+ * These were "worker" / "admin" / "super". There are no such roles — they
+ * are editable `CustomRole` rows — and the old names encouraged exactly the
+ * tier-thinking that let `/payroll/identities/unmatched` drift from one
+ * fixed role to anyone holding `payroll.view`.
+ *
+ *   self      — their own pay stub, FULL detail. Ownership, not a capability.
+ *   operator  `payroll.view`    — any worker, hours / gross / net only.
+ *   manager   `payroll.manage`  — any worker, full detail, plus unmatched rows.
+ */
 export type PayrollViewer =
-  | { kind: "worker"; userId: string }
-  | { kind: "admin" }
-  | { kind: "super" };
+  | { kind: "self"; userId: string }
+  | { kind: "operator" }
+  | { kind: "manager" };
 
 // ── Column groups ────────────────────────────────────────────────────────────
 
 /**
- * The only numeric fields an ADMIN may receive for another worker.
+ * The only numeric fields the `operator` view may receive for ANOTHER
+ * person — i.e. a caller holding `payroll.view` but not `payroll.manage`.
  *
- * Derived from the spec's visibility table: hours / gross / net. Everything
- * else — federal, state, Medicare, Social Security, FUTA, employer cost —
- * is withheld. `netPay` and `checkAmount` are the same number in practice
- * but Gusto reports both, and an admin reconciling a bank line needs the
- * check amount.
+ * Hours / gross / net. Everything else — federal, state, Medicare, Social
+ * Security, FUTA, employer cost — is withheld. `netPay` and `checkAmount`
+ * are the same number in practice but Gusto reports both, and whoever is
+ * reconciling a bank line needs the check amount.
  */
-export const ADMIN_VISIBLE_FIELDS = [
+export const OPERATOR_VISIBLE_FIELDS = [
   "regularHours",
   "grossEarnings",
   "netPay",
   "checkAmount",
 ] as const satisfies readonly NumericField[];
 
-/** Every numeric field. SUPER only — the one view with nothing withheld.
+/** Every numeric field. The `manager` view (`payroll.manage`) — the one
+ *  view with nothing withheld.
  *
  *  `as const satisfies` and NOT `: readonly NumericField[]` — the annotation
  *  widens each entry to NumericField, which erases the literal types the
@@ -123,14 +137,14 @@ void _allNumericFieldsAreExhaustive;
  * The employer's side of the ledger: what the BUSINESS paid on top of
  * wages, and the resulting total cost of employing someone.
  *
- * SUPER ONLY. Not because it is more sensitive than a tax line — it is
+ * `payroll.manage` ONLY. Not because it is more sensitive than a tax line — it is
  * simply not the worker's information. A pay stub tells you what you
  * earned and what was withheld from it; the employer's matching Social
  * Security contribution, its FUTA and NC unemployment liability, and what
  * you cost the company in total are the company's books. Gusto draws the
  * same line: an employee's own Gusto account does not show these either.
  *
- * An ADMIN is already excluded from everything but hours/gross/net, so
+ * Someone with `payroll.view` is already excluded from everything but hours/gross/net, so
  * this list is really about narrowing the WORKER's own row.
  */
 export const EMPLOYER_SIDE_FIELDS = [
@@ -151,7 +165,7 @@ export const EMPLOYER_SIDE_FIELDS = [
  * withholding line is theirs by right — while anything belonging to the
  * company's books has to be declared above to be withheld.
  */
-export const WORKER_VISIBLE_FIELDS: readonly NumericField[] = ALL_NUMERIC_FIELDS.filter(
+export const SELF_VISIBLE_FIELDS: readonly NumericField[] = ALL_NUMERIC_FIELDS.filter(
   (f) => !(EMPLOYER_SIDE_FIELDS as readonly NumericField[]).includes(f),
 );
 
@@ -159,18 +173,18 @@ export const WORKER_VISIBLE_FIELDS: readonly NumericField[] = ALL_NUMERIC_FIELDS
  * Which fields a given viewer may receive.
  *
  * Every branch is explicit. An earlier version read `admin ? ADMIN : ALL`,
- * which made "everything" the default for anything that was not an admin
+ * which made "everything" the default for anything that was not someone with `payroll.view`
  * — so `super` and `worker` shared one projection and a worker's payload
  * carried the employer-side columns their UI never rendered. Client-side
  * omission is not a control.
  */
 export function fieldsFor(viewer: PayrollViewer): readonly NumericField[] {
   switch (viewer.kind) {
-    case "admin":
-      return ADMIN_VISIBLE_FIELDS;
-    case "worker":
-      return WORKER_VISIBLE_FIELDS;
-    case "super":
+    case "operator":
+      return OPERATOR_VISIBLE_FIELDS;
+    case "self":
+      return SELF_VISIBLE_FIELDS;
+    case "manager":
       return ALL_NUMERIC_FIELDS;
   }
 }
@@ -464,8 +478,27 @@ function entryToRow(
   };
 }
 
+/**
+ * Map key for "same person by name", used to match an imported payroll row
+ * to a stored identity.
+ *
+ * THE DELIMITER IS AN ESCAPE, NOT A LITERAL CONTROL CHARACTER. This line
+ * used to contain a real NUL byte, typed straight into the template string.
+ * It worked — the key is built and read inside one call and never persisted
+ * — but it made the whole 890-line file register as BINARY, so `grep` and
+ * every grep-driven search silently skipped it. A payroll module that does
+ * not appear in a search for its own identifiers is a trap, and it cost real
+ * time here.
+ *
+ * `\u001f` (unit separator) is a delimiter by definition, cannot occur in a
+ * name, and carries none of NUL's hazard: Postgres rejects NUL in text, which
+ * is why `lib/scrubNulBytes.ts` exists, and a key like this is one refactor
+ * away from being written to a column.
+ */
+const NAME_KEY_DELIMITER = "\u001f";
+
 function nameKey(last: string, first: string): string {
-  return `${last.trim().toLowerCase()} ${first.trim().toLowerCase()}`;
+  return `${last.trim().toLowerCase()}${NAME_KEY_DELIMITER}${first.trim().toLowerCase()}`;
 }
 
 // ── Reads ────────────────────────────────────────────────────────────────────
@@ -476,7 +509,7 @@ export type PayrollPeriodSummary = {
   periodEnd: string;
   payDay: string;
   label: string | null;
-  /** Present only for admin/super. Workers get their own numbers, not the team's. */
+  /** Present only for management. Workers get their own numbers, not the team's. */
   teamTotals?: {
     grossEarnings: number | null;
     /** Tips paid through the paycheck this period. A COMPONENT of
@@ -485,10 +518,10 @@ export type PayrollPeriodSummary = {
      *  from a period that carried no tips. */
     paycheckTips: number | null;
     netPay: number | null;
-    /** SUPER ONLY — absent from an admin payload. */
+    /** `payroll.manage` ONLY — absent from an operator payload. */
     employerCost?: number | null;
   };
-  /** Worker view: their own figures for this period, if they have a row. */
+  /** Self-scoped view: their own figures for this period, if they have a row. */
   mine?: { grossEarnings: number | null; paycheckTips: number | null; netPay: number | null };
   entryCount?: number;
   unmatchedCount?: number;
@@ -497,11 +530,11 @@ export type PayrollPeriodSummary = {
 /**
  * List periods the viewer is allowed to see, newest pay day first.
  *
- * A worker only sees periods they actually appear in — an empty period, or
+ * The `self` tier only sees periods they actually appear in — an empty period, or
  * one predating their hire, is not theirs to browse.
  */
 export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodSummary[]> {
-  if (viewer.kind === "worker") {
+  if (viewer.kind === "self") {
     const periods = await prisma.payrollPeriod.findMany({
       where: {
         archivedAt: null,
@@ -531,9 +564,10 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
     }));
   }
 
-  // Admin + Super: every period. Super additionally sees archived ones.
+  // Every period. The `manager` tier (`payroll.manage`) additionally sees
+  // archived ones.
   const periods = await prisma.payrollPeriod.findMany({
-    where: viewer.kind === "super" ? {} : { archivedAt: null },
+    where: viewer.kind === "manager" ? {} : { archivedAt: null },
     orderBy: { payDay: "desc" },
     include: { entries: { select: { userId: true } } },
   });
@@ -550,15 +584,15 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
         grossEarnings: t.values?.grossEarnings ?? null,
         paycheckTips: t.values?.paycheckTips ?? null,
         netPay: t.values?.netPay ?? null,
-        // SUPER ONLY. `employerCost` is in TAX_AND_EMPLOYER_FIELDS — the
-        // list of everything an admin must not receive — so shipping it in
-        // the aggregate would have handed an admin, through the back door,
+        // `payroll.manage` ONLY. `employerCost` is in TAX_AND_EMPLOYER_FIELDS — the
+        // list of everything someone with `payroll.view` must not receive — so shipping it in
+        // the aggregate would have handed someone with `payroll.view`, through the back door,
         // the exact figure the per-entry projection withholds. A team of
         // three makes an aggregate close enough to per-person.
         //
         // It is shown to the operator as an operational figure only: NOT an
         // Expense row, and it never reaches a tax export.
-        ...(viewer.kind === "super"
+        ...(viewer.kind === "manager"
           ? { employerCost: t.values?.employerCost ?? null }
           : {}),
       },
@@ -571,7 +605,7 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
 /**
  * The employer's side of one period's "Payroll Totals" row.
  *
- * SUPER ONLY — returns undefined for anyone else, so the field is absent
+ * `payroll.manage` ONLY — returns undefined for anyone else, so the field is absent
  * from the payload rather than present-and-zeroed. Same rule as
  * `teamTotals.employerCost`: the absence IS the access control.
  */
@@ -579,7 +613,7 @@ export function employerTotalsFor(
   period: { totals: unknown },
   viewer: PayrollViewer,
 ): Partial<Record<NumericField, number | null>> | undefined {
-  if (viewer.kind !== "super") return undefined;
+  if (viewer.kind !== "manager") return undefined;
   const t = (period.totals ?? {}) as {
     values?: Partial<Record<NumericField, number | null>>;
   };
@@ -602,14 +636,14 @@ export type PayrollEntryView = {
   paymentMethod: string | null;
   /** Only the fields this viewer is permitted to receive. */
   values: Partial<Record<NumericField, number | null>>;
-  /** Super only — flags a row with no confirmed identity. */
+  /** `payroll.manage` only — flags a row with no confirmed identity. */
   unmatched?: boolean;
 };
 
 /**
  * Entries for one period, projected for the viewer.
  *
- * `forUserId` narrows an admin/super view to a single worker (the "unless
+ * `forUserId` narrows a `payroll.view` holder view to a single worker (the "unless
  * you select a worker" case). It is IGNORED for a worker viewer, whose
  * scope is already fixed to themselves — accepting it there would be a
  * parameter that looks like it grants access.
@@ -621,7 +655,7 @@ export async function listEntries(
 ): Promise<PayrollEntryView[]> {
   const where: Prisma.PayrollEntryWhereInput = { payrollPeriodId: periodId };
 
-  if (viewer.kind === "worker") {
+  if (viewer.kind === "self") {
     where.userId = viewer.userId;
   } else if (forUserId) {
     where.userId = forUserId;
@@ -634,9 +668,9 @@ export async function listEntries(
   });
 
   // Admin never receives an unmatched row: it has no confirmed owner, so
-  // showing it in a per-worker admin view would be an unattributed number.
+  // showing it in a per-worker management view would be an unattributed number.
   const visible =
-    viewer.kind === "admin" ? entries.filter((e) => e.userId !== null) : entries;
+    viewer.kind === "operator" ? entries.filter((e) => e.userId !== null) : entries;
 
   const fields = fieldsFor(viewer);
 
@@ -652,7 +686,7 @@ export async function listEntries(
       employeeType: e.employeeType,
       paymentMethod: e.paymentMethod,
       values,
-      ...(viewer.kind === "super" ? { unmatched: e.userId === null } : {}),
+      ...(viewer.kind === "manager" ? { unmatched: e.userId === null } : {}),
     };
   });
 }
@@ -700,7 +734,7 @@ export async function getMyLatest(userId: string): Promise<{
  * name changes — marriage, a Gusto typo, "Mike" vs "Michael" — the new
  * period imports with `userId: null` and the worker simply doesn't see it.
  * No gap, no error, no cue. They conclude payroll is late. Meanwhile the
- * Super's review queue says "1 payroll name needs matching" and the worker
+ * The `payroll.manage` review queue says "1 payroll name needs matching" and the worker
  * has no way to know that concerns them.
  *
  * DELIBERATELY TARGETED, not a broadcast. Showing "some rows are unmatched"
@@ -749,7 +783,7 @@ export async function getPendingMatchNotice(userId: string): Promise<{
   return { affected: true, payDay: latest.payDay };
 }
 
-// ── Identity mapping (Super only) ────────────────────────────────────────────
+// ── Identity mapping (`payroll.manage` only) ────────────────────────────────────────────
 
 /** Names appearing in any period with no confirmed identity yet. */
 export async function listUnmatchedNames(): Promise<
@@ -845,7 +879,7 @@ export async function unlinkIdentity(opts: {
   });
 }
 
-// ── Archive (Super only) ─────────────────────────────────────────────────────
+// ── Archive (`payroll.manage` only) ─────────────────────────────────────────────────────
 
 /**
  * Soft-delete a period. Follows the repo-wide archivedAt pattern; hard

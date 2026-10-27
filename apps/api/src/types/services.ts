@@ -1,9 +1,9 @@
+import type { CallerCan } from "../lib/callerCan";
 import type {
   Equipment,
   AuditEvent,
   User,
   Client,
-  UserRole,
   ClientContact,
   ClientStatus,
   Property,
@@ -70,14 +70,22 @@ export type ContactUpsert = Pick<
   "status" | "firstName" | "lastName" | "email" | "phone" | "role" | "isPrimary"
 > & { id?: string };
 
-export type Role = "SUPER" | "ADMIN" | "WORKER";
+/** Derived from the Prisma enum, never hand-listed.
+ *
+ *  A hand-maintained copy of this union went stale the moment a new value
+ *  was added to the schema, breaking `tsc` in the route layer while the
+ *  build gate stayed green — the gate runs vitest and never typechecks.
+ *  Aliasing the generated type means a new enum value cannot reintroduce
+ *  that gap. */
+// There is no role enum. What someone may do comes from the capabilities
+// their roles grant — see @repo/permissions.
 
 type ReserveResult = { id: string; userId: string };
 type CheckoutResult = { id: string; userId: string };
 type ReleaseResult = { released: true };
 type CancelResult = { cancelled: true };
 
-export type AdminHolder = {
+export type EquipmentHolder = {
   userId: string;
   displayName?: string | null;
   email?: string | null;
@@ -90,7 +98,7 @@ export type AdminHolder = {
   groupName?: string | null;
 };
 
-export type AdminUserHolding = {
+export type UserHolding = {
   userId: string;
   equipmentId: string;
   shortDesc: string;
@@ -100,9 +108,9 @@ export type AdminUserHolding = {
   checkedOutAt: Date | null;
 };
 
-export type EquipmentWithHolder = Equipment & { holder: AdminHolder | null };
+export type EquipmentWithHolder = Equipment & { holder: EquipmentHolder | null };
 
-export type AdminActivityEvent = {
+export type DirectoryActivityEvent = {
   equipmentName?: string;
   qrSlug?: string;
   brand?: string;
@@ -111,13 +119,13 @@ export type AdminActivityEvent = {
   role?: string;
 };
 
-export type AdminActivityUser = {
+export type DirectoryActivityUser = {
   userId: string;
   displayName?: string;
   email?: string;
   lastActivityAt: Date | null;
   count: number;
-  events: AdminActivityEvent[];
+  events: DirectoryActivityEvent[];
 };
 
 export type PropertyUpsert = Pick<
@@ -136,7 +144,14 @@ export type PropertyUpsert = Pick<
   | "pointOfContactId"
   | "lotSize"
   | "lotSizeUnit"
-> & { id?: string };
+> & {
+  id?: string;
+  /** Territory. Omitted means "inherit from this client's other properties
+   *  when they all agree, otherwise leave unassigned" — see
+   *  `properties.create`. Unassigned is legal and its consequence is that
+   *  the property's work counts toward no area's rollup. */
+  areaId?: string | null;
+};
 
 export type PropertyListItemParams = {
   q?: string;
@@ -144,6 +159,26 @@ export type PropertyListItemParams = {
   status?: PropertyStatus | "ALL";
   kind?: PropertyKind | "ALL";
   limit?: number;
+  /** Territory filter from `areaWhere(principal, "clients.view")`, computed
+   *  at the route because only the route has the principal. `{}` means the
+   *  caller holds the capability company-wide. */
+  areaWhere?: Record<string, unknown>;
+  /** Narrow to properties this user is on the work for — set by the route
+   *  for a caller who is not field-cleared and cannot manage clients. The
+   *  same rule PropertiesTab was applying in the browser, moved to where
+   *  it actually withholds the rows. */
+  assignedToUserId?: string;
+  /**
+   * Show one area's properties — the SUBTREE, so picking a district
+   * includes its routes and the list agrees with the count beside it on
+   * the Areas tab.
+   *
+   * A VIEW filter, not a permission: it is ANDed with `areaWhere` above, so
+   * it can only ever subtract from what the caller may already see.
+   * `"none"` asks for the properties in NO area, which is the one question
+   * the area tree cannot answer about itself.
+   */
+  areaSubtreePath?: string | "none";
 };
 
 export type PropertyListItem = Property & {
@@ -156,7 +191,7 @@ export type PropertyListItem = Property & {
 
 export type ServicesEquipment = {
   listAvailable(): Promise<Equipment[]>;
-  listAllAdmin(): Promise<EquipmentWithHolder[]>;
+  listAllUnscoped(): Promise<EquipmentWithHolder[]>;
   listForWorkers(): Promise<Equipment[]>; // includes MAINTENANCE/RESERVED/CHECKED_OUT
   listUnavailableForWorkers(): Promise<Equipment[]>; // cannot reserve RESERVED/CHECKED_OUT/MAINTENANCE/RETIRED
   listMine(userId: string): Promise<Equipment[]>; // items I currently hold (reserved or checked out)
@@ -254,7 +289,7 @@ export type ServicesEquipment = {
   // pre-cutoff checkouts are hidden so the operator's "fresh slate" view of
   // the books is consistent across surfaces. Anchored on checkedOutAt (the
   // usage event) rather than releasedAt, so active (releasedAt=null) checkouts
-  // post-cutoff still appear. Super reveal flips cutoff to null upstream.
+  // post-cutoff still appear. the reveal flips cutoff to null upstream.
   listUsage(params?: {
     from?: string;
     to?: string;
@@ -263,25 +298,70 @@ export type ServicesEquipment = {
   }): Promise<any[]>;
 };
 
+/**
+ * A row in the user directory.
+ *
+ * `roleGrants` and `capabilities` are the reason this type exists. The
+ * directory used to read `u.roles` — `{ role: Role }[]` straight off the
+ * deleted UserRole table — to decide whether someone was team or client, to
+ * filter by worker type, and to resolve privileges client-side. With the
+ * table gone, `list()` returned bare user rows and every one of those reads
+ * was `undefined.some(...)`: the tab threw before it rendered.
+ *
+ * So the server answers both questions it is actually being asked. Which
+ * ROLES does this person hold (what the badges show, and what a grant screen
+ * edits) and what can they DO (one flattened set, resolved by the same
+ * `heldCapabilities` the request path uses). The second is not derivable from
+ * the first without the inheritance table, which is exactly the computation
+ * that must not be duplicated in the browser.
+ */
+export type DirectoryUserRow = User & {
+  roleGrants: Array<{
+    roleId: string;
+    /** Stable key for a starter role; null for an operator-built one. */
+    key: string | null;
+    name: string;
+    /**
+     * null for a company-wide grant (a `UserCustomRole` row); set for one
+     * scoped to a single area (an `AreaAssignment` row). The two live in
+     * separate tables because they are different grants, and the directory
+     * has to tell them apart: "Admin" and "Admin in Durham" are not the same
+     * badge, and only the first makes someone someone with `schedule.manage` of the business.
+     */
+    areaId: string | null;
+    areaName: string | null;
+    /** Temporary cover — an `AreaAssignment` flag; always false company-wide. */
+    isTemporary: boolean;
+  }>;
+  /**
+   * What this person can do EVERYWHERE — their company-wide grants,
+   * flattened through inheritance, suspension already applied.
+   *
+   * Area-scoped grants are deliberately excluded. `heldCapabilities` is a
+   * union and does not consider `areaPath`, so including them would report
+   * someone who runs one district as running the business. Read those out
+   * of `roleGrants`, where each carries its own area.
+   */
+  capabilities: string[];
+};
+
 export type ServicesUsers = {
   list(params?: {
     approved?: boolean;
-    role?: Role;
-  }): Promise<(User & { roles: UserRole[] })[]>;
+    /** Filter to people holding this role, by its stable key
+     *  ("seedlings.worker"). Was a `Role` enum value. */
+    roleKey?: string;
+  }): Promise<DirectoryUserRow[]>;
   // Reserved + checked-out items (flat list used by AdminUsers UI)
-  listHoldings(): Promise<AdminUserHolding[]>;
+  listHoldings(): Promise<UserHolding[]>;
 
   approve(
     clerkUserId: string,
     userId: string,
     opts?: { linkContactId?: string | null },
   ): Promise<User>;
-  addRole(clerkUserId: string, userId: string, role: Role): Promise<UserRole>;
-  removeRole(
-    clerkUserId: string,
-    userId: string,
-    role: Role,
-  ): Promise<{ deleted: boolean }>;
+  // addRole / removeRole are GONE. Granting a role is `customRoles.assign`
+  // / `.revoke`, which audit and enforce the one-system-role rule.
   // Hard-delete user (Clerk + DB)
   remove(
     clerkUserId: string,
@@ -298,26 +378,31 @@ export type ServicesUsers = {
   me(
     token: string,
     impersonateHeader?: string | string[] | null,
-    // Super-only client "View as" contact ID. Set by
+    // The client "View as" contact ID (`clients.view-as`). Set by
     // plugins/clientImpersonation.ts on request.impersonatedContact.id and
     // passed through from the /me route. When active + the caller is really
     // SUPER, the returned payload is overlaid to look like a signed-in
-    // client (empty roles, client identity fields) so UI visibility guards
-    // render the client tabs. Ignored for non-Super callers.
+    // client (no capabilities, client identity fields) so UI visibility
+    // guards render the client tabs. Ignored for callers without
+    // `identity.link`.
     clientImpersonationContactId?: string | null,
   ): Promise<{
     id: string;
     isApproved: boolean;
-    roles: Role[];
+    /** What this caller may DO, narrowed by any active perspective. The web gates
+     *  every button on this, so it must match what the routes will accept. */
+    capabilities?: string[];
+    /** Perspectives available, lowest access first — the top-tab dropdown. */
+    perspectives?: Array<{ roleId: string; key: string | null; name: string; order: number }>;
+    /** The active perspective, or null for "everything I hold". */
+    activePerspectiveRoleId?: string | null;
     email?: string | null;
     displayName?: string | null;
     workerType?: string | null;
     // Compliance-policy state (insurance, W-9, contractor agreement, safety
     // SOP, etc.) served separately via GET /me/policies in Slice 2.
-    // Super-only impersonation echo fields — always present so the UI can
-    // unconditionally check realRoles to decide whether to render the View-as
-    // menu. When impersonation isn't active they mirror the regular fields.
-    realRoles?: Role[];
+    /** Mirrors the regular field when no perspective is active. Kept so the UI can
+     *  always show what the person really is while looking through one. */
     realWorkerType?: string | null;
     isImpersonating?: boolean;
     isClientImpersonating?: boolean;
@@ -333,14 +418,6 @@ export type ServicesUsers = {
     userId: string,
     isOwner: boolean,
   ): Promise<User>;
-  setPrivilegeOverrides(
-    currentUserId: string,
-    userId: string,
-    overrides: {
-      canPullInventory?: boolean | null;
-      canChargeBusinessExpenses?: boolean | null;
-    },
-  ): Promise<User>;
 };
 
 export type ServicesClients = {
@@ -348,6 +425,12 @@ export type ServicesClients = {
     q?: string;
     status?: ClientStatus | "ALL";
     limit?: number;
+    /** Territory filter from `areaWhere(principal, "clients.view")`; the
+     *  service wraps it in the hop through `properties`. */
+    areaWhere?: Record<string, unknown>;
+    /** Narrow to clients this user is on the work for — set by the route
+     *  for a caller who is not field-cleared and cannot manage clients. */
+    assignedToUserId?: string;
   }): Promise<ClientListItem[]>;
   get(id: string): Promise<ClientWithContacts>;
   create(currentUserId: string, payload: ClientUpsert): Promise<Client | null>;
@@ -415,14 +498,37 @@ export type ServicesCurrentUser = {
   me(clerkUserId: string): Promise<{
     id: string;
     isApproved: boolean;
-    roles: Role[];
     email?: string | null;
     displayName?: string | null;
+    /** How this person is paid. NULL means nothing resolves — being in the
+     *  system is not being cleared to act in it. */
+    workerType: "EMPLOYEE" | "CONTRACTOR" | "UNPAID" | null;
+    /** Live roles with inheritance already flattened. `areaPath` present
+     *  means the role is held within that subtree rather than company-wide.
+     *
+     *  NOT the person's capabilities. The rbac plugin builds those into a
+     *  principal; a field named `capabilities` here is exactly what
+     *  `{ ...me }` would spread through a narrowed perspective (G4). */
+    roleGrants: Array<{
+      roleId: string;
+      name: string;
+      entitlements: string[];
+      areaPath?: string;
+    }>;
+    /** Perspectives this person may look through, lowest access first. Always a
+     *  subset of what they hold — a perspective can only ever narrow. */
+    perspectives: Array<{
+      roleId: string;
+      key: string | null;
+      name: string;
+      order: number;
+      entitlements: string[];
+    }>;
   }>;
 };
 
 export type ServicesActivity = {
-  listUserActivity(): Promise<AdminActivityUser[]>;
+  listUserActivity(): Promise<DirectoryActivityUser[]>;
 };
 
 export type ServicesAudit = {
@@ -438,7 +544,46 @@ export type ServicesAudit = {
   }): Promise<{ items: AuditEvent[]; total: number }>;
 };
 
+/** One pin on the area map. */
+export type PropertyMapPoint = {
+  id: string;
+  displayName: string;
+  street1: string | null;
+  city: string | null;
+  lat: number | null;
+  lng: number | null;
+  /** Set when the geocoder could not place this address. Such a property is
+   *  skipped by the resolver rather than retried on every open. */
+  parcelLookupError: string | null;
+  area: { id: string; name: string } | null;
+  client: { displayName: string | null } | null;
+};
+
+export type PropertyMapScope = {
+  areaWhere?: Record<string, unknown>;
+  areaSubtreePath?: string | "none";
+  assignedToUserId?: string;
+};
+
 export type ServicesProperties = {
+  /** Pins for the area map. A pure read — never geocodes. */
+  mapPoints(params: PropertyMapScope & { areaId?: string }): Promise<{
+    /** The area's own configured point — what its weather is anchored on. */
+    areaCentre: { id: string; name: string; lat: number; lng: number } | null;
+    points: PropertyMapPoint[];
+    total: number;
+    placed: number;
+    /** Still to geocode; excludes the known-unplaceable. */
+    pending: number;
+    unplaceable: number;
+  }>;
+  /** Geocode the next few unplaced properties. Small batches, called
+   *  repeatedly — one address costs seconds. */
+  resolveMapPoints(params: PropertyMapScope & { limit: number }): Promise<{
+    resolved: Array<{ id: string; lat: number; lng: number }>;
+    failed: string[];
+    remaining: number;
+  }>;
   list(params?: PropertyListItemParams): Promise<PropertyListItem[]>;
   get(id: string): Promise<Property>;
 
@@ -504,7 +649,7 @@ export type CreateOccurrenceInput = {
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
-  isAdminOnly?: boolean;
+  mustBeAssigned?: boolean;
   jobType?: string | null;
   jobTags?: string | null;
   pinnedNote?: string | null;
@@ -529,36 +674,55 @@ export type ServicesJobs = {
     limit?: number;
     from?: string;
     to?: string;
+      /** From `areaWhereOn(principal, cap, "defaultArea")`. */
+    areaWhere?: Record<string, unknown>;
   }): Promise<JobListItem[]>;
 
   listAllOccurrences(params?: {
     from?: string;
     to?: string;
     cutoff?: Date | null;
+      /** Territory filter from `areaWhere(principal, "schedule.view")`.
+     *  A JobOccurrence carries its own `areaId`. */
+    areaWhere?: Record<string, unknown>;
   }): Promise<any[]>;
   listNextOccurrenceGhosts(params: {
     from?: string;
     to?: string;
     assigneeUserId?: string | null;
     cutoff?: Date | null;
+      /** From `areaWhereOn(principal, cap, "defaultArea")`. */
+    areaWhere?: Record<string, unknown>;
   }): Promise<any[]>;
   countGhostExpiry(params: {
     assigneeUserId?: string | null;
     cutoff?: Date | null;
+      areaWhere?: Record<string, unknown>;
   }): Promise<{ expiringSoon: number; expired: number }>;
   getOccurrencesByIds(ids: string[], cutoff?: Date | null): Promise<any[]>;
   listMyOccurrences(
     userId: string,
-    options?: { isAdmin?: boolean },
+    options?: { canManageSchedule?: boolean },
   ): Promise<any[]>;
-  listAvailableOccurrences(): Promise<any[]>;
+  /** @param areaWhere territory filter from
+   *  `areaWhere(principal, "schedule.view")`; `{}` for a global reader. */
+  listAvailableOccurrences(areaWhere?: Record<string, unknown>): Promise<any[]>;
+  /**
+   * These four decide whether the caller may act on a visit that is not
+   * theirs — unclaim somebody else's, remove another person's assignment,
+   * force a status. Each answered it with `userCan(tx, currentUserId, …)`, a
+   * fresh read of the caller's REAL grants that ignored any active
+   * perspective. `callerCan` is the route's already-narrowed test.
+   */
   claimOccurrence(
     currentUserId: string,
+    callerCan: CallerCan,
     occurrenceId: string,
     opts?: { groupId?: string | null },
   ): Promise<{ claimed: true }>;
   updateOccurrenceStatus(
     currentUserId: string,
+    callerCan: CallerCan,
     occurrenceId: string,
     status: JobOccurrenceStatus,
     notes?: string,
@@ -621,27 +785,16 @@ export type ServicesJobs = {
       price?: number | null;
       isTentative?: boolean;
       isEstimate?: boolean;
-      isAdminOnly?: boolean;
+      mustBeAssigned?: boolean;
       paymentRevertReason?: string | null;
     },
-    options?: { isAdmin?: boolean },
+    options?: { canManageSchedule?: boolean },
   ): Promise<JobOccurrence>;
 
+  /** Caller must already be on the visit, or hold `schedule.manage`. */
   addOccurrenceAssignee(
-    currentUserId: string,
-    occurrenceId: string,
-    targetUserId: string,
-    role?: string | null,
-  ): Promise<{ added: true } | { added: false; reason: string }>;
-
-  removeOccurrenceAssignee(
-    currentUserId: string,
-    occurrenceId: string,
-    targetUserId: string,
-  ): Promise<{ removed: true }>;
-
-  adminAddOccurrenceAssignee(
-    adminUserId: string,
+    actingUserId: string,
+    callerCan: CallerCan,
     occurrenceId: string,
     targetUserId: string,
     role?: string | null,
@@ -657,14 +810,17 @@ export type ServicesJobs = {
     },
   ): Promise<JobOccurrence>;
 
-  adminRemoveOccurrenceAssignee(
-    adminUserId: string,
+  /** Caller must be the claimer, or hold `schedule.manage`. */
+  removeOccurrenceAssignee(
+    actingUserId: string,
+    callerCan: CallerCan,
     occurrenceId: string,
     targetUserId: string,
   ): Promise<{ removed: true }>;
 
   unclaimOccurrence(
     currentUserId: string,
+    callerCan: CallerCan,
     occurrenceId: string,
   ): Promise<{ unclaimed: true }>;
 
@@ -682,14 +838,14 @@ export type ServicesJobs = {
     currentUserId: string,
     occurrenceId: string,
   ): Promise<JobOccurrence>;
-  listArchivedJobs(params?: { page?: number; pageSize?: number }): Promise<{
+  listArchivedJobs(params?: { page?: number; pageSize?: number; areaWhere?: Record<string, unknown> }): Promise<{
     items: JobListItem[];
     total: number;
     page: number;
     pageSize: number;
   }>;
   createEvent(
-    adminUserId: string,
+    actingUserId: string,
     input: {
       title: string;
       notes?: string;
@@ -698,12 +854,12 @@ export type ServicesJobs = {
     },
   ): Promise<JobOccurrence>;
   completeEvent(
-    adminUserId: string,
+    actingUserId: string,
     occurrenceId: string,
   ): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
 
   createFollowup(
-    adminUserId: string,
+    actingUserId: string,
     input: {
       title: string;
       notes?: string;
@@ -714,12 +870,12 @@ export type ServicesJobs = {
     },
   ): Promise<JobOccurrence>;
   completeFollowup(
-    adminUserId: string,
+    actingUserId: string,
     occurrenceId: string,
   ): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
 
   createAnnouncement(
-    adminUserId: string,
+    actingUserId: string,
     input: {
       title: string;
       notes?: string;
@@ -728,7 +884,7 @@ export type ServicesJobs = {
     },
   ): Promise<JobOccurrence>;
   completeAnnouncement(
-    adminUserId: string,
+    actingUserId: string,
     occurrenceId: string,
   ): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
 
@@ -745,25 +901,25 @@ export type ServicesJobs = {
     input: AssignOccurrenceInput,
   ): Promise<{ updated: true }>;
 
-  // Admin-only: move ownership of an occurrence to another worker.
+  // `schedule.manage`: move ownership of an occurrence to another worker.
   reassignClaimer(
-    adminUserId: string,
+    actingUserId: string,
     occurrenceId: string,
     newClaimerUserId: string,
   ): Promise<any>;
 
-  // Admin-only: change a specific assignee's role on an occurrence.
+  // `schedule.manage`: change a specific assignee's seat on an occurrence.
   // `newRole` of null clears the role override.
   changeAssigneeRole(
-    adminUserId: string,
+    actingUserId: string,
     occurrenceId: string,
     targetUserId: string,
     newRole: string | null,
   ): Promise<any>;
 
-  // Admin-only: lightweight estimate creation from the dispatch flow.
+  // `schedule.manage`: lightweight estimate creation from the dispatch flow.
   createLightEstimate(
-    adminUserId: string,
+    actingUserId: string,
     input: {
       title: string;
       notes?: string;
@@ -800,10 +956,11 @@ export type ServicesJobs = {
       assigneeUserIds?: string[];
       jobId?: string | null;
     },
-    options?: { isAdmin?: boolean },
+    options?: { canManageSchedule?: boolean },
   ): Promise<any>;
 
-  // Worker/admin: standalone reminder (no parent job/occurrence).
+  // A reminder with no parent job or occurrence. `approvedUser` — any
+  // approved caller, because the reminder belongs to whoever made it.
   createStandaloneReminder(
     currentUserId: string,
     input: {
@@ -824,8 +981,9 @@ export type ServicesPayments = {
       amountPaid: number;
       method: string;
       note?: string | null;
-      // Optional processor fee — set by admin paths when the payment
-      // method has a known fee (Venmo/Zelle/card). Computed and
+      // Optional processor fee — set by the back-office money paths
+      // (`money.record` at mark-paid, `money.approve` at approval) when the
+      // payment method has a known fee (Venmo/Zelle/card). Computed and
       // persisted on the resulting Payment row so the income/expense
       // exports tie out.
       processorFeeAmount?: number | null;
@@ -856,6 +1014,10 @@ export type ServicesPayments = {
     userId?: string;
     method?: string;
     cutoff?: Date | null;
+    /** Area filter from `areaWhereVia(principal, "money.view", "occurrence")`.
+     *  EMPTY means no narrowing — a global money.view holder sees everything
+     *  and the query is byte-identical to its pre-feature shape. */
+    areaWhere?: Record<string, unknown>;
   }): Promise<{
     items: any[];
     personTotals: Array<{
@@ -889,7 +1051,7 @@ export type ServicesPayments = {
     currentUserId: string,
     occurrenceId: string,
   ): Promise<any>;
-  adminMarkInvoicePaid(
+  markInvoicePaidAsManager(
     currentUserId: string,
     occurrenceId: string,
     input: {
@@ -909,7 +1071,7 @@ export type ServicesPayments = {
   /**
    * Client-or-worker self-reported payment. Creates an unconfirmed Payment
    * row attached to the occurrence; occurrence stays in PENDING_PAYMENT
-   * until an admin/super approves. Splits are not materialized here —
+   * until someone with `schedule.manage` approves. Splits are not materialized here —
    * they're computed at approval time from JobOccurrence.completionSplits.
    */
   selfReportPayment(
@@ -923,7 +1085,7 @@ export type ServicesPayments = {
   ): Promise<any>;
 
   /**
-   * Admin/super flips an existing self-reported Payment to confirmed=true.
+   * `money.approve` flips an existing self-reported Payment to confirmed=true.
    * Optionally adjusts amount/method (e.g., "client said $150 Zelle but I
    * see $140"). Materializes splits using completionSplits + final amount.
    * Closes the occurrence and runs the next-occurrence creation logic.
@@ -957,8 +1119,8 @@ export type ServicesPayments = {
   ): Promise<any>;
 
   /**
-   * Admin/super deletes a pending self-reported Payment. Occurrence stays
-   * PENDING_PAYMENT so the client can be re-prompted or admin can record
+   * `money.approve` deletes a pending self-reported Payment. Occurrence stays
+   * PENDING_PAYMENT so the client can be re-prompted, or the payment recorded
    * directly later.
    */
   rejectPayment(
@@ -968,7 +1130,7 @@ export type ServicesPayments = {
   ): Promise<void>;
 
   /**
-   * Admin/super closes the books on a payment that will never be collected
+   * `money.approve` closes the books on a payment that will never be collected
    * (client refused, check bounced, etc.). Approves with collected=0;
    * employees+trainees get their promised net topped up from business funds,
    * contractors get $0, and Payment.shortfallAmount captures the absorbed
@@ -981,12 +1143,12 @@ export type ServicesPayments = {
   ): Promise<any>;
 
   /**
-   * Super-only "pretend this service never happened" — every money query,
+   * "Pretend this service never happened" (`schedule.manage`) — every money query,
    * export, dashboard aggregate, and 1099 total filters `skippedAt: null`
    * to exclude the payment. Under the hood runs the standard approval
    * path with collected=0 (so occurrence closes + next-occurrence
    * generation fires) then stamps `skippedAt`. See services/payments.ts
-   * for the full rationale; gated by superGuard + type-APPROVE at the UI.
+   * for the full rationale; gated by `money.approve` + type-APPROVE at the UI.
    */
   skipPayment(
     currentUserId: string,
@@ -1015,10 +1177,15 @@ export type ServicesPayments = {
   ): Promise<any>;
 
   /** Reverse a skip. Clears skippedAt so the payment reappears in
-   *  every aggregate. Same Super + type-APPROVE gate as skip. */
+   *  every aggregate. Same `money.approve` + type-APPROVE gate as skip. */
   unskipPayment(currentUserId: string, paymentId: string): Promise<any>;
 
-  listPendingApprovals(cutoff?: Date | null): Promise<any[]>;
+  listPendingApprovals(
+    cutoff?: Date | null,
+    /** From `areaWhereVia(principal, "money.view", "occurrence")`. Empty
+     *  means no narrowing. */
+    areaWhere?: Record<string, unknown>,
+  ): Promise<any[]>;
 };
 
 export type InvoiceChargeInput = {
@@ -1047,31 +1214,47 @@ export type InvoiceChargePatchInput = {
 };
 
 export type ServicesInvoiceCharges = {
+  /**
+   * `callerCan` IS NOT OPTIONAL, AND THAT IS THE POINT.
+   *
+   * These four decide whether the caller may bill a visit that is not theirs.
+   * They used to answer it with `userCan(prisma, currentUserId, …)` — a fresh
+   * read that returns the person's REAL grants and ignores any active
+   * perspective, so someone with `settings.manage` looking through a Trainee perspective still billed like
+   * someone with `settings.manage`. The principal could not reach a service, so the route passes its
+   * test down instead. Required, so TypeScript names every call site rather
+   * than leaving one silently re-reading the database.
+   */
   addInvoiceCharge(
     currentUserId: string,
+    callerCan: CallerCan,
     occurrenceId: string,
     input: InvoiceChargeInput,
   ): Promise<any>;
 
   updateInvoiceCharge(
     currentUserId: string,
+    callerCan: CallerCan,
     invoiceChargeId: string,
     input: InvoiceChargePatchInput,
   ): Promise<any>;
 
   deleteInvoiceCharge(
     currentUserId: string,
+    callerCan: CallerCan,
     invoiceChargeId: string,
   ): Promise<{ deleted: true }>;
 
-  adminAddInvoiceCharge(
+  addInvoiceCharge(
     currentUserId: string,
+    callerCan: CallerCan,
     occurrenceId: string,
     input: InvoiceChargeInput,
   ): Promise<any>;
 
-  adminDeleteInvoiceCharge(
+  deleteInvoiceCharge(
     currentUserId: string,
+    callerCan: CallerCan,
     invoiceChargeId: string,
   ): Promise<{ deleted: true }>;
 
@@ -1140,6 +1323,13 @@ export type SupplyHoldInput = {
   detail?: string | null;
 };
 
+/**
+ * `callerCan` on every mutating method is the CALLER's capability test,
+ * resolved at the route from the already-narrowed principal. These used to
+ * ask `userCan(prisma, currentUserId, …)`, a fresh read that returns real
+ * grants and ignores an active perspective — so someone with `settings.manage` looking through a
+ * Trainee perspective could still rewrite the catalogue.
+ */
 export type ServicesSupplies = {
   list(opts?: {
     includeArchived?: boolean;
@@ -1147,27 +1337,34 @@ export type ServicesSupplies = {
     includeHoldDetails?: boolean;
   }): Promise<any[]>;
   getById(id: string): Promise<any | null>;
-  create(currentUserId: string, input: SupplyCreateInput): Promise<any>;
+  create(currentUserId: string,
+    callerCan: CallerCan, input: SupplyCreateInput): Promise<any>;
   update(
     currentUserId: string,
+    callerCan: CallerCan,
     id: string,
     input: SupplyPatchInput,
   ): Promise<any>;
-  archive(currentUserId: string, id: string): Promise<{ archived: true }>;
-  unarchive(currentUserId: string, id: string): Promise<{ archived: false }>;
+  archive(currentUserId: string,
+    callerCan: CallerCan, id: string): Promise<{ archived: true }>;
+  unarchive(currentUserId: string,
+    callerCan: CallerCan, id: string): Promise<{ archived: false }>;
 
   recordPurchase(
     currentUserId: string,
+    callerCan: CallerCan,
     supplyId: string,
     input: SupplyPurchaseInput,
   ): Promise<any>;
   reversePurchase(
     currentUserId: string,
+    callerCan: CallerCan,
     purchaseId: string,
   ): Promise<{ reversed: true }>;
 
   recordAdjustment(
     currentUserId: string,
+    callerCan: CallerCan,
     supplyId: string,
     input: SupplyAdjustmentInput,
   ): Promise<any>;
@@ -1181,16 +1378,19 @@ export type ServicesSupplies = {
   ): Promise<any[]>;
 
   // Add a hold (consumption reservation) on an occurrence — creates a paired
-  // job-level Expense for payout deduction. Workers (claimers) and admins can
+  // job-level Expense for payout deduction. Workers (claimers) and holders of `schedule.manage` can
   // call this; the route layer enforces.
   addHold(
     currentUserId: string,
+    callerCan: CallerCan,
     occurrenceId: string,
     input: SupplyHoldInput,
   ): Promise<any>;
-  removeHold(currentUserId: string, holdId: string): Promise<{ removed: true }>;
+  removeHold(currentUserId: string,
+    callerCan: CallerCan, holdId: string): Promise<{ removed: true }>;
   adjustHold(
     currentUserId: string,
+    callerCan: CallerCan,
     holdId: string,
     newQuantity: number,
   ): Promise<any>;
@@ -1227,6 +1427,8 @@ export type Services = {
   banners: typeof import("../services/banners").banners;
   paymentRequests: typeof import("../services/paymentRequests").paymentRequests;
   policies: typeof import("../services/policies").policies;
+  customRoles: typeof import("../services/customRoles").customRoles;
+  areas: typeof import("../services/areas").areas;
 };
 
 export type ServicesSettings = {

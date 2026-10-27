@@ -5,7 +5,7 @@
 // Two action shapes:
 //   - SKIP   → one-click "Skip this visit". Cancels the occurrence and (when
 //              applicable) advances the recurring chain to the next visit.
-//   - RESCHEDULE → no auto-mutation. The admin reaches out to the client via
+//   - RESCHEDULE → no auto-mutation. A caller with `clients.manage` reaches out to the client via
 //              the rendered call/text/email links to find a new time, edits
 //              the occurrence date through normal admin tooling, then taps
 //              "Mark resolved" here.
@@ -148,7 +148,7 @@ export default function ClientRequestsSection({
   const [rows, setRows] = useState<ChangeRequestRow[]>([]);
   const [loading, setLoading] = useState(false);
   // Reschedule combines "edit the occurrence date" and "mark the
-  // request resolved" into one action — the admin already worked out
+  // request resolved" into one action — a caller with `clients.manage` already worked out
   // the new date with the client over phone/text/email before opening
   // this dialog. State holds the row being rescheduled and the picked
   // date (yyyy-mm-dd).
@@ -157,7 +157,7 @@ export default function ClientRequestsSection({
   const [rescheduleBusy, setRescheduleBusy] = useState(false);
   const [skippingRow, setSkippingRow] = useState<ChangeRequestRow | null>(null);
   // "Dismiss" closes a pending request without acting on the
-  // occurrence — used after the admin talked to the client and the
+  // occurrence — used after a caller with `clients.manage` talked to the client and the
   // client changed their mind. Server-side this is the same as
   // "deny": status → DENIED, optional resolutionNote, no job changes.
   // The framing is intentionally softer than "Decline" though, since
@@ -167,7 +167,7 @@ export default function ClientRequestsSection({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await apiGet<ChangeRequestRow[]>("/api/admin/change-requests?status=PENDING");
+      const list = await apiGet<ChangeRequestRow[]>("/api/change-requests?status=PENDING");
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't load client requests.", err) });
@@ -190,12 +190,12 @@ export default function ClientRequestsSection({
   useEffect(() => { void load(); }, [load]);
 
   /** Close out a request without changing the occurrence — used after
-   *  the admin talked to the client and the client changed their mind.
+   *  a caller with `clients.manage` talked to the client and the client changed their mind.
    *  Server flips the request to DENIED with an optional note for the
    *  audit trail (e.g., "Client decided to keep the original date"). */
   async function dismissRequest(row: ChangeRequestRow, note: string) {
     try {
-      await apiPost(`/api/admin/change-requests/${row.id}/deny`, {
+      await apiPost(`/api/change-requests/${row.id}/deny`, {
         note: note?.trim() ? note.trim() : undefined,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Request dismissed." });
@@ -209,7 +209,7 @@ export default function ClientRequestsSection({
    *  to APPROVED. Recurring chain advance happens server-side. */
   async function approveSkip(row: ChangeRequestRow) {
     try {
-      await apiPost(`/api/admin/change-requests/${row.id}/approve`, {});
+      await apiPost(`/api/change-requests/${row.id}/approve`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Visit skipped." });
       await load();
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
@@ -220,7 +220,7 @@ export default function ClientRequestsSection({
 
   /** Combined reschedule: edit the occurrence's startAt to the new
    *  date, then approve the change request. Two API calls, one user
-   *  intent — the admin already agreed on the date with the client
+   *  intent — a caller with `clients.manage` already agreed on the date with the client
    *  through the contact-link buttons above. */
   async function applyReschedule() {
     if (!reschedulingRow || !rescheduleDate) return;
@@ -229,10 +229,10 @@ export default function ClientRequestsSection({
       // Mirror the OccurrenceDialog convention: noon UTC anchors the
       // date so it lands on the right calendar day in any timezone.
       const newStartAt = rescheduleDate + "T12:00:00Z";
-      await apiPatch(`/api/admin/occurrences/${reschedulingRow.occurrence.id}`, {
+      await apiPatch(`/api/occurrences/${reschedulingRow.occurrence.id}`, {
         startAt: newStartAt,
       });
-      await apiPost(`/api/admin/change-requests/${reschedulingRow.id}/approve`, {});
+      await apiPost(`/api/change-requests/${reschedulingRow.id}/approve`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Rescheduled and request resolved." });
       setReschedulingRow(null);
       setRescheduleDate("");
@@ -444,8 +444,7 @@ export default function ClientRequestsSection({
       />
 
       {/* Dismiss confirm — the note (when set) is shown to the client
-       *  on their My Properties card AND to workers/admin on the
-       *  JobsTab card. Disappears naturally when the next recurring
+       *  on their My Properties card AND to staff on the JobsTab card. Disappears naturally when the next recurring
        *  visit is created. Write it as something a client would
        *  reasonably read. */}
       <ConfirmDialog

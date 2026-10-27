@@ -6,7 +6,7 @@
 // times / odometers / notes and its own Approve / Unapprove control.
 //
 // Persistence:
-//   • Time / odometer / notes edits POST via PATCH /super/mileage/:id
+//   • Time / odometer / notes edits POST via PATCH /mileage/:id
 //   • Approve / Unapprove hit their own endpoints
 //   • Dialog stays open across mutations so the operator can review
 //     multiple sessions in one flow; the caller reloads its own data
@@ -148,7 +148,7 @@ function EntryCard({
     if (!dirty || !odometerValid) return;
     setBusy(true);
     try {
-      await apiPatch(`/api/super/mileage/${entry.id}`, {
+      await apiPatch(`/api/mileage/${entry.id}`, {
         startedAt: bizParseLocalInputValue(startedAt) || null,
         endedAt: endedAt ? bizParseLocalInputValue(endedAt) : null,
         startOdometer: startNum,
@@ -170,7 +170,7 @@ function EntryCard({
   async function approve() {
     setBusy(true);
     try {
-      await apiPost(`/api/super/mileage/${entry.id}/approve`);
+      await apiPost(`/api/mileage/${entry.id}/approve`);
       publishInlineMessage({ type: "SUCCESS", text: "Entry approved." });
       onChanged();
     } catch (err) {
@@ -186,7 +186,7 @@ function EntryCard({
   async function unapprove() {
     setBusy(true);
     try {
-      await apiPost(`/api/super/mileage/${entry.id}/unapprove`);
+      await apiPost(`/api/mileage/${entry.id}/unapprove`);
       publishInlineMessage({ type: "SUCCESS", text: "Approval removed." });
       onChanged();
     } catch (err) {
@@ -206,7 +206,7 @@ function EntryCard({
     setRejectConfirmOpen(false);
     setBusy(true);
     try {
-      await apiPost(`/api/super/mileage/${entry.id}/reject`);
+      await apiPost(`/api/mileage/${entry.id}/reject`);
       publishInlineMessage({ type: "SUCCESS", text: "Entry rejected." });
       onChanged();
     } catch (err) {

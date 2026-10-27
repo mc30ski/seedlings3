@@ -5,7 +5,7 @@
 // Locks in the two invariants that keep the "Due to record" panel from
 // forking a recurring expense series into phantom siblings:
 //
-//   1. The POST /admin/business-expenses handler MUST use
+//   1. The POST /business-expenses handler MUST use
 //      `recurrenceSeriesId` when persisting a new row. Without it, no
 //      series-id is written and the panel falls back to the fragile
 //      legacy (type, description, vendor) key that produced the Vercel
@@ -17,7 +17,7 @@
 //      series id and instantly split the stream.
 //
 // SCOPE
-// Pure text scans on the /admin/business-expenses route file. Not a
+// Pure text scans on the /business-expenses route file. Not a
 // runtime test — no DB, no HTTP. The scan is coarse but sufficient
 // because the invariants are localised to a handful of tokens in one
 // file. A more thorough test would spin up a Fastify app and call
@@ -35,16 +35,18 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-const FILE_PATH = resolve(__dirname, "../routes/admin.ts");
+// The ledger routes live in routes/books.ts since the role-named route
+// files were split by resource.
+const FILE_PATH = resolve(__dirname, "../routes/books.ts");
 
 describe("recurrence-series build gate", () => {
   const src = readFileSync(FILE_PATH, "utf8");
 
-  it("the /admin/business-expenses create handler writes recurrenceSeriesId", () => {
+  it("the /business-expenses create handler writes recurrenceSeriesId", () => {
     // Locate the create handler body. If the route name changes we want
     // this test to fail loudly rather than silently pass.
-    const routeMatch = /app\.post\(\s*"\/admin\/business-expenses"\s*,/.exec(src);
-    expect(routeMatch, "POST /admin/business-expenses handler not found in admin.ts").not.toBeNull();
+    const routeMatch = /app\.post\(\s*"\/business-expenses"\s*,/.exec(src);
+    expect(routeMatch, "POST /business-expenses handler not found in books.ts").not.toBeNull();
 
     const startIdx = routeMatch!.index;
     // Read forward until the create({ data: { ... } }) block. Simple
@@ -55,16 +57,16 @@ describe("recurrence-series build gate", () => {
     const matches = (window.match(/recurrenceSeriesId/g) ?? []).length;
     expect(
       matches,
-      "POST /admin/business-expenses must reference recurrenceSeriesId in the create body (mint + persist). Found " +
+      "POST /business-expenses must reference recurrenceSeriesId in the create body (mint + persist). Found " +
         matches +
         " occurrences within the handler window.",
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it("the /admin/business-expenses create handler inherits from sourceExpenseId when provided", () => {
+  it("the /business-expenses create handler inherits from sourceExpenseId when provided", () => {
     // Locate the create handler body.
-    const routeMatch = /app\.post\(\s*"\/admin\/business-expenses"\s*,/.exec(src);
-    expect(routeMatch, "POST /admin/business-expenses handler not found in admin.ts").not.toBeNull();
+    const routeMatch = /app\.post\(\s*"\/business-expenses"\s*,/.exec(src);
+    expect(routeMatch, "POST /business-expenses handler not found in books.ts").not.toBeNull();
     const startIdx = routeMatch!.index;
     const window = src.slice(startIdx, startIdx + 5000);
 
@@ -74,7 +76,7 @@ describe("recurrence-series build gate", () => {
     // Vercel-style bug fix.
     expect(
       window.includes("sourceExpenseId"),
-      "POST /admin/business-expenses must read sourceExpenseId from the request body to inherit the source row's recurrenceSeriesId. Missing the token entirely.",
+      "POST /business-expenses must read sourceExpenseId from the request body to inherit the source row's recurrenceSeriesId. Missing the token entirely.",
     ).toBe(true);
 
     // Also require that the handler actually consults the source row's
@@ -82,7 +84,7 @@ describe("recurrence-series build gate", () => {
     // but forgot to plumb it through Prisma".
     expect(
       /source(Expense)?\.recurrenceSeriesId/.test(window),
-      "POST /admin/business-expenses must read the source row's recurrenceSeriesId (looks like `source.recurrenceSeriesId`). Missing the plumbing.",
+      "POST /business-expenses must read the source row's recurrenceSeriesId (looks like `source.recurrenceSeriesId`). Missing the plumbing.",
     ).toBe(true);
   });
 
@@ -91,9 +93,9 @@ describe("recurrence-series build gate", () => {
     // id when set. A fallback to the legacy key is allowed (defensive
     // for pre-backfill rows), but the sid-based key must be reachable
     // for the recurrenceSeriesId model to actually take effect.
-    for (const route of ["/admin/business-expenses/due-soon", "/admin/business-expenses/due-soon/count"]) {
+    for (const route of ["/business-expenses/due-soon", "/business-expenses/due-soon/count"]) {
       const routeMatch = new RegExp(`app\\.get\\(\\s*"${route.replace(/\//g, "\\/")}"\\s*,`).exec(src);
-      expect(routeMatch, `${route} not found in admin.ts`).not.toBeNull();
+      expect(routeMatch, `${route} not found in books.ts`).not.toBeNull();
       const startIdx = routeMatch!.index;
       const window = src.slice(startIdx, startIdx + 4000);
       expect(

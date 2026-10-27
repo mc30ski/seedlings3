@@ -75,7 +75,7 @@ test.describe("Auto-retry: workday start → sign → workday actually starts", 
       keyPrefix: "E2E_AUTORETRY",
       title: "E2E AutoRetry Gate",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     // The scratch policy fixture doesn't set gatesServices by default;
     // patch the row directly to gate WORKDAY_START.

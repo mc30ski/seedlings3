@@ -36,7 +36,8 @@ import {
   X,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import type { Scope } from "@/src/lib/scope";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import { fmtDate, bizDateKey, bizToday, bizDaysBetween } from "@/src/lib/dates";
 import {
   publishInlineMessage,
@@ -64,7 +65,7 @@ type EventRow = {
   anchorDate: string;
   lastCompletedAt: string | null;
   archivedAt: string | null;
-  adminHidden: boolean;
+  restricted: boolean;
   nextDate: string;
 };
 type DocRow = {
@@ -72,12 +73,15 @@ type DocRow = {
   documentId: string;
   title: string;
   type: string;
-  adminHidden: boolean;
+  restricted: boolean;
   nextDate: string;
 };
 type UpcomingRow = EventRow | DocRow;
 
-type Props = { isSuper?: boolean };
+type Props = {
+  /** Capability answers for the help copy. Absent fails closed. */
+  scope?: Scope;
+};
 
 // Combined "kind/category" filter — one of:
 //   "all"        → everything (events + doc expirations)
@@ -137,7 +141,7 @@ function urgencyColor(u: "past" | "urgent" | "soon" | "future"): string {
 }
 
 // Section bucketing — group upcoming rows by how close they are. Past
-// items get their own bucket so admins can act on them; everything else
+// items get their own bucket so holders of `time.manage` can act on them; everything else
 // is bucketed into Today / Next 7 days / Next 30 days / Later. Defaults
 // to expanded for "Overdue" + "Today" so the actionable stuff is
 // visible at a glance; Later/30d collapse by default.
@@ -202,8 +206,14 @@ function completedSectionOf(iso: string): CompletedSectionKey {
   return "older";
 }
 
-export default function TimelineTab({ isSuper = false }: Props) {
-  const apiBase = isSuper ? "/api/super/timeline" : "/api/admin/timeline";
+export default function TimelineTab({ scope }: Props) {
+  // `canManageTimeline` as a PROP is gone. The parent told the tab which role it
+  // was rendering for, so the same component produced two builds
+  // depending on where it was mounted. It reads the capability from
+  // `scope` now, which is the perspective-narrowed set.
+  const canManageTimeline = !!scope?.can("timeline.manage");
+  // One endpoint either way; this branch had two identical arms.
+  const apiBase = "/api/timeline";
 
   const [rows, setRows] = useState<UpcomingRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -243,7 +253,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
   useEffect(() => {
     (async () => {
       try {
-        const settings = await apiGet<{ key: string; value: string }[]>("/api/admin/settings");
+        const settings = await apiGet<{ key: string; value: string }[]>("/api/settings");
         const tc = (Array.isArray(settings) ? settings : []).find((s) => s.key === "TIMELINE_CATEGORIES");
         const parsed = parseTimelineCategoriesConfig(tc?.value);
         if (parsed) setCategories(parsed);
@@ -386,7 +396,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
   function copyShareLink(eventId: string, title: string) {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.origin);
-    url.searchParams.set("tab", isSuper ? "super-system-timeline" : "admin-system-timeline");
+    url.searchParams.set("tab", "system-timeline");
     url.searchParams.set("eventId", eventId);
     navigator.clipboard.writeText(url.toString()).then(
       () => publishInlineMessage({ type: "SUCCESS", text: `Link to "${title}" copied.` }),
@@ -405,10 +415,10 @@ export default function TimelineTab({ isSuper = false }: Props) {
       localStorage.setItem("seedlings_deeplink_document", docId);
       localStorage.setItem("seedlings_deeplink_document_ts", String(Date.now()));
     } catch {}
-    if (isSuper) {
-      window.dispatchEvent(new CustomEvent("navigate:superTab", { detail: { tab: "documents" } }));
+    if (canManageTimeline) {
+      window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "documents" } }));
     } else {
-      window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "documents" } }));
+      window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "documents" } }));
     }
     // DocumentsTab listens for this event and applies the highlight once it's
     // mounted. The 250ms delay gives the tab time to render and register.
@@ -481,22 +491,21 @@ export default function TimelineTab({ isSuper = false }: Props) {
 
   return (
     <Box w="full">
-      <TabExplainer explainerId={`seedlings:timelineTab:guideOpen:${isSuper ? "super" : "admin"}`}>
+      <TabExplainer explainerId="seedlings:timelineTab:guideOpen">
         <ExplainerText>
           Dated business events worth remembering — filings, renewals, insurance, licences,
           anything with a deadline. Upcoming ones surface as reminders.
         </ExplainerText>
         <ExplainerText>
           This is a <Em>record kept by hand</Em>. Nothing writes to it automatically, so an
-          event only exists here because someone entered it. Adding, editing and completing
-          entries are <Em>super-only</Em>.
+          event only exists here because someone entered it.
         </ExplainerText>
-        {isSuper && (
-          <RoleSection role="Super">
+        {canManageTimeline && (
+          <CapabilitySection capability="timeline.manage" scope={scope}>
             <ExplainerText>
               You can add, edit, complete, archive and delete entries.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
       </TabExplainer>
       <HStack mb={2} gap={2}>
@@ -629,7 +638,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
         >
           <Check size={14} />
         </Button>
-        {isSuper && (
+        {canManageTimeline && (
           <Button
             size="sm"
             colorPalette="teal"
@@ -853,8 +862,8 @@ export default function TimelineTab({ isSuper = false }: Props) {
                           <Text fontSize="sm" fontWeight="semibold" lineClamp={2} minW={0}>
                             {r.title}
                           </Text>
-                          {r.adminHidden && (
-                            <Badge size="xs" colorPalette="red" variant="subtle" px="1.5" title="Hidden from Admins">
+                          {r.restricted && (
+                            <Badge size="xs" colorPalette="red" variant="subtle" px="1.5" title="Restricted">
                               <EyeOff size={9} />
                             </Badge>
                           )}
@@ -914,7 +923,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
                             >
                               <Link2 size={13} />
                             </Button>
-                            {isSuper && !r.archivedAt && (
+                            {canManageTimeline && !r.archivedAt && (
                               <>
                                 <Button
                                   size="xs"
@@ -949,7 +958,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
                                 </Button>
                               </>
                             )}
-                            {isSuper && r.archivedAt && (
+                            {canManageTimeline && r.archivedAt && (
                               <>
                                 <Button
                                   size="xs"
@@ -1007,7 +1016,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
         )}
       </Box>
 
-      {isSuper && (
+      {canManageTimeline && (
         <>
           <TimelineEventDialog
             key={editingEvent?.id ?? "new"}
@@ -1058,7 +1067,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
       )}
 
       {/* Description preview — opens from the Eye button on rows that
-          have a description. Read-only; lets non-Super users skim the
+          have a description. Read-only; lets anyone skim the
           full text without needing the Edit dialog. */}
       <Dialog.Root
         open={descriptionView != null}

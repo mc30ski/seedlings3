@@ -30,10 +30,25 @@ import { getUploadUrl, getDownloadUrl, deleteObject, headObject } from "../lib/r
 type Tx = PrismaClient | Prisma.TransactionClient;
 
 /** Who is asking, and therefore what they may see and do. */
+/**
+ * NAMED FOR THE AUTHORITY, NOT FOR A ROLE.
+ *
+ * These were "worker" / "admin" / "super". No such roles exist — they are
+ * editable `CustomRole` rows now — and the names actively misled: the whole
+ * reason every `content.approve` guide route became reachable without it was a
+ * reader believing `kind: "approver"` meant something the code enforced.
+ *
+ *   reader   `content.view`     — can read the library
+ *   author   `content.manage`   — can write a draft and submit it
+ *   approver `content.approve`  — can publish, roll back, archive, add video
+ *
+ * education.md: "Holders of `content.manage` cannot publish their own work, deliberately." An
+ * author is not an approver, and these names say so.
+ */
 export type GuideViewer =
-  | { kind: "worker"; userId: string }
-  | { kind: "admin"; userId: string }
-  | { kind: "super"; userId: string };
+  | { kind: "reader"; userId: string }
+  | { kind: "author"; userId: string }
+  | { kind: "approver"; userId: string };
 
 const BUCKET = "guide-media" as const;
 
@@ -108,14 +123,14 @@ export async function makeSlug(title: string): Promise<string> {
 }
 
 function assertAuthor(viewer: GuideViewer) {
-  if (viewer.kind === "worker") {
+  if (viewer.kind === "reader") {
     throw new ServiceError("FORBIDDEN", "Workers can read guides but not edit them.", 403);
   }
 }
 
-function assertSuper(viewer: GuideViewer) {
-  if (viewer.kind !== "super") {
-    throw new ServiceError("FORBIDDEN", "Only a Super can do that.", 403);
+function assertApprover(viewer: GuideViewer) {
+  if (viewer.kind !== "approver") {
+    throw new ServiceError("FORBIDDEN", "Only someone with approval authority can do that.", 403);
   }
 }
 
@@ -176,12 +191,13 @@ export function supersededName(name: string, assetId: string): string {
 /**
  * Which guides this viewer may see at all.
  *
- * A worker only ever sees guides with a published version. Authors also
- * see unpublished ones so they can find their own drafts — but the
- * VERSION they read is still resolved per-role below.
+ * A `content.view` reader only ever sees guides with a published version.
+ * Authors (`content.manage`) also see unpublished ones so they can find
+ * their own drafts — but the VERSION they read is still resolved per tier
+ * below.
  */
 function visibilityWhere(viewer: GuideViewer): Prisma.GuideWhereInput {
-  if (viewer.kind === "worker") {
+  if (viewer.kind === "reader") {
     return { archivedAt: null, currentVersionId: { not: null } };
   }
   return { archivedAt: null };
@@ -196,10 +212,10 @@ export type GuideListItem = {
   tags: string[];
   isPublished: boolean;
   updatedAt: string;
-  /** Author surfaces only — what is waiting on a Super right now. */
+  /** Author surfaces only — what is waiting on someone with `content.approve` right now. */
   pendingVersionId?: string | null;
   draftVersionId?: string | null;
-  /** Sent back by a Super. Without this the catalog shows a rejected guide
+  /** Sent back by someone with `content.approve`. Without this the catalog shows a rejected guide
    *  as a bare "Not published" and the author has no way to tell it needs
    *  their attention short of opening every unpublished row. */
   rejectedVersionId?: string | null;
@@ -221,7 +237,7 @@ export async function listGuides(
   // index. See the spec for the upgrade path.
   if (q) {
     const bodyMatch: Prisma.GuideWhereInput =
-      viewer.kind === "worker"
+      viewer.kind === "reader"
         ? { currentVersion: { contentMarkdown: { contains: q, mode: "insensitive" } } }
         : { versions: { some: { contentMarkdown: { contains: q, mode: "insensitive" } } } };
     where.AND = [
@@ -241,7 +257,7 @@ export async function listGuides(
     orderBy: [{ updatedAt: "desc" }],
     include: {
       versions:
-        viewer.kind === "worker"
+        viewer.kind === "reader"
           ? false
           : { select: { id: true, status: true }, orderBy: { versionNumber: "desc" } },
     },
@@ -258,7 +274,7 @@ export async function listGuides(
       tags: g.tags,
       isPublished: !!g.currentVersionId,
       updatedAt: g.updatedAt.toISOString(),
-      ...(viewer.kind === "worker"
+      ...(viewer.kind === "reader"
         ? {}
         : {
             pendingVersionId:
@@ -280,7 +296,7 @@ export async function getGuide(viewer: GuideViewer, idOrSlug: string) {
       currentVersion: true,
       createdBy: { select: { displayName: true } },
       versions:
-        viewer.kind === "worker"
+        viewer.kind === "reader"
           ? false
           : {
               orderBy: { versionNumber: "desc" },
@@ -304,7 +320,7 @@ export async function getGuide(viewer: GuideViewer, idOrSlug: string) {
   return { ...guide, isPublished: !!guide.currentVersionId };
 }
 
-/** Versions awaiting a Super. Drives the alert badge + Tasks section. */
+/** Versions awaiting someone with `content.approve`. Drives the alert badge + Tasks section. */
 export async function listPendingApprovals() {
   return prisma.guideVersion.findMany({
     where: { status: "PENDING_APPROVAL", guide: { archivedAt: null } },
@@ -514,7 +530,7 @@ export async function discardDraft(viewer: GuideViewer, versionId: string) {
     throw new ServiceError(
       "BAD_STATE",
       version.status === "PENDING_APPROVAL"
-        ? "This is awaiting approval — a Super has to reject it before it can be discarded."
+        ? "This is awaiting approval — someone with approval authority has to reject it before it can be discarded."
         : "Only an unsubmitted draft can be discarded.",
       400,
     );
@@ -640,7 +656,7 @@ export async function submitForApproval(
  * approved but not readable is a state nobody asked for.
  */
 export async function approveAndPublish(viewer: GuideViewer, versionId: string) {
-  assertSuper(viewer);
+  assertApprover(viewer);
   const version = await prisma.guideVersion.findUnique({
     where: { id: versionId },
     include: { guide: true },
@@ -692,7 +708,7 @@ export async function approveAndPublish(viewer: GuideViewer, versionId: string) 
 }
 
 export async function rejectVersion(viewer: GuideViewer, versionId: string, note: string) {
-  assertSuper(viewer);
+  assertApprover(viewer);
   if (!note.trim()) {
     throw new ServiceError("BAD_REQUEST", "Say why — a bare rejection tells the author nothing.", 400);
   }
@@ -724,7 +740,7 @@ export async function rejectVersion(viewer: GuideViewer, versionId: string, note
 
 /** Pull a guide out of the catalog without destroying anything. */
 export async function unpublish(viewer: GuideViewer, guideId: string) {
-  assertSuper(viewer);
+  assertApprover(viewer);
   const guide = await prisma.guide.findUnique({ where: { id: guideId } });
   if (!guide?.currentVersionId) {
     throw new ServiceError("BAD_STATE", "That guide is not published.", 400);
@@ -741,7 +757,7 @@ export async function unpublish(viewer: GuideViewer, guideId: string) {
 
 /** Make a previously published version live again. */
 export async function rollbackTo(viewer: GuideViewer, versionId: string) {
-  assertSuper(viewer);
+  assertApprover(viewer);
   const version = await prisma.guideVersion.findUnique({
     where: { id: versionId },
     include: { guide: true },
@@ -773,7 +789,7 @@ export async function rollbackTo(viewer: GuideViewer, versionId: string) {
 }
 
 export async function setArchived(viewer: GuideViewer, guideId: string, archived: boolean) {
-  assertSuper(viewer);
+  assertApprover(viewer);
   const guide = await prisma.guide.findUnique({ where: { id: guideId } });
   if (!guide) throw new ServiceError("NOT_FOUND", "Guide not found.", 404);
   return prisma.$transaction(async (tx) => {
@@ -800,7 +816,7 @@ export async function setArchived(viewer: GuideViewer, guideId: string, archived
  * because afterwards it is the only record the guide ever existed.
  */
 export async function purge(viewer: GuideViewer, guideId: string) {
-  assertSuper(viewer);
+  assertApprover(viewer);
   const guide = await prisma.guide.findUnique({
     where: { id: guideId },
     include: { versions: { orderBy: { versionNumber: "asc" } }, assets: true },
@@ -858,7 +874,7 @@ export async function purge(viewer: GuideViewer, guideId: string) {
 // the approval gate would quietly become advisory. "Replacing" an image
 // means uploading a new asset and editing the page, which re-enters review.
 //
-// Video is SUPER-ONLY. It is the one asset class that can silently become
+// Video needs `content.approve`. It is the one asset class that can silently become
 // expensive, and the one with a format trap (phones record HEVC .mov,
 // which desktop Chrome and Firefox often will not play). Concentrating it
 // in one uploader means that is learned once rather than repeatedly.
@@ -888,7 +904,7 @@ export type PresignResult = {
   r2Key: string;
   /** Non-blocking advice shown before the upload starts. */
   warning: string | null;
-  /** True when the Super must explicitly confirm an over-size video. */
+  /** True when a caller with `content.approve` must explicitly confirm an over-size video. */
   requiresOverride: boolean;
 };
 
@@ -906,10 +922,10 @@ export async function presignAssetUpload(
   const kind = kindForContentType(input.contentType);
   if (!kind) throw new ServiceError("BAD_REQUEST", "Only images and video can be uploaded.", 400);
 
-  if (kind === "VIDEO" && viewer.kind !== "super") {
+  if (kind === "VIDEO" && viewer.kind !== "approver") {
     throw new ServiceError(
       "FORBIDDEN",
-      "Only a Super can add video. You can reference any video already in the library.",
+      "Only someone with approval authority can add video. You can reference any video already in the library.",
       403,
     );
   }
@@ -924,7 +940,7 @@ export async function presignAssetUpload(
   }
 
   if (kind === "IMAGE") {
-    // HARD limit. Admins are many, so this is a real ceiling.
+    // HARD limit. Holders of `content.manage` are many, so this is a real ceiling.
     if (input.sizeBytes > limits.imageMaxBytes) {
       throw new ServiceError(
         "TOO_LARGE",
@@ -1034,8 +1050,8 @@ export async function finalizeAsset(
   assertAuthor(viewer);
   const kind = kindForContentType(input.contentType);
   if (!kind) throw new ServiceError("BAD_REQUEST", "Unsupported media type.", 400);
-  if (kind === "VIDEO" && viewer.kind !== "super") {
-    throw new ServiceError("FORBIDDEN", "Only a Super can add video.", 403);
+  if (kind === "VIDEO" && viewer.kind !== "approver") {
+    throw new ServiceError("FORBIDDEN", "Only someone with approval authority can add video.", 403);
   }
 
   const head = await headObject(input.r2Key, BUCKET);
@@ -1197,7 +1213,7 @@ export async function listAssets(
     uploadedById: a.uploadedById,
     uploadedByName: a.uploadedBy.displayName,
     /** Whether THIS viewer may delete it — drives the UI affordance. */
-    canManage: viewer.kind === "super" || a.uploadedById === viewer.userId,
+    canManage: viewer.kind === "approver" || a.uploadedById === viewer.userId,
   }));
 
   return { items, total, page, pageSize };
@@ -1222,7 +1238,7 @@ export async function assetUrl(viewer: GuideViewer, assetId: string): Promise<st
   const asset = await prisma.guideAsset.findUnique({ where: { id: assetId } });
   if (!asset) throw new ServiceError("NOT_FOUND", "Asset not found.", 404);
 
-  if (viewer.kind === "worker") {
+  if (viewer.kind === "reader") {
     const referenced = await prisma.guide.findFirst({
       where: {
         ...visibilityWhere(viewer),
@@ -1277,7 +1293,7 @@ export async function assetUrlByRef(
   });
   if (!asset) throw new ServiceError("NOT_FOUND", "Asset not found.", 404);
 
-  if (viewer.kind === "worker") {
+  if (viewer.kind === "reader") {
     // Same rule as the id path: a worker may only fetch media a guide they
     // can actually see references. Identical 404 either way, so "no such
     // asset" and "an asset you may not see" stay indistinguishable.
@@ -1341,7 +1357,7 @@ export async function resolveGuideLinks(
  *
  * Unlike an asset reference, an inbound guide link is not a hard block —
  * a link that stops resolving degrades to plain text rather than breaking
- * the page. It is a warning, so a Super unpublishing something can see
+ * the page. It is a warning, so someone with `content.approve` unpublishing something can see
  * they are about to blank a cross-reference in three other guides.
  */
 export async function guidesLinkingTo(slug: string) {
@@ -1375,7 +1391,7 @@ export async function guidesReferencing(assetId: string) {
  *
  * Assets are managed separately from pages, so without this someone
  * eventually deletes the image a live guide uses and a worker standing in
- * a field gets a broken page. A Super deleting a video especially needs
+ * a field gets a broken page. Someone with `content.approve` deleting a video especially needs
  * telling, since they may not have written the page that uses it.
  */
 export async function deleteAsset(viewer: GuideViewer, assetId: string) {
@@ -1383,11 +1399,11 @@ export async function deleteAsset(viewer: GuideViewer, assetId: string) {
   const asset = await prisma.guideAsset.findUnique({ where: { id: assetId } });
   if (!asset) throw new ServiceError("NOT_FOUND", "Asset not found.", 404);
 
-  if (viewer.kind !== "super" && asset.uploadedById !== viewer.userId) {
+  if (viewer.kind !== "approver" && asset.uploadedById !== viewer.userId) {
     throw new ServiceError("FORBIDDEN", "You can only manage media you uploaded.", 403);
   }
-  if (asset.kind === "VIDEO" && viewer.kind !== "super") {
-    throw new ServiceError("FORBIDDEN", "Only a Super can manage video.", 403);
+  if (asset.kind === "VIDEO" && viewer.kind !== "approver") {
+    throw new ServiceError("FORBIDDEN", "Only someone with approval authority can manage video.", 403);
   }
 
   const users = await guidesReferencing(assetId);

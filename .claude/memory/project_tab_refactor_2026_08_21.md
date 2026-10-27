@@ -46,7 +46,7 @@ explicit `scope` prop, mounted per role in the shell.
 - ClientsTab
 - PropertiesTab
 - UsersTab (new `WorkerTeamRoster` sub-component for worker view)
-- AdminGroupsTab (new `WorkerMyCrews` sub-component — labeled
+- CrewsTab (new `WorkerMyCrews` sub-component — labeled
   "My Groups")
 - PaymentsTab
 - PricingTab
@@ -56,20 +56,22 @@ explicit `scope` prop, mounted per role in the shell.
 
 ## API changes
 
-- `POST /admin/equipment` and `DELETE /admin/equipment/:id` —
-  tightened to `superGuard` (create + hard-delete are super-only).
-- Four `/super/equipment/*-for` endpoints (reserve-for /
-  reserve-for/cancel / checkout-for / return-for) — loosened from
-  `superGuard` to `adminGuard` so admin view-as can drive them.
-- `GET /super/vehicles` — loosened to new `workerGuard` (list is
-  read-only, mutations stay super).
-- `GET /api/me/team` — new, workerGuard, sanitized worker roster.
-- `GET /api/me/groups` — new, workerGuard, caller's crews without
-  cost-split percentages.
-- `getWorkerPoliciesView` history rows extended with content fields
-  (`versionId`, `contentFormat`, `contentMarkdown`, `contentR2Key`,
-  `contentFileName`, `contentContentType`) — powers the worker
-  "View again" affordance on Recorded on file.
+The route layer has been reshaped twice since this refactor, so the per-route
+list that lived here described paths that no longer exist in any form. It is
+removed rather than maintained — a list of dead URLs is worse than no list.
+
+What is still true: this refactor tightened equipment create/hard-delete,
+loosened the act-on-behalf equipment routes and the vehicle list so they
+could be driven while viewing as someone else, and added sanitized `/me/team`
+and `/me/groups` reads that withhold cost-split percentages. It also extended
+`getWorkerPoliciesView` history rows with content fields (`versionId`,
+`contentFormat`, `contentMarkdown`, `contentR2Key`, `contentFileName`,
+`contentContentType`), which power the "View again" affordance on Recorded on
+file.
+
+For what any route requires today, read
+[`docs/features/permissions-ROUTE-MAP.md`](../../docs/features/permissions-ROUTE-MAP.md)
+— it is generated, and G5 fails the build if it and a guard disagree.
 
 ## Seed enrichment
 
@@ -98,9 +100,9 @@ after tab deletion.
 - `notifyEquipmentUpdated` event still emitted from InventoryTab
   after every mutation; no listeners in sibling tabs. Cross-tab
   auto-refresh not implemented (only active tab is mounted anyway).
-- PricingTab / SuppliesTab `showSuperExtras` lacks the
-  `hasSuperRole` defense-in-depth (they don't take `me` today; the
-  shell is authoritative on `scope.isSuper`).
+- ~~PricingTab / SuppliesTab lack the role-flag defense-in-depth.~~ **MOOT 2026-10-17** — the flag, the fallback rule and
+  the shells are all deleted. Both tabs ask `scope.can("pricing.manage")` /
+  `can("supplies.manage")` against the perspective-narrowed set.
 - Large-file compartmentalization (JobsTab ~9929 lines,
-  AdminComplianceTab ~3636 lines, InventoryTab ~3868 lines) —
+  ComplianceTab ~3636 lines, InventoryTab ~3868 lines) —
   deferred per rule of "only recommend extraction >2000 lines".

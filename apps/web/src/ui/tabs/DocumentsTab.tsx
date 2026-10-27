@@ -38,7 +38,8 @@ import {
 } from "lucide-react";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import type { Scope } from "@/src/lib/scope";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import { fmtDate } from "@/src/lib/dates";
 import {
   publishInlineMessage,
@@ -76,7 +77,7 @@ type CompanyDocument = {
   title: string;
   description: string | null;
   expiresAt: string | null;
-  adminHidden: boolean;
+  restricted: boolean;
   currentVersionId: string | null;
   currentVersion: CompanyDocumentVersion | null;
   archivedAt: string | null;
@@ -92,8 +93,10 @@ type CompanyDocumentDetail = CompanyDocument & {
 };
 
 type Props = {
-  /** Admin sees read-only without admin-hidden docs; Super gets full controls. */
-  isSuper?: boolean;
+  /** Capability answers for the help copy, which asks the same question
+   *  the route does. Optional, and absent fails closed. */
+  scope?: Scope;
+  /** `documents.view` is read-only and omits hidden docs; `documents.manage` gets full controls. */
 };
 
 const STATUS_ITEMS = [
@@ -189,7 +192,12 @@ function ExpandableText({
   );
 }
 
-export default function DocumentsTab({ isSuper = false }: Props) {
+export default function DocumentsTab({ scope }: Props) {
+  // `canManageDocuments` as a PROP is gone. The parent told the tab which role it
+  // was rendering for, so the same component produced two builds
+  // depending on where it was mounted. It reads the capability from
+  // `scope` now, which is the perspective-narrowed set.
+  const canManageDocuments = !!scope?.can("documents.manage");
   const [items, setItems] = useState<CompanyDocument[]>([]);
   const [details, setDetails] = useState<Record<string, CompanyDocumentDetail>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -227,11 +235,13 @@ export default function DocumentsTab({ isSuper = false }: Props) {
     downloadUrl: string | null;
   }>({ open: false, title: "", text: null, loading: false, error: null, downloadUrl: null });
 
-  // Endpoint base reflects the audience, not the caller's role: the Admin
-  // tab always uses `/api/admin/documents` so Super-only docs are filtered
-  // server-side even when the caller happens to be Super. The Super tab uses
-  // `/api/super/documents` for the full view + writes.
-  const apiBase = isSuper ? "/api/super/documents" : "/api/admin/documents";
+  // ONE endpoint, for every caller. There used to be a role-prefixed pair
+  // here and the client picked which one to call — which meant the CLIENT
+  // chose its own privilege level, since both twins ran the same handler on
+  // the same entitlement and differed only in whether admin-hidden records
+  // came back. Now the server filters by capability and the URL is just the
+  // resource.
+  const apiBase = "/api/documents";
 
   // Deep-link target: `?docId=<id>` filters to a single doc; `?typeKey=<key>`
   // filters to a type group. Applied once on mount and stripped from the URL
@@ -307,7 +317,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   async function loadTypes() {
     try {
-      const settings = await apiGet<{ key: string; value: string }[]>("/api/admin/settings");
+      const settings = await apiGet<{ key: string; value: string }[]>("/api/settings");
       const dt = (Array.isArray(settings) ? settings : []).find((s) => s.key === "DOCUMENT_TYPES");
       const parsed = parseDocumentTypesConfig(dt?.value);
       if (parsed) setTypes(parsed);
@@ -580,13 +590,16 @@ export default function DocumentsTab({ isSuper = false }: Props) {
     }
   }
 
-  // Build a shareable deep-link URL. We encode the audience (super/admin) in
+  // Build a shareable deep-link URL. We encode the audience in
   // the tab slug so the recipient lands in the right context — and the server
   // enforces permission either way.
   function buildShareUrl(params: { docId?: string; typeKey?: string }): string {
     if (typeof window === "undefined") return "";
     const url = new URL(window.location.origin);
-    const tabSlug = isSuper ? "super-system-documents" : "admin-system-documents";
+    // ONE Documents tab, so one slug. This picked between
+  // "super-system-documents" and "admin-system-documents" — the two
+  // tabs that were collapsed into it.
+  const tabSlug = "system-documents";
     url.searchParams.set("tab", tabSlug);
     if (params.docId) url.searchParams.set("docId", params.docId);
     if (params.typeKey) url.searchParams.set("typeKey", params.typeKey);
@@ -655,7 +668,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   return (
     <Box w="full">
-      <TabExplainer explainerId={`seedlings:documentsTab:guideOpen:${isSuper ? "super" : "admin"}`}>
+      <TabExplainer explainerId="seedlings:documentsTab:guideOpen">
         <ExplainerText>
           The company&rsquo;s own paperwork — insurance certificates, licences, registrations,
           contracts — with expiring ones surfaced before they lapse. Each document keeps its{" "}
@@ -663,18 +676,17 @@ export default function DocumentsTab({ isSuper = false }: Props) {
         </ExplainerText>
         <ExplainerText>
           This is company paperwork, <Em>not</Em> client documents or signed policies —
-          policies live under Compliance. Adding, replacing and archiving are{" "}
-          <Em>super-only</Em>.
+          policies live under Compliance.
         </ExplainerText>
-        {isSuper && (
-          <RoleSection role="Super">
+        {canManageDocuments && (
+          <CapabilitySection capability="documents.manage" scope={scope}>
             <ExplainerText>
               You can add, edit, archive and delete, and manage the Drive backup.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
       </TabExplainer>
-      {isSuper && <DocumentSyncStatusPanel refreshNonce={syncPanelNonce} />}
+      {canManageDocuments && <DocumentSyncStatusPanel refreshNonce={syncPanelNonce} />}
       <HStack gap={2} mb={2}>
         <Button
           size="sm"
@@ -788,7 +800,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
             </Button>
           );
         })()}
-        {isSuper && (
+        {canManageDocuments && (
           <Button
             size="sm"
             colorPalette="teal"
@@ -877,8 +889,8 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                           <Box flexShrink={0} display="inline-flex"><FileText size={13} /></Box>
                           <Text fontSize="sm" fontWeight="semibold" lineClamp={2} minW={0}>{d.title}</Text>
                         </HStack>
-                        {d.adminHidden && (
-                          <Badge size="xs" colorPalette="red" variant="subtle" px="1.5" title="Hidden from Admins">
+                        {d.restricted && (
+                          <Badge size="xs" colorPalette="red" variant="subtle" px="1.5" title="Restricted">
                             <EyeOff size={9} />
                           </Badge>
                         )}
@@ -963,7 +975,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                           <Text fontSize="xs" color="fg.muted">
                             {versionCount} {versionCount === 1 ? "version" : "versions"} · updated {fmtDateShort(d.updatedAt)}
                           </Text>
-                          {isSuper && !d.archivedAt && (
+                          {canManageDocuments && !d.archivedAt && (
                             <HStack gap={2} wrap="wrap">
                               <Button size="xs" variant="outline" colorPalette="teal" onClick={() => setVersionUploadDocId(d.id)}>
                                 <Upload size={12} /> Upload new version
@@ -976,7 +988,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                               </Button>
                             </HStack>
                           )}
-                          {isSuper && d.archivedAt && (
+                          {canManageDocuments && d.archivedAt && (
                             <HStack gap={2} wrap="wrap">
                               <Button size="xs" variant="outline" colorPalette="teal" onClick={() => setConfirmAction({ kind: "unarchive", doc: d })}>
                                 <ArchiveRestore size={12} /> Restore from archive
@@ -1007,12 +1019,12 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                                     <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v, "download", d.title)}>
                                       <Download size={11} />
                                     </Button>
-                                    {isSuper && !isCurrent && (
+                                    {canManageDocuments && !isCurrent && (
                                       <Button size="xs" variant="ghost" colorPalette="teal" onClick={() => restoreVersion(d.id, v.id)} title="Make this the current version">
                                         <RotateCcw size={11} />
                                       </Button>
                                     )}
-                                    {isSuper && !isCurrent && (
+                                    {canManageDocuments && !isCurrent && (
                                       <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setConfirmAction({ kind: "deleteVersion", doc: d, versionId: v.id, filename: v.originalFilename })}>
                                         <Trash2 size={11} />
                                       </Button>
@@ -1136,7 +1148,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                     <Box pl={3} borderLeftWidth="2px" borderColor="gray.emphasized" mt={1}>
                       <VStack align="stretch" gap={2}>
                         {docs.map((d) => renderDocCard(d, true))}
-                        {isSuper && !opts.singleton && (
+                        {canManageDocuments && !opts.singleton && (
                           <Button
                             size="xs"
                             variant="outline"
@@ -1177,7 +1189,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
       })()}
       </Box>
 
-      {isSuper && (
+      {canManageDocuments && (
         <>
           <UploadDocumentDialog
             open={uploadOpen}

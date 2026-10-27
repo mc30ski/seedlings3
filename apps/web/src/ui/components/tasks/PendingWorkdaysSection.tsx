@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Box, Button, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
 import { Car, CheckCircle2 } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import type { Scope } from "@/src/lib/scope";
 import { fmtDateOpts, fmtTimeOpts } from "@/src/lib/dates";
 import {
   publishInlineMessage,
@@ -21,7 +22,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import StatusChip from "@/src/ui/components/StatusChip";
 
-type SuperWorkdayRow = {
+type WorkdayReviewRow = {
   id: string;
   userId: string;
   workdayDate: string;
@@ -38,16 +39,16 @@ type SuperWorkdayRow = {
   };
   uiState: "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "APPROVED";
   isOpen: boolean;
-  adminWindowOpen: boolean;
+  reviewWindowOpen: boolean;
 };
 
 type ByDateResponse = {
   workdayDate: string;
-  adminWindowOpen: boolean;
-  rows: SuperWorkdayRow[];
+  reviewWindowOpen: boolean;
+  rows: WorkdayReviewRow[];
 };
 
-// Mileage entry as returned by /super/mileage/by-date. Same shape the
+// Mileage entry as returned by /mileage/by-date. Same shape the
 // WorkdaysTab consumes so the two surfaces render mileage identically.
 type MileageEntry = {
   id: string;
@@ -64,11 +65,11 @@ type MileageEntry = {
 
 type MileageByDateResponse = Record<string, MileageEntry[]>;
 
-function workerLabel(u: SuperWorkdayRow["user"]): string {
+function workerLabel(u: WorkdayReviewRow["user"]): string {
   return u.displayName || u.email || u.id.slice(-8);
 }
 
-function activeMs(row: SuperWorkdayRow, now = Date.now()): number {
+function activeMs(row: WorkdayReviewRow, now = Date.now()): number {
   const start = Date.parse(row.startedAt);
   const end = row.endedAt ? Date.parse(row.endedAt) : now;
   return Math.max(0, end - start - (row.totalPausedMs ?? 0));
@@ -79,8 +80,15 @@ function fmtHours(ms: number): string {
   return `${hours.toFixed(1)}h`;
 }
 
-export default function PendingWorkdaysSection() {
-  const [rows, setRows] = useState<SuperWorkdayRow[]>([]);
+export default function PendingWorkdaysSection({ scope }: { scope?: Scope } = {}) {
+  // THE CAPABILITY ITS OWN ENDPOINTS REQUIRE. Approving a workday and
+  // approving a mileage day are both guarded on "time.manage". This
+  // section was mounted under `time.approve`, which is a different
+  // capability that Admin and Coordinator hold and `time.manage` is not
+  // implied by — so the buttons appeared and refused. Asking here means
+  // the next mount cannot get it wrong quietly.
+  const canApprove = scope ? scope.can("time.manage") : true;
+  const [rows, setRows] = useState<WorkdayReviewRow[]>([]);
   // Mileage entries keyed by `${userId}:${entryDate}` — inline sub-row
   // on each workday for the two-button approval model. Only entries
   // for dates that also have a pending workday show up; mileage-only
@@ -102,7 +110,7 @@ export default function PendingWorkdaysSection() {
       const summary = await apiGet<{
         totalPending: number;
         byDate: { workdayDate: string; count: number }[];
-      }>("/api/super/workdays/pending-summary");
+      }>("/api/workdays/pending-summary");
       const dates = Array.isArray(summary?.byDate) ? summary.byDate : [];
       if (dates.length === 0) {
         setRows([]);
@@ -112,16 +120,16 @@ export default function PendingWorkdaysSection() {
       const [pages, mileagePages] = await Promise.all([
         Promise.all(
           dates.map((d) =>
-            apiGet<ByDateResponse>(`/api/super/workdays/by-date?date=${d.workdayDate}`).catch(() => null),
+            apiGet<ByDateResponse>(`/api/workdays/by-date?date=${d.workdayDate}`).catch(() => null),
           ),
         ),
         Promise.all(
           dates.map((d) =>
-            apiGet<MileageByDateResponse>(`/api/super/mileage/by-date?date=${d.workdayDate}`).catch(() => null),
+            apiGet<MileageByDateResponse>(`/api/mileage/by-date?date=${d.workdayDate}`).catch(() => null),
           ),
         ),
       ]);
-      const pendingAcrossDates: SuperWorkdayRow[] = [];
+      const pendingAcrossDates: WorkdayReviewRow[] = [];
       for (const page of pages) {
         if (!page) continue;
         for (const r of page.rows) {
@@ -159,13 +167,13 @@ export default function PendingWorkdaysSection() {
     void load();
   }, [load]);
 
-  async function approveRow(row: SuperWorkdayRow) {
+  async function approveRow(row: WorkdayReviewRow) {
     setBusyId(row.id);
     try {
       // Empty body — Approve with the recorded times as-is. Any edit
       // path still routes through WorkdaysTab's Review dialog (the
       // Goto Task button on the parent CollapsibleSectionCard).
-      await apiPost(`/api/super/workdays/${row.id}/approve`, {});
+      await apiPost(`/api/workdays/${row.id}/approve`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Workday approved." });
       await load();
     } catch (err) {
@@ -178,14 +186,14 @@ export default function PendingWorkdaysSection() {
     }
   }
 
-  async function approveMileage(row: SuperWorkdayRow) {
+  async function approveMileage(row: WorkdayReviewRow) {
     // Approves every closed unapproved entry the driver logged that
     // day. Anything already approved stays untouched. Open sessions
     // are excluded server-side.
     const key = `mileage:${row.id}`;
     setBusyId(key);
     try {
-      await apiPost(`/api/super/mileage/approve-day`, {
+      await apiPost(`/api/mileage/approve-day`, {
         userId: row.userId,
         entryDate: row.workdayDate,
       });
@@ -251,6 +259,7 @@ export default function PendingWorkdaysSection() {
                   {fmtHours(active)} active
                 </Text>
               </VStack>
+              {canApprove && (
               <Button
                 size="xs"
                 colorPalette="green"
@@ -259,6 +268,7 @@ export default function PendingWorkdaysSection() {
               >
                 <CheckCircle2 size={12} /> Approve hours
               </Button>
+              )}
             </HStack>
             {/* Mileage sub-row — visible only when this driver has any
                 mileage entries for the same date. Two-button approval:
@@ -305,7 +315,7 @@ export default function PendingWorkdaysSection() {
                     </HStack>
                   </VStack>
                 </HStack>
-                {pendingMileage.length > 0 && (
+                {canApprove && pendingMileage.length > 0 && (
                   <Button
                     size="xs"
                     colorPalette="green"

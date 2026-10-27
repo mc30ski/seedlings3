@@ -53,7 +53,7 @@ test.describe("Edge: Exception clears banner", () => {
       keyPrefix: "E2E_EXCEPTION",
       title: "E2E Exception BLOCK",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -63,7 +63,7 @@ test.describe("Edge: Exception clears banner", () => {
     await grantException(prisma, {
       userId: USERS.employee,
       policyDocumentId: scratch.policyId,
-      grantedByUserId: USERS.super,
+      grantedByUserId: USERS.owner,
     });
 
     await page.evaluate(() => window.dispatchEvent(new CustomEvent("policies:changed")));
@@ -83,7 +83,7 @@ test.describe("Edge: WorkerType targeting", () => {
       title: "E2E Contractor Only",
       enforcement: "BLOCK",
       targetWorkerTypes: ["CONTRACTOR"],
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -101,7 +101,7 @@ test.describe("Edge: Sign now button opens wizard", () => {
       keyPrefix: "E2E_WIZARD",
       title: "E2E Wizard Open BLOCK",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -136,7 +136,7 @@ test.describe("Edge: View profile navigates", () => {
       keyPrefix: "E2E_VIEW_PROFILE",
       title: "E2E View Profile BLOCK",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -165,7 +165,7 @@ test.describe("Edge: Pulse animation is present", () => {
       keyPrefix: "E2E_PULSE_RED",
       title: "E2E Pulse Red",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -183,7 +183,7 @@ test.describe("Edge: Pulse animation is present", () => {
       keyPrefix: "E2E_PULSE_ORANGE",
       title: "E2E Pulse Orange",
       enforcement: "WARN",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -204,7 +204,7 @@ test.describe("Edge: Data attributes", () => {
         keyPrefix: `E2E_DATA_BLOCK_${i}`,
         title: `E2E Data BLOCK ${i}`,
         enforcement: "BLOCK",
-        createdByUserId: USERS.super,
+        createdByUserId: USERS.owner,
       });
     }
     for (let i = 0; i < 3; i++) {
@@ -212,7 +212,7 @@ test.describe("Edge: Data attributes", () => {
         keyPrefix: `E2E_DATA_WARN_${i}`,
         title: `E2E Data WARN ${i}`,
         enforcement: "WARN",
-        createdByUserId: USERS.super,
+        createdByUserId: USERS.owner,
       });
     }
 
@@ -232,7 +232,7 @@ test.describe("Edge: INFO-only pending", () => {
       keyPrefix: "E2E_INFO_ONLY",
       title: "E2E Info Only",
       enforcement: "INFO",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -252,7 +252,7 @@ test.describe("Edge: Archived policy", () => {
       keyPrefix: "E2E_ARCHIVED",
       title: "E2E Archived BLOCK",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await prisma.policyDocument.update({
       where: { id: scratch.policyId },
@@ -296,7 +296,7 @@ test.describe("Edge: Contractor role banner", () => {
       title: "E2E Contractor BLOCK",
       enforcement: "BLOCK",
       targetWorkerTypes: ["CONTRACTOR"],
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoWorkerHome(page);
@@ -315,15 +315,15 @@ test.describe("Edge: Impersonation hides banner", () => {
     // in HomeTab, so when Michael impersonates the Employee (or anyone else)
     // the banner should be hidden entirely.
     const ctx = await browser.newContext({
-      storageState: "./playwright/.auth/super.json",
+      storageState: "./playwright/.auth/owner.json",
       viewport: { width: 1280, height: 900 },
     });
     const page = await ctx.newPage();
 
-    // Give the SUPER user real backlog cleared so THEIR banner wouldn't
+    // Give a caller with `compliance.manage` user real backlog cleared so THEIR banner wouldn't
     // show, then trigger impersonation via localStorage (the app's usual
     // mechanism). Fallback: just verify banner is absent on default view.
-    await resetWorkerCompliance(prisma, USERS.super);
+    await resetWorkerCompliance(prisma, USERS.owner);
     const superRealPolicies = await prisma.policyDocument.findMany({
       where: { archivedAt: null, targetWorkerTypes: { has: "EMPLOYEE" } },
       select: { id: true, currentVersion: { select: { id: true, contentDigest: true } } },
@@ -331,7 +331,7 @@ test.describe("Edge: Impersonation hides banner", () => {
     for (const p of superRealPolicies) {
       if (!p.currentVersion) continue;
       await signPolicyDirect(prisma, {
-        userId: USERS.super,
+        userId: USERS.owner,
         policyDocumentVersionId: p.currentVersion.id,
         contentDigestAtSign: p.currentVersion.contentDigest,
       });

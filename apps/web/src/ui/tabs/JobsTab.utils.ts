@@ -137,7 +137,7 @@ export function getQuickMessage(occ: any, contactName: string | null): { label: 
   const prop = occ.job?.property;
   const addressStr = [prop?.street1, prop?.city, prop?.state].filter(Boolean).join(", ");
   const atAddress = addressStr ? ` at ${addressStr}` : "";
-  // Confirmation request also fires for unclaimed rows — admins
+  // Confirmation request also fires for unclaimed rows — holders of `schedule.manage`
   // regularly request confirmation on the client's behalf, and the
   // copy is claim-agnostic ("we have your appointment scheduled").
   if (occ.status === "SCHEDULED" && occ.jobId && !(occ as any).isClientConfirmed) {

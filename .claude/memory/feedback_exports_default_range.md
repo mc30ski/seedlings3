@@ -15,7 +15,7 @@ subsumes the old Exports + P&L Report tabs). The date-range default
 preference below still applies to any Super window-based
 export/reconcile surface.
 
-Any date range on a Super Money export/reconcile surface MUST default to **this week's Monday → Sunday** — the calendar week containing today.
+Any date range on someone with `settings.manage` Money export/reconcile surface MUST default to **this week's Monday → Sunday** — the calendar week containing today.
 
 - Start = most recent Monday on or before today (`mondayOnOrBefore(today)`)
 - End = Sunday 6 days after that Monday

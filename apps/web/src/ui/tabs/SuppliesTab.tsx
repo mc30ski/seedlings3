@@ -38,11 +38,13 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import { prettyStatus } from "@/src/lib/labels";
 import { occurrenceStatusColor } from "@/src/lib/statusColors";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import { scopeFromMe } from "@/src/lib/roles";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import QRScannerDialog from "@/src/ui/dialogs/QRScannerDialog";
 import SupplyPhotos, { uploadStagedPhotos, type StagedPhoto, type SupplyPhoto } from "@/src/ui/components/SupplyPhotos";
 import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
+import type { Scope } from "@/src/lib/scope";
 
 // Barcode formats to scan when looking up supplies. Stable reference so
 // QRScannerDialog's effect doesn't re-run on every parent render.
@@ -101,7 +103,7 @@ type Supply = {
   available: number;
   archivedAt?: string | null;
   createdAt: string;
-  // Populated only on Admin/Super list responses (includeHoldDetails=true).
+  // Populated only for a `supplies.hold` holder (includeHoldDetails=true).
   // Per-job breakdown of currently-claimed (ACTIVE) holds.
   activeHolds?: ActiveHold[];
 };
@@ -130,42 +132,33 @@ type Props = {
   /** Read-only mode hides all action buttons, the average-cost figure,
    *  and the archived filter. */
   readOnly?: boolean;
-  /** Drives endpoint choice and which inventory details are surfaced.
-   *  - WORKER: minimal — only "Remaining" count, worker-only endpoint
-   *  - ADMIN: full inventory + per-job claim breakdown with click-through
-   *  - SUPER: same data as ADMIN, plus mutation actions (default behavior)
-   */
-  purpose?: "WORKER" | "ADMIN" | "SUPER";
-  /** Additive scope — capabilities ADD as you climb the ladder.
-   *  scope.isWorker → worker-endpoint list, "Remaining" only, no actions.
-   *  scope.isAdmin  → admin-endpoint list with per-job claim breakdown.
-   *  scope.isSuper  → adds add/buy/adjust/edit/archive/reverse actions.
-   *  Falls back to a scope derived from the legacy `purpose` + `readOnly`
-   *  props when not passed, so mounts still on the old shape keep working. */
-  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  /** What the caller may do, as capabilities.
+   *  `supplies.view`   → the list and the per-job claim breakdown.
+   *  `supplies.manage` → add / buy / adjust / edit / archive / reverse.
+   *  Absent fails closed — it grants nothing. */
+  scope?: Scope;
 };
 
 export default function SuppliesTab({
   readOnly = false,
-  purpose = "SUPER",
   scope,
 }: Props = {}) {
-  // Effective scope: prefer the additive prop; fall back to a scope
-  // derived from the legacy `purpose` + `readOnly` props. Legacy shape:
-  //   purpose="WORKER" readOnly → worker view (worker endpoint)
-  //   purpose="ADMIN"  readOnly → admin read-only view (admin endpoint)
-  //   purpose="SUPER" (default, no readOnly) → super view (writable)
-  const effScope = scope ?? {
-    isWorker: purpose === "WORKER",
-    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
-    isSuper: purpose === "SUPER" && !readOnly,
-  };
-  // Capabilities render additively AND are strictly governed by the
-  // scope prop. No `me` prop on this tab — trust the scope for the
-  // super check (the shell only sets scope.isSuper on the super tab).
-  const showWorkerExtras = effScope.isWorker;
-  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
-  const showSuperExtras = effScope.isSuper;
+  // FAIL CLOSED. This used to synthesise a scope from `purpose` —
+  // a prop that meant "they hold the top role" — which answered "what may I
+  // do" with "where did you come from", and handed a custom role whichever
+  // build its shell happened to pick. Every mount passes a real scope now,
+  // so there is nothing left to guess; an absent one grants nothing rather
+  // than inventing an answer.
+  const effScope: Scope = scope ?? { can: () => false };
+  // No `me` prop on this tab, so every answer comes from `scope`, which
+  // carries the PERSPECTIVE-NARROWED set the server resolved.
+  const canViewSupplies = effScope.can("supplies.view");
+  // The LEDGER side of a supply purchase. Attaching or detaching a purchase
+  // from a Ledger row edits what a deduction is evidenced by, so it asks the
+  // capability its own endpoint asks — see routes/books.ts.
+  const canManageBooks = effScope.can("books.manage");
+  // What this actually gates, per the route map.
+  const canManageSupplies = effScope.can("supplies.manage");
 
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(false);
@@ -180,10 +173,12 @@ export default function SuppliesTab({
   const [collapsedClaims, setCollapsedClaims] = useState<Set<string>>(new Set());
 
   // Worker uses the worker-readable endpoint (no per-job breakdown).
-  // Admin/Super hit /admin/supplies which now returns activeHolds details.
-  const listEndpoint = showAdminExtras ? "/api/admin/supplies" : "/api/supplies";
+  // /supplies returns activeHolds details to a `supplies.hold` holder.
+  // One endpoint. This was a ternary with two identical arms, left from
+  // when a worker read `/api/supplies` and someone with `supplies.manage` read a different path.
+  const listEndpoint = "/api/supplies";
   const historyEndpoint = (id: string) =>
-    showAdminExtras ? `/api/admin/supplies/${id}/history` : `/api/supplies/${id}/history`;
+    `/api/supplies/${id}/history`;
 
   // Edit / create supply dialog
   const [editOpen, setEditOpen] = useState(false);
@@ -216,7 +211,7 @@ export default function SuppliesTab({
       setGalleryIndex(0);
     }
     try {
-      const list = await apiGet<SupplyPhoto[]>(`/api/admin/supplies/${s.id}/photos`);
+      const list = await apiGet<SupplyPhoto[]>(`/api/supplies/${s.id}/photos`);
       const photos = Array.isArray(list) ? list : [];
       if (photos.length === 0) {
         setGalleryPhotos(null);
@@ -301,7 +296,7 @@ export default function SuppliesTab({
 
   // BusinessExpensesTab → Supplies handoff: the supply-purchase badge sets
   // `seedlings_supplies_pendingHighlight = <supplyId>` and dispatches
-  // navigate:superTab. Land on that supply: scroll it into view and ring it.
+  // navigate:staffTab. Land on that supply: scroll it into view and ring it.
   //
   // THE PREVIOUS VERSION NEVER FIRED ONCE. It read the key on mount and then
   // polled `supplies.find(...)` on an interval — but the interval closed over
@@ -400,7 +395,7 @@ export default function SuppliesTab({
         code: string;
         matchExisting: { id: string; name: string; unit: string; clientUnitPrice: number; onHand: number; category: string } | null;
         lookup: { found: boolean; title?: string; brand?: string; description?: string } | null;
-      }>(`/api/admin/supplies/upc-lookup?code=${encodeURIComponent(code)}`);
+      }>(`/api/supplies/upc-lookup?code=${encodeURIComponent(code)}`);
 
       if (result.matchExisting) {
         // Reload list so onHand/available are fresh, then open Buy More
@@ -484,10 +479,10 @@ export default function SuppliesTab({
     setSavingEdit(true);
     try {
       if (editing) {
-        await apiPatch(`/api/admin/supplies/${editing.id}`, payload);
+        await apiPatch(`/api/supplies/${editing.id}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Supply updated." });
       } else {
-        const created = await apiPost<{ id: string }>("/api/admin/supplies", payload);
+        const created = await apiPost<{ id: string }>("/api/supplies", payload);
         // STAGED PHOTOS UPLOAD ONLY NOW — there was no supply to attach them
         // to until this moment. The supply itself is already saved, so a
         // failure here must NOT read as a failed add, and must not read as a
@@ -554,7 +549,7 @@ export default function SuppliesTab({
       const seq = ++ledgerSeq.current;
       try {
         const rows = await apiGet<LedgerRow[]>(
-          `/api/admin/ledger-charges?q=${encodeURIComponent(q)}`,
+          `/api/ledger-charges?q=${encodeURIComponent(q)}`,
         );
         if (seq === ledgerSeq.current) setLedgerRows(rows);
       } catch {
@@ -575,7 +570,7 @@ export default function SuppliesTab({
   /** Link or unlink an ALREADY-RECORDED purchase, from the History timeline. */
   async function setPurchaseLedgerLink(purchaseId: string, businessExpenseId: string | null) {
     try {
-      await apiPatch(`/api/admin/supply-purchases/${purchaseId}/ledger-link`, { businessExpenseId });
+      await apiPatch(`/api/supply-purchases/${purchaseId}/ledger-link`, { businessExpenseId });
       setLedgerPickerFor(null);
       if (historyOpen) await openHistory(historyOpen);
     } catch (err) {
@@ -612,7 +607,7 @@ export default function SuppliesTab({
     }
     setSavingBuy(true);
     try {
-      await apiPost(`/api/admin/supplies/${buyOpen.id}/purchases`, {
+      await apiPost(`/api/supplies/${buyOpen.id}/purchases`, {
         quantity: qty,
         totalCost: total,
         date: bDate,
@@ -657,7 +652,7 @@ export default function SuppliesTab({
     }
     setSavingAdjust(true);
     try {
-      await apiPost(`/api/admin/supplies/${adjustOpen.id}/adjustments`, {
+      await apiPost(`/api/supplies/${adjustOpen.id}/adjustments`, {
         delta,
         reason: aReason.trim(),
       });
@@ -719,7 +714,7 @@ export default function SuppliesTab({
       return;
     }
     try {
-      await apiDelete(`/api/admin/supplies/purchases/${purchaseId}`);
+      await apiDelete(`/api/supplies/purchases/${purchaseId}`);
       publishInlineMessage({ type: "SUCCESS", text: "Purchase reversed." });
       if (historyOpen) await openHistory(historyOpen);
       void load();
@@ -733,7 +728,7 @@ export default function SuppliesTab({
 
   async function archiveSupply(s: Supply) {
     try {
-      await apiPost(`/api/admin/supplies/${s.id}/archive`, {});
+      await apiPost(`/api/supplies/${s.id}/archive`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Supply archived." });
       setConfirmArchive(null);
       void load();
@@ -747,7 +742,7 @@ export default function SuppliesTab({
 
   async function unarchiveSupply(s: Supply) {
     try {
-      await apiPost(`/api/admin/supplies/${s.id}/unarchive`, {});
+      await apiPost(`/api/supplies/${s.id}/unarchive`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Supply unarchived." });
       void load();
     } catch (err) {
@@ -761,16 +756,17 @@ export default function SuppliesTab({
   return (
     <Box w="full">
       {/* FROM THE GUARDS:
-            • worker → GET /supplies, /supplies/:id/history. Pulling stock onto
-              a job is workerGuard too, but it happens ON THE JOB, not here.
-            • admin  → the same reads plus hold detail, and may point a
-              purchase at a ledger row (PATCH .../ledger-link is adminGuard).
-              Buying, adjusting and editing the catalog are all superGuard.
+            • `supplies.view` → GET /supplies, /supplies/:id/history. Pulling
+              stock onto a job needs `inventory.pull`, and it happens ON THE
+              JOB, not here.
+            • `materials.charge` → may point a purchase at a ledger row
+              (PATCH .../ledger-link).
+            • `supplies.manage` → buying, adjusting and editing the catalog.
             • super  → everything. */}
       {/* Own bottom margin: the surrounding stack has no `gap` here, so
           without it the explainer butts straight into the filters. */}
         <TabExplainer
-          explainerId={`seedlings:suppliesTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
+          explainerId="seedlings:suppliesTab:guideOpen"
         >
           <ExplainerText>
             What the company has on hand, and what upcoming jobs have <Em>claimed</Em>.
@@ -782,19 +778,18 @@ export default function SuppliesTab({
             Supplies go onto a job <Em>from the job</Em>, not from here. They are billed to
             the client on top of the labor price and <Em>never come out of anyone&rsquo;s
             pay</Em>. The price is set on the job and can differ per client; the catalog only
-            holds a default. Buying, adjusting stock and editing the catalog are{" "}
-            <Em>super-only</Em>.
+            holds a default.
           </ExplainerText>
-          {showAdminExtras && (
-            <RoleSection role="Admin">
+          {canViewSupplies && (
+            <CapabilitySection capability="books.view" scope={scope}>
               <ExplainerText>
                 From a supply&rsquo;s history you can point a purchase at the Ledger row that
                 paid for it.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
-          {showSuperExtras && (
-            <RoleSection role="Super">
+          {canManageSupplies && (
+            <CapabilitySection capability="supplies.manage" scope={scope}>
               <ExplainerText>
                 Supplies track <Em>stock, not taxes</Em>. Buying adds units to the shelf and
                 creates <Em>no tax entry</Em> — the deduction is the real card charge you
@@ -805,12 +800,12 @@ export default function SuppliesTab({
                 first — so a price you have stopped paying leaves the figure as that stock is
                 used up.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
         </TabExplainer>
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
         <Text fontWeight="bold" fontSize="lg">Supplies</Text>
-        {showSuperExtras && (
+        {canManageSupplies && (
           <HStack gap={2}>
             <Button
               size="sm"
@@ -851,7 +846,7 @@ export default function SuppliesTab({
             pl="8"
           />
         </Box>
-        {showSuperExtras && (
+        {canManageSupplies && (
         <Button
           size="sm"
           variant={includeArchived ? "solid" : "outline"}
@@ -877,7 +872,7 @@ export default function SuppliesTab({
         <Box py={8} textAlign="center"><Spinner /></Box>
       ) : filtered.length === 0 ? (
         <Box py={8} textAlign="center" color="fg.muted">
-          <Text>{q || includeArchived || lowStockOnly ? "No supplies match the current filters." : (!showSuperExtras ? "No supplies have been added yet." : "No supplies yet. Click Add Supply to get started.")}</Text>
+          <Text>{q || includeArchived || lowStockOnly ? "No supplies match the current filters." : (!canManageSupplies ? "No supplies have been added yet." : "No supplies yet. Click Add Supply to get started.")}</Text>
         </Box>
       ) : (
         <VStack align="stretch" gap={1}>
@@ -971,8 +966,8 @@ export default function SuppliesTab({
                       )}
                     </HStack>
                     <HStack gap={3} fontSize="xs" color="fg.muted" wrap="wrap">
-                      {!showAdminExtras ? (
-                        // Worker view: just "Remaining" (= available). Holds
+                      {!canViewSupplies ? (
+                        // Self-scoped view: just "Remaining" (= available). Holds
                         // and onHand are operational detail they don't need.
                         <Text>
                           Remaining: <Text as="span" fontWeight="medium" color={s.available <= 0 ? "orange.fg" : "green.fg"}>{s.available}</Text> {s.unit}
@@ -1041,10 +1036,10 @@ export default function SuppliesTab({
                           {/* AVERAGE OF WHAT IS STILL ON THE SHELF, oldest
                               units first, so a price you have stopped paying
                               leaves the figure as that stock is used. Internal
-                              margin info — Super only. An em dash rather than
+                              margin info — `supplies.manage`. An em dash rather than
                               $0.00 when nothing has been bought: no purchase
                               is not the same claim as free. */}
-                          {showSuperExtras && (
+                          {canManageSupplies && (
                             <Text title="Weighted average of the units on hand, oldest used first">
                               Average price:{" "}
                               {s.averageCost == null ? (
@@ -1087,9 +1082,9 @@ export default function SuppliesTab({
                     {s.description && (
                       <Text fontSize="xs" color="fg.muted" mt={1}>{s.description}</Text>
                     )}
-                    {/* Per-job claim breakdown — admin/super only, expanded
+                    {/* Per-job claim breakdown — `supplies.view`, expanded
                         on click of the "claimed by jobs: N" link above. */}
-                    {showAdminExtras && !collapsedClaims.has(s.id) && s.activeHolds && s.activeHolds.length > 0 && (
+                    {canViewSupplies && !collapsedClaims.has(s.id) && s.activeHolds && s.activeHolds.length > 0 && (
                       <VStack
                         align="stretch"
                         gap={1}
@@ -1129,7 +1124,7 @@ export default function SuppliesTab({
                                   );
                                 } catch {}
                                 window.dispatchEvent(
-                                  new CustomEvent("navigate:adminTab", {
+                                  new CustomEvent("navigate:staffTab", {
                                     detail: { tab: "jobs", remount: true },
                                   }),
                                 );
@@ -1179,7 +1174,7 @@ export default function SuppliesTab({
                     )}
                   </Box>
                   <HStack gap={1} wrap="wrap">
-                    {showSuperExtras && !s.archivedAt && (
+                    {canManageSupplies && !s.archivedAt && (
                       <>
                         <Button size="xs" variant="outline" colorPalette="green" onClick={() => openBuy(s)} title="Record a purchase">
                           <ShoppingCart size={12} /> Buy
@@ -1192,12 +1187,12 @@ export default function SuppliesTab({
                     <Button size="xs" variant="ghost" onClick={() => openHistory(s)} title="View history">
                       <Clock size={12} />
                     </Button>
-                    {showSuperExtras && (
+                    {canManageSupplies && (
                       <Button size="xs" variant="ghost" onClick={() => openEdit(s)} title="Edit">
                         <Pencil size={12} />
                       </Button>
                     )}
-                    {showSuperExtras && (s.archivedAt ? (
+                    {canManageSupplies && (s.archivedAt ? (
                       <Button size="xs" variant="ghost" onClick={() => unarchiveSupply(s)} title="Unarchive">
                         <ArchiveRestore size={12} />
                       </Button>
@@ -1626,11 +1621,11 @@ export default function SuppliesTab({
                                     set, changed, or cleared after the fact —
                                     the endpoint existed from the start and
                                     nothing called it. */}
-                                {/* ADMIN-GATED. The endpoint behind this is
-                                    adminGuard, so rendering it for a worker
-                                    offers a button that 403s. A worker still
-                                    SEES an existing link — it is useful
-                                    context — but cannot change it. */}
+                                {/* The endpoint behind this requires
+                                    `materials.charge`, so rendering it
+                                    without that offers a button that 403s.
+                                    An existing link is still SHOWN — it is
+                                    useful context — but not editable. */}
                                 <Box mt={1}>
                                   {evt.row.businessExpense ? (
                                     <HStack gap={2} fontSize="xs" wrap="wrap">
@@ -1655,7 +1650,7 @@ export default function SuppliesTab({
                                             );
                                           } catch {}
                                           window.dispatchEvent(
-                                            new CustomEvent("navigate:superTab", {
+                                            new CustomEvent("navigate:staffTab", {
                                               detail: { tab: "ledger" },
                                             }),
                                           );
@@ -1666,7 +1661,13 @@ export default function SuppliesTab({
                                         {evt.row.businessExpense.description ? ` — ${evt.row.businessExpense.description}` : ""}
                                         {" →"}
                                       </Text>
-                                      {showAdminExtras && (
+                                      {/* `books.manage` — the capability on
+                                          `PATCH /supply-purchases/:id/ledger-link`,
+                                          which this calls. It asked
+                                          `supplies.view`, so the history
+                                          dialog offered Unlink to anyone who
+                                          could merely READ the supply list. */}
+                                      {canManageBooks && (
                                         <Button
                                           size="xs"
                                           variant="ghost"
@@ -1709,7 +1710,10 @@ export default function SuppliesTab({
                                         )}
                                       </VStack>
                                     </VStack>
-                                  ) : showAdminExtras ? (
+                                  ) : canManageBooks ? (
+                                    // Same endpoint as Unlink, so the same
+                                    // capability: linking and unlinking are
+                                    // one PATCH with a value or a null.
                                     <Button size="xs" variant="ghost" onClick={() => openLedgerPicker(evt.row.id)}>
                                       Link a ledger expense
                                     </Button>
@@ -1756,7 +1760,7 @@ export default function SuppliesTab({
                               </>
                             )}
                           </Box>
-                          {showSuperExtras && evt.kind === "PURCHASE" && (
+                          {canManageSupplies && evt.kind === "PURCHASE" && (
                             <Button
                               size="xs"
                               variant="ghost"

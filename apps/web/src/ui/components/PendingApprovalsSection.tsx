@@ -1,7 +1,7 @@
 "use client";
 
-// Pinned-to-the-top section of the Admin Payments tab. Lists every self-
-// reported Payment that hasn't been admin-approved yet, with three actions
+// Pinned-to-the-top section of the Payments tab. Lists every self-
+// reported Payment that hasn't been approved yet, with three actions
 // per row: Approve, Reject (with reason), Open job. Refresh is manual
 // (refresh button on the section, or reload the page).
 //
@@ -35,7 +35,7 @@ import AdjustPaymentDialog from "@/src/ui/dialogs/AdjustPaymentDialog";
 import { invoiceTotal } from "@repo/money";
 import { PaymentContactsLine } from "@/src/ui/components/PaymentContactsLine";
 import { PaymentPropertyLine } from "@/src/ui/components/PaymentPropertyLine";
-import { bumpAdminPayments } from "@/src/lib/bus";
+import { bumpPayments } from "@/src/lib/bus";
 
 type PendingRow = {
   id: string;
@@ -178,7 +178,7 @@ export default function PendingApprovalsSection({ onReady }: {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await apiGet<PendingRow[]>("/api/admin/payments/pending");
+      const list = await apiGet<PendingRow[]>("/api/payments/pending");
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load pending approvals.", err) });
@@ -261,7 +261,7 @@ export default function PendingApprovalsSection({ onReady }: {
       // formats both branches identically across every payment toast in
       // the app — see lib/paymentMessages.ts.
       const result: PaymentActionResult = await apiPost(
-        `/api/admin/payments/${row.id}/approve`,
+        `/api/payments/${row.id}/approve`,
         body,
       );
       // Skip-reasons other than `one_off` represent a misconfiguration
@@ -275,7 +275,7 @@ export default function PendingApprovalsSection({ onReady }: {
         text: composePaymentMessage("approved", result),
       });
       setRows((prev) => prev.filter((r) => r.id !== row.id));
-      bumpAdminPayments();
+      bumpPayments();
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Approve failed.", err) });
@@ -284,10 +284,10 @@ export default function PendingApprovalsSection({ onReady }: {
 
   async function performReject(row: PendingRow, reason: string) {
     try {
-      await apiPost(`/api/admin/payments/${row.id}/reject`, { reason });
+      await apiPost(`/api/payments/${row.id}/reject`, { reason });
       publishInlineMessage({ type: "SUCCESS", text: composePaymentMessage("rejected") });
       setRows((prev) => prev.filter((r) => r.id !== row.id));
-      bumpAdminPayments();
+      bumpPayments();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
     }
@@ -301,7 +301,7 @@ export default function PendingApprovalsSection({ onReady }: {
       // to surface that consistently, with the write-off-specific
       // addendum about where the employee money came from.
       const result: PaymentActionResult = await apiPost(
-        `/api/admin/payments/${row.id}/write-off`,
+        `/api/payments/${row.id}/write-off`,
         { reason },
       );
       const skip = result?.nextOccurrenceSkipReason;
@@ -315,7 +315,7 @@ export default function PendingApprovalsSection({ onReady }: {
         ),
       });
       setRows((prev) => prev.filter((r) => r.id !== row.id));
-      bumpAdminPayments();
+      bumpPayments();
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Write-off failed.", err) });
@@ -323,7 +323,7 @@ export default function PendingApprovalsSection({ onReady }: {
   }
 
   function openJob(row: PendingRow) {
-    // Navigate to the admin Services tab and highlight this occurrence.
+    // Navigate to the Services tab and highlight this occurrence.
     // jobsTabToServicesTabSearch expects entityId as "jobId:occurrenceId"
     // so the destination tab can auto-expand the job AND flash the row.
     // q is empty — we don't want a text filter, just a row highlight.
@@ -332,7 +332,6 @@ export default function PendingApprovalsSection({ onReady }: {
       new CustomEvent("open:jobsTabToServicesTabSearch", {
         detail: {
           q: "",
-          forAdmin: true,
           entityId: `${jobId}:${row.occurrence.id}`,
         },
       }),

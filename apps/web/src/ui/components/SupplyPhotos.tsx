@@ -59,7 +59,7 @@ export async function uploadStagedPhotos(
     const compressed = await compressOnly(file);
     const contentType = "image/jpeg";
     const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-      `/api/admin/supplies/${supplyId}/photos/upload-url`,
+      `/api/supplies/${supplyId}/photos/upload-url`,
       { fileName: file.name, contentType },
     );
     const res = await fetch(uploadUrl, {
@@ -68,7 +68,7 @@ export async function uploadStagedPhotos(
       headers: { "Content-Type": contentType },
     });
     if (!res.ok) throw new Error(`Upload failed for ${file.name}: ${res.status}`);
-    await apiPost(`/api/admin/supplies/${supplyId}/photos/confirm`, {
+    await apiPost(`/api/supplies/${supplyId}/photos/confirm`, {
       key,
       fileName: file.name,
       contentType,
@@ -81,7 +81,11 @@ export async function uploadStagedPhotos(
 type Props = {
   /** null while creating — the component stages instead of uploading. */
   supplyId: string | null;
-  /** Hides every mutating control. */
+  /**
+   * Hides every mutating control. Read it from "supplies.manage", the
+   * capability the upload / edit / delete endpoints behind this component
+   * are guarded on.
+   */
   readOnly?: boolean;
   /** Staged files, owned by the caller so it can upload them after create. */
   staged?: StagedPhoto[];
@@ -99,7 +103,7 @@ export default function SupplyPhotos({ supplyId, readOnly, staged = [], onStaged
   async function load() {
     if (!supplyId) return;
     try {
-      const list = await apiGet<SupplyPhoto[]>(`/api/admin/supplies/${supplyId}/photos`);
+      const list = await apiGet<SupplyPhoto[]>(`/api/supplies/${supplyId}/photos`);
       setPhotos(Array.isArray(list) ? list : []);
     } catch {
       setPhotos([]);
@@ -152,7 +156,7 @@ export default function SupplyPhotos({ supplyId, readOnly, staged = [], onStaged
   async function handleDelete(photoId: string) {
     if (!supplyId) return;
     try {
-      await apiDelete(`/api/admin/supplies/${supplyId}/photos/${photoId}`);
+      await apiDelete(`/api/supplies/${supplyId}/photos/${photoId}`);
       setPhotos((prev) => prev.filter((p) => p.id !== photoId));
       publishInlineMessage({ type: "SUCCESS", text: "Photo deleted." });
     } catch (err) {
@@ -163,7 +167,7 @@ export default function SupplyPhotos({ supplyId, readOnly, staged = [], onStaged
   async function saveDescription(photoId: string) {
     if (!supplyId) return;
     try {
-      await apiPatch(`/api/admin/supplies/${supplyId}/photos/${photoId}`, { description: editDesc });
+      await apiPatch(`/api/supplies/${supplyId}/photos/${photoId}`, { description: editDesc });
       setPhotos((prev) =>
         prev.map((p) => (p.id === photoId ? { ...p, description: editDesc.trim() || null } : p)),
       );

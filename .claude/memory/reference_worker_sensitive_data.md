@@ -23,21 +23,21 @@ additive-scope pattern. Worker views must NEVER see:
 
 ## Server-side endpoints (defense layer 1)
 
-- **`GET /api/me/team`** (`apps/api/src/routes/worker.ts:1622-1629`,
-  `workerGuard`) — returns ONLY `{id, displayName, workerType}` for
+- **`GET /api/me/team`** (`apps/api/src/routes/people.ts`, `approvedUser`)
+  — returns ONLY `{id, displayName, workerType}` for
   approved workers. Consumed by `WorkerTeamRoster` in UsersTab.
   Never widen this endpoint — `/api/workers` is admin-shaped and
   workers must not call it.
-- **`GET /api/me/groups`** (`apps/api/src/routes/worker.ts:1592-1614`,
-  `workerGuard`) — returns crews the caller is on with `{id, name,
+- **`GET /api/me/groups`** (`apps/api/src/routes/crews.ts`, `approvedUser`)
+  — returns crews the caller is on with `{id, name,
   claimerId, myRole, members:[{userId, displayName, role}]}`. NO
   percentages, NO emails. Consumed by `WorkerMyCrews` in
-  AdminGroupsTab.
+  CrewsTab.
 
 ## Client-side scrubbing (defense layer 2)
 
 Both `WorkerTeamRoster` (UsersTab) and `WorkerMyCrews`
-(AdminGroupsTab) explicitly re-scrub payloads even though the
+(CrewsTab) explicitly re-scrub payloads even though the
 endpoints already sanitize. Belt-and-suspenders — if a future server
 change accidentally widens a payload, the worker UI still won't
 render sensitive fields.
@@ -60,6 +60,6 @@ percentages never rendered.
   concern (this is an employer/employee relationship).
 - Do NOT reuse `/api/workers` (admin endpoint) for worker-facing
   code. It returns email; workers must not have that data.
-- Do NOT let worker mount pass `scope.isAdmin` or `scope.isSuper` —
+- There are no per-role mounts to get wrong any more: one tab, one `scope`, carrying the perspective-narrowed set. The rule survives as — never render a sensitive field without asking the capability that guards the endpoint it came from —
   the extras derivations are additive; any leak of admin-scope from
-  the shell would flip on the admin UI.
+  the shell would flip on a caller with `people.view` UI.

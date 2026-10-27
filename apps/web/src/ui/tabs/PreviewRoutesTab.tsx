@@ -1,11 +1,13 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PreviewRoutesTab — blended-role Routes tab. Takes a `scope` prop
-// carrying {isWorker, isAdmin, isSuper} so one tab serves all three:
-// Worker plans own routes; Admin/Super get the inline worker picker
-// + on-behalf endpoints; Super also gets the team-travel Insights
-// rollup at the top of the tab.
+// PreviewRoutesTab — the Routes tab. One tab, built from entitlements:
+// anyone who can reach it plans their own routes; `schedule.manage` adds
+// the inline worker picker and the on-behalf endpoints; `reports.view` adds
+// the team-travel Operations rollup at the top.
+//
+// This described the `scope` prop as carrying three role booleans "so one
+// tab serves all three". It carries one field, `can`.
 //
 // Offline: covered by the shell's service worker (public/sw.js)
 // which is network-first + cache-fallback for /api/*, plus this
@@ -33,8 +35,9 @@ import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
 import { fmtDate, fmtDateTime, bizDateKey, bizTomorrow, bizDaysBetween, bizHourMinute, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/dates";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
-import { AdminWorkerPicker, RoutesOperationsPanel, SectionExpander } from "@/src/ui/tabs/PreviewRoutesTab.parts";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import { WorkerPickerInline, RoutesOperationsPanel, SectionExpander } from "@/src/ui/tabs/PreviewRoutesTab.parts";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
+import type { Scope } from "@/src/lib/scope";
 
 type RouteJob = {
   id: string;
@@ -129,10 +132,10 @@ function formatDuration(mins: number): string {
 // Date helpers come from @/src/lib/dates (bizTomorrow). NEVER reinvent.
 
 type Props = {
-  /** Blended-role scope. Worker plans own routes; Admin/Super get
-   *  the inline worker picker + on-behalf-of endpoints. Capabilities
-   *  add — never subtract. */
-  scope: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  /** One-tab scope. The baseline plans your own routes; `routes.plan`
+   *  adds the inline person picker and the on-behalf-of endpoints.
+   *  Capabilities add — never subtract. */
+  scope: Scope;
 };
 
 const STORAGE_KEY_PREFIX = "preview_routeResults";
@@ -174,15 +177,25 @@ function saveCachedTimestamp(ts: string | null, userId?: string) {
 }
 
 export default function PreviewRoutesTab({ scope }: Props) {
-  // Blended admin picker — mounted when scope.isAdmin. Empty
-  // selection = plan own routes (admin can still plan their own
-  // day); picking a worker delegates to the on-behalf endpoints
-  // via the `userId` variable below.
+  // Worker picker — mounted on `schedule.manage`. Empty selection = plan
+  // your own routes; picking a worker delegates to the on-behalf
+  // endpoints via the `userId` variable below.
   const [selfPickedWorkerId, setSelfPickedWorkerId] = usePersistedState<string | null>(
     "routesTab_viewAsWorker",
     null,
   );
-  const usingSelfPicker = scope.isAdmin;
+  // `schedule.manage`, NOT `people.view`.
+  //
+  // It was mounted on `people.view` because that guards the `/workers`
+  // list the picker reads — reasoning from the endpoint that fills the
+  // options rather than the one the control acts through. Every rung
+  // holds `people.view` (it is on Trainee), so once `routes.plan` moved
+  // to the base rung a trainee would have been offered "plan somebody
+  // else's day". Directing another person's work is `schedule.manage`.
+  //
+  // Planning your OWN route is untouched: that is the tab's core and
+  // needs only `routes.plan` to reach it.
+  const usingSelfPicker = scope.can("schedule.manage");
   const userId = usingSelfPicker ? (selfPickedWorkerId ?? undefined) : undefined;
   const [data, setData] = useState<Response | null>(() => loadCachedResults(userId));
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(() => loadCachedTimestamp(userId));
@@ -254,7 +267,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
     // available-hours defaults, not the previously-viewed worker's.
     setHomeBaseLoaded(false);
     setProfileHoursLoaded(false);
-    const endpoint = userId ? `/api/admin/users/${userId}` : "/api/me";
+    const endpoint = userId ? `/api/users/${userId}` : "/api/me";
     apiGet<any>(endpoint)
       .then((u) => {
         const profileAddr = u?.homeBaseAddress ?? "";
@@ -286,7 +299,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
     };
     window.addEventListener("routes:autoAnalyze", onAutoAnalyze);
     return () => window.removeEventListener("routes:autoAnalyze", onAutoAnalyze);
-    // userId included so an admin switching workers mid-session gets
+    // userId included so someone with `routes.plan` switching workers mid-session gets
     // an auto-analyze scoped to the newly-picked worker.
   }, [targetDate, mode, bufferPercent, lookAhead, availableHours, routingProvider, userId]);
 
@@ -298,7 +311,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
 
   // Start point for the optimized route. "home" uses the saved home base
   // (round-trip). "current" geolocates the device when Analyze runs and uses
-  // those coords as the start (one-way — no return leg). Admin views can't
+  // those coords as the start (one-way — no return leg). Management views can't
   // pick "current" because the device location belongs to the operator, not
   // the target worker.
   const [startFrom, setStartFrom] = usePersistedState<"home" | "current">("preview_startFrom", "home");
@@ -403,9 +416,9 @@ export default function PreviewRoutesTab({ scope }: Props) {
 
       if (userId) {
         // Admin claiming on behalf of a worker — use admin assign endpoint
-        await apiPost(`/api/admin/occurrences/${occurrenceId}/add-assignee`, { userId });
+        await apiPost(`/api/occurrences/${occurrenceId}/add-assignee`, { userId });
         if (needsDateChange) {
-          await apiPatch(`/api/admin/occurrences/${occurrenceId}`, patchData);
+          await apiPatch(`/api/occurrences/${occurrenceId}`, patchData);
         }
       } else {
         // Worker claiming for themselves
@@ -450,7 +463,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
       if (diffDays > maxMoveDays) {
         publishInlineMessage({
           type: "WARNING",
-          text: `${userId ? "Admins" : "Workers"} can only move jobs up to ${maxMoveDays} days. This move is ${diffDays} days.`,
+          text: `${userId ? "Office" : "Workers"} can only move jobs up to ${maxMoveDays} days. This move is ${diffDays} days.`,
         });
         return;
       }
@@ -469,7 +482,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
       }
 
       if (userId) {
-        await apiPatch(`/api/admin/occurrences/${occurrenceId}`, patchData);
+        await apiPatch(`/api/occurrences/${occurrenceId}`, patchData);
       } else {
         await apiPost(`/api/occurrences/${occurrenceId}/reschedule`, { ...patchData, source: "route-planner" });
       }
@@ -505,7 +518,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
           disclaimer below stays, because it has to be visible without
           opening anything. */}
         <TabExplainer
-          explainerId={`seedlings:routesTab:guideOpen:${scope.isSuper ? "super" : scope.isAdmin ? "admin" : "worker"}`}
+          explainerId="seedlings:routesTab:guideOpen"
         >
           <ExplainerText>
             Pick a day and this suggests the order to drive it, from real driving times across
@@ -519,25 +532,22 @@ export default function PreviewRoutesTab({ scope }: Props) {
             apply, so a tentative or administered job cannot be claimed here either, and a
             contractor is still held to jobs within two days.
           </ExplainerText>
-          {scope.isAdmin && (
-            <RoleSection role="Admin">
+          {/* The section gates itself on the capability. */}
+          <CapabilitySection capability="schedule.manage" scope={scope}>
               <ExplainerText>
                 The worker picker plans someone else&rsquo;s day; leave it on <Em>Me</Em> for
                 your own. Claim and reschedule then run on their behalf, and moves made from
                 here <Em>skip the written-reason requirement</Em> a manual reschedule needs —
                 the planner records itself as the source.
               </ExplainerText>
-            </RoleSection>
-          )}
-          {scope.isSuper && (
-            <RoleSection role="Super">
+          </CapabilitySection>
+          <CapabilitySection capability="reports.business" scope={scope}>
               <ExplainerText>
                 <Em>Insights</Em> above the picker is yours alone: team miles, drive time,
                 sessions, active drivers, and the top drivers and vehicles for a rolling
                 period.
               </ExplainerText>
-            </RoleSection>
-          )}
+          </CapabilitySection>
         </TabExplainer>
       {/* No AI disclaimer here any more. It had also become untrue: the
           model was removed from this path — see the header of
@@ -546,21 +556,23 @@ export default function PreviewRoutesTab({ scope }: Props) {
 
       {/* Super capability layer — team travel rollup (miles, drive
           time, sessions, active drivers, top drivers/vehicles) for
-          a rolling period. Placed above the admin picker so the
-          highest-level lens (team-wide travel) reads first; the
+          a rolling period. Placed above the picker so the
+          widest view (team-wide travel) reads first; the
           picker below narrows the per-worker planning surface. */}
-      {scope.isSuper && (
+      {/* Business-wide travel rollup — `reports.business`, as INSIGHTS is
+          everywhere. */}
+      {scope.can("reports.business") && (
         <Box mb={3}>
           <RoutesOperationsPanel />
         </Box>
       )}
 
-      {/* Admin picker — mounted when scope.isAdmin and no explicit
-          userId prop. "Me" = plan own routes. Picking a worker
-          delegates to the on-behalf endpoints. */}
+      {/* Worker picker — mounted when the caller holds `routes.manage`
+          and no explicit userId prop. "Me" = plan own routes. Picking a
+          worker delegates to the on-behalf endpoints. */}
       {usingSelfPicker && (
         <Box mb={3}>
-          <AdminWorkerPicker
+          <WorkerPickerInline
             selectedWorkerId={selfPickedWorkerId}
             onChange={setSelfPickedWorkerId}
           />
@@ -1129,7 +1141,7 @@ export default function PreviewRoutesTab({ scope }: Props) {
                                   openEventSearch(
                                     "jobsTabToServicesTabSearch",
                                     stop.property,
-                                    true,
+                                    
                                     `${job?.jobId ?? ""}:${stop.occurrenceId}`,
                                   );
                                 }}

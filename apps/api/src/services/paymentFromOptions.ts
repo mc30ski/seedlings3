@@ -2,7 +2,7 @@ import { prisma } from "../db/prisma";
 
 // Configurable "Payment From" presets. The PAYMENT_FROM_OPTIONS setting
 // is a JSON array of small objects; each entry shows up as a dropdown
-// option in the Super Money Ledger → Add/Edit Expense dialog's
+// option in the Money Ledger → Add/Edit Expense dialog's
 // "Payment From" picker. Pure presentation taxonomy — the value the
 // operator picks (or types via the Other escape hatch) is persisted
 // verbatim to BusinessExpense.paymentFrom for reconciliation against

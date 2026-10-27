@@ -36,7 +36,7 @@ type Props = {
   types: DocumentTypeConfig[];
   /** Used to disable singleton types that already have an active doc. */
   takenSingletonKeys: Set<string>;
-  /** API base path for documents (Super writes always hit `/api/super/...`). */
+  /** API base path for documents (Super writes always hit `/api/...`). */
   apiBase: string;
   onCreated: () => void;
   /** When set, lock the type picker to this key (e.g., "Add another GL cert"). */
@@ -59,7 +59,7 @@ export default function UploadDocumentDialog({
   // Separate from `expiresAt` so the picker can be visible while empty — keeps
   // the "no default" promise when the user reveals it.
   const [showExpiration, setShowExpiration] = useState(false);
-  const [adminHidden, setAdminHidden] = useState(false);
+  const [restricted, setRestricted] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
@@ -71,7 +71,7 @@ export default function UploadDocumentDialog({
       setDescription("");
       setExpiresAt("");
       setShowExpiration(false);
-      setAdminHidden(false);
+      setRestricted(false);
       setFile(null);
     }
   }, [open, initialType]);
@@ -115,7 +115,7 @@ export default function UploadDocumentDialog({
         // is intentionally omitted so it doesn't double up.
         description: selectedType?.singleton ? undefined : (description.trim() || undefined),
         expiresAt: expiresAt ? bizInstantFromEtParts(expiresAt as EtDateKey, "23:59:59") : null,
-        adminHidden,
+        restricted,
       });
 
       const contentType = file.type || "application/octet-stream";
@@ -216,13 +216,13 @@ export default function UploadDocumentDialog({
                   </Button>
                 )}
                 <Checkbox.Root
-                  checked={adminHidden}
-                  onCheckedChange={(e) => setAdminHidden(!!e.checked)}
+                  checked={restricted}
+                  onCheckedChange={(e) => setRestricted(!!e.checked)}
                 >
                   <Checkbox.HiddenInput />
                   <Checkbox.Control />
                   <Checkbox.Label>
-                    Hide from Admins (Super-only)
+                    Restricted — only visible to people who manage documents
                   </Checkbox.Label>
                 </Checkbox.Root>
               </VStack>

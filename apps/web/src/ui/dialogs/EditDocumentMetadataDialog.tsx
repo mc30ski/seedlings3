@@ -30,14 +30,14 @@ type DocMeta = {
   title: string;
   description?: string | null;
   expiresAt?: string | null;
-  adminHidden: boolean;
+  restricted: boolean;
 };
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   doc: DocMeta | null;
-  /** API base path for documents (writes always hit `/api/super/...`). */
+  /** API base path for documents (writes always hit `/api/...`). */
   apiBase: string;
   /** When true, hide the per-doc description input — singleton types use the
    *  type-level taxonomy description instead. */
@@ -65,7 +65,7 @@ export default function EditDocumentMetadataDialog({
   // Separate visibility flag so the picker can be shown empty without the
   // native date input rendering today as a phantom default.
   const [showExpiration, setShowExpiration] = useState(false);
-  const [adminHidden, setAdminHidden] = useState(false);
+  const [restricted, setRestricted] = useState(false);
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
 
@@ -76,7 +76,7 @@ export default function EditDocumentMetadataDialog({
       const initialDate = isoToDateInput(doc.expiresAt);
       setExpiresAt(initialDate);
       setShowExpiration(!!initialDate);
-      setAdminHidden(doc.adminHidden);
+      setRestricted(doc.restricted);
     }
   }, [open, doc]);
 
@@ -94,7 +94,7 @@ export default function EditDocumentMetadataDialog({
         // Send null when the picker is hidden or empty — that's the user
         // saying "no expiration." Send a real ISO when they've picked a date.
         expiresAt: showExpiration && expiresAt ? bizInstantFromEtParts(expiresAt as EtDateKey, "23:59:59") : null,
-        adminHidden,
+        restricted,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Document updated." });
       onSaved();
@@ -142,12 +142,12 @@ export default function EditDocumentMetadataDialog({
                   </Button>
                 )}
                 <Checkbox.Root
-                  checked={adminHidden}
-                  onCheckedChange={(e) => setAdminHidden(!!e.checked)}
+                  checked={restricted}
+                  onCheckedChange={(e) => setRestricted(!!e.checked)}
                 >
                   <Checkbox.HiddenInput />
                   <Checkbox.Control />
-                  <Checkbox.Label>Hide from Admins (Super-only)</Checkbox.Label>
+                  <Checkbox.Label>Restricted — only visible to people who manage documents</Checkbox.Label>
                 </Checkbox.Root>
               </VStack>
             </Dialog.Body>

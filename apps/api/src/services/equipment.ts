@@ -8,6 +8,8 @@ import { ServiceError } from "../lib/errors";
 import { deleteObject } from "../lib/r2";
 import { generateLedgerId } from "../lib/ledgerId";
 import { cutoffWhere } from "../lib/businessStartCutoff";
+import { isFeeable, type WorkerType } from "@repo/money";
+import { userCan } from "../lib/userCapabilities";
 
 type Tx = Prisma.TransactionClient;
 
@@ -38,14 +40,16 @@ async function loadEquipmentBillingEnabled(
   return !(v === "false" || v === "0" || v === "off" || v === "no");
 }
 
-// Super "act on behalf of a worker" audit marker. When the action's actor
+// Audit marker for an `equipment.manage` holder acting on somebody
+// else's behalf. When the action's actor
 // (currentUserId) differs from the target worker (userId), the action is by
-// construction a Super override — only the /super/equipment/* routes pass
+// construction an override — only the /equipment/*-for routes pass
 // a target userId that's distinct from the caller. Folding this marker into
-// the audit metadata makes Super overrides immediately legible in the audit
-// feed without changing the actorUserId (which must still record who pulled
-// the lever — the Super, not the worker). See routes/admin.ts /super/* and
-// EquipmentTab.tsx Super action buttons.
+// the audit metadata makes an act-on-behalf override immediately legible in
+// the audit feed without changing the actorUserId (which must still record
+// who pulled the lever — the `equipment.manage` holder, not the worker). See
+// the `/equipment/:id/*-for` routes and the matching buttons in
+// InventoryTab.tsx.
 function onBehalfOfMeta(currentUserId: string, userId: string) {
   return currentUserId !== userId ? { actedOnBehalfOfUserId: userId } : {};
 }
@@ -236,7 +240,7 @@ export async function fetchJobsByDayForCheckout(
  *   • Percent allocation uses each worker's `equipmentCostPercent` when
  *     EVERY worker has one and they sum to 100 (tolerance 0.001). Else
  *     even-split.
- *   • EMPLOYEE / TRAINEE workers get `amount = 0` after allocation. Their
+ *   • Non-contractor workers get `amount = 0` after allocation. Their
  *     equipment usage is already covered upstream by the higher business
  *     margin charged on their jobs (no actual loss to the business —
  *     it's an accounting note that the cost was paid elsewhere). The row
@@ -247,7 +251,7 @@ export async function fetchJobsByDayForCheckout(
  *     that would punish contractors for crewing with employees.
  */
 export function calculateContractorSplits(
-  workers: Array<{ userId: string; equipmentCostPercent: number | null; workerType: string | null }>,
+  workers: Array<{ userId: string; equipmentCostPercent: number | null; workerType: WorkerType | null }>,
   rentalCost: number,
 ): {
   splits: Array<{ userId: string; percent: number; amount: number }>;
@@ -269,7 +273,11 @@ export function calculateContractorSplits(
     seen.add(w.userId);
     const percent = useCustom ? (w.equipmentCostPercent ?? 0) : 100 / workers.length;
     const rawShare = Math.round(rentalCost * (percent / 100) * 100) / 100;
-    const billable = w.workerType === "CONTRACTOR" || w.workerType === null;
+    // Only contractors carry equipment cost. An UNTYPED worker used to be
+    // billed too (`|| workerType === null`) on the assumption that unknown
+    // meant contractor — the same guess that charged them a contractor fee.
+    // Nobody is billed until someone says how they are paid.
+    const billable = isFeeable(w.workerType);
     const amount = billable ? rawShare : 0;
     contractorTotal += amount;
     splits.push({
@@ -307,7 +315,7 @@ async function writeCheckoutSplits(
   ];
   if (baseWorkers.length === 0) return { contractorTotal: 0 };
 
-  // Resolve workerType for each worker — needed to zero out W-2 / trainee
+  // Resolve workerType for each worker — needed to zero out W-2
   // shares. One query for all of them avoids a per-member round-trip.
   const userIds = [...new Set(baseWorkers.map((w) => w.userId))];
   const users = await tx.user.findMany({
@@ -397,7 +405,7 @@ export const equipment: ServicesEquipment = {
     });
   },
 
-  async listAllAdmin() {
+  async listAllUnscoped() {
     const rows = await prisma.equipment.findMany({
       orderBy: { createdAt: "desc" },
       include: {
@@ -555,9 +563,26 @@ export const equipment: ServicesEquipment = {
       requiredPolicyIds?: string[];
     }
   ) {
+    // THE SIGNATURE SAYS `shortDesc: string` AND NOTHING CHECKED IT.
+    //
+    // The route hands `req.body` straight through untyped, so a POST
+    // without the field wrote `shortDesc: undefined` and Prisma stored
+    // NULL — the column is `String?`. Three rows with no name, no brand,
+    // no model and no QR slug reached the dev database that way, and the
+    // Inventory tab then died sorting them. A TypeScript parameter type
+    // is not a runtime check at a trust boundary; this is.
+    const shortDesc = typeof input.shortDesc === "string" ? input.shortDesc.trim() : "";
+    if (!shortDesc) {
+      throw new ServiceError(
+        "SHORT_DESC_REQUIRED",
+        "Equipment needs a short description — it is how the item is named everywhere in the app.",
+        400,
+      );
+    }
+
     return prisma.$transaction(async (tx) => {
       const data: Prisma.EquipmentCreateInput = {
-        shortDesc: input.shortDesc,
+        shortDesc,
         longDesc: input.longDesc ?? "",
         ...(input.qrSlug !== undefined ? { qrSlug: input.qrSlug } : {}),
         ...(input.brand !== undefined ? { brand: input.brand } : {}),
@@ -822,7 +847,7 @@ export const equipment: ServicesEquipment = {
         await writeAudit(tx, AUDIT.EQUIPMENT.FORCE_RELEASED, currentUserId, {
           equipmentRecord: updated,
           checkoutRecord: checkout,
-          // Carry the per-day breakdown so the audit log lets an admin
+          // Carry the per-day breakdown so the audit log lets someone with `equipment.manage`
           // reconstruct any charge (per issue #17 from the design doc).
           rentalBreakdown: rental?.breakdown ?? null,
         });
@@ -852,10 +877,33 @@ export const equipment: ServicesEquipment = {
           409
         );
 
-      // Trainees cannot reserve any equipment
-      const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
-      if (user.workerType === "TRAINEE") {
-        throw new ServiceError("TRAINEE_NOT_ALLOWED", "Trainees cannot reserve equipment.", 403);
+      // May this person take stock out? That is `inventory.pull`, resolved
+      // from their roles. NOT "field clearance" — `work.claim` is the
+      // authority to pick WORK up, and the two are separately grantable so
+      // the office person who fetches supplies can hold one without the
+      // other. The `canPullInventory` column and resolvePrivileges are gone:
+      // two stores for one fact, and they had already disagreed.
+      const user = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        
+      });
+      // THE TARGET, NOT THE CALLER — `userId` is whoever the equipment is
+      // being reserved FOR, which may not be the person asking (someone with `equipment.manage` can
+      // reserve on a worker's behalf). So `userCan` by id is the RIGHT tool
+      // here: the question is whether that person is cleared to hold stock,
+      // and the answer must not change because the caller is looking through
+      // a narrower perspective. Contrast `callerCan`, which is for "may I do this".
+      //
+      // "Trainee" is no longer a worker type, and this is not the field-work
+      // question either — it is specifically `inventory.pull`. The route
+      // guard checks the caller; this is the service-level backstop on
+      // whoever will actually hold the equipment.
+      if (!(await userCan(tx, userId, "inventory.pull"))) {
+        throw new ServiceError(
+          "NOT_CLEARED_FOR_INVENTORY",
+          "You are not cleared to take equipment out.",
+          403,
+        );
       }
 
       // Group rental gate: only the group's claimer can reserve on behalf of
@@ -1166,7 +1214,7 @@ export const equipment: ServicesEquipment = {
   async listEquipmentCharges(params?: { userId?: string; from?: string; to?: string; cutoff?: Date | null }) {
     // When userId is supplied we return *that worker's share* — solo rentals
     // (Checkout.userId === userId) plus group rentals where they have a
-    // CheckoutSplit row. Without userId we return all rentals (admin view).
+    // CheckoutSplit row. Without userId we return all rentals (management view).
     //
     // Business Start Date filter — pre-cutoff charges (by releasedAt) hidden.
     // Anchored on releasedAt because rentalCost only materializes at release;
@@ -1199,7 +1247,7 @@ export const equipment: ServicesEquipment = {
         },
       });
       // Group rentals where this user has a CheckoutSplit. We require
-      // `amount: { gt: 0 }` so employee/trainee splits (which the splitter
+      // `amount: { gt: 0 }` so W-2 splits (which the splitter
       // zeros out — usage covered by their business margin) stay out of
       // the money tab. Their audit-trail row still exists on the parent
       // Checkout; we just don't surface it as a charge to the user.
@@ -1293,7 +1341,7 @@ export const equipment: ServicesEquipment = {
   // Equipment-usage history for the Usage dashboard. Returns actual checkouts
   // (checkedOutAt set — reservations that were never picked up don't count as
   // usage) overlapping the requested range. With userId the result is scoped
-  // to one worker's own checkouts; without it, every worker (admin view).
+  // to one worker's own checkouts; without it, every worker (management view).
   async listUsage(params?: { from?: string; to?: string; userId?: string; cutoff?: Date | null }) {
     const where: any = { checkedOutAt: { not: null } };
     if (params?.to) where.checkedOutAt.lte = etEndOfDay(params.to as EtDateKey);
@@ -1307,7 +1355,7 @@ export const equipment: ServicesEquipment = {
     // Business Start Date filter — hide checkouts that happened pre-cutoff.
     // Anchored on checkedOutAt (when the usage event occurred) rather than
     // releasedAt: this tab cares about WHEN equipment was used, and active
-    // (releasedAt=null) checkouts must remain visible. Super reveal header
+    // (releasedAt=null) checkouts must remain visible. the `books.view` reveal header
     // returns null cutoff in the route, so this is a no-op when revealed.
     if (params?.cutoff) {
       const c = params.cutoff;

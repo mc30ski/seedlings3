@@ -106,7 +106,7 @@ export async function startPairing(meta: { ip?: string | null; userAgent?: strin
 
   // audit-allow: a pairing REQUEST is not a state change worth a row — any
   // device that loads /display creates one, and most expire unapproved. The
-  // approval is the security event, and admin.ts audits that.
+  // approval is the security event, and the approve path audits that.
   const pairing = await prisma.displayPairing.create({
     data: {
       code,

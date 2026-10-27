@@ -54,7 +54,7 @@ export default function ReceiptUpload({
   // route family can reach it for the current caller.
   const base =
     apiBase ??
-    (businessExpenseId ? `/api/admin/business-expenses/${businessExpenseId}` : null);
+    (businessExpenseId ? `/api/business-expenses/${businessExpenseId}` : null);
 
   async function handleUpload(file: File) {
     if (!base) {

@@ -1,0 +1,344 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
+import {
+  Badge,
+  Box,
+  Button,
+  Card,
+  HStack,
+  Select,
+  Spinner,
+  Text,
+  VStack,
+  createListCollection,
+} from "@chakra-ui/react";
+import { CalendarRange, ChevronDown, RefreshCw, X } from "lucide-react";
+import DateInput from "@/src/ui/components/DateInput";
+import { apiGet } from "@/src/lib/api";
+import { type WorkerOccurrence } from "@/src/lib/types";
+import { fmtDate, bizDateKey, bizToday, bizTomorrow, bizYesterday } from "@/src/lib/dates";
+import { clientLabel, prettyStatus } from "@/src/lib/labels";
+import { occurrenceStatusColor } from "@/src/lib/statusColors";
+import { StatusBadge } from "@/src/ui/components/StatusBadge";
+import { MapLink } from "@/src/ui/helpers/Link";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import { openEventSearch } from "@/src/lib/bus";
+import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
+
+// `localDate` removed — use `bizDateKey` from @/src/lib/dates directly.
+
+const presetItems = [
+  { value: "overdueOnly", label: "Overdue only" },
+  { value: "overdueAndNext3", label: "Overdue + Next 3 days" },
+  { value: "overdueAndNextWeek", label: "Overdue + Next week" },
+];
+const presetCollection = createListCollection({ items: presetItems });
+
+export default function UnclaimedTab() {
+  const [items, setItems] = useState<WorkerOccurrence[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState("");
+
+  // Date preset (default: next week)
+  const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("unclaimed_datePreset", "overdueAndNext3");
+  const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
+  const [dateFrom, setDateFrom] = usePersistedState("unclaimed_dateFrom", presetDates.from);
+  const [dateTo, setDateTo] = usePersistedState("unclaimed_dateTo", presetDates.to);
+
+  // Overdue
+  const [overdueActive, setOverdueActive] = usePersistedState("unclaimed_overdue", false);
+
+  // Re-apply preset dates when preset changes
+  useEffect(() => {
+    if (overdueActive) {
+      setDateFrom("");
+      setDateTo(bizYesterday());
+    } else if (datePreset) {
+      const d = computeDatesFromPreset(datePreset);
+      setDateFrom(d.from);
+      setDateTo(d.to);
+    }
+  }, [datePreset, overdueActive]);
+
+  useEffect(() => {
+    if (!quickDateMenuOpen) return;
+    const close = () => setQuickDateMenuOpen(false);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [quickDateMenuOpen]);
+
+  async function load(displayLoading = true, overrideDates?: { from?: string; to?: string }) {
+    if (displayLoading) setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      const qFrom = overrideDates?.from ?? dateFrom;
+      const qTo = overrideDates?.to ?? dateTo;
+      if (qFrom) qs.set("from", qFrom);
+      if (qTo) qs.set("to", qTo);
+      const list = await apiGet<WorkerOccurrence[]>(`/api/occurrences?${qs}`);
+      setItems(Array.isArray(list) ? list : []);
+    } catch {
+      setItems([]);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { void load(); }, [dateFrom, dateTo]);
+
+  // Refresh overdue count
+  const filtered = useMemo(() => {
+    const excludeStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "CANCELED", "REJECTED", "ACCEPTED"]);
+    let rows = items.filter((occ) =>
+      (occ.assignees ?? []).length === 0 &&
+      !excludeStatuses.has(occ.status)
+    );
+
+    if (overdueActive) {
+      const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+      rows = rows.filter((occ) => !overdueExclude.has(occ.status));
+    }
+
+    const qlc = q.trim().toLowerCase();
+    if (qlc) {
+      rows = rows.filter((occ) =>
+        [
+          occ.job?.property?.displayName,
+          occ.job?.property?.street1,
+          occ.job?.property?.city,
+          occ.job?.property?.client?.displayName,
+          occ.status,
+          occ.notes,
+          (occ as any).jobType,
+        ]
+          .filter(Boolean)
+          .some((s) => (s as string).toLowerCase().includes(qlc))
+      );
+    }
+
+    // Sort chronologically (most urgent first)
+    rows.sort((a, b) => (a.startAt ?? "").localeCompare(b.startAt ?? ""));
+
+    return rows;
+  }, [items, q, overdueActive]);
+
+  if (loading && items.length === 0) {
+    return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
+  }
+
+  return (
+    <Box w="full" pb={8}>
+      <Box mb={3} p={3} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
+        <Text fontSize="sm" fontWeight="medium" color="yellow.fg">Unclaimed Jobs</Text>
+        <Text fontSize="xs" color="yellow.fg">Showing overdue and upcoming unassigned jobs. Red = overdue, yellow = today/tomorrow, green = upcoming. Default view: overdue + next 3 days.</Text>
+      </Box>
+
+      <HStack mb={2} gap={2}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+          <RefreshCw size={14} />
+        </Button>
+        <SearchWithClear
+          value={q}
+          onChange={setQ}
+          placeholder="Search…"
+          inputId="super-unclaimed-search"
+        />
+      </HStack>
+
+      <HStack mb={2} gap={2} align="center" wrap="wrap">
+        <DateInput
+          value={dateFrom}
+          onChange={(val) => {
+            setDateFrom(val);
+            setDatePreset(null);
+            setOverdueActive(false);
+            if (dateTo && val && val > dateTo) setDateTo(val);
+          }}
+        />
+        <Text fontSize="sm">–</Text>
+        <DateInput
+          value={dateTo}
+          onChange={(val) => {
+            setDateTo(val);
+            setDatePreset(null);
+            setOverdueActive(false);
+            if (dateFrom && val && val < dateFrom) setDateFrom(val);
+          }}
+        />
+        <Select.Root
+          collection={presetCollection}
+          value={datePreset ? [datePreset] : []}
+          onValueChange={(e) => {
+            const val = e.value[0] as DatePreset;
+            if (!val) return;
+            setDatePreset(val);
+            setOverdueActive(false);
+          }}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2">
+              <CalendarRange size={14} />
+              <Select.ValueText placeholder="Date range" />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {presetItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+      </HStack>
+
+      <HStack mb={2} gap={1} wrap="wrap" pl="2">
+        <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+          <Badge size="sm" colorPalette={datePreset === "overdueOnly" ? "red" : "yellow"} variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
+            {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : "Select"}
+            {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg={datePreset === "overdueOnly" ? "red.500" : "yellow.500"} color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+          </Badge>
+          {quickDateMenuOpen && (
+            <VStack position="fixed" bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="160px"
+              ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 168))}px`; } }}>
+              {presetItems.map((it) => (
+                <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? (it.value === "overdueOnly" ? "red" : "yellow") : undefined} w="full" justifyContent="start"
+                  onClick={() => { setQuickDateMenuOpen(false); setDatePreset(it.value as DatePreset); setOverdueActive(false); }}>
+                  {it.label}
+                </Button>
+              ))}
+            </VStack>
+          )}
+        </Box>
+          {!(datePreset === "overdueAndNext3" && !q) && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setOverdueActive(false);
+                setDatePreset("overdueAndNext3");
+                setQ("");
+              }}
+            >
+              ✕ Clear
+            </Badge>
+          )}
+      </HStack>
+
+      <Text fontSize="xs" color="fg.muted" mb={2}>
+        {filtered.length} unclaimed job{filtered.length !== 1 ? "s" : ""}
+      </Text>
+
+      {filtered.length === 0 && !loading && (
+        <Box textAlign="center" py={10}>
+          <Text fontSize="lg" fontWeight="semibold" color="green.fg">All jobs are assigned!</Text>
+          <Text fontSize="sm" color="fg.muted" mt={1}>No unclaimed jobs in the selected date range.</Text>
+        </Box>
+      )}
+
+      <VStack align="stretch" gap={2}>
+        {filtered.map((occ) => {
+          const prop = occ.job?.property;
+          const isVip = !!(prop?.client as any)?.isVip;
+          const vipReason = (prop?.client as any)?.vipReason;
+          const today = bizToday();
+          const tomorrow = bizTomorrow();
+          const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
+          const isOverdue = occDate && occDate < today;
+          const isTodayOrTomorrow = occDate === today || occDate === tomorrow;
+          const isFuture = occDate > tomorrow;
+
+          // Card colors: overdue=red, today/tomorrow=yellow, future=green, VIP overlay
+          const cardBg = isOverdue ? "red.faint" : isTodayOrTomorrow ? "yellow.faint" : isFuture ? "green.faint" : undefined;
+          const cardBorder = isOverdue ? "red.emphasized" : isTodayOrTomorrow ? "yellow.strong" : isFuture ? "green.emphasized" : isVip ? "yellow.strong" : undefined;
+
+          return (
+            <Card.Root
+              key={occ.id}
+              variant="outline"
+              borderColor={cardBorder}
+              bg={cardBg}
+            >
+              <Card.Body py="2" px="3">
+                <VStack align="start" gap={1}>
+                  <Text fontSize="sm" fontWeight="semibold">
+                    {isVip && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
+                    {prop?.displayName}
+                    {prop?.client?.displayName && (
+                      <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(prop.client.displayName)}</Text>
+                    )}
+                  </Text>
+
+                  {isVip && vipReason && (
+                    <Text fontSize="xs" color="yellow.fg" fontWeight="medium">⭐ VIP: {vipReason}</Text>
+                  )}
+
+                  <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
+                    {isOverdue && <StatusBadge status="Overdue" palette="red" variant="solid" />}
+                    {isTodayOrTomorrow && <StatusBadge status={occDate === today ? "Today" : "Tomorrow"} palette="yellow" variant="solid" />}
+                    {isFuture && <StatusBadge status="Upcoming" palette="green" variant="subtle" />}
+                    {occ.isTentative ? (
+                      <StatusBadge status="Tentative" palette="orange" variant="solid" />
+                    ) : occ.status !== "SCHEDULED" ? (
+                      <StatusBadge status={occ.status} palette={occurrenceStatusColor(occ.status)} variant="solid" />
+                    ) : null}
+                    {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
+                    {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
+                    {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
+                    {occ.mustBeAssigned && <StatusBadge status="Administered" palette="red" variant="outline" />}
+                  </Box>
+
+                  <HStack gap={3} fontSize="xs" wrap="wrap">
+                    {occ.startAt && <Text color={isOverdue ? "red.fg" : isTodayOrTomorrow ? "yellow.fg" : isFuture ? "green.fg" : "fg.muted"} fontWeight={isOverdue || isTodayOrTomorrow ? "medium" : "normal"}>{fmtDate(occ.startAt)}</Text>}
+                    {(occ as any).jobType && (
+                      <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                        {prettyStatus((occ as any).jobType)}
+                      </Badge>
+                    )}
+                    {occ.price != null && (
+                      <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                        ${occ.price.toFixed(2)}
+                      </Badge>
+                    )}
+                    {occ.estimatedMinutes != null && (
+                      <Text color="fg.muted">{occ.estimatedMinutes}m</Text>
+                    )}
+                  </HStack>
+
+                  <Box fontSize="xs">
+                    <MapLink address={[prop?.street1, prop?.city, prop?.state].filter(Boolean).join(", ")} />
+                  </Box>
+
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    colorPalette="blue"
+                    onClick={() =>
+                      openEventSearch(
+                        "jobsTabToServicesTabSearch",
+                        prop?.displayName ?? "",
+                        
+                        `${occ.job?.id}:${occ.id}`,
+                      )
+                    }
+                  >
+                    Manage in Services
+                  </Button>
+                </VStack>
+              </Card.Body>
+            </Card.Root>
+          );
+        })}
+      </VStack>
+    </Box>
+  );
+}

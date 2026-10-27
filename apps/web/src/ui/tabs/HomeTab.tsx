@@ -1,19 +1,25 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HomeTab — blended-role Home tab.
+// HomeTab — one Home tab for all of staff.
 //
-// One tab serves worker/admin/super via a `scope` prop. The layout is
-// capability-additive:
-//   • Worker : self-view (HomeBanners → MyDashboard → hero card →
-//              WorkerHourlyPayCard).
-//   • Admin  : adds the AdminViewAsSelector + badges above the hero,
-//              which drive `viewAsUserId`/`subsetUserIds`/`aggregate`
-//              — the same hero and pay card re-render scoped to the
-//              picker. The team pay-per-hour section appears alongside.
-//   • Super  : adds the Operations rollup at the very top (money /
-//              jobs / equipment / team & clients) via the parts file.
-// Client role is walled off — HomeTab is worker-and-up only.
+// The layout is CAPABILITY-ADDITIVE, and each addition asks for the
+// capability its own data needs — never for a tier:
+//   • baseline        : self-view (HomeBanners → MyDashboard → hero card
+//                       → WorkerHourlyPayCard). Everyone gets this.
+//   • `people.manage` : adds the ViewAsSelector + badges above the hero,
+//                       which drive `viewAsUserId`/`subsetUserIds`/
+//                       `aggregate` — the same hero and pay card re-render
+//                       scoped to the picker. MANAGE, not view: reading
+//                       somebody else's day is what the picker does, and
+//                       that is what its endpoints check.
+//   • `reports.view`  : adds the TEAM rollup — Overview · team and the
+//                       team pay tiles, from /dashboard-summary/aggregate.
+//   • `reports.business`: adds the business-wide Operations rollup (money / jobs /
+//                       equipment / team & clients) via the parts file,
+//                       and permits the aggregate view.
+// Someone holding both gets both; someone holding neither still gets a
+// working Home. The client portal is a separate shell, not a case here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from "react";
@@ -34,36 +40,39 @@ import AllWorkersHourlyPayCards from "@/src/ui/components/AllWorkersHourlyPayCar
 import type { Me } from "@/src/lib/types";
 import { MyVehiclesSection, OperationsPanel } from "@/src/ui/tabs/HomeTab.parts";
 import {
-  AdminViewAsBadges,
-  AdminViewAsSelector,
-  type AdminWorker,
+  ViewAsBadges,
+  ViewAsSelector,
+  type ViewAsWorker,
 } from "@/src/ui/tabs/JobsTab.parts";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { bumpMyActivities } from "@/src/lib/bus";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
+import type { Scope } from "@/src/lib/scope";
 
 type Props = {
   me: Me | null | undefined;
   onLaunchWorkflow: (name: string, opts?: { targetDate?: string }) => void;
-  // Blended-role scope. Worker layer is the always-on self-view; Admin
-  // adds the Team dashboard; Super adds Operations. Additive — never
-  // subtractive — so a Super sees Worker + Admin + Super sections.
-  scope: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
-  // Admin-only: when set, the dashboard is computed for this worker instead of the
-  // logged-in user. Hero CTAs that launch worker workflows (begin/plan workday) are
-  // disabled in this mode since the actions belong to the viewed worker. Tile click-
-  // throughs are rerouted to the admin's equivalent tabs, pre-filtered to the worker.
+  // What the reader may do. The self-view is always on; `people.view`
+  // adds the Team dashboard and the worker picker, `reports.view` adds the
+  // TEAM rollup and `reports.business` the business-wide Operations
+  // rollup. Sections ADD — holding more never removes one.
+  scope: Scope;
+  // Needs `people.view`: when set, the dashboard is computed for this worker
+  // instead of the logged-in user. Hero CTAs that launch workday workflows
+  // (begin/plan) are disabled in this mode since the actions belong to the
+  // viewed worker. Tile click-throughs are rerouted to the equivalent tabs,
+  // pre-filtered to that worker.
   viewAsUserId?: string;
-  // Admin-only: display name + first name for the impersonated worker (drives the
-  // greeting copy "Good morning, Bob" instead of using the admin's identity).
+  // Display name + first name for the viewed worker, so the greeting reads
+  // "Good morning, Bob" rather than using the viewer's own identity.
   viewAsDisplayName?: string;
-  // Admin-only: company-wide aggregate mode. Hits a different endpoint that sums
-  // values across the whole team. Hero is replaced with a single team-summary
-  // banner; tile click-throughs go to admin tabs WITHOUT a worker filter.
-  // Mutually exclusive with viewAsUserId.
+  // Needs `people.view`: company-wide aggregate mode. Hits a different
+  // endpoint that sums values across the whole team. Hero is replaced with a
+  // single team-summary banner; tile click-throughs go to the destination
+  // tabs WITHOUT a worker filter. Mutually exclusive with viewAsUserId.
   aggregate?: boolean;
-  // Admin-only: subset team mode. Same shape as aggregate but restricted to the
-  // listed workers — uses the aggregate endpoint with a workerIds filter, and
+  // Needs `people.view`: subset team mode. Same shape as aggregate but
+  // restricted to the listed workers — the aggregate endpoint with a workerIds filter, and
   // tile click-throughs pre-filter destination tabs to those workers. Mutually
   // exclusive with viewAsUserId and aggregate.
   subsetUserIds?: string[];
@@ -71,7 +80,7 @@ type Props = {
 
 // Narrowed to the fields this tab actually consumes. The API returns
 // more (equipment/notices/reminders/tasks/etc. — see
-// routes/worker.ts /dashboard-summary), but the tile grid that used
+// routes/reports.ts /dashboard-summary), but the tile grid that used
 // them was removed. Add fields back here as new UI needs them.
 type Summary = {
   today: number;
@@ -147,18 +156,18 @@ const setLS = (key: string, val: unknown) => {
  *  with the navigation event. The destination tab is force-remounted, reading its fresh state on first render.
  *
  *  Three modes:
- *  - default (no opts): worker mode. Writes wjobs_, equip_w_, pay_w_ keys, dispatches navigate:workerTab.
- *  - opts.adminViewAsUserId: admin-impersonation mode. Writes admin keys + worker-scope filters
- *    (adminjobs_workers, pay_a_persons, equip_a_workers), dispatches navigate:adminTab.
- *  - opts.adminAggregate: admin company-wide mode. Writes admin keys, CLEARS worker-scope filters,
- *    dispatches navigate:adminTab.
+ *  - default (no opts): worker mode. Writes wjobs_, equip_w_, pay_w_ keys, dispatches navigate:staffTab.
+ *  - opts.viewAsUserId_: admin-impersonation mode. Writes admin keys + worker-scope filters
+ *    (jobs_workers, pay_a_persons, equip_a_workers), dispatches navigate:staffTab.
+ *  - opts.teamAggregate: admin company-wide mode. Writes admin keys, CLEARS worker-scope filters,
+ *    dispatches navigate:staffTab.
  */
 type NavOpts = {
-  adminViewAsUserId?: string;
-  adminAggregate?: boolean;
+  viewAsUserId_?: string;
+  teamAggregate?: boolean;
   // When provided (and non-empty), navigation pre-writes this list of worker IDs
   // to the destination tab's worker filter, so the destination shows the same subset.
-  adminSubsetUserIds?: string[];
+  teamSubsetUserIds?: string[];
 };
 function navigateWithFilter(
   tab: "jobs" | "equipment" | "payments",
@@ -170,21 +179,21 @@ function navigateWithFilter(
     sessionStorage.removeItem("servicesTabToJobsNav");
   } catch {}
 
-  const adminViewAsUserId = opts?.adminViewAsUserId;
-  const adminAggregate = !!opts?.adminAggregate;
-  const adminSubsetUserIds = opts?.adminSubsetUserIds;
-  const adminMode = !!adminViewAsUserId || adminAggregate || (!!adminSubsetUserIds && adminSubsetUserIds.length > 0);
+  const viewAsUserId_ = opts?.viewAsUserId_;
+  const teamAggregate = !!opts?.teamAggregate;
+  const teamSubsetUserIds = opts?.teamSubsetUserIds;
+  const teamMode = !!viewAsUserId_ || teamAggregate || (!!teamSubsetUserIds && teamSubsetUserIds.length > 0);
   // For destination-tab worker filters: subset takes precedence (use the list),
   // then impersonation (single worker), then aggregate (clear it).
-  const destWorkerIds: string[] = adminSubsetUserIds && adminSubsetUserIds.length > 0
-    ? adminSubsetUserIds
-    : adminViewAsUserId
-      ? [adminViewAsUserId]
+  const destWorkerIds: string[] = teamSubsetUserIds && teamSubsetUserIds.length > 0
+    ? teamSubsetUserIds
+    : viewAsUserId_
+      ? [viewAsUserId_]
       : [];
 
   if (tab === "jobs") {
     // Worker JobsTab uses prefix "wjobs", admin uses "ajobs". Reset everything filterable.
-    const pfx = adminMode ? "ajobs" : "wjobs";
+    const pfx = teamMode ? "ajobs" : "wjobs";
     setLS(`${pfx}_status`, [filter.status ?? "ALL"]);
     setLS(`${pfx}_type`, [filter.type ?? "ALL"]);
     setLS(`${pfx}_kind`, [filter.kind ?? "ALL"]);
@@ -205,16 +214,16 @@ function navigateWithFilter(
     // we write it raw too — otherwise the reset still fires and clobbers what we just
     // wrote, leaving the user with default filters and "everything" in the feed.
     try { localStorage.setItem(`${pfx}_lastUsedDate`, bizToday()); } catch {}
-    if (adminMode) {
+    if (teamMode) {
       // Worker filter for destination JobsTab: subset list, single worker, or empty.
-      setLS(`adminjobs_workers`, destWorkerIds);
+      setLS(`jobs_workers`, destWorkerIds);
     }
   } else if (tab === "payments") {
-    const pfx = adminMode ? "pay_a" : "pay_w";
+    const pfx = teamMode ? "pay_a" : "pay_w";
     setLS(`${pfx}_datePreset`, filter.datePreset ?? null);
     setLS(`${pfx}_dateFrom`, filter.dateFrom ?? "");
     setLS(`${pfx}_dateTo`, filter.dateTo ?? "");
-    if (adminMode) {
+    if (teamMode) {
       setLS(`${pfx}_method`, [filter.method ?? "ALL"]);
       // Person filter: subset list, single worker, or empty.
       setLS(`${pfx}_persons`, destWorkerIds);
@@ -222,20 +231,20 @@ function navigateWithFilter(
       setLS(`${pfx}_type`, [filter.method ?? "ALL"]);
     }
   } else if (tab === "equipment") {
-    const pfx = adminMode ? "equip_a" : "equip_w";
-    // Worker view supports "MY_RESERVED" / "MY_CHECKED_OUT" virtual statuses that are
+    const pfx = teamMode ? "equip_a" : "equip_w";
+    // Self-scoped view supports "MY_RESERVED" / "MY_CHECKED_OUT" virtual statuses that are
     // implicitly scoped to the current user. In admin mode the equivalent is the global
     // RESERVED/CHECKED_OUT status combined with the worker filter set below — translate
     // here so admin tile clicks land on a meaningful Equipment view.
-    let adminStatus = filter.status ?? "ALL";
-    if (adminMode) {
-      if (filter.status === "MY_RESERVED") adminStatus = "RESERVED";
-      else if (filter.status === "MY_CHECKED_OUT") adminStatus = "CHECKED_OUT";
+    let manageStatus = filter.status ?? "ALL";
+    if (teamMode) {
+      if (filter.status === "MY_RESERVED") manageStatus = "RESERVED";
+      else if (filter.status === "MY_CHECKED_OUT") manageStatus = "CHECKED_OUT";
     }
-    setLS(`${pfx}_status`, [adminMode ? adminStatus : (filter.status ?? "CLAIMED")]);
+    setLS(`${pfx}_status`, [teamMode ? manageStatus : (filter.status ?? "CLAIMED")]);
     setLS(`${pfx}_kind`, [filter.kind ?? "ALL"]);
     setLS(`${pfx}_likedOnly`, false);
-    if (adminMode) {
+    if (teamMode) {
       // Worker filter: subset list, single worker, or empty.
       setLS(`${pfx}_workers`, destWorkerIds);
     }
@@ -244,7 +253,7 @@ function navigateWithFilter(
   // Admin and Worker share inner-tab value names for the Work-category
   // tabs (jobs/payments/equipment), so the destination is the same
   // string in both modes — no remap needed.
-  const eventName = adminMode ? "navigate:adminTab" : "navigate:workerTab";
+  const eventName = teamMode ? "navigate:staffTab" : "navigate:staffTab";
   window.dispatchEvent(new CustomEvent(eventName, { detail: { tab, remount: true } }));
 }
 
@@ -274,13 +283,18 @@ export default function HomeTab({
   // inner banners (NotificationOptInBanner, CompliancePromptBanner) —
   // this file no longer needs to track any of it.
 
-  // Blended admin picker — matches the JobsTab pattern. When
-  // scope.isAdmin is on AND the caller didn't already pass explicit
-  // viewAs/aggregate/subset props, this internal state feeds the same
-  // load() / render code paths the shipped HomeTab uses. Default
+  // The worker picker — matches the JobsTab pattern. Mounted on
+  // `people.manage`, and only when the caller did not already pass explicit
+  // viewAs/aggregate/subset props. This internal state feeds the same
+  // load() / render code paths as those props. Default
   // (empty selection) is "All Workers" = aggregate; 1 selection =
-  // single-worker view-as; N selections = subset.
-  const [adminWorkers, setAdminWorkers] = useState<AdminWorker[]>([]);
+  // view-as on ONE person; N selections = subset.
+  // IT WAS MOUNTED ON `people.view` BECAUSE THAT GUARDS `/workers` — the
+  // list the picker reads. That is the wrong endpoint to reason from: a
+  // control asks for what the ACTION needs, not what populating its
+  // options needs. Reading the list is `people.view`; reading the person
+  // you pick is `people.manage`.
+  const [viewAsWorkers, setViewAsWorkers] = useState<ViewAsWorker[]>([]);
   const [selfViewAsIds, setSelfViewAsIds] = usePersistedState<string[]>(
     "homeTab_viewAsIds",
     [],
@@ -355,14 +369,29 @@ export default function HomeTab({
     hasVehicles: boolean;
   } | null>(null);
 
+  // `people.manage`, NOT `people.view`.
+  //
+  // `people.view` is "can see the directory" and the Trainee rung holds it,
+  // so every Worker inherits it — and every Worker was offered this picker.
+  // What the picker DOES is read another person's Home: their vehicles,
+  // their compliance, their day. Those endpoints each check
+  // `callerCan(req, "people.manage")` (e.g. routes/vehicles.ts: "Viewing
+  // another worker's vehicles requires people authority"), so the control
+  // was gated on one capability and its own endpoints on a stricter one.
+  // A worker could open the picker, pick a colleague, and collect 403s.
+  //
+  // The sibling mounts were already right and are left alone: JobsTab gates
+  // on `schedule.manage` and InventoryTab on `equipment.manage`, each
+  // matching the routes behind it. This one was the outlier.
   const usingSelfViewAs =
-    scope.isAdmin && !propViewAsUserId && !propAggregate && !propSubsetUserIds?.length;
+    scope.can("people.manage") && !propViewAsUserId && !propAggregate && !propSubsetUserIds?.length;
   useEffect(() => {
-    if (!scope.isAdmin) return;
-    apiGet<AdminWorker[]>("/api/workers")
-      .then((list) => setAdminWorkers(Array.isArray(list) ? list : []))
+    // The worker picker reads the team.
+    if (!scope.can("people.manage")) return;
+    apiGet<ViewAsWorker[]>("/api/workers")
+      .then((list) => setViewAsWorkers(Array.isArray(list) ? list : []))
       .catch(() => {});
-  }, [scope.isAdmin]);
+  }, [scope]);
 
   // Effective props — either what the parent passed, or what the
   // internal picker derives. Downstream code reads these names.
@@ -371,13 +400,13 @@ export default function HomeTab({
     : propViewAsUserId;
   const rawViewAsDisplayName = usingSelfViewAs
     ? (selfViewAsIds.length === 1
-        ? (adminWorkers.find((w) => w.id === selfViewAsIds[0])?.displayName ?? undefined)
+        ? (viewAsWorkers.find((w) => w.id === selfViewAsIds[0])?.displayName ?? undefined)
         : undefined)
     : propViewAsDisplayName;
 
   // SELECTING YOURSELF IS NOT IMPERSONATION.
   //
-  // The operator appears in their own /api/workers picker, so an admin can
+  // The operator appears in their own /api/workers picker, so someone with `people.view` can
   // pick themselves as the single selected worker. Everything downstream
   // keys off `isViewingOther = !!viewAsUserId`, which had no self-check —
   // so choosing your own name put the page into full impersonation mode
@@ -398,9 +427,16 @@ export default function HomeTab({
   const subsetUserIds = usingSelfViewAs
     ? (selfViewAsIds.length > 1 ? selfViewAsIds : undefined)
     : propSubsetUserIds;
+  // THE TEAM AGGREGATE NEEDS `reports.view`, and the worker picker that
+  // leads here is offered to anyone who runs the schedule. A coordinator is
+  // both: they pick workers and they do not read the business rollup, so
+  // "no selection → All Workers" sent them to an endpoint that refuses
+  // them. Without the capability there is no aggregate mode — they get
+  // their own summary, which is the honest answer rather than an error.
+  const mayAggregate = !!scope?.can("reports.view");
   const aggregate = usingSelfViewAs
-    ? selfViewAsIds.length === 0  // no selection → All Workers aggregate
-    : propAggregate;
+    ? mayAggregate && selfViewAsIds.length === 0  // no selection → All Workers aggregate
+    : mayAggregate && propAggregate;
 
   const isViewingOther = !!viewAsUserId;
   // Subset mode: aggregate-style view restricted to a list of workers. Treated like
@@ -412,11 +448,11 @@ export default function HomeTab({
   // Local nav helpers that fold in impersonation/aggregate/subset context. Always reach
   // for these from inside the component instead of the module-level ones.
   const navOpts: NavOpts | undefined = isSubset
-    ? { adminAggregate: true, adminSubsetUserIds: subsetUserIds }
+    ? { teamAggregate: true, teamSubsetUserIds: subsetUserIds }
     : aggregate && !viewAsUserId
-      ? { adminAggregate: true }
+      ? { teamAggregate: true }
       : viewAsUserId
-        ? { adminViewAsUserId: viewAsUserId }
+        ? { viewAsUserId_: viewAsUserId }
         : undefined;
   const navTo = (tab: "jobs" | "equipment" | "payments", filter: TabFilter) =>
     navigateWithFilter(tab, filter, navOpts);
@@ -500,7 +536,7 @@ export default function HomeTab({
    * it have to flip on the same hour or they contradict each other.
    */
   const isEveningGreeting = etHour >= 17;
-  // When impersonating, the greeting names the viewed worker, not the admin.
+  // When impersonating, the greeting names the viewed worker, not a caller with `people.view`.
   const firstName = isViewingOther
     ? (viewAsDisplayName?.split(" ")[0] || "")
     : (me?.displayName?.split(" ")[0] || me?.email?.split("@")[0] || "");
@@ -514,7 +550,7 @@ export default function HomeTab({
   // paint. Closed, it renders nothing, so the loading view is unchanged.
   const tabHelp = (
         <TabExplainer
-          explainerId={`seedlings:homeTab:guideOpen:${scope.isSuper ? "super" : scope.isAdmin ? "admin" : "worker"}`}
+          explainerId="seedlings:homeTab:guideOpen"
         >
           <ExplainerText>
             Your day in one place: the next thing to do as a big button, your workday clock,
@@ -527,8 +563,8 @@ export default function HomeTab({
             payroll actually paid you. Someone paid as a contractor has no payroll record, so
             that card stays hidden.
           </ExplainerText>
-          {scope.isAdmin && (
-            <RoleSection role="Admin">
+          {scope.can("people.view") && (
+            <CapabilitySection capability="people.view" scope={scope}>
               <ExplainerText>
                 The worker picker re-scopes the whole page. Nothing selected is the{" "}
                 <Em>team aggregate</Em> — who is on the clock and what they are doing; one
@@ -539,15 +575,15 @@ export default function HomeTab({
                 render in the single-worker and own-view modes, because none of them means
                 anything averaged across a team.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
-          {scope.isSuper && (
-            <RoleSection role="Super">
+          {scope.can("reports.business") && (
+            <CapabilitySection capability="reports.business" scope={scope}>
               <ExplainerText>
                 The <Em>Insights</Em> rollup above your day is yours alone: money, jobs,
                 equipment, team and clients under one period control.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
         </TabExplainer>
   );
@@ -730,7 +766,7 @@ export default function HomeTab({
    *  - `workdayStarted === false` — a definite NO, not the `null` the
    *    lookup starts on, so the affordance never appears and then
    *    vanishes mid-render.
-   *  - not viewing another worker — an admin inspecting someone else's
+   *  - not viewing another worker — someone with `people.view` inspecting someone else's
    *    day must not start it for them.
    *
    * Gates the card's click, its hover and its action row together, so the
@@ -1034,12 +1070,12 @@ export default function HomeTab({
 
         {/* Super Insights — Operations rollup (money, jobs, equipment,
             team & clients) driven by one period control. Placed
-            ABOVE the admin picker so the highest-level lens
+            ABOVE the worker picker so the widest view
             (business-wide pulse) sits at the top; the picker below
             narrows the main hero/tile area. Wrapped in the orange
             Insights card that matches the Equipment + Jobs Insights
             sections for a consistent Super visual language. */}
-        {scope.isSuper && (
+        {scope.can("reports.business") && (
           <Dashboard
             storageKey="seedlings:homeTab:insightsOpen"
             title="Insights"
@@ -1054,7 +1090,7 @@ export default function HomeTab({
           </Dashboard>
         )}
 
-        {/* Admin picker — mirrors the shipped Admin → Work → Home
+        {/* Admin picker — mirrors the shipped Work → Home
             worker selector. Default (nothing selected) = All Workers
             aggregate; 1 = single-worker view-as; N = subset team
             view. The same hero / hourly-pay / weekly-chart / tile
@@ -1062,8 +1098,8 @@ export default function HomeTab({
         {usingSelfViewAs && (
           <VStack align="stretch" gap={1}>
             <HStack gap={2} align="center" wrap="nowrap">
-              <AdminViewAsSelector
-                workers={adminWorkers}
+              <ViewAsSelector
+                workers={viewAsWorkers}
                 selected={selfViewAsIds}
                 onChange={setSelfViewAsIds}
               />
@@ -1074,8 +1110,8 @@ export default function HomeTab({
                 stretched to 100% width). */}
             {selfViewAsIds.length > 0 && (
               <HStack gap={1} wrap="wrap">
-                <AdminViewAsBadges
-                  workers={adminWorkers}
+                <ViewAsBadges
+                  workers={viewAsWorkers}
                   selected={selfViewAsIds}
                 />
                 {/* Same "✕ Clear" affordance the Jobs filter bar uses —
@@ -1100,14 +1136,14 @@ export default function HomeTab({
         {/* MY ACTIVITIES — the day's hero card plus the self-view
             banners, merged into one section. Reflects the
             currently-scoped user: logged-in user by default, or the
-            impersonated worker when the admin picker has exactly
+            impersonated worker when the picker has exactly
             one selection (WorkdayBanner + CompliancePromptBanner
             are view-as-aware; MileageBanner + NotificationOptInBanner
             are inherently self-only and skip themselves in that
             mode — see MyDashboard). Hidden in subset (N workers)
             and aggregate (0 workers, admin scope) modes because
             everything in it is a single-user surface. */}
-        {(!scope.isAdmin || !!viewAsUserId || (!isAggregate && !isSubset)) && (
+        {(!scope.can("people.view") || !!viewAsUserId || (!isAggregate && !isSubset)) && (
           <MyDashboard
             onRefresh={refreshActivities}
             refreshing={activitiesRefreshing}
@@ -1119,14 +1155,14 @@ export default function HomeTab({
         )}
         {/* NOTHING self-scoped renders in team modes (aggregate / subset).
             This previously kept a self-scoped CompliancePromptBanner alive
-            here, on the reasoning that an admin parked in Team overview
+            here, on the reasoning that someone with team access parked in Team overview
             would otherwise never see their own BLOCK-level items before
             PolicyGateInterceptor blocked them. That was reverted
-            deliberately (2026-08-24, product decision): the Admin surface
+            deliberately (2026-08-24, product decision): the surface
             is for a TEAM overview, or for a single selected worker whose
             view you are inspecting and acting on behalf of. The operator's
             OWN items belong in MY WORKDAY — reachable via the Work role,
-            or on the Admin role by selecting yourself in the picker.
+            or on a caller with schedule authority role by selecting yourself in the picker.
             A self-scoped banner floating above a team roster reads as if
             it describes the team, which is what prompted the revert.
             Don't "restore" it without asking. */}
@@ -1178,7 +1214,7 @@ export default function HomeTab({
                     currently on the clock (workday endedAt is null).
                     Rendered ABOVE "Jobs in progress now" because the
                     "who's clocked in" question is the foundational
-                    lens: an admin wants to see who's on before
+                    order: you want to see who's on before
                     drilling into what any of them is doing. Duration
                     ticks live every 30 seconds; states derive from
                     pausedAt (set → PAUSED with amber dot, else
@@ -1190,7 +1226,7 @@ export default function HomeTab({
 
                 {/* Live "who's doing what" panel — only renders in aggregate
                     mode when at least one job is active. Each row links to
-                    the occurrence on the Admin Jobs tab via the existing
+                    the occurrence on a caller with schedule authority Jobs tab via the existing
                     pendingHighlight handoff. */}
                 {(s.inProgressJobs?.length ?? 0) > 0 && (
                   <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.emphasized">
@@ -1206,9 +1242,9 @@ export default function HomeTab({
                           : claimer
                             ? `${claimer.displayName}${others.length > 0 ? ` +${others.length}` : ""}`
                             : occ.assignees.map((a) => a.displayName).join(", ");
-                      // Client name leads the row so the admin's eye lands
+                      // Client name leads the row so the manager’s eye lands
                       // on "who" before "where" — matches the way most
-                      // admins ask "what's <client> doing right now?".
+                      // holders of `people.view` ask "what's <client> doing right now?".
                       // Falls back to the property name alone when the
                       // client name isn't available.
                       const jobLabel =
@@ -1241,14 +1277,13 @@ export default function HomeTab({
                               );
                             } catch {}
                             // Preserve the operator's active scope on
-                            // the jump — a Super clicking a row lands
-                            // on Super → Jobs; an Admin lands on
-                            // Admin → Jobs. JobsTab renders the same
+                            // the jump — someone with `settings.manage` clicking a row lands
+                            // on Jobs; someone with `schedule.manage` lands on
+                            // Jobs. JobsTab renders the same
                             // data via scope, but scope-continuity
                             // matters for the Back button + breadcrumb.
-                            const eventName = scope.isSuper
-                              ? "navigate:superTab"
-                              : "navigate:adminTab";
+                            // One event; the ternary's arms are now the same.
+                            const eventName = "navigate:staffTab";
                             window.dispatchEvent(
                               new CustomEvent(eventName, {
                                 detail: { tab: "jobs", remount: true },
@@ -1312,7 +1347,7 @@ export default function HomeTab({
                 {/* "Completed today" panel — mirrors "In progress now" in
                     structure and click behavior. Shows everything that
                     finished today (status COMPLETED, PENDING_PAYMENT, or
-                    CLOSED) so the admin can see the day's output at a
+                    CLOSED) so a caller with team access can see the day's output at a
                     glance and drill into any row. */}
                 {(s.completedTodayJobs?.length ?? 0) > 0 && (
                   <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.emphasized">
@@ -1328,9 +1363,9 @@ export default function HomeTab({
                           : claimer
                             ? `${claimer.displayName}${others.length > 0 ? ` +${others.length}` : ""}`
                             : occ.assignees.map((a) => a.displayName).join(", ");
-                      // Client name leads the row so the admin's eye lands
+                      // Client name leads the row so the manager’s eye lands
                       // on "who" before "where" — matches the way most
-                      // admins ask "what's <client> doing right now?".
+                      // holders of `people.view` ask "what's <client> doing right now?".
                       // Falls back to the property name alone when the
                       // client name isn't available.
                       const jobLabel =
@@ -1379,14 +1414,13 @@ export default function HomeTab({
                               );
                             } catch {}
                             // Preserve the operator's active scope on
-                            // the jump — a Super clicking a row lands
-                            // on Super → Jobs; an Admin lands on
-                            // Admin → Jobs. JobsTab renders the same
+                            // the jump — someone with `settings.manage` clicking a row lands
+                            // on Jobs; someone with `schedule.manage` lands on
+                            // Jobs. JobsTab renders the same
                             // data via scope, but scope-continuity
                             // matters for the Back button + breadcrumb.
-                            const eventName = scope.isSuper
-                              ? "navigate:superTab"
-                              : "navigate:adminTab";
+                            // One event; the ternary's arms are now the same.
+                            const eventName = "navigate:staffTab";
                             window.dispatchEvent(
                               new CustomEvent(eventName, {
                                 detail: { tab: "jobs", remount: true },
@@ -1445,7 +1479,7 @@ export default function HomeTab({
 
         {/* Approximate pay-per-hour card — worker's own on their Home,
             OR the impersonated worker's when Admin Home is viewing a
-            single worker via the "View as" picker (so admins can see
+            single worker via the "View as" picker (so holders of team access can see
             exactly what that worker sees). Hidden in aggregate /
             subset views since those already show a per-worker table
             below. */}
@@ -1470,6 +1504,9 @@ export default function HomeTab({
             viewAsUserId={viewAsUserId ?? null}
             viewAsDisplayName={viewAsDisplayName ?? null}
             isOwner={!!me?.isOwner}
+            // Named for the capability the equity endpoint is guarded on
+            // (`GET /business-expenses` → books.view), not for a role.
+            canSeeEquity={scope.can("books.view")}
           />
         )}
 
@@ -1534,7 +1571,7 @@ export default function HomeTab({
 }
 
 // Shared "how long has this been running" formatter used by both the
-// Jobs in progress and Completed today rows on the Admin Home Team
+// Jobs in progress and Completed today rows on the Home Team
 // Overview panel. Sub-hour intervals stay in minutes so short jobs
 // don't collapse to "0h Xm"; hour-plus intervals use "Hh Mm".
 function fmtJobElapsed(ms: number): string {

@@ -14,7 +14,7 @@ type Photo = CachedEquipmentPhoto;
 type Props = {
   equipmentId: string;
   /** Use admin endpoint when true; defaults to worker (read-only) */
-  isAdmin?: boolean;
+  editable?: boolean;
   /** When false, skip the photos API call entirely (caller already knows there are no photos). */
   hasPhotos?: boolean;
   size?: number;
@@ -26,7 +26,7 @@ type Props = {
  * Lazy-loads when scrolled into view (IntersectionObserver).
  * Clicking opens a full-size viewer (unless onClick is provided).
  */
-export default function EquipmentThumbnail({ equipmentId, isAdmin, hasPhotos, size = 64, onClick }: Props) {
+export default function EquipmentThumbnail({ equipmentId, editable, hasPhotos, size = 64, onClick }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [inView, setInView] = useState(false);
   const [loaded, setLoaded] = useState(hasPhotos === false);
@@ -64,7 +64,7 @@ export default function EquipmentThumbnail({ equipmentId, isAdmin, hasPhotos, si
       setLoaded(true);
       return;
     }
-    const cached = getCachedEquipmentPhotos(equipmentId, !!isAdmin);
+    const cached = getCachedEquipmentPhotos(equipmentId, !!editable);
     if (cached) {
       setUrl(cached.length > 0 ? cached[0].url : null);
       setLoaded(true);
@@ -73,11 +73,11 @@ export default function EquipmentThumbnail({ equipmentId, isAdmin, hasPhotos, si
     let cancelled = false;
     (async () => {
       try {
-        const endpoint = isAdmin ? `/api/admin/equipment/${equipmentId}/photos` : `/api/equipment/${equipmentId}/photos`;
+        const endpoint = `/api/equipment/${equipmentId}/photos`;
         const list = await apiGet<Photo[]>(endpoint);
         if (cancelled) return;
         const photos = Array.isArray(list) ? list : [];
-        setCachedEquipmentPhotos(equipmentId, photos, !!isAdmin);
+        setCachedEquipmentPhotos(equipmentId, photos, !!editable);
         setUrl(photos.length > 0 ? photos[0].url : null);
       } catch {
         if (!cancelled) setUrl(null);
@@ -85,7 +85,7 @@ export default function EquipmentThumbnail({ equipmentId, isAdmin, hasPhotos, si
       if (!cancelled) setLoaded(true);
     })();
     return () => { cancelled = true; };
-  }, [inView, equipmentId, isAdmin, hasPhotos]);
+  }, [inView, equipmentId, editable, hasPhotos]);
 
   // Always reserve space so siblings don't shift when the photo loads (or doesn't exist).
   const hasImage = !!url;

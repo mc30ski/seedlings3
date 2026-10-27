@@ -355,7 +355,7 @@ See [§8 below](#8-how-the-venmo-processor-fee-is-handled) for the full processo
 - **Friday (or end of pay period):** download the `gusto-w2.csv` and `gusto-contractors.csv` from the app's Exports tab, upload them into Gusto, and run payroll. Gusto withholds taxes, deposits each worker's net pay, and remits the withholdings.
 - **Sunday/Monday:** check Chase. Confirm all expected Venmo / Zelle / Cash deposits arrived. Catch any anomalies before they age into the next pay period.
 - Move ~25–30% of the week's net profit into Chase business savings (for your personal estimated taxes).
-- **Monday (optional):** export the previous week's CSVs from the app (Super → Money → Exports) and import them into QuickBooks. See [§10](#10-recommended-setup-for-a-complete-qb-picture) for why this matters.
+- **Monday (optional):** export the previous week's CSVs from the app (Money → Exports) and import them into QuickBooks. See [§10](#10-recommended-setup-for-a-complete-qb-picture) for why this matters.
 
 ### Monthly (~30–60 minutes)
 
@@ -468,7 +468,7 @@ The business's financial state is spread across **three systems**. Each one owns
 
 ### The app's Accounting tab — your real-time view
 
-The app's Super → Money → Accounting tab Cash Flow section is your **most current** view of the business because it's pulling live from the app's own data. It shows:
+The app's Money → Accounting tab Cash Flow section is your **most current** view of the business because it's pulling live from the app's own data. It shows:
 
 - Platform fees (from contractor work)
 - Margin (from employee work)
@@ -547,7 +547,7 @@ Continue to export the app's QB Income, QB Expenses, QB Equity, and QB Fixed Ass
 | Client revenue | App exports `qb-journal-income.csv` → you upload to QB weekly | Service Income + Equipment Rental Income lines |
 | Operating expenses | App exports `qb-journal-expenses.csv` → you upload to QB weekly | Categorized expense lines (Supplies, Insurance, Advertising, etc.) |
 | Processor fees | Same `qb-journal-expenses.csv` upload | Payment Processing Fees expense |
-| Contractor labor (1099) | **Currently:** same `qb-journal-expenses.csv` upload — the app emits Contract Labor rows for contractor splits, gated by the `QB_INCLUDE_CONTRACT_LABOR` setting (default ON). **After connecting Gusto-QB:** flip `QB_INCLUDE_CONTRACT_LABOR` to OFF in Settings → Payments & Payouts. The app's Contract Labor section disappears from the CSV; Gusto's integration posts contractor payments to QB directly. | Contract Labor expense |
+| Contractor labor (1099) | **Currently:** same `qb-journal-expenses.csv` upload — the app always emits Contract Labor rows for contractor splits. **After connecting Gusto-QB:** these rows become duplicative, because Gusto's integration posts contractor payments to QB directly. There is no switch for this today: a `QB_INCLUDE_CONTRACT_LABOR` setting existed but nothing read it, so it was deleted 2026-10-18. Suppressing the section is a code change at that point. | Contract Labor expense |
 | W-2 wages | App exports `gusto-w2.csv` → you upload to Gusto → run payroll → **Gusto auto-posts to QB** | Wages expense |
 | Employer payroll taxes | Run payroll in Gusto (same step as above) → **Gusto auto-posts to QB** | Payroll Tax expense |
 | Owner equity (contributions/draws) | App exports `qb-equity.csv` → you upload to QB weekly | Owner Investments / Owner Draws (equity accounts) |

@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Area" ADD COLUMN     "lat" DOUBLE PRECISION,
+ADD COLUMN     "lng" DOUBLE PRECISION;

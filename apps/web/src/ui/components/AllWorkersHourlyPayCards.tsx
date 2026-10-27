@@ -1,6 +1,6 @@
 // Aggregate variant of WorkerHourlyPayCard — shows the "Pay per hour"
 // figure for EVERY approved worker side-by-side. Rendered on
-// Admin → Work → Home when no specific worker is selected (aggregate
+// Work → Home when no specific worker is selected (aggregate
 // view / no viewAsUserId). The single-worker card handles the "one
 // worker at a time" surface; this handles the "team snapshot" surface.
 //
@@ -27,7 +27,7 @@ import { Dashboard } from "@/src/ui/components/Dashboard";
 import { apiGet } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import {
-  SUPER_PERIODS,
+  FULL_PERIODS,
   buttonPeriodLabel,
   fmtHours,
   fmtUSD,
@@ -88,7 +88,7 @@ export default function AllWorkersHourlyPayCards({ periodOverride, workerIds }: 
    */
   const [internalPeriod, setInternalPeriod] = usePersistedPeriod(
     "teamPayPerHour_period",
-    SUPER_PERIODS,
+    FULL_PERIODS,
     { preset: "today", label: "today" },
   );
   const period = periodOverride ?? internalPeriod;
@@ -107,7 +107,7 @@ export default function AllWorkersHourlyPayCards({ periodOverride, workerIds }: 
     let cancelled = false;
     (async () => {
       try {
-        const list = await apiGet<Array<any>>("/api/admin/users?approved=true&role=WORKER");
+        const list = await apiGet<Array<any>>("/api/users?approved=true&role=WORKER");
         if (cancelled) return;
         const mapped: WorkerListItem[] = (Array.isArray(list) ? list : []).map((u) => ({
           id: String(u.id),
@@ -166,7 +166,7 @@ export default function AllWorkersHourlyPayCards({ periodOverride, workerIds }: 
   const periodCollection = useMemo(
     () =>
       createListCollection({
-        items: SUPER_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
+        items: FULL_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
       }),
     [],
   );
@@ -200,7 +200,7 @@ export default function AllWorkersHourlyPayCards({ periodOverride, workerIds }: 
    * source of truth for the same ordering.
    *
    * Null while loading or when nobody has hours yet: a header that says
-   * "Trainee Worker · $0.00/hr" because everyone is at zero reads as a
+   * "Unpaid Worker · $0.00/hr" because everyone is at zero reads as a
    * real result rather than an empty period.
    */
   const topEarner = useMemo(() => {
@@ -239,7 +239,7 @@ export default function AllWorkersHourlyPayCards({ periodOverride, workerIds }: 
       timeframe={
         externallyControlled
           ? undefined
-          : periodTimeframe(SUPER_PERIODS, period, setInternalPeriod)
+          : periodTimeframe(FULL_PERIODS, period, setInternalPeriod)
       }
       onRefresh={loadPay}
       refreshing={payLoading}

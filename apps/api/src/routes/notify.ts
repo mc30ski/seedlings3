@@ -1,32 +1,33 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { Role as RoleVal, AuditScope, AuditVerb } from "@prisma/client";
+import { AuditScope, AuditVerb } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { notifyWorker } from "../lib/notifications";
 import { writeAudit } from "../lib/auditLogger";
 import { etMidnight, etToday } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
+import { makeGuards } from "../lib/routeGuards";
 
 /**
- * Admin-driven notifications: ad-hoc messages an admin can send to one or more
- * approved users (workers + admins). All sends fan out via `notifyWorker`,
+ * Admin-driven notifications: ad-hoc messages someone with `routes.plan` can send to one or more
+ * approved users (workers + holders of `routes.plan`). All sends fan out via `notifyWorker`,
  * which fires SMS + email + push in parallel. Results are written to the
  * AuditEvent log for compliance and a "history" view.
  *
- * Templates are CRUDed under /admin/notification-templates.
+ * Templates are CRUDed under /notification-templates.
  *
  * Rate limit: max 20 admin broadcasts per actor per UTC day.
  */
 const RATE_LIMIT_PER_DAY = 20;
 
 // Template CRUD logs under AUDIT.NOTIFICATION.CREATED/UPDATED/DELETED, NOT
-// under .SENT: both the /admin/notify rate limiter and /admin/notify/history
+// under .SENT: both the /notify rate limiter and /notify/history
 // query by scope NOTIFICATION + verb SENT, so template edits recorded as SENT
-// would consume the admin's 20-broadcasts-per-day budget and render as bogus
+// would consume the 20-broadcasts-per-day budget and render as bogus
 // rows in the send-history view.
 
-/** Actor for template mutations. `adminGuard` (requireRole → requireApproved)
- *  attaches the resolved User row to req.user, so the id is always present
- *  by the time a handler body runs. */
+/** Actor for template mutations. `req_notifySend` resolves approval first,
+ *  which attaches the resolved User row to req.user, so the id is always
+ *  present by the time a handler body runs. */
 function actorId(req: any): string | null {
   return (req?.user?.id as string | undefined) ?? null;
 }
@@ -41,20 +42,25 @@ async function currentUser(req: any) {
 }
 
 export default async function notifyRoutes(app: FastifyInstance) {
-  const adminGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireRole(req, reply, RoleVal.ADMIN),
-  };
+  // Every route in this file is the same capability: sending notifications
+  // and managing the templates they are sent from. While
+  // Named for the capability, which is now the only thing checked.
+  const { requires } = makeGuards(app);
+  // NAMED FOR WHAT IT CHECKS. This carried the same role-guard name every
+  // other route file used for its generic gate — so a reader here would
+  // reasonably assume it meant that, and a route moved
+  // between files would silently change which entitlement it needs.
+  const req_notifySend = requires("notify.send");
 
   // ── Templates CRUD ───────────────────────────────────────────────
 
-  app.get("/admin/notification-templates", adminGuard, async () => {
+  app.get("/notification-templates", req_notifySend, async () => {
     return prisma.notificationTemplate.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     });
   });
 
-  app.post("/admin/notification-templates", adminGuard, async (req: any, reply) => {
+  app.post("/notification-templates", req_notifySend, async (req: any, reply) => {
     const b = req.body || {};
     const name = String(b.name || "").trim();
     const body = String(b.body || "").trim();
@@ -82,7 +88,7 @@ export default async function notifyRoutes(app: FastifyInstance) {
     });
   });
 
-  app.patch("/admin/notification-templates/:id", adminGuard, async (req: any, reply) => {
+  app.patch("/notification-templates/:id", req_notifySend, async (req: any, reply) => {
     const id = String((req.params as any)?.id || "");
     const b = req.body || {};
     const data: any = {};
@@ -117,7 +123,7 @@ export default async function notifyRoutes(app: FastifyInstance) {
     }
   });
 
-  app.delete("/admin/notification-templates/:id", adminGuard, async (req: any, reply) => {
+  app.delete("/notification-templates/:id", req_notifySend, async (req: any, reply) => {
     const id = String((req.params as any)?.id || "");
     try {
       await prisma.$transaction(async (tx) => {
@@ -144,7 +150,7 @@ export default async function notifyRoutes(app: FastifyInstance) {
 
   // ── Send ──────────────────────────────────────────────────────────
 
-  app.post("/admin/notify", adminGuard, async (req: any, reply) => {
+  app.post("/notify", req_notifySend, async (req: any, reply) => {
     const me = await currentUser(req);
     if (!me) return reply.code(401).send({ error: "Unauthorized" });
 
@@ -173,7 +179,7 @@ export default async function notifyRoutes(app: FastifyInstance) {
     if (!messageBody) return reply.code(400).send({ error: "body is required" });
 
     // Resolve recipient user IDs to a concrete list of approved users
-    // (workers + admins). "all" = every approved user.
+    // (workers + holders of `routes.plan`). "all" = every approved user.
     const everyone = await prisma.user.findMany({
       where: { isApproved: true },
       select: { id: true, displayName: true, email: true, phone: true },
@@ -299,7 +305,7 @@ export default async function notifyRoutes(app: FastifyInstance) {
 
   // ── History (read past sends from AuditEvent) ────────────────────
 
-  app.get("/admin/notify/history", adminGuard, async (req: any) => {
+  app.get("/notify/history", req_notifySend, async (req: any) => {
     const q = (req.query || {}) as { page?: string; pageSize?: string };
     const page = q.page ? Math.max(1, Number(q.page)) : 1;
     const pageSize = q.pageSize ? Math.min(100, Math.max(1, Number(q.pageSize))) : 25;

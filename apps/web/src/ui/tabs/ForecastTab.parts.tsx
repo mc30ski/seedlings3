@@ -11,6 +11,7 @@ import { FiAlertTriangle, FiInfo, FiTrendingUp, FiTrendingDown } from "react-ico
 import type { ForecastResult, WorkerOutcome, ForecastAssessment, MarketRateInfo } from "@/src/lib/forecast";
 import { money, pct, VERDICT_LABEL, VERDICT_TONE } from "@/src/lib/forecast";
 import { fmtDate } from "@/src/lib/dates";
+import { payClassLabel } from "../../lib/paymentMath";
 
 /**
  * One numeric column of a comparison row.
@@ -513,7 +514,7 @@ export function WorkerFairnessTable({
                 {w.isOwner && <Badge size="xs" colorPalette="purple">Owner</Badge>}
                 {w.hypothetical && <Badge size="xs" colorPalette="cyan">Modelled</Badge>}
                 <Badge size="xs" variant="outline">
-                  {w.workerType === "CONTRACTOR" ? "1099" : w.workerType === "TRAINEE" ? "Trainee" : "W-2"}
+                  {payClassLabel(w.workerType)}
                 </Badge>
               </HStack>
               <HStack gap={2} w={{ base: "100%", md: "auto" }}

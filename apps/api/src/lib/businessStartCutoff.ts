@@ -6,11 +6,12 @@
 // slate from the company's official start date onward, while preserving every
 // row in the database. Pre-cutoff Payments, BusinessExpenses, Expenses,
 // Checkouts, AuditEvents and SupplyPurchases are HIDDEN from queries (not
-// deleted). A Super user can transiently disable the filter via the
-// X-Reveal-Pre-Cutoff header to inspect old data (e.g. for tax exports).
+// deleted). A caller holding `books.view` can transiently disable the
+// filter via the X-Reveal-Pre-Cutoff header to inspect old data (e.g. for
+// tax exports).
 //
 // SAFETY INVARIANTS (do not violate when extending this module)
-//   1. When the feature is disabled OR the Super reveal header is honored,
+//   1. When the feature is disabled OR the reveal header is honored,
 //      `resolveCutoff()` returns `null` and every helper here returns an
 //      EMPTY object/where so the underlying query is byte-identical to its
 //      pre-feature shape. Off-state must always === pre-feature behavior.
@@ -33,6 +34,7 @@
 import type { FastifyRequest } from "fastify";
 import { prisma } from "../db/prisma";
 import { etMidnight, type EtDateKey } from "./dates";
+import { callerCan } from "./callerCan";
 
 export const BUSINESS_START_DATE_KEY = "BUSINESS_START_DATE";
 export const BUSINESS_START_DATE_ENABLED_KEY = "BUSINESS_START_DATE_ENABLED";
@@ -71,7 +73,7 @@ export type CutoffModel = keyof typeof MODEL_DATE_FIELD;
 //
 // Returns the effective cutoff Date for this request, or null when the filter
 // is off (either globally disabled, or transiently disabled by a verified
-// Super via the reveal header).
+// `books.view` holder via the reveal header).
 //
 // SAFETY: any failure (settings throw, parse fail, role lookup throw) returns
 // null. Never accidentally hide data on a transient error.
@@ -93,14 +95,25 @@ export async function resolveCutoff(req: FastifyRequest): Promise<Date | null> {
     const cutoff = parseCutoffValue(dateRow.value);
     if (!cutoff) return null;
 
-    // Super reveal — only honored when `req.user.roles` (post-impersonation)
-    // still includes SUPER. A Super impersonating a non-Super loses the
-    // reveal capability for that request, which matches the rest of
-    // impersonation's "see what they see" contract.
+    // The reveal — honoured only for a caller who holds `books.view`.
+    //
+    // THIS WAS BROKEN, AND SILENTLY SO. It read
+    // a role check, and `roles` no longer exists on
+    // `req.user` — so the expression was `undefined?.includes(...)`, which is
+    // `undefined`, which is falsy. The reveal stopped working the moment the
+    // enum was dropped, with no error anywhere: the header was accepted,
+    // ignored, and the caller simply saw the filtered figures. Exactly the
+    // failure shape this repo keeps hitting — a page that renders perfectly
+    // and shows the wrong number.
+    //
+    // `books.view` rather than "is someone with `settings.manage`", because that is the actual
+    // question: seeing pre-cutoff money is seeing the books. It also honours
+    // an active perspective, since callerCan reads the principal — somebody
+    // looking through a narrowed perspective loses the reveal, which is the "see
+    // what they see" contract the old comment described.
     const revealHeader = req.headers[REVEAL_PRE_CUTOFF_HEADER];
     if (revealHeader === "true" || revealHeader === "1") {
-      const roles = (req as any).user?.roles as string[] | undefined;
-      if (roles?.includes("SUPER")) return null;
+      if (callerCan(req, "books.view")) return null;
     }
 
     return cutoff;

@@ -7,6 +7,7 @@ import {
   loadRates,
   type WorkerInput,
 } from "./payments";
+import { isW2 } from "@repo/money";
 
 // Returned by every CSV builder. `rowCount` counts data rows only
 // (excludes header + TOTALS); `total` is the dollar figure on the TOTALS
@@ -82,10 +83,6 @@ function toIsoDate(d: Date): string {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
-}
-
-export function isEmployeeClass(t: string | null | undefined): boolean {
-  return t === "EMPLOYEE" || t === "TRAINEE";
 }
 
 // Common loader: confirmed payments in [start, end] with everything we need.
@@ -172,7 +169,7 @@ async function loadConfirmedPayments(start: Date, end: Date) {
 // ─────────────────────────────────────────────────────────────────────────────
 // W-2 earnings — WORK-anchored, not payment-anchored.
 //
-// An employee/trainee is a W-2 worker: their wages accrue when they DO the
+// An EMPLOYEE is a W-2 worker: their wages accrue when they DO the
 // work and must be paid on the regular payroll schedule for the period the
 // work fell in — regardless of whether (or when) the client pays. So the W-2
 // export is driven by JOBS COMPLETED in the window, bucketed by completedAt,
@@ -204,12 +201,12 @@ type W2Agg = {
 // until reviewed (or hours edited back within tolerance to auto-approve).
 
 /**
- * Aggregate W-2 (employee + trainee) earnings for the window, work-anchored.
+ * Aggregate W-2 (EMPLOYEE) earnings for the window, work-anchored.
  * Shared by the CSV export and the preview.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Gusto W-2 CSV — one row per employee/trainee with totals in the period.
+// Gusto W-2 CSV — one row per EMPLOYEE with totals in the period.
 // ─────────────────────────────────────────────────────────────────────────────
 // QB Income CSV — one row per confirmed Payment.
 //
@@ -313,15 +310,6 @@ export function effectiveExpenseDate(be: {
   if (be.occurrenceId && be.occurrence?.completedAt) return be.occurrence.completedAt;
   return be.date;
 }
-
-/**
- * Whether qb-journal-expenses.csv should emit Contract Labor rows.
- * Setting: QB_INCLUDE_CONTRACT_LABOR (boolean). Default = true (current
- * behavior — the app's CSV is the only path getting contractor labor
- * into QB). Flip to false once Gusto's QuickBooks integration is
- * configured to post contractor payments directly; the app's rows
- * become duplicative at that point.
- */
 
 // Synthetic category for processor-fee rows — sourced from Payment records,
 // never a hand-logged BusinessExpense. Its Schedule C line comes from the
@@ -821,7 +809,7 @@ export async function incomeCsv(start: Date, end: Date): Promise<CsvResult> {
 // WorkerWorkday), NOT the underlying timestamps. A workday that started
 // at 11 PM Mon and ended at 2 AM Tue stays anchored to Monday — keeps
 // the export aligned with the operator's mental model and with the
-// Super → Workdays tab.
+// Workdays tab.
 //
 // Active hours computed from (endedAt − startedAt) − totalPausedMs.
 // Open rows (no endedAt yet) leave Active Hours blank — they aren't a
@@ -1065,13 +1053,13 @@ export async function workdaysCsv(start: Date, end: Date): Promise<CsvResult> {
   function workerTypeLabel(t: string | null | undefined): string {
     switch (t) {
       case "EMPLOYEE": return "Employee";
-      case "TRAINEE": return "Trainee";
+      case "UNPAID": return "Unpaid";
       case "CONTRACTOR": return "Contractor";
       default: return "Unclassified";
     }
   }
 
-  // Derived status — matches the labels on the Super → Workdays tab so
+  // Derived status — matches the labels on the Workdays tab so
   // the operator's mental model stays consistent across surfaces.
   function rowStatus(w: { endedAt: Date | null; pausedAt: Date | null; approvedAt: Date | null }): string {
     if (w.endedAt && w.approvedAt) return "Approved";

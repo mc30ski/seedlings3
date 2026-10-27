@@ -38,7 +38,8 @@ type Props = {
   jobId: string;
   frequencyDays: number;
   closedOccurrence: ClosedOccurrence;
-  /** For admin: `/api/admin/jobs/${jobId}/occurrences`; for worker: `/api/occurrences/create-next` */
+  /** With `schedule.manage`: `/api/jobs/${jobId}/occurrences`.
+   *  Without it: `/api/occurrences/create-next`. */
   createEndpoint: string;
   /** Extra body fields for the create call (e.g. { jobId } for worker endpoint) */
   createBody?: Record<string, unknown>;

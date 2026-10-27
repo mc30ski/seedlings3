@@ -300,22 +300,22 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
     onDone();
     if (tab === "routes") {
       try { localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(today)); } catch {}
-      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
+      window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "routes", autoAnalyze: true } }));
     } else if (tab === "equipment") {
-      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "equipment" } }));
-      // EquipmentTab persists its filters across visits; pre-day prep wants
+      window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "equipment" } }));
+      // InventoryTab persists its filters across visits; pre-day prep wants
       // a fresh "show me everything" view, not whatever filter was last left
       // applied (commonly "claimed", which hides the items they need to grab).
       // Fire an empty applyFilter so the tab's handler resets status/kind/likedOnly/query.
       // setTimeout defers until after the tab swap so the freshly-mounted
-      // EquipmentTab's listener catches the event.
+      // InventoryTab's listener catches the event.
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent("equipment:applyFilter", { detail: {} }));
       }, 100);
     } else if (tab === "jobs") {
       // Set date filter to today
       try { localStorage.setItem("seedlings_beginWorkday_jobsDate", today); } catch {}
-      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
+      window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "jobs" } }));
     }
   }
 
@@ -1107,7 +1107,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                           const firstOcc = occurrences[0];
                           // Set date to today and navigate to Jobs tab highlighting the first job
                           try { localStorage.setItem("seedlings_beginWorkday_jobsDate", today); } catch {}
-                          window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
+                          window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "jobs" } }));
                           if (firstOcc) {
                             setTimeout(() => {
                               window.dispatchEvent(new CustomEvent("remindersToJobsTabSearch:run", {

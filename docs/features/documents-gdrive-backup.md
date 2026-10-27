@@ -1,11 +1,23 @@
 # Documents → Google Drive Backup — Feature Reference
 
-> **Status: design phase — no code yet.** Google Cloud + OAuth setup
-> in progress. Full design lives in the memory file
-> `project_documents_gdrive_backup.md`; this doc is where implementation
-> notes + operational config land as they materialize. Keep this
-> and the memory file in sync during the build; once the code ships,
-> this doc becomes canonical and the memory file gets slimmed.
+> **Status: BUILT.** This line said "design phase — no code yet", which
+> stopped being true some time ago. What exists in the repo today:
+>
+> - **Services** — `apps/api/src/services/documentSyncQueue.ts` and
+>   `documentSyncWorker.ts`.
+> - **Models** — `DocumentSyncQueue` and `DocumentSyncState` in
+>   `prisma/schema.prisma`.
+> - **Routes** (`routes/documents.ts`) — `GET /documents/sync/status`,
+>   `/sync/failed`, `/sync/pending` on `documents.view`; `POST
+>   /documents/sync/run`, `/sync/backfill`, `/sync/tasks/:id/retry`,
+>   `/sync/tasks/:id/dismiss` on `documents.manage`.
+> - **Cron** — wired in `routes/cron.ts`.
+> - **UI** — `DocumentSyncStatusPanel` on the Documents tab.
+>
+> What is NOT verified from the repo: whether the Google Cloud project,
+> OAuth consent screen and refresh token are configured in any
+> environment. That is operator setup, not code, so check it before
+> assuming the sync runs.
 
 ## What this feature does
 
@@ -15,7 +27,7 @@ Drive. Backup only — edits made in Drive do not flow back. Runs on a
 daily cadence with an operator-triggered "Force Sync Now" button on the
 Records → Documents tab.
 
-## Auth model — OAuth 2.0 as the admin user
+## Auth model — OAuth 2.0 as a caller with `documents.manage` user
 
 The app authenticates to Google Drive **as `admin@seedlingslawncare.com`**
 using an OAuth 2.0 refresh token, not a service account. This means:
@@ -106,14 +118,14 @@ top-level folder under `GOOGLE_DRIVE_ROOT_FOLDER_ID`.
 
 - **OAuth as admin user, not service account** (see rationale above).
 - **One-way, backup semantics** — no conflict resolution, no Drive→app.
-- **Daily cron + on-demand "Force Sync Now"** button (Super only).
+- **Daily cron + on-demand "Force Sync Now"** button (`documents.manage`).
 - **Queue + worker architecture** — every mutation writes a
   `DocumentSyncQueue` row **in the same DB transaction** as the app
   change, so sync tasks can't be lost.
 - **Coalesce metadata tasks per document** at the start of each worker
   run — many small edits collapse to one Drive write.
 - **Verify current DB state before running version tasks** — an
-  `UPLOAD_VERSION` task checks the version still exists before uploading.
+  `UPLOAD_DOCUMENT_VERSION` task checks the version still exists before uploading.
 - **App-dictated deletion policy** — no separate retention concept;
   hard-deletes move to `_deleted/YYYY-MM/…`, `_deleted/` is never
   auto-purged.

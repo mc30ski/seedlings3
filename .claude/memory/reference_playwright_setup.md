@@ -15,11 +15,23 @@ E2E tests live at [`apps/web/tests/e2e/`](file:///Users/michaelwanderski/dev/see
 Depends on `pk_test_` Clerk instance (dev mode) — production keys would need a different approach.
 
 **Seed users** (Clerk IDs in [`tests/e2e/auth/auth.setup.ts`](file:///Users/michaelwanderski/dev/seedlings3/apps/web/tests/e2e/auth/auth.setup.ts)):
-- `employee` — Employee Worker (WORKER only)
-- `contractor` — Contractor Worker (WORKER only)
-- `trainee` — Trainee Worker (WORKER only)
-- `admin` — Admin Worker (WORKER + ADMIN)
-- `super` — Michael Wanderski (SUPER)
+**NINE**, not five, and none of them is a role — the `Role` enum is deleted,
+so each is a person holding a `CustomRole`. The key list is `SeedUserKey` in
+`apps/web/tests/e2e/helpers/db.ts`; database ids resolve at run time from
+`playwright/.auth/user-ids.json` and are never hardcoded.
+
+- `employee` · `contractor` · `trainee` — field personas, differing by
+  `workerType` and by which starter role they hold
+- `scheduler` — runs the schedule
+- `owner` — Michael; holds everything
+- `coordinator` — office staff, paid, no field work
+- `bookkeeper` — books without payroll, 1099
+- `payroll` — payroll without books (the other half of that split)
+- `unpaid` — entitlements but NO payroll: the case that proves an unpaid
+  person never reaches a split, a wage or an export
+
+The last four were added 2026-10-12 and exist to be CLICKED THROUGH as, which
+is the only way to verify a non-field persona.
 
 **Helpers** at `tests/e2e/helpers/`:
 - `db.ts` — direct Prisma access with a `jolly-wildflower` safety guard (dev DB only). Helpers to reset compliance state, create scratch `E2E_`-prefixed policies, grant exceptions, insert direct signatures. `cleanupScratchPolicies` handles the FK cascade properly (null currentVersion → drop sigs → drop versions → drop docs).

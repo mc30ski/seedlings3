@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import type { Scope } from "@/src/lib/scope";
 import { parseAddressLine } from "@/src/lib/address";
 import {
   Badge,
@@ -18,7 +19,6 @@ import { createListCollection } from "@chakra-ui/react/collection";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
 import AddressSearchField from "@/src/ui/components/AddressSearchField";
 import {
-  Role,
   DialogMode,
   Property,
   PropertyStatus,
@@ -49,7 +49,9 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
-  role: Role;
+  /** What the viewer can do. Was `role: Surface` — a role name
+   *  deciding whether fields were editable. */
+  scope?: Scope;
   initial?: Property | null;
   onSaved?: (saved: Property) => void;
 
@@ -68,7 +70,7 @@ export default function PropertyDialog({
   open,
   onOpenChange,
   mode,
-  role,
+  scope,
   initial,
   onSaved,
   defaultClientId,
@@ -79,7 +81,9 @@ export default function PropertyDialog({
   onBack,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-  const isAdmin = role === "ADMIN";
+  // The capability this dialog's writes actually require, not a
+  // role name. Absent scope fails closed.
+  const canManageClients = !!scope?.can("clients.manage");
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
 
@@ -119,6 +123,21 @@ export default function PropertyDialog({
 
   const [pocValue, setPocValue] = useState<string[]>(["NONE"]);
 
+  // ── TERRITORY ─────────────────────────────────────────────────────────
+  //
+  // A property's area decides whose rollups it appears in. Until now
+  // nothing in the app set it: a property got one from the seed, or by
+  // inheriting from a sibling when the client's other properties all
+  // agreed, or not at all — and an untagged property is invisible to every
+  // area-scoped reader, which is the silent-rows-missing failure the whole
+  // area feature exists to avoid.
+  const [areaValue, setAreaValue] = useState<string[]>(["INHERIT"]);
+  const [areaOptions, setAreaOptions] = useState<Array<{ id: string; name: string; trail?: string[] }>>([]);
+  // What it was when the dialog opened, so an UPDATE only retags when the
+  // operator actually changed it.
+  const initialAreaId = (initial as any)?.areaId ?? null;
+  const mayRetag = !!scope?.can("areas.manage");
+
   const clientItems = useMemo(() => {
     const items = clients.map((c) => ({
       label: clientLabel(c.displayName) || c.id,
@@ -133,6 +152,27 @@ export default function PropertyDialog({
   const clientCollection = useMemo(
     () => createListCollection({ items: clientItems }),
     [clientItems]
+  );
+
+  const areaItems = useMemo(
+    () => [
+      // CREATE offers "work it out", which is the server's inherit-from-
+      // the-client rule. UPDATE offers "none", which is a real choice to
+      // remove a property from every territory.
+      mode === "CREATE"
+        ? { label: "Decide from this client's other properties", value: "INHERIT" }
+        : { label: "No area", value: "NONE" },
+      ...areaOptions.map((a) => ({
+        // The chain, so two routes called "North" are distinguishable.
+        label: a.trail?.length ? a.trail.join(" → ") : a.name,
+        value: a.id,
+      })),
+    ],
+    [areaOptions, mode],
+  );
+  const areaCollection = useMemo(
+    () => createListCollection({ items: areaItems }),
+    [areaItems],
   );
 
   const statusItems = useMemo(
@@ -210,6 +250,26 @@ export default function PropertyDialog({
   }
 
   // load clients list when dialog opens
+  // Load the areas on offer, and seed the picker from the property.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiGet<{ areas: Array<{ id: string; name: string; trail?: string[] }> }>(
+          "/api/me/areas",
+        );
+        if (!cancelled) setAreaOptions(res.areas ?? []);
+      } catch {
+        // No list means no picker — the rest of the dialog still works and
+        // the server still applies its own inherit rule on create.
+        if (!cancelled) setAreaOptions([]);
+      }
+    })();
+    setAreaValue([initialAreaId ?? (mode === "CREATE" ? "INHERIT" : "NONE")]);
+    return () => { cancelled = true; };
+  }, [open, initialAreaId, mode]);
+
   useEffect(() => {
     if (!open) return;
 
@@ -222,11 +282,10 @@ export default function PropertyDialog({
 
     (async () => {
       try {
-        const path = isAdmin
-          ? "/api/admin/clients?limit=500"
-          : "/api/clients?limit=500";
-
-        const res: unknown = await apiGet(path);
+        // One endpoint. This was a ternary whose two arms were the same
+        // URL, left behind when the two client routes were merged into
+        // one.
+        const res: unknown = await apiGet("/api/clients?limit=500");
 
         // normalize into an array
         const list: ClientLite[] = Array.isArray(res)
@@ -245,7 +304,7 @@ export default function PropertyDialog({
         setClients([]);
       }
     })();
-  }, [open, isAdmin]);
+  }, [open, canManageClients]);
 
   // Seed form ONCE per open — see ContactDialog for the rationale.
   const prevOpenRefSeed = useRef(false);
@@ -313,9 +372,7 @@ export default function PropertyDialog({
 
     (async () => {
       try {
-        const path = isAdmin
-          ? `/api/admin/clients/${cid}`
-          : `/api/clients/${cid}`;
+        const path = `/api/clients/${cid}`;
         const res: unknown = await apiGet(path);
 
         // Normalize various server shapes into an array
@@ -359,7 +416,7 @@ export default function PropertyDialog({
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientValue, isAdmin]);
+  }, [clientValue, canManageClients]);
 
   async function handleSave() {
     dlgErr.clear();
@@ -407,6 +464,14 @@ export default function PropertyDialog({
       lotSize: lotSize !== "" ? Number(lotSize) : null,
       lotSizeUnit: lotSize !== "" ? lotSizeUnit : null,
       pointOfContactId: pocValue[0] === "NONE" ? null : pocValue[0],
+      // ONLY ON CREATE. `properties.update` deliberately does not write
+      // `areaId`: moving an existing property has consequences the plain
+      // patch does not handle — future visits follow it, a retired area is
+      // refused, and the audit records how many occurrences moved. That is
+      // `PATCH /properties/:id/area`, called separately below.
+      ...(mode === "CREATE" && areaValue[0] && areaValue[0] !== "INHERIT"
+        ? { areaId: areaValue[0] }
+        : {}),
     };
 
     if (deferSave) {
@@ -419,7 +484,7 @@ export default function PropertyDialog({
     try {
       let saved: Property;
       if (mode === "CREATE") {
-        saved = await apiPost<Property>("/api/admin/properties", payload);
+        saved = await apiPost<Property>("/api/properties", payload);
         publishInlineMessage({
           type: "SUCCESS",
           text: `Property "${payload.displayName}" created.`,
@@ -427,12 +492,33 @@ export default function PropertyDialog({
       } else {
         if (!initial?.id) throw new Error("Missing property id");
         saved = await apiPatch<Property>(
-          `/api/admin/properties/${initial.id}`,
+          `/api/properties/${initial.id}`,
           payload
         );
+
+        // MOVING AREA IS ITS OWN CALL, after the patch above.
+        //
+        // Not folded into it: the retag endpoint moves the property's
+        // UNFINISHED visits with it and leaves completed ones where they
+        // happened, refuses a retired area, and audits the count. Writing
+        // `areaId` through the ordinary patch would skip all three and
+        // quietly restate what past rollups reported.
+        const chosenArea = areaValue[0] === "NONE" ? null : areaValue[0] ?? null;
+        let moved = 0;
+        if (mayRetag && chosenArea !== (initialAreaId ?? null)) {
+          const res = await apiPatch<{ changed?: boolean; occurrencesRetagged?: number }>(
+            `/api/properties/${initial.id}/area`,
+            { areaId: chosenArea },
+          );
+          moved = res?.occurrencesRetagged ?? 0;
+        }
+
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Property "${payload.displayName}" updated.`,
+          text:
+            moved > 0
+              ? `Property "${payload.displayName}" updated. ${moved} scheduled visit${moved === 1 ? "" : "s"} moved with it.`
+              : `Property "${payload.displayName}" updated.`,
         });
       }
       onSaved?.(saved);
@@ -479,7 +565,7 @@ export default function PropertyDialog({
                 <div>
                   <HStack justify="space-between">
                     <Text mb="1">Client *</Text>
-                    {!isAdmin && <Badge colorPalette="gray">Read-only</Badge>}
+                    {!canManageClients && <Badge colorPalette="gray">Read-only</Badge>}
                   </HStack>
                   <Select.Root
                     collection={clientCollection}
@@ -487,7 +573,7 @@ export default function PropertyDialog({
                     onValueChange={(e) => setClientValue(e.value)}
                     size="sm"
                     positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                    disabled={!isAdmin && mode === "UPDATE"}
+                    disabled={!canManageClients && mode === "UPDATE"}
                   >
                     <Select.Control>
                       <Select.Trigger>
@@ -536,6 +622,49 @@ export default function PropertyDialog({
                     ))}
                   </HStack>
                 </div>
+                {/* AREA. Above Status because it answers a question about
+                    the property's place in the business, not its lifecycle,
+                    and because it is the field nobody could set until now. */}
+                {areaOptions.length > 0 && (
+                  <div>
+                    <Text mb="1">Area</Text>
+                    <Select.Root
+                      collection={areaCollection}
+                      value={areaValue}
+                      onValueChange={(e) => setAreaValue(e.value)}
+                      size="sm"
+                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                      // Changing an existing property's area goes through the
+                      // retag endpoint, which is `areas.manage`. Without it
+                      // the field shows where the property is and refuses to
+                      // move it, rather than offering a control whose save
+                      // would be refused.
+                      disabled={mode === "UPDATE" ? !mayRetag : !canManageClients}
+                    >
+                      <Select.Control>
+                        <Select.Trigger>
+                          <Select.ValueText placeholder="Select area" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {areaItems.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
+                    <Text fontSize="xs" color="fg.muted" mt="1">
+                      {mode === "UPDATE" && !mayRetag
+                        ? "Only somebody who manages areas can move a property."
+                        : mode === "UPDATE"
+                          ? "Moving it takes its scheduled visits along. Finished work stays where it happened."
+                          : "Decides whose rollups this property appears in."}
+                    </Text>
+                  </div>
+                )}
                 <HStack gap={3}>
                   <div style={{ flex: 1 }}>
                     <Text mb="1">Status *</Text>
@@ -548,7 +677,7 @@ export default function PropertyDialog({
                         strategy: "fixed",
                         hideWhenDetached: true,
                       }}
-                      disabled={!isAdmin && mode === "UPDATE"}
+                      disabled={!canManageClients && mode === "UPDATE"}
                     >
                       <Select.Control>
                         <Select.Trigger>
@@ -577,7 +706,7 @@ export default function PropertyDialog({
                         strategy: "fixed",
                         hideWhenDetached: true,
                       }}
-                      disabled={!isAdmin && mode === "UPDATE"}
+                      disabled={!canManageClients && mode === "UPDATE"}
                     >
                       <Select.Control>
                         <Select.Trigger>
@@ -649,7 +778,7 @@ export default function PropertyDialog({
                     size="sm"
                     positioning={{ strategy: "fixed", hideWhenDetached: true }}
                     disabled={
-                      !clientValue[0] || (!isAdmin && mode === "UPDATE")
+                      !clientValue[0] || (!canManageClients && mode === "UPDATE")
                     }
                   >
                     <Select.Control>

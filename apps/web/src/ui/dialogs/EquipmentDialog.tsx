@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import type { Scope } from "@/src/lib/scope";
 import {
   Badge,
   Box,
@@ -19,7 +20,6 @@ import { AlertCircle } from "lucide-react";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import {
-  Role,
   DialogMode,
   Equipment,
   EQUIPMENT_KIND,
@@ -43,7 +43,9 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
-  role: Role;
+  /** What the viewer can do. Was `role: Surface` — a role name
+   *  deciding whether fields were editable. */
+  scope?: Scope;
   initial?: Equipment | null;
   onSaved?: (saved: any) => void;
 };
@@ -52,12 +54,14 @@ export default function EquipmentDialog({
   open,
   onOpenChange,
   mode,
-  role,
+  scope,
   initial,
   onSaved,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-  const isAdmin = role === "ADMIN";
+  // The capability this dialog's writes actually require, not a
+  // role name. Absent scope fails closed.
+  const canManageEquipment = !!scope?.can("equipment.manage");
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
 
@@ -173,12 +177,12 @@ export default function EquipmentDialog({
   }, [open, mode, initial]);
 
   // Fetch the list of policies that can be attached to equipment. Fires
-  // once per dialog open — an admin who adds a new eligible policy mid-
+  // once per dialog open — someone with `equipment.manage` who adds a new eligible policy mid-
   // session will need to close and reopen this dialog to see it.
   useEffect(() => {
     if (!open) return;
     setAttachablePoliciesLoaded(false);
-    apiGet<typeof attachablePolicies>("/api/admin/policies/attachable-to-equipment")
+    apiGet<typeof attachablePolicies>("/api/policies/attachable-to-equipment")
       .then((rows) => setAttachablePolicies(rows))
       .catch(() => setAttachablePolicies([]))
       .finally(() => setAttachablePoliciesLoaded(true));
@@ -219,7 +223,7 @@ export default function EquipmentDialog({
       // Effectively UPDATE if we have an id (either from initial or just-created).
       const existingId = initial?.id ?? createdId;
       if (mode === "CREATE" && !existingId) {
-        saved = await apiPost<Equipment>("/api/admin/equipment", payload);
+        saved = await apiPost<Equipment>("/api/equipment", payload);
         publishInlineMessage({
           type: "SUCCESS",
           text: `Equipment “${payload.shortDesc}” created. Reopen the row to add photos or instructions.`,
@@ -228,7 +232,7 @@ export default function EquipmentDialog({
       } else {
         if (!existingId) throw new Error("Missing equipment id");
         saved = await apiPatch<Equipment>(
-          `/api/admin/equipment/${existingId}`,
+          `/api/equipment/${existingId}`,
           payload
         );
         publishInlineMessage({
@@ -249,7 +253,7 @@ export default function EquipmentDialog({
     } finally {
       // Close on both CREATE and UPDATE. The old "stay open after CREATE so
       // the user can manage photos/instructions" behavior was intentional
-      // but surprised admins who expected the dialog to close like every
+      // but surprised holders of `equipment.manage` who expected the dialog to close like every
       // other form. To restore the stay-open behavior, the previous code
       // guarded onOpenChange(false) with a `didCreate` flag; just re-add
       // that flag if you want it back.
@@ -287,7 +291,7 @@ export default function EquipmentDialog({
                 <div>
                   <HStack justify="space-between">
                     <Text mb="1">Type *</Text>
-                    {!isAdmin && <Badge colorPalette="gray">Read-only</Badge>}
+                    {!canManageEquipment && <Badge colorPalette="gray">Read-only</Badge>}
                   </HStack>
                   <Select.Root
                     collection={typeCollection}
@@ -298,7 +302,7 @@ export default function EquipmentDialog({
                       strategy: "fixed",
                       hideWhenDetached: true,
                     }}
-                    disabled={!isAdmin && mode === "UPDATE"}
+                    disabled={!canManageEquipment && mode === "UPDATE"}
                   >
                     <Select.Control>
                       <Select.Trigger>
@@ -325,7 +329,7 @@ export default function EquipmentDialog({
                     mb="2"
                   />
                 </div>
-                {isAdmin && (
+                {canManageEquipment && (
                   <>
                     <div>
                       <Text mb="1">Contractor Rate ($/day)</Text>
@@ -474,7 +478,7 @@ export default function EquipmentDialog({
                       strategy: "fixed",
                       hideWhenDetached: true,
                     }}
-                    disabled={!isAdmin && mode === "UPDATE"}
+                    disabled={!canManageEquipment && mode === "UPDATE"}
                   >
                     <Select.Control>
                       <Select.Trigger>
@@ -537,7 +541,7 @@ export default function EquipmentDialog({
                     mb="2"
                   />
                 </div>
-                {isAdmin && (() => {
+                {canManageEquipment && (() => {
                   const equipId = initial?.id ?? createdId;
                   return (
                     <div>
@@ -579,7 +583,7 @@ export default function EquipmentDialog({
                     <div>
                       <Text mb="1" fontSize="sm" fontWeight="medium">Photos</Text>
                       {equipId ? (
-                        <EquipmentPhotos equipmentId={equipId} />
+                        <EquipmentPhotos equipmentId={equipId} scope={scope} />
                       ) : (
                         <Text fontSize="xs" color="fg.muted">Save the equipment first to add photos.</Text>
                       )}
@@ -611,7 +615,7 @@ export default function EquipmentDialog({
           </Dialog.Content>
         </Dialog.Positioner>
       </Portal>
-      {(initial?.id || createdId) && isAdmin && (
+      {(initial?.id || createdId) && canManageEquipment && (
         <EquipmentInstructionsDialog
           open={instructionsDialogOpen}
           onOpenChange={setInstructionsDialogOpen}

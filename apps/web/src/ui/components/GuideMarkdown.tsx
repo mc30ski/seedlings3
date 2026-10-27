@@ -172,7 +172,7 @@ function useGuideLinks(markdown: string): { bySlug: Record<string, GuideLinkTarg
  * verbatim: `:::video javascript:alert(1)` produced a working
  * javascript: href on a page every worker can open.
  *
- * Authoring is Admin-gated and publishing needs a Super, so this is not
+ * Authoring is Admin-gated and publishing needs someone with `settings.manage`, so this is not
  * open to the world — but it routes around the one sanitizer this
  * renderer relies on, and an approver reading prose is not going to
  * catch it.
@@ -262,7 +262,7 @@ function VideoBlock({
     }
     // Not on the allowlist. A plain link is the honest fallback — silently
     // embedding an arbitrary host would put a third party inside training
-    // material that a Super approved.
+    // material that someone with `settings.manage` approved.
     return (
       <Box my={3}>
         <Link href={target} target="_blank" rel="noreferrer" color="blue.fg" textDecoration="underline">

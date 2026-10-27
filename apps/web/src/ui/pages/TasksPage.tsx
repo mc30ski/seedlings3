@@ -60,9 +60,10 @@ import GuideApprovalsSection from "@/src/ui/components/GuideApprovalsSection";
 import { fetchUnmatchedPayrollNames, notifyPayrollChanged } from "@/src/lib/payroll";
 import RepeatingPausesDueSection from "@/src/ui/components/tasks/RepeatingPausesDueSection";
 import { Dashboard } from "@/src/ui/components/Dashboard";
+import type { Scope } from "@/src/lib/scope";
 
 type ShortcutCounts = {
-  // Super-only
+  // `payroll.manage` / `content.approve` queues
   pendingWorkdays: number;
   unapprovedHoursCount: number;
   ledgerFollowupCount: number;
@@ -85,9 +86,9 @@ type ShortcutCounts = {
   policyPendingUploadsCount: number;
   policyPendingApprovalsCount: number;
   policyWorkerPendingCount: number;
-  /** Super-only: Gusto names with no confirmed User yet. */
+  /** `payroll.manage`: Gusto names with no confirmed User yet. */
   payrollUnmatchedCount: number;
-  /** Super-only: education guides awaiting approval. */
+  /** `content.approve`: education guides awaiting approval. */
   guideApprovalCount: number;
 };
 
@@ -122,10 +123,10 @@ type ShortcutHandlers = {
   goToAnnouncements: () => void;
 };
 
-type Props = {
-  isWorker: boolean;
-  isAdmin: boolean;
-  isSuper: boolean;
+// The three flags are spread into Props rather than nested under a
+// `scope` prop, so this intersects Scope instead of holding it. Every
+// call site stays as it was.
+type Props = Scope & {
   counts: ShortcutCounts;
   handlers: ShortcutHandlers;
   onClose: () => void;
@@ -192,9 +193,7 @@ function ShortcutCard({
 }
 
 export default function TasksPage({
-  isWorker,
-  isAdmin,
-  isSuper,
+  can,
   counts,
   handlers,
   onClose,
@@ -221,36 +220,35 @@ export default function TasksPage({
   // pages/index.tsx alerts.push calls).
   const visibleCount = useMemo(() => {
     let n = 0;
-    if (isSuper) {
-      n += counts.pendingWorkdays;
-      n += counts.ledgerFollowupCount;
-      n += counts.pendingUsersCount;
-      n += counts.policyPendingUploadsCount;
-      n += counts.policyPendingApprovalsCount;
-      n += counts.payrollUnmatchedCount;
-      n += counts.guideApprovalCount;
-    }
-    if (isAdmin) {
-      n += counts.estimateFollowupCount;
-      n += counts.overdueCount;
-      n += counts.unclaimedCount;
-      n += counts.unapprovedHoursCount;
-      n += counts.timelineUrgentCount;
-    }
+    // Each number counts only if its queue is one you can work. Two
+    // role buckets could not express that: a bookkeeper was told about
+    // payroll names to match, and a payroll clerk about ledger follow-ups.
+    if (can("time.approve")) n += counts.pendingWorkdays + counts.unapprovedHoursCount;
+    if (can("books.manage")) n += counts.ledgerFollowupCount;
+    if (can("people.approve")) n += counts.pendingUsersCount;
+    if (can("compliance.manage"))
+      n += counts.policyPendingUploadsCount + counts.policyPendingApprovalsCount;
+    if (can("payroll.manage")) n += counts.payrollUnmatchedCount;
+    if (can("content.approve")) n += counts.guideApprovalCount;
+    if (can("estimates.create")) n += counts.estimateFollowupCount;
+    if (can("schedule.manage")) n += counts.overdueCount + counts.unclaimedCount;
+    if (can("timeline.view")) n += counts.timelineUrgentCount;
     n += counts.announcementCount;
     // Worker-side "documents to sign" — role-agnostic since anyone with
-    // a workerType may have policies to sign, including admins/supers who
+    // a workerType may have policies to sign, including holders of `schedule.manage`/holders of `settings.manage` who
     // also work in the field.
     n += counts.policyWorkerPendingCount;
     return n;
-  }, [isAdmin, isSuper, counts]);
+  }, [can, counts]);
 
-  // Worker-only short-circuit: render the empty-by-design state with
+  // Self-scoped-only short-circuit: render the empty-by-design state with
   // a hint about where worker tasks actually live. We still embed
   // WorkdayStrip so a forgotten-to-end workday from yesterday surfaces
   // here too — that's the one worker-specific item with a standalone
   // component today.
-  if (!isAdmin && !isSuper) {
+  // Nobody with a queue here. Was a pair of role flags, which hid the
+  // page from a bookkeeper who has ledger follow-ups waiting.
+  if (visibleCount === 0) {
     return (
       <Box maxW="720px" mx="auto" w="full" p={3}>
         <InlineMessage />
@@ -258,14 +256,14 @@ export default function TasksPage({
         <Box mt={3}>
           {/* Mileage embedded for consistency with HomeTab / JobsTab —
               same "one card, two zones" experience across every Worker
-              surface that shows the strip. This render is worker-only
-              (guarded by the !isAdmin && !isSuper check above), so no
+              surface that shows the strip. This render is the self-scoped one
+              (guarded by the visibleCount check above), so no
               impersonation-hide is needed. */}
           <WorkdayStrip mileageSlot={<MileageStrip embedded />} />
         </Box>
         <EmptyState
           mt={3}
-          title="Tasks is mostly an admin queue today"
+          title="Tasks is mostly an office queue today"
           body="Your day-to-day work lives on the Home and Jobs tabs. Anything time-sensitive shows up there directly."
         />
       </Box>
@@ -302,7 +300,7 @@ export default function TasksPage({
               ("Unlinked client accounts") had no dropdown alert at all —
               a claim nothing checked, so it rotted. */}
 
-          {isAdmin && counts.overdueCount > 0 && (
+          {can("schedule.manage") && counts.overdueCount > 0 && (
             <ShortcutCard
               label="Job Overdue"
               count={counts.overdueCount}
@@ -313,7 +311,7 @@ export default function TasksPage({
           {/* Directly after Job Overdue — same rule, split by workflow, and
               the alerts dropdown pushes them in this order. The
               alert-ordering gate enforces that the two lists agree. */}
-          {isAdmin && counts.activitiesOverdueCount > 0 && (
+          {can("schedule.manage") && counts.activitiesOverdueCount > 0 && (
             <ShortcutCard
               label="Activities Overdue"
               count={counts.activitiesOverdueCount}
@@ -321,7 +319,7 @@ export default function TasksPage({
               onReview={wrap(handlers.goToActivitiesOverdue)}
             />
           )}
-          {isSuper && (
+          {can("people.approve") && (
             <CollapsibleSectionCard
               label="User sign-ups awaiting approval"
               dotColor="#FB923C"
@@ -332,39 +330,47 @@ export default function TasksPage({
               <PendingUserSignupsSection />
             </CollapsibleSectionCard>
           )}
-          {isSuper && (
+          {can("money.approve") && (
             <CollapsibleSectionCard
               label="Pending payment approvals"
               dotColor="#16A34A"
               loadCount={countPendingPaymentApprovals}
-              refreshEvents={["seedlings:admin-payments-changed"]}
+              refreshEvents={["seedlings:payments-changed"]}
               onGoto={wrap(handlers.goToPaymentApprovals)}
             >
               <PendingApprovalsSection />
             </CollapsibleSectionCard>
           )}
-          {isSuper && (
+          {can("money.view") && (
             <CollapsibleSectionCard
               label="Outstanding client invoices"
               dotColor="#FB923C"
               loadCount={countOutstandingClientInvoices}
-              refreshEvents={["seedlings:admin-payments-changed"]}
+              refreshEvents={["seedlings:payments-changed"]}
               onGoto={wrap(handlers.goToPaymentApprovals)}
             >
               <OutstandingRequestsSection />
             </CollapsibleSectionCard>
           )}
-          {isSuper && (
+          {/* `time.manage`, NOT `time.approve`. Both endpoints inside this
+              section — POST /workdays/:id/approve and
+              POST /mileage/approve-day — are guarded on `time.manage`
+              (apps/api/src/routes/time.ts), while this mount asked for
+              `time.approve`. Admin and Coordinator hold the second and not
+              the first, so both saw "Workdays to approve" on Tasks and got
+              a 403 from every Approve they pressed, with nothing on screen
+              explaining why. Found by G15, 2026-10-22. */}
+          {can("time.manage") && (
             <CollapsibleSectionCard
               label="Workdays to approve"
               dotColor="#6366F1"
               loadCount={countPendingWorkdays}
               onGoto={wrap(handlers.goToWorkdayApprovals)}
             >
-              <PendingWorkdaysSection />
+              <PendingWorkdaysSection scope={{ can }} />
             </CollapsibleSectionCard>
           )}
-          {isSuper && (
+          {can("books.manage") && (
             <CollapsibleSectionCard
               label="Ledger follow-ups"
               dotColor="#F59E0B"
@@ -372,10 +378,10 @@ export default function TasksPage({
               refreshEvents={["seedlings3:ledger-followups-changed"]}
               onGoto={wrap(handlers.goToLedgerFollowups)}
             >
-              <LedgerFollowupsSection />
+              <LedgerFollowupsSection scope={{ can }} />
             </CollapsibleSectionCard>
           )}
-          {isSuper && counts.dueToRecordCount > 0 && (
+          {can("money.record") && counts.dueToRecordCount > 0 && (
             <ShortcutCard
               label="Due to record"
               count={counts.dueToRecordCount}
@@ -383,7 +389,7 @@ export default function TasksPage({
               onReview={wrap(handlers.goToDueToRecord)}
             />
           )}
-          {(isAdmin || isSuper) && (
+          {can("schedule.manage") && (
             <CollapsibleSectionCard
               label="Paused repeating to review"
               dotColor="#A855F7"
@@ -400,7 +406,7 @@ export default function TasksPage({
           )}
           {/* Next-visit placeholders. Gray dots match the ghost cards these
               land on, so the alert and its destination read as one thing. */}
-          {(isAdmin || isSuper) && counts.ghostExpiringCount > 0 && (
+          {can("schedule.manage") && counts.ghostExpiringCount > 0 && (
             <ShortcutCard
               label="Next visits expiring"
               count={counts.ghostExpiringCount}
@@ -408,7 +414,7 @@ export default function TasksPage({
               onReview={wrap(handlers.goToExpiringGhosts)}
             />
           )}
-          {(isAdmin || isSuper) && counts.ghostExpiredCount > 0 && (
+          {can("schedule.manage") && counts.ghostExpiredCount > 0 && (
             <ShortcutCard
               label="Next visits expired"
               count={counts.ghostExpiredCount}
@@ -416,7 +422,7 @@ export default function TasksPage({
               onReview={wrap(handlers.goToExpiredGhosts)}
             />
           )}
-          {isSuper && counts.policyPendingUploadsCount > 0 && (
+          {can("compliance.manage") && counts.policyPendingUploadsCount > 0 && (
             <ShortcutCard
               label="Compliance uploads to review"
               count={counts.policyPendingUploadsCount}
@@ -424,7 +430,7 @@ export default function TasksPage({
               onReview={wrap(handlers.goToCompliance)}
             />
           )}
-          {isSuper && counts.policyPendingApprovalsCount > 0 && (
+          {can("compliance.manage") && counts.policyPendingApprovalsCount > 0 && (
             <ShortcutCard
               label="Policy versions awaiting approval"
               count={counts.policyPendingApprovalsCount}
@@ -444,7 +450,7 @@ export default function TasksPage({
               onReview={wrap(handlers.goToWorkerCompliance)}
             />
           )}
-          {isAdmin && (
+          {can("schedule.manage") && (
             <CollapsibleSectionCard
               label="Client change requests"
               dotColor="#F97316"
@@ -452,20 +458,20 @@ export default function TasksPage({
               refreshEvents={["seedlings3:jobs-changed"]}
               onGoto={wrap(handlers.goToClientRequests)}
             >
-              <ChangeRequestsPanel bare />
+              <ChangeRequestsPanel bare scope={{ can }} />
             </CollapsibleSectionCard>
           )}
-          {isAdmin && (
+          {can("identity.link") && (
             <CollapsibleSectionCard
               label="Unlinked client accounts"
               dotColor="#F97316"
               loadCount={countUnlinkedClientAccounts}
               onGoto={wrap(handlers.goToUnlinkedAccounts)}
             >
-              <UnlinkedClientAccountsSection />
+              <UnlinkedClientAccountsSection scope={{ can }} />
             </CollapsibleSectionCard>
           )}
-          {isAdmin && counts.estimateFollowupCount > 0 && (
+          {can("estimates.create") && counts.estimateFollowupCount > 0 && (
             <ShortcutCard
               label="Estimate follow-ups"
               count={counts.estimateFollowupCount}
@@ -473,13 +479,13 @@ export default function TasksPage({
               onReview={wrap(handlers.goToEstimateFollowups)}
             />
           )}
-          {/* Super-only, and inline rather than a shortcut card: the whole
+          {/* `payroll.manage`, and inline rather than a shortcut card: the whole
               action is one picker plus a confirm, so bouncing the operator
               to the Payroll tab to do it would be more steps than doing it
               here. Sits directly above "Job hours awaiting payroll review"
               — both are payroll, and this one blocks a worker from seeing
               their own pay until it is cleared. */}
-          {isSuper && (
+          {can("payroll.manage") && (
             <CollapsibleSectionCard
               label="Payroll names to match"
               dotColor="#A855F7"
@@ -490,10 +496,10 @@ export default function TasksPage({
               <PayrollIdentityReview onChanged={notifyPayrollChanged} />
             </CollapsibleSectionCard>
           )}
-          {/* Education guides pending approval — Super only. Sits with the
+          {/* Education guides pending approval — `content.approve`. Sits with the
               other review queues; approving is the only way material
               becomes readable by a worker. */}
-          {isSuper && (
+          {can("content.approve") && (
             <CollapsibleSectionCard
               label="Guides awaiting approval"
               dotColor="#3B82F6"
@@ -504,7 +510,7 @@ export default function TasksPage({
               <GuideApprovalsSection />
             </CollapsibleSectionCard>
           )}
-          {isAdmin && (
+          {can("time.approve") && (
             <CollapsibleSectionCard
               label="Job hours awaiting payroll review"
               dotColor="#F59E0B"
@@ -515,7 +521,7 @@ export default function TasksPage({
               <UnapprovedHoursSection />
             </CollapsibleSectionCard>
           )}
-          {isAdmin && counts.unclaimedCount > 0 && (
+          {can("schedule.manage") && counts.unclaimedCount > 0 && (
             <ShortcutCard
               label="Unclaimed jobs"
               count={counts.unclaimedCount}
@@ -531,15 +537,15 @@ export default function TasksPage({
               onReview={wrap(handlers.goToAnnouncements)}
             />
           )}
-          {isAdmin && (
+          {can("timeline.view") && (
             <CollapsibleSectionCard
               label="Timeline"
               dotColor="#6366F1"
-              loadCount={() => countTimelineUrgent(isSuper)}
+              loadCount={() => countTimelineUrgent()}
               refreshEvents={["seedlings3:timeline-changed"]}
               onGoto={wrap(handlers.goToTimeline)}
             >
-              <TimelineUrgentSection isSuper={isSuper} />
+              <TimelineUrgentSection canSeeHidden={can("timeline.manage")} />
             </CollapsibleSectionCard>
           )}
         </VStack>
@@ -720,43 +726,42 @@ function CollapsibleSectionCard({
 // components and lets the chip number show before the section is
 // mounted.
 async function countUnlinkedClientAccounts(): Promise<number> {
-  const list = await apiGet<unknown[]>("/api/admin/clients/unlinked-accounts");
+  const list = await apiGet<unknown[]>("/api/clients/unlinked-accounts");
   return Array.isArray(list) ? list.length : 0;
 }
 async function countPendingPaymentApprovals(): Promise<number> {
-  const list = await apiGet<unknown[]>("/api/admin/payments/pending");
+  const list = await apiGet<unknown[]>("/api/payments/pending");
   return Array.isArray(list) ? list.length : 0;
 }
 async function countOutstandingClientInvoices(): Promise<number> {
-  const list = await apiGet<unknown[]>("/api/admin/payment-requests/outstanding");
+  const list = await apiGet<unknown[]>("/api/payment-requests/outstanding");
   return Array.isArray(list) ? list.length : 0;
 }
 async function countChangeRequests(): Promise<number> {
   // Same source the section itself uses internally.
-  const list = await apiGet<unknown[]>("/api/admin/change-requests?status=PENDING");
+  const list = await apiGet<unknown[]>("/api/change-requests?status=PENDING");
   return Array.isArray(list) ? list.length : 0;
 }
 async function countPendingUserSignups(): Promise<number> {
-  const r = await apiGet<{ pending: number }>("/api/admin/users/pendingCount");
+  const r = await apiGet<{ pending: number }>("/api/users/pendingCount");
   return r?.pending ?? 0;
 }
 async function countPendingWorkdays(): Promise<number> {
-  const r = await apiGet<{ totalPending: number }>("/api/super/workdays/pending-summary");
+  const r = await apiGet<{ totalPending: number }>("/api/workdays/pending-summary");
   return r?.totalPending ?? 0;
 }
 async function countLedgerFollowups(): Promise<number> {
-  const r = await apiGet<{ count: number }>("/api/super/ledger-followups/count");
+  const r = await apiGet<{ count: number }>("/api/ledger-followups/count");
   return r?.count ?? 0;
 }
 async function countRepeatingPausesDue(): Promise<number> {
-  const r = await apiGet<{ count: number }>("/api/admin/stream-pauses/reminders/count");
+  const r = await apiGet<{ count: number }>("/api/stream-pauses/reminders/count");
   return r?.count ?? 0;
 }
-async function countTimelineUrgent(isSuper: boolean): Promise<number> {
-  const endpoint = isSuper
-    ? "/api/super/timeline/upcoming-counts"
-    : "/api/admin/timeline/upcoming-counts";
-  const r = await apiGet<{ urgent: number; soon: number }>(endpoint);
+async function countTimelineUrgent(): Promise<number> {
+  // ONE endpoint — the server decides the row set from the caller's
+  // capability, so the client never picks a URL by privilege.
+  const r = await apiGet<{ urgent: number; soon: number }>("/api/timeline/upcoming-counts");
   return r?.urgent ?? 0;
 }
 async function countGuideApprovals(): Promise<number> {
@@ -770,7 +775,7 @@ async function countPayrollUnmatched(): Promise<number> {
 }
 
 async function countUnapprovedHours(): Promise<number> {
-  const r = await apiGet<{ count: number }>("/api/admin/occurrences/unapproved-hours-count");
+  const r = await apiGet<{ count: number }>("/api/occurrences/unapproved-hours-count");
   return r?.count ?? 0;
 }
 

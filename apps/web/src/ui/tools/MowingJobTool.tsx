@@ -13,7 +13,7 @@
 // estimate stays under operator control.
 //
 // Read-only — same self-contained pattern as MulchJobTool. Hits the
-// existing /api/admin/pricing endpoint and never mutates anything.
+// existing /api/pricing endpoint and never mutates anything.
 
 import { useMemo, useState } from "react";
 import {
@@ -98,7 +98,7 @@ export default function MowingJobTool() {
   // Frequency
   const [frequency, setFrequency] = useState<FrequencyKey>("weekly");
 
-  // Other key-based lookups, derived from the same /api/admin/pricing
+  // Other key-based lookups, derived from the same /api/pricing
   // list the hook just fetched. The Acres mode uses a known key; the
   // Time mode uses the General Labor entry directly.
   const acreMow = useMemo(

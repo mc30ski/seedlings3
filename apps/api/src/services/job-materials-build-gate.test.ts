@@ -30,6 +30,7 @@ import {
   humanizeTag,
   INVOICE_LINES_SELECT,
 } from "../lib/jobPricing";
+import { guardEntitlement, guardRequiresAny, isOwnershipGated } from "../lib/guardIntrospection";
 
 const read = (p: string) => readFileSync(join(__dirname, p), "utf8");
 const CHARGES = read("invoiceCharges.ts");
@@ -37,8 +38,31 @@ const SUPPLIES = read("supplies.ts");
 const PRICING = read("../lib/jobPricing.ts");
 const REQUESTS = read("paymentRequests.ts");
 const PAYMENTS = read("payments.ts");
-const ADMIN = read("../routes/admin.ts");
-const WORKER = read("../routes/worker.ts");
+/**
+ * THE ROUTE LAYER, AS ONE STRING.
+ *
+ * The route layer is split by RESOURCE — occurrences.ts, money.ts,
+ * books.ts and so on — so these assertions read every route file at once
+ * rather than naming any single one.
+ *
+ * Every assertion below asks "does the route layer do X", not "does THIS
+ * file do X", and none of them is a negative assertion, so concatenating the
+ * layer preserves each one exactly while surviving future splits. The one
+ * rule that IS about file identity — only one file may write the Ledger —
+ * has its own `LEDGER_OWNERS` list and does not use this.
+ */
+function routeLayer(): string {
+  const dir = join(__dirname, "../routes");
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+    .map((f) => readFileSync(join(dir, f), "utf8"))
+    .join("\n");
+}
+
+const ROUTE_LAYER = routeLayer();
+const BOOKS = read("../routes/books.ts");
+const REPORTS = read("../routes/reports.ts");
+const WORKER = routeLayer();
 
 const WEB = join(__dirname, "../../../../apps/web/src");
 const web = (p: string) => readFileSync(join(WEB, p), "utf8");
@@ -82,9 +106,9 @@ const NO_FEES = { contractorFeePercent: 0, employeeMarginPercent: 0 } as any;
 //
 // SCANNED, NOT REGEXED. The previous version ran a block-comment regex first
 // and a line-comment regex second, so a `/*` appearing INSIDE a line comment
-// opened a phantom block comment. `routes/worker.ts` line 1557 reads
+// opened a phantom block comment. One route file contained
 //
-//     // view-as-allow: not a /me/* route; scoping comes from workerView/...
+//     // view-as-allow: not a /me/* route; scoping comes from selfScoped/...
 //
 // and that `/me/*` swallowed the next 2,843 lines — 37.6% of the file —
 // leaving every gate that scans it asserting against 62% of the source. A
@@ -164,6 +188,28 @@ function sourceFiles(dir: string, exts: RegExp, acc: string[] = []): string[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Assert a route exists and requires at least `role`, whatever its guard is
+ *  called.
+ *
+ *  Asserts the CAPABILITY, not a role. It used to resolve the guard to its
+ *  legacy role, which no longer exists — and the capability is the better
+ *  claim anyway: it stays true when an operator grants `books.manage` to a
+ *  bookkeeper rather than making them someone with `settings.manage`. */
+function expectGated(src: string, routePrefix: string, entitlements: readonly string[]) {
+  const at = src.indexOf(routePrefix);
+  expect(at, `route not found: ${routePrefix}`).toBeGreaterThan(-1);
+  const g = /,\s*([A-Za-z][A-Za-z0-9_]*)\s*,/.exec(src.slice(at, at + 200))?.[1];
+  expect(g, `could not read the guard for ${routePrefix}`).toBeTruthy();
+  const actual = guardEntitlement(src, g!);
+  const ok = entitlements.length === 0
+    ? isOwnershipGated(src, g!)
+    : actual !== null && entitlements.includes(actual);
+  expect(
+    ok,
+    `${routePrefix} requires ${actual ?? "(unresolvable)"}, expected one of ${entitlements.join(", ") || "ownership"}`,
+  ).toBe(true);
+}
 
 describe("[build-gate] job lines never touch the tax ledger", () => {
   const fnBody = (name: string) => {
@@ -417,15 +463,27 @@ describe("[build-gate] invoice lines are written for a client, not a database", 
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("[build-gate] a job line raises a customer's bill, so it is admin-only", () => {
-  it("every mutation refuses a non-admin", () => {
+describe("[build-gate] a job line raises a customer's bill, so it needs `materials.charge`", () => {
+  it("every mutation refuses a caller without the capability", () => {
     for (const fn of [
       "addInvoiceCharge", "updateInvoiceCharge", "deleteInvoiceCharge",
-      "adminAddInvoiceCharge",
+      "addInvoiceCharge",
     ]) {
       const at = CHARGES.indexOf(`async ${fn}`);
       const body = CHARGES.slice(at, CHARGES.indexOf("\n  async ", at + 1));
-      expect(body, `${fn} must be admin-only`).toMatch(/isAdminUser|isAdminOrSuper/);
+      // Asserts the CAPABILITY, not a helper name. Phrased against helper
+      // names it went red the moment one was renamed — and would have
+      // stayed GREEN if somebody kept the name while weakening what it
+      // asked, which is the failure that actually matters here.
+      expect(
+        body,
+        `${fn} must require the capability to bill ANY visit`,
+      ).toMatch(/mayChargeAnyVisit|schedule\.manage/);
+      expect(
+        body,
+        `${fn} must not settle for materials.charge — every worker holds it, ` +
+          `for their own visit only`,
+      ).not.toMatch(/"materials\.charge"/);
     }
   });
 
@@ -455,7 +513,9 @@ describe("[build-gate] a job line raises a customer's bill, so it is admin-only"
 
 describe("[build-gate] only the Ledger writes the Ledger", () => {
   const API_SRC = join(__dirname, "..");
-  const LEDGER_OWNERS = ["routes/admin.ts"];
+  // EXACTLY ONE FILE may write BusinessExpense, and it is the one named
+  // for the Ledger.
+  const LEDGER_OWNERS = ["routes/books.ts"];
   const WRITE = /\bbusinessExpense\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\b/g;
 
   it("no service, plugin or non-Ledger route mutates a BusinessExpense", () => {
@@ -478,8 +538,8 @@ describe("[build-gate] only the Ledger writes the Ledger", () => {
     ).toEqual([]);
   });
 
-  it("every ledger mutation in the Ledger routes is Super-gated", () => {
-    const src = stripComments(ADMIN);
+  it("every ledger mutation in the Ledger routes is books-gated", () => {
+    const src = stripComments(BOOKS);
     for (const m of src.matchAll(WRITE)) {
       const before = src.slice(0, m.index);
       const line = before.split("\n").length;
@@ -489,10 +549,34 @@ describe("[build-gate] only the Ledger writes the Ledger", () => {
         before.lastIndexOf("app.delete("),
       );
       const header = src.slice(routeIdx, routeIdx + 400);
-      expect(header, `routes/admin.ts:${line} writes the ledger from a non-Ledger route`)
-        .toMatch(/["']\/admin\/business-expenses/);
-      expect(header, `routes/admin.ts:${line} ledger write is not superGuard`)
-        .toMatch(/superGuard/);
+      expect(header, `route layer line ${line} writes the ledger from a non-Ledger route`)
+        .toMatch(/["']\/business-expenses/);
+      // Asserts the RULE, not the identifier — the guard is a
+      // `requires(entitlement)` const with any name.
+      const g = /,\s*([A-Za-z][A-Za-z0-9_]*)\s*,/.exec(header)?.[1];
+      expect(g, `route layer line ${line} could not read its guard`).toBeTruthy();
+      // The Ledger is the only deduction, so writing it is a books decision —
+      // with ONE deliberate exception.
+      //
+      // RECORDING an expense (`POST /business-expenses`) is
+      // `expenses.charge`: the trusted employee carrying the company card
+      // puts the company's own spend on the books. That capability existed
+      // for exactly this and had no enforcing route until now, and the plan
+      // called the change out as a behaviour change rather than a relabel.
+      // It is also bounded — creating a row, never editing, reconciling or
+      // deleting one, which all stay `books.manage`.
+      //
+      // Stated as a per-route exception rather than by widening the rule,
+      // because "any of books.manage or expenses.charge" applied to EVERY
+      // ledger write would let a card-holder rewrite the books.
+      const isRecordingAnExpense = /app\.post\("\/business-expenses"/.test(header);
+      const allowed = isRecordingAnExpense
+        ? ["books.manage", "expenses.charge"]
+        : ["books.manage"];
+      expect(
+        guardRequiresAny(src, g!, allowed),
+        `route layer line ${line} ledger write must require ${allowed.join(" or ")}`,
+      ).toBe(true);
     }
   });
 
@@ -511,9 +595,9 @@ describe("[build-gate] only the Ledger writes the Ledger", () => {
     // getting it backwards destroyed a deduction twice. With one pricing
     // model a job line is always a charge the CLIENT was billed, so there is
     // one behaviour and no way to pick the wrong one.
-    const at = ADMIN.indexOf('app.delete("/admin/business-expenses/:id"');
+    const at = BOOKS.indexOf('app.delete("/business-expenses/:id"');
     expect(at).toBeGreaterThan(-1);
-    const body = ADMIN.slice(at, at + 6000);
+    const body = BOOKS.slice(at, at + 6000);
     expect(body, "a job line must never be deleted with a receipt")
       .not.toMatch(/invoiceCharge\.delete/);
     expect(body).toMatch(/inventoryReversed: false/);
@@ -533,7 +617,7 @@ describe("[build-gate] a job line is an invoice charge, never an expense", () =>
     [/\bExpenseItem\b/, "ExpenseItem → InvoiceChargeItem"],
     [/\bManageExpensesDialog\b/, "→ ManageInvoiceChargesDialog"],
     [/\bAddExpenseDialog\b/, "deleted — use ManageInvoiceChargesDialog"],
-    [/\/api\/(admin\/)?(occurrences\/[^"'`]*\/)?expenses\b/, "the /expenses routes are now /invoice-charges"],
+    [/\/api\/()?(occurrences\/[^"'`]*\/)?expenses\b/, "the /expenses routes are now /invoice-charges"],
   ];
 
   // The rule above catches IDENTIFIERS and ROUTES. It caught none of the copy
@@ -829,12 +913,28 @@ describe("[build-gate] the charge dialog behaves the same in every scenario", ()
     expect(fn).toMatch(/actualCost: editActualCost\.trim\(\) \? parseFloat\(editActualCost\) : null/);
   });
 
-  it("an admin edits through the admin route, like every other verb", () => {
+  it("everyone edits through ONE route — the dialog does not branch on a role", () => {
+    /**
+     * This used to assert the opposite: that two registrations existed, one
+     * per role, and the client picked between them. Both required
+     * `materials.charge`, and the client chose from a role flag — so the
+     * URL, not a capability, picked the privilege level. They are merged,
+     * and the dialog must no longer choose.
+     *
+     * The check was a regex for the flag name it was watching for. That
+     * name is deleted, so the pattern could never
+     * match again and the assertion had stopped meaning anything. Counting
+     * the endpoints instead states the rule directly and survives whatever
+     * the next flag is called.
+     */
     const at = DLG.indexOf("async function handleUpdate");
     const fn = DLG.slice(at, DLG.indexOf("\n  const total", at));
-    expect(fn).toMatch(/isAdmin\s*\n?\s*\?\s*`\/api\/admin\/invoice-charges\/\$\{editingId\}`/);
-    // …and that route has to exist. It didn't, once.
-    expect(ADMIN).toMatch(/app\.patch\("\/admin\/invoice-charges\/:id", adminGuard/);
+    expect(fn).toMatch(/`\/api\/invoice-charges\/\$\{editingId\}`/);
+    expect(
+      (fn.match(/\/api\//g) ?? []).length,
+      "the edit endpoint must not be chosen by a conditional — there is one route",
+    ).toBe(1);
+    expectGated(WORKER, 'app.patch("/invoice-charges/:id"', ["materials.charge"]);
   });
 
   it("the dialog locks nothing on an inventory line", () => {
@@ -843,7 +943,7 @@ describe("[build-gate] the charge dialog behaves the same in every scenario", ()
     // It explains what the quantity still controls instead of locking a field.
     expect(DLG).toMatch(/re-prices this line/);
   });
-  it("a non-admin gets a read-only list, not buttons that 403", () => {
+  it("a caller without the capability gets a read-only list, not buttons that 403", () => {
     expect(DLG).toMatch(/\{canCharge && \(\s*\n?\s*<Button[\s\S]{0,500}?Edit/);
     expect(DLG).toMatch(/\{canCharge && \(\s*\n?\s*<Button[\s\S]{0,500}?colorPalette="red"/);
   });
@@ -881,8 +981,8 @@ describe("[build-gate] the wording matches what the thing does", () => {
     expect(DLG).toMatch(/Ledger/);
   });
 
-  it("a worker sees copy written for someone who cannot add one", () => {
-    expect(DLG).toMatch(/Only an admin can add or change them/);
+  it("a reader without charge authority sees copy written for them", () => {
+    expect(DLG).toMatch(/You need charge authority to add or change them/);
     expect(DLG).toMatch(/don&rsquo;t come out of your pay/);
   });
 
@@ -1153,7 +1253,7 @@ describe("[build-gate] asking a client to confirm is recorded as an ASK", () => 
   // messaging app — we never learn whether send was pressed. A surface saying
   // "messaged" when the draft was abandoned would stop someone chasing a
   // client who was never contacted, which is worse than showing nothing.
-  const WORKER = readFileSync(join(__dirname, "../routes/worker.ts"), "utf8");
+  const WORKER = routeLayer();
   const TAB = web("ui/tabs/JobsTab.tsx");
   const SCHEMA = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
 
@@ -1178,7 +1278,7 @@ describe("[build-gate] asking a client to confirm is recorded as an ASK", () => 
     const body = WORKER.slice(at, WORKER.indexOf("\n  app.", at + 10));
     expect(body, "must audit the attempt").toMatch(/action: "client_confirmation_requested"/);
     expect(body, "must NOT flip the confirmed flag").not.toMatch(/isClientConfirmed/);
-    expect(body, "same authorization as /confirm").toMatch(/Only the claimer or an admin/);
+    expect(body, "same authorization as /confirm").toMatch(/Only the claimer or someone with schedule authority/);
   });
 
   it("the last ask moves forward; the first one never does", () => {
@@ -1609,7 +1709,13 @@ describe("[build-gate] Guidance appears at every card density or none", () => {
     // above), which is why this is a "each of whatever we find" check rather
     // than a head-count — the population is allowed to shrink to one, never
     // to grow a site that decides for itself.
-    const sites = TAB.match(/(?:const guidanceSection = |isCardCompact && )([A-Za-z]+)/g) ?? [];
+    // `(?<!!)` — the NEGATED form is a different decision. `!isCardCompact`
+    // means "the roomy card", and several roomy-only controls legitimately
+    // read `!isCardCompact && <capability>`. This pattern used to miss them
+    // by accident, because the gate was spelled as a parenthesised pair of
+    // role flags and a `(` is not `[A-Za-z]`. Naming the capability made them visible
+    // and the gate fired on controls it was never about.
+    const sites = TAB.match(/(?:const guidanceSection = |(?<!!)isCardCompact && )([A-Za-z]+)/g) ?? [];
     expect(sites.length, "the render decision must be found at all").toBeGreaterThanOrEqual(1);
     for (const site of sites) {
       expect(site, `a render site decides for itself: "${site}"`)
@@ -1798,7 +1904,12 @@ describe("[build-gate] the stacked card panels share one vertical rhythm", () =>
     // Anchored on `accessNotes`, not on `orange.faint` — the offline banner
     // earlier in the file paints the same fill and was matching first.
     ["access note", TAB, /accessNotes && \(\s*\n\s*<HStack([\s\S]{0,400}?)bg="orange\.faint"/],
-    ["property address", TAB, /<Box fontSize="sm"([^>]*)>\s*\n\s*<MapLink/],
+    // Box OR HStack: the address row became an HStack in 2026-10 so the
+    // property's AREA badge could sit on the same line as the address
+    // instead of wrapping below it. The rhythm rule is unchanged — that
+    // row still owns its own top gap and sets no bottom margin — but the
+    // matcher named one element and silently stopped finding the panel.
+    ["property address", TAB, /<(?:Box|HStack) fontSize="sm"([^>]*)>\s*\n\s*<MapLink/],
     ["badge row (expanded)", TAB, /<HStack gap=\{1\} flexShrink=\{0\} alignItems="center" wrap="wrap"([^>]*)>/],
     ["badge row (semi)", TAB, /<HStack gap=\{1\} flexWrap="wrap"([^>]*)>/],
   ];
@@ -2112,7 +2223,7 @@ describe("[build-gate] every tab explainer is driven from the breadcrumb", () =>
       "ui/tabs/ActivityTab.tsx": "gate is `role !== admin` — fixed for the lifetime of the mount",
       "ui/tabs/HistoryTab.tsx": "gate is `role !== admin` — same",
       "ui/tabs/UsersTab.tsx": "gate returns the worker roster, a different view with its own explainer",
-      "ui/tabs/PaymentsTab.tsx": "gate is `!isAvail && !showSuperExtras`; the explainer is a child component rendered after it",
+      "ui/tabs/PaymentsTab.tsx": "gate is `!canViewMoney && !canApproveMoney`; the explainer is a child component rendered after it",
     };
     const GATE = /\n {2}if \([^\n]{0,160}\)[\s\S]{0,300}?return[\s\S]{0,240}?(?:LoadingCenter|UnavailableNotice|Spinner)/g;
     // `HistoryView`'s own little spinner is not the tab's gate and has nothing
@@ -2377,7 +2488,7 @@ describe("[build-gate] an alert count and the filter it opens agree", () => {
   // parts that can be checked statically.
   const TAB = web("ui/tabs/JobsTab.tsx");
   const RULE = web("lib/overdueRule.ts");
-  const ADMIN = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+  const ROUTE_LAYER = routeLayer();
 
   it("the two overdue queues partition by workflow, with no overlap", () => {
     // Job Overdue and Activities Overdue are ONE rule split by workflow. If a
@@ -2476,7 +2587,7 @@ describe("[build-gate] an alert count and the filter it opens agree", () => {
     // The predicate above is necessary but NOT sufficient: foreignRows are
     // pushed into the list AFTER the filter has run, so the predicate never
     // sees them. The append itself has to be gated.
-    const i = TAB.indexOf("if (showAdminExtras && foreignRows.length > 0");
+    const i = TAB.indexOf("if (canManageSchedule && foreignRows.length > 0");
     expect(i, "the foreignRows append must exist").toBeGreaterThan(-1);
     const cond = TAB.slice(i, TAB.indexOf("{", i + 10));
     expect(cond, "the foreignRows append must be skipped while Overdue is on")
@@ -2484,12 +2595,12 @@ describe("[build-gate] an alert count and the filter it opens agree", () => {
   });
 
   it("the client UNCLAIMED filter carries every server condition", () => {
-    // Source of truth is `jobsUnclaimed` in routes/admin.ts — that is what
+    // Source of truth is `jobsUnclaimed` in routes/reports.ts — that is what
     // the chip counts. The client block used to copy only its observer rule
     // while claiming in a comment to match the whole predicate.
-    const si = ADMIN.indexOf("const jobsUnclaimed = occurrences.filter(");
+    const si = REPORTS.indexOf("const jobsUnclaimed = occurrences.filter(");
     expect(si, "the server predicate must exist").toBeGreaterThan(-1);
-    const server = ADMIN.slice(si, si + 400);
+    const server = REPORTS.slice(si, si + 400);
     expect(server).toMatch(/o\.status === "SCHEDULED"/);
     expect(server).toMatch(/!o\.isEstimate/);
 
@@ -2504,7 +2615,7 @@ describe("[build-gate] an alert count and the filter it opens agree", () => {
       .toMatch(/_isNextOccurrenceGhost/);
     // The server puts ESTIMATE in nonJobWorkflows, so the client's
     // claimable allow-list must not name it.
-    expect(ADMIN, "server excludes the ESTIMATE workflow")
+    expect(REPORTS, "server excludes the ESTIMATE workflow")
       .toMatch(/nonJobWorkflows = new Set\(\[\"ESTIMATE\"/);
     expect(
       client.slice(client.indexOf("const claimable")),
@@ -2686,7 +2797,7 @@ describe("[build-gate] Job status buttons confirm before they fire", () => {
     expect(SEED, "the taxonomy belongs in Catalogs & Taxonomies")
       .toMatch(new RegExp(`${KEY}: "catalogs"`));
     // An edit that cannot be rejected is an edit that corrupts the dropdown.
-    const ROUTES = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+    const ROUTES = routeLayer();
     expect(ROUTES, "the server must validate the payload before storing it")
       .toMatch(new RegExp(`key === "${KEY}"[\\s\\S]{0,300}validatePauseReasonsJson`));
   });
@@ -2799,7 +2910,7 @@ describe("[build-gate] Job status buttons confirm before they fire", () => {
       ["JobsTab", web("ui/tabs/JobsTab.tsx")],
     ] as const) {
       expect(src, `${name} must gate the cluster on admin or super`)
-        .toMatch(/canManageStreams = !!\(isAdmin \|\| isSuper\)/);
+        .toMatch(/canManageStreams = !?!?canManageSchedule/);
       expect(src, `${name} must pass that gate in`)
         .toMatch(/canManage=\{canManageStreams\}/);
     }
@@ -2831,7 +2942,7 @@ describe("[build-gate] expired ghosts have no window, and nothing may imply one"
   // The count was right and the filter was right; they were answering
   // different questions.
   //
-  // The grace window is now GONE — an expired ghost persists until an admin
+  // The grace window is now GONE — an expired ghost persists until someone with `schedule.manage`
   // suppresses it, the Job is paused, or the stall resolves. That does not
   // retire this rule, it tightens it: an unbounded server needs an unbounded
   // preset, and ANY finite preset reintroduces the same split permanently
@@ -2895,16 +3006,17 @@ describe("[build-gate] expired ghosts have no window, and nothing may imply one"
   });
 });
 
-describe("[build-gate] muting a next-visit warning is admin-only and reversible", () => {
+describe("[build-gate] muting a next-visit warning needs `schedule.manage` and is reversible", () => {
   // Muting silences a stalled visit in the expiry counts — and therefore in
   // the "Expired N" chip, the alerts dropdown and the Tasks page, which read
   // those two numbers and nothing else. It does NOT remove the card. Four
   // things have to hold or it turns into a silent delete:
-  //   1. only ADMIN/SUPER can do it — enforced on the SERVER, not just hidden
-  //   2. the control is absent from the Worker form of the tab
+  //   1. only `schedule.manage` can do it — enforced on the SERVER, not
+  //      just hidden
+  //   2. the control is absent without that capability
   //   3. the COUNTS drop muted rows and the LIST does not
   //   4. the card stays findable so the warning can be turned back on
-  const WORKER_ROUTES = readFileSync(join(__dirname, "../routes/worker.ts"), "utf8");
+  const WORKER_ROUTES = routeLayer();
   const JOBS_SVC = readFileSync(join(__dirname, "./jobs.ts"), "utf8");
   const TAB = web("ui/tabs/JobsTab.tsx");
 
@@ -2917,13 +3029,24 @@ describe("[build-gate] muting a next-visit warning is admin-only and reversible"
     return rest.slice(0, j === -1 ? rest.length : j);
   }
 
-  it("the server refuses a non-admin — the UI gate is not the enforcement", () => {
+  it("the server refuses the unentitled — the UI gate is not the enforcement", () => {
     const body = routeBody();
-    expect(body, "roles must come from req.user, never a fresh DB read (view-as bypass)")
-      .toMatch(/req\.user\?\.roles/);
-    expect(body).toMatch(/RoleVal\.ADMIN/);
-    expect(body).toMatch(/RoleVal\.SUPER/);
-    expect(body, "a non-admin caller must be rejected").toMatch(/if \(!isAdmin\)/);
+    // The decision must come from the principal the request already resolved,
+    // never a fresh read by id. That is the view-as bypass this repo has
+    // shipped three times: a second lookup restores the real powers of
+    // somebody looking through a narrowed perspective, silently, with every page
+    // rendering normally. `callerCan` reads `req.principal`, which has
+    // suspension filtered, inheritance flattened and the perspective applied.
+    expect(
+      body,
+      "the capability must come from req.principal via callerCan, never a fresh DB read",
+    ).toMatch(/callerCan\(req,/);
+    expect(body, "a fresh user lookup here would bypass the active perspective")
+      .not.toMatch(/prisma\.user\.find/);
+    // Suppressing a warning changes what the WHOLE COMPANY sees about a
+    // stalled job, so it needs the capability that runs the schedule.
+    expect(body).toMatch(/callerCan\(req, "schedule\.manage"\)/);
+    expect(body, "a caller without it must be rejected").toMatch(/if \(!canManageSchedule\)/);
     expect(body).toMatch(/FORBIDDEN/);
     // Deliberately NOT "claimer or admin" like the sibling customer-notes
     // route — suppressing changes what the whole company sees is outstanding.
@@ -3015,20 +3138,20 @@ describe("[build-gate] muting a next-visit warning is admin-only and reversible"
     // would check the gating of the wrong thing.
     const i = TAB.indexOf('{ghostSuppressed ? "Unmute warning" : "Mute warning"}');
     expect(i, "the suppress control must exist").toBeGreaterThan(-1);
-    // Walk back to the conditional that renders it. `forAdmin` is the tab's
+    // Walk back to the conditional that renders it. The flag is the tab's
     // admin-form flag; a bare role check would leak the button into the
-    // Worker tab for an admin standing in it.
+    // Worker tab for someone with `schedule.manage` standing in it.
     const before = TAB.slice(Math.max(0, i - 1400), i);
     expect(
       before,
-      "the suppress control must be gated on forAdmin, not on a bare role check",
-    ).toMatch(/\{forAdmin && \(occ as any\)\._blockingOccurrenceId && \(/);
+      "the suppress control must be gated on `schedule.manage`, not on a bare role check",
+    ).toMatch(/\{canManageSchedule && \(occ as any\)\._blockingOccurrenceId && \(/);
   });
 
   it("the confirm dialog does not claim the job keeps repeating", () => {
     // IT DOES NOT KEEP REPEATING. A next-visit ghost exists precisely
     // BECAUSE the cycle has stalled: the next occurrence is created by
-    // approvePayment when the money lands, or by the admin force-next
+    // approvePayment when the money lands, or by the force-next
     // escape hatch, and by nothing else. So while the warning is up the
     // job is producing no visits at all.
     //
@@ -3120,13 +3243,26 @@ describe("[build-gate] services carry the same optional detail as charges", () =
     expect(PREVIEW, "detail is absent, not blank, when empty").toMatch(/\{shownDetail && \(/);
   });
 
-  it("both addon routes persist it — neither drops it on the floor", () => {
-    for (const [name, src] of [["worker", WORKER], ["admin", ADMIN]] as const) {
-      const at = src.indexOf("occurrences/:id/addons");
-      const body = src.slice(at, src.indexOf("\n  app.", at));
-      expect(body, `${name} addon route must write detail`)
-        .toMatch(/detail: detail\?\.trim\(\) \|\| null/);
-    }
+  it("the addon route persists it — and there is only one to check", () => {
+    /**
+     * This iterated over TWO routes, because the prefixed `/occurrences/:id/addons`
+     * and `/occurrences/:id/addons` both existed and one of them had
+     * already dropped `detail` on the floor once. They are merged: the
+     * surviving route carries the claimer-or-`schedule.manage` check plus
+     * the editable-state and workflow guards its management twin skipped — so
+     * there is one place for `detail` to go missing, and one to assert.
+     */
+    const at = WORKER.indexOf('app.post("/occurrences/:id/addons"');
+    expect(at, "the addon route must exist").toBeGreaterThan(-1);
+    const body = WORKER.slice(at, WORKER.indexOf("\n  app.", at));
+    expect(body, "the addon route must write detail")
+      .toMatch(/detail: detail\?\.trim\(\) \|\| null/);
+    // A REGISTRATION, not a mention: the comments above deliberately name the
+    // deleted twin, and a raw substring check matches its own explanation.
+    expect(
+      /app\.[a-z]+\(\s*"\/admin\/occurrences/.test(ROUTE_LAYER),
+      "no /admin/occurrences route may come back — the merge is the fix",
+    ).toBe(false);
   });
 
   it("a service line reaches the invoice with its detail", () => {
@@ -3228,7 +3364,7 @@ describe("[build-gate] the invoice preview cannot drift from the invoice", () =>
   };
 
   it("the preview computes no money of its own", () => {
-    // There are THREE previews now — a shared one, an admin one that adds
+    // There are THREE previews now — a shared one, someone with `schedule.manage` one that adds
     // the crew figure, and a worker one that must not. All three have to
     // trace back to buildInvoice, or a preview starts quoting a number the
     // client never gets.
@@ -3236,7 +3372,7 @@ describe("[build-gate] the invoice preview cannot drift from the invoice", () =>
     expect(shared).not.toMatch(/invoiceTotal\(|invoiceLines\(/);
     expect(shared).toMatch(/await buildInvoice\(occ\)/);
 
-    // crewPool is a DIFFERENT number and legitimately belongs on the ADMIN
+    // crewPool is a DIFFERENT number and legitimately belongs on a caller with `schedule.manage`
     // preview — but from the shared helper, and never inside buildInvoice
     // (the client's payload).
     expect(methodBody("previewInvoice")).toMatch(/crewPool: crewPool\(/);
@@ -3246,7 +3382,7 @@ describe("[build-gate] the invoice preview cannot drift from the invoice", () =>
     )).not.toMatch(/crewPool/);
   });
 
-  it("the WORKER preview carries no crew-pay figure", () => {
+  it("the client-facing preview carries no crew-pay figure", () => {
     // A worker previews what the CUSTOMER receives. `crewPool` is what the
     // crew is paid, and worker surfaces must not expose pay — the same rule
     // that keeps wages off the team roster.
@@ -3305,17 +3441,26 @@ describe("[build-gate] the invoice preview cannot drift from the invoice", () =>
   });
 
   it("the preview is reachable by the crew, and the crew-pay split is not", () => {
-    // POLICY CHANGED 2026-09-16: this used to be admin-only on both the route
+    // POLICY CHANGED 2026-09-16: this used to need `schedule.manage` on both the route
     // and the button. A worker can already SEND the payment request, so being
-    // unable to read the invoice first was the odd part. What stays admin-only
+    // unable to read the invoice first was the odd part. What still needs it
     // is the CREW-PAY figure, not the invoice.
     //
-    // Two routes on purpose: the admin one adds `crewPool`, the worker one
-    // cannot. Both resolve through previewInvoiceShared, so they can never
-    // quote different money.
-    expect(ADMIN).toMatch(/app\.get\("\/admin\/occurrences\/:id\/invoice-preview", adminGuard/);
-    expect(WORKER, "workers need their own preview route")
-      .toMatch(/app\.get\("\/occurrences\/:id\/invoice-preview", workerGuard/);
+    // ONE route now, not two. It was two "on purpose" — one added
+    // `crewPool`, the other could not — but both required only
+    // `schedule.view`, so the crew-pay figure was never actually protected:
+    // anyone could read it by asking for the wider URL. The surviving route
+    // picks the projection from `money.view`, and both still resolve through
+    // previewInvoiceShared so they can never quote different money.
+    expectGated(WORKER, 'app.get("/occurrences/:id/invoice-preview"', ["schedule.view"]);
+    const preview = WORKER.slice(
+      WORKER.indexOf('app.get("/occurrences/:id/invoice-preview"'),
+      WORKER.indexOf('app.get("/occurrences/:id/invoice-preview"') + 700,
+    );
+    expect(
+      preview,
+      "the full invoice (with the crew-pay split) must be chosen by capability",
+    ).toMatch(/callerCan\(req, "money\.view"\)/);
 
     // The button sits on the EVERYDAY row now, gated the same way the API is:
     // claimer, active assignee, or admin. Anchored on the CLICK HANDLER, not
@@ -3324,14 +3469,14 @@ describe("[build-gate] the invoice preview cannot drift from the invoice", () =>
     const at = TAB.indexOf("setPreviewOccId(occ.id)");
     expect(at, "the preview button is gone").toBeGreaterThan(-1);
     const own = TAB.slice(Math.max(0, at - 700), at);
-    expect(own, "the button must be gated like the API: claimer/assignee/admin")
-      .toMatch(/isClaimer \|\| isActiveAssignee \|\| forAdmin/);
+    expect(own, "the button must be gated like the API: claimer, active assignee, or `schedule.manage`")
+      .toMatch(/isClaimer \|\| isActiveAssignee \|\| canManageSchedule/);
 
     // And the dialog must not default to showing pay.
     expect(PREVIEW, "canSeeCrewPay must default to the safe side")
       .toMatch(/canSeeCrewPay = false/);
     expect(TAB, "the tab must pass the real role through")
-      .toMatch(/canSeeCrewPay=\{isAdmin \|\| isSuper\}/);
+      .toMatch(/canSeeCrewPay=\{scope\.can\("money\.view"\)\}/);
   });
 
   it("it says on its face that it is not a record", () => {
@@ -3389,7 +3534,7 @@ describe("[build-gate] nothing applies the LEGACY rule to every visit", () => {
   // mulch out of the crew's pay a second time.
   //
   // It shipped in the payout CONTRACT (adjustOccurrencePrice), the P&L wage
-  // accrual, the workdays CSV, an admin earnings projection, and the claim
+  // accrual, the workdays CSV, someone with `schedule.manage` earnings projection, and the claim
   // agreement a worker signs. Every one silently under-paid or under-reported.
   //
   // The shape is mechanical, so the check is too: any file that computes a
@@ -3426,10 +3571,10 @@ describe("[build-gate] nothing applies the LEGACY rule to every visit", () => {
     // on top, LEGACY took them out of the pool BEFORE the split. Subtracting
     // them from a worker's earnings docks them for materials the business
     // billed to the client.
-    const worker = stripComments(readFileSync(join(__dirname, "../routes/worker.ts"), "utf8"));
+    const worker = stripComments(routeLayer());
     expect(worker).not.toMatch(/netEarnings = totalEarnings - totalExpenses/);
     expect(worker).toMatch(/const netEarnings = totalEarnings;/);
-    const admin = stripComments(readFileSync(join(__dirname, "../routes/admin.ts"), "utf8"));
+    const admin = stripComments(routeLayer());
     expect(admin).not.toMatch(/netEarnings \+= earnings - expenseShare/);
   });
 
@@ -3472,23 +3617,24 @@ describe("[build-gate] removing a charge confirms and is reachable without sight
 
 describe("[build-gate] the ledger breadcrumb is reachable where charges are entered", () => {
   it("the picker follows the ROLE, not which chip you're on", () => {
-    // `isAdmin` on this dialog means "this is the admin VIEW" and picks the
+    // The flag on this dialog meant "this is the staff VIEW" and picked the
     // endpoint set. Gating the picker on it hid the link on the Worker chip —
-    // which is exactly where an admin who claimed their own job enters the
+    // which is exactly where someone with `schedule.manage` who claimed their own job enters the
     // charge. Adding was allowed there; linking was not.
     const DLG = stripComments(web("ui/dialogs/ManageInvoiceChargesDialog.tsx"));
-    expect(DLG).toMatch(/const canLink = canLinkLedger \?\? !!isAdmin;/);
+    expect(DLG).toMatch(/const canLink = canLinkLedger \?\? !!canManageSchedule;/);
     expect(DLG).toMatch(/\{canLink && \(/);
-    expect(DLG).not.toMatch(/\{isAdmin && \(\s*\n\s*<Box pl=\{1\}>/);
+    expect(DLG).not.toMatch(/\{canManageSchedule && \(\s*\n\s*<Box pl=\{1\}>/);
     // The job card passes the role, not the view.
     expect(stripComments(web("ui/tabs/JobsTab.tsx")))
-      .toMatch(/canLinkLedger=\{hasAdminRole \|\| hasSuperRole\}/);
+      .toMatch(/canLinkLedger=\{scope\.can\("books\.manage"\)\}/);
   });
 
   it("both ledger endpoints exist for it to call", () => {
-    const R = stripComments(readFileSync(join(__dirname, "../routes/admin.ts"), "utf8"));
-    expect(R).toMatch(/app\.get\("\/admin\/ledger-charges", adminGuard/);
-    expect(R).toMatch(/app\.patch\("\/admin\/invoice-charges\/:id\/ledger-link", adminGuard/);
+    // The two halves live in different resource files now: the ledger read
+    // with the books, the charge-to-ledger link with the invoice lines.
+    expectGated(stripComments(BOOKS), 'app.get("/ledger-charges"', ["books.view"]);
+    expectGated(stripComments(ROUTE_LAYER), 'app.patch("/invoice-charges/:id/ledger-link"', ["materials.charge"]);
   });
 });
 
@@ -3631,11 +3777,19 @@ describe("[build-gate] the Supplies UI says what the service actually does", () 
     // setting a supply's price was told they were setting worker pay.
     // Renamed in migration 20260908140000 — data unchanged, no rows rewritten.
     const SCHEMA = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
-    expect(SCHEMA).toMatch(/clientUnitPrice Float @default\(0\)/);
-    expect(SCHEMA).toMatch(/clientUnitPrice Float\n/);
+    // `\s+`, not a literal space: `prisma format` aligns attributes into
+    // columns, so the gap after `Float` widens whenever a longer field name
+    // joins the model. These assertions are about the column's NAME and
+    // whether it is defaulted — a formatter run must not be able to turn
+    // either into a build failure.
+    expect(SCHEMA).toMatch(/clientUnitPrice\s+Float\s+@default\(0\)/);
+    expect(SCHEMA).toMatch(/clientUnitPrice\s+Float\s*\n/);
     const code = SCHEMA.replace(/^\s*\/\/\/?[^\n]*$/gm, "");
     expect(code, "the old name must survive only in prose").not.toMatch(/jobPayoutCost/);
-    for (const f of ["./supplies.ts", "./invoiceCharges.ts", "../routes/admin.ts"]) {
+    // The supply + ledger routes live in ../routes/supplies.ts and
+    // ../routes/books.ts.
+    for (const f of ["./supplies.ts", "./invoiceCharges.ts",
+                     "../routes/supplies.ts", "../routes/books.ts"]) {
       const src = stripComments(readFileSync(join(__dirname, f), "utf8"));
       expect(src, f).not.toMatch(/jobPayoutCost/);
     }
@@ -4034,7 +4188,9 @@ describe("[build-gate] the supply<->ledger breadcrumb is reachable from BOTH end
   const LEDGER_TAB = () => readFileSync(
     join(__dirname, "../../../web/src/ui/tabs/BusinessExpensesTab.tsx"), "utf8",
   );
-  const ADMIN = () => readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+  const ROUTE_LAYER = () => routeLayer();
+  // The ledger and supply-purchase routes moved to routes/books.ts.
+  const BOOKSF = () => readFileSync(join(__dirname, "../routes/books.ts"), "utf8");
 
   // AN ENDPOINT NOBODY CALLS IS NOT A FEATURE. The column, the service
   // parameter, the PATCH route and the audit all shipped; the Supplies UI to
@@ -4043,7 +4199,7 @@ describe("[build-gate] the supply<->ledger breadcrumb is reachable from BOTH end
   // the pointer — half a feature that reads as a whole one from the schema.
 
   it("a purchase can be pointed at a ledger row WHEN IT IS RECORDED", () => {
-    expect(ADMIN(), "the Buy route must forward the breadcrumb")
+    expect(ROUTE_LAYER(), "the Buy route must forward the breadcrumb")
       .toMatch(/businessExpenseId: b\.businessExpenseId != null/);
     const T = TAB();
     expect(T, "the Buy dialog must send it").toMatch(/businessExpenseId: bLedgerId/);
@@ -4054,7 +4210,7 @@ describe("[build-gate] the supply<->ledger breadcrumb is reachable from BOTH end
     const T = TAB();
     expect(T).toMatch(/supply-purchases\/\$\{purchaseId\}\/ledger-link/);
     expect(T, "a breadcrumb that cannot be cleared is a trap").toMatch(/setPurchaseLedgerLink\(evt\.row\.id, null\)/);
-    expect(ADMIN()).toMatch(/patch\("\/admin\/supply-purchases\/:id\/ledger-link"/);
+    expect(BOOKSF()).toMatch(/patch\("\/supply-purchases\/:id\/ledger-link"/);
   });
 
   it("the ledger row shows every purchase pointing at it", () => {
@@ -4089,7 +4245,9 @@ describe("[build-gate] the supply<->ledger breadcrumb is reachable from BOTH end
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("[build-gate] supply photos", () => {
-  const ADMIN = () => readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+  const ROUTE_LAYER = () => routeLayer();
+  // The ledger and supply-purchase routes moved to routes/books.ts.
+  const BOOKSF = () => readFileSync(join(__dirname, "../routes/books.ts"), "utf8");
   const COMP = () => readFileSync(
     join(__dirname, "../../../web/src/ui/components/SupplyPhotos.tsx"), "utf8",
   );
@@ -4109,8 +4267,8 @@ describe("[build-gate] supply photos", () => {
     // A dedicated bucket needs a Cloudflare bucket and two Vercel env vars set
     // by hand before uploads work at all. R2_GUIDE_MEDIA_BUCKET_NAME is unset
     // in production today and Guides media 503s for exactly that reason.
-    const A = ADMIN();
-    const at = A.indexOf('app.post("/admin/supplies/:id/photos/upload-url"');
+    const A = ROUTE_LAYER();
+    const at = A.indexOf('app.post("/supplies/:id/photos/upload-url"');
     expect(at, "the upload-url route must exist").toBeGreaterThan(-1);
     expect(A.slice(at, at + 700)).toMatch(/"equipment-photos"/);
     expect(A.slice(at, at + 700)).toMatch(/`supply\/\$\{supplyId\}\//);
@@ -4120,19 +4278,19 @@ describe("[build-gate] supply photos", () => {
     // The key is built server-side but handed back by the client, so without
     // this an object written under one supply's prefix could be attached to
     // another's row.
-    expect(ADMIN()).toMatch(/key\.startsWith\(`supply\/\$\{supplyId\}\/`\)/);
+    expect(ROUTE_LAYER()).toMatch(/key\.startsWith\(`supply\/\$\{supplyId\}\/`\)/);
   });
 
   it("the photo cap is enforced on the SERVER", () => {
     // The component also checks, but a client-side cap is a suggestion.
-    const A = ADMIN();
+    const A = ROUTE_LAYER();
     expect(A).toMatch(/SUPPLY_PHOTO_LIMIT = 10/);
     expect(A).toMatch(/count >= SUPPLY_PHOTO_LIMIT/);
   });
 
   it("deleting a photo snapshots it into the audit BEFORE it is gone", () => {
-    const A = ADMIN();
-    const at = A.indexOf('app.delete("/admin/supplies/:id/photos/:photoId"');
+    const A = ROUTE_LAYER();
+    const at = A.indexOf('app.delete("/supplies/:id/photos/:photoId"');
     expect(at).toBeGreaterThan(-1);
     const body = A.slice(at, at + 1400);
     expect(body).toMatch(/action: "photo_deleted"/);
@@ -4245,18 +4403,18 @@ describe("[build-gate] supply photos", () => {
     // FETCHED BY ID. The list is filtered to a persisted date window, so
     // searching the loaded rows would silently fail for older receipts — the
     // very ones worth deep-linking to.
-    expect(LEDGER).toMatch(/admin\/business-expenses\/\$\{pending\}/);
-    expect(ADMIN()).toMatch(/app\.get\("\/admin\/business-expenses\/:id"/);
+    expect(LEDGER).toMatch(/business-expenses\/\$\{pending\}/);
+    expect(BOOKSF()).toMatch(/app\.get\("\/business-expenses\/:id"/);
     // One include feeds the list and the detail route, so they cannot drift.
-    expect(ADMIN()).toMatch(/const LEDGER_ROW_INCLUDE = /);
-    expect(ADMIN()).toMatch(/include: LEDGER_ROW_INCLUDE/);
+    expect(BOOKSF()).toMatch(/const LEDGER_ROW_INCLUDE = /);
+    expect(BOOKSF()).toMatch(/include: LEDGER_ROW_INCLUDE/);
   });
 
   it("the ledger picker is capped, debounced and race-guarded", () => {
     // CAPPED: the endpoint returns the 40 most recent EXPENSE rows, or the 40
     // best matches — never the whole ledger, which only grows.
-    const A = ADMIN();
-    const at = A.indexOf('app.get("/admin/ledger-charges"');
+    const A = BOOKS;
+    const at = A.indexOf('app.get("/ledger-charges"');
     expect(at).toBeGreaterThan(-1);
     const route = A.slice(at, at + 1200);
     expect(route).toMatch(/take: 40/);
@@ -4419,7 +4577,7 @@ describe("[build-gate] hours approval measures a job against itself", () => {
     // rule still runs, just against the number this change exists to stop
     // using. All three sites must pass it.
     const J = JOBS();
-    const WORKER = stripComments(readFileSync(join(__dirname, "../routes/worker.ts"), "utf8"));
+    const WORKER = stripComments(routeLayer());
     const calls = (J + WORKER).match(/evaluateHoursApproval\(\{/g) ?? [];
     const supplied = (J + WORKER).match(/priorPersonMinutes: await loadPriorPersonMinutes\(/g) ?? [];
     expect(calls.length, "expected three call sites").toBe(3);
@@ -4694,7 +4852,7 @@ describe("[build-gate] Home's vehicle summary is per-driver and self-hiding", ()
 
   it("the summary is scoped to the DRIVER, not the vehicle", () => {
     // Two workers share the crew van. "How far did the van go" is the
-    // fleet question the Super Vehicles tab answers; this section answers
+    // fleet question the Vehicles tab answers; this section answers
     // "how far did I take it". Dropping driverUserId from the query would
     // still return plausible numbers — just everyone else's mixed in.
     const M = readFileSync(join(__dirname, "./mileage.ts"), "utf8");
@@ -4713,17 +4871,17 @@ describe("[build-gate] Home's vehicle summary is per-driver and self-hiding", ()
   it("the endpoint is view-as aware, not annotated away", () => {
     // /me/vehicles carries a `view-as-allow` annotation whose stated
     // reason is that the MileageStrip is self-service only. This section
-    // is NOT — an admin with the Home worker picker on one worker must see
-    // that worker's vehicles — so it needs the real override, gated on
-    // ADMIN/SUPER. Reusing /me/vehicles here would have rendered the
-    // admin's own vehicles under the worker's name.
-    const R = readFileSync(join(__dirname, "../routes/worker.ts"), "utf8");
+    // is NOT — someone using the Home picker on one person must see THAT
+    // person's vehicles — so it needs the real override, gated on
+    // `people.view`. Reusing /me/vehicles here would have rendered the
+    // caller's own vehicles under the other person's name.
+    const R = routeLayer();
     const at = R.indexOf('app.get("/me/vehicle-summary"');
     expect(at, "the endpoint must exist").toBeGreaterThan(-1);
     const handler = R.slice(at, at + 1400);
     expect(handler, "must accept viewAsUserId").toContain("viewAsUserId");
-    expect(handler, "must gate the override on ADMIN/SUPER")
-      .toMatch(/isAdmin[\s\S]{0,200}?forbidden/);
+    expect(handler, "must gate the override on `people.manage`")
+      .toMatch(/canManagePeople[\s\S]{0,200}?forbidden/);
   });
 
   it("the section disappears for a worker with no vehicles", () => {
@@ -4753,13 +4911,13 @@ describe("[build-gate] Home's vehicle summary is per-driver and self-hiding", ()
       .toMatch(/!isAggregate && !isSubset/);
   });
 
-  it("the timeframe list widens for an admin inspecting a worker", () => {
-    // Same split as the pay card: a worker gets the short list, an admin
-    // looking at one worker gets the longer arc.
+  it("the timeframe list widens when inspecting somebody else", () => {
+    // Same split as the pay card: your own card gets the short list,
+    // somebody else's gets the longer arc.
     const P = web("ui/tabs/HomeTab.parts.tsx").replace(/\s+/g, " ");
     const at = P.indexOf("export function MyVehiclesSection");
     const body = P.slice(at, at + 1600);
-    expect(body).toMatch(/isAdminView \? ADMIN_PERIODS : WORKER_PERIODS/);
+    expect(body).toMatch(/isViewingOther \? OTHER_PERIODS : OWN_PERIODS/);
     expect(body, "the chosen window must survive a reload")
       .toMatch(/usePersistedPeriod\( "homeMyVehicles_period"/);
   });
@@ -4777,7 +4935,7 @@ describe("[build-gate] a forced next visit is the same visit approval would make
     // crew showed up without the reference photos.
     const P = svc("./payments.ts");
     expect(P, "the shared builder must exist").toContain("async function createNextOccurrenceFrom(");
-    // Exactly two callers: approvePayment's auto-create and the admin
+    // Exactly two callers: approvePayment's auto-create and a caller with `schedule.manage`
     // force-next escape hatch.
     const calls = P.match(/await createNextOccurrenceFrom\(/g) ?? [];
     expect(calls.length, "expected both paths to call the shared builder").toBe(2);
@@ -4832,9 +4990,9 @@ describe("[build-gate] a forced next visit is the same visit approval would make
 
   it("a deduped visit is never stamped over", () => {
     // When the dedupe matches a visit that already exists — exactly what
-    // happens after an admin force-creates one and the payment lands later
+    // happens after someone with `schedule.manage` force-creates one and the payment lands later
     // — that row belongs to another path. Copying this payment's carryover
-    // onto it would overwrite whatever the admin put there, which is the
+    // onto it would overwrite whatever a caller with `schedule.manage` put there, which is the
     // entire reason force-next is usable for "add a service to the next
     // visit before this one is paid".
     const P = svc("./payments.ts");
@@ -4870,7 +5028,7 @@ describe("[build-gate] the driving log is reminded, never gated", () => {
       .toMatch(/workday\/end[\s\S]{0,240}?maybePromptMileage\("stop"/);
   });
 
-  it("the reminder is suppressed for an admin acting as someone else", () => {
+  it("the reminder is suppressed when acting as someone else", () => {
     // /api/me/mileage/* is self-only server-side (driverUserId === caller),
     // so prompting an impersonating admin offers an action the request
     // would be refused for.
@@ -4960,41 +5118,69 @@ describe("[build-gate] every Money tab explains itself", () => {
   };
 
   // Every tab under the Money category, and whether more than one role sees it.
+  /**
+   * DOES THIS EXPLAINER ADAPT TO THE READER?
+   *
+   * It used to be two conditions: `keyed` (the explainerId interpolates
+   * something) and `branched` (the copy has a role-flag ternary). Both
+   * named the deleted roles, and `keyed` was satisfied by
+   * interpolating a role into a localStorage key even when the two arms of
+   * the copy were IDENTICAL — which is what DocumentsTab, TimelineTab and
+   * ServicesTab were doing, so the gate passed on three tabs whose copy did
+   * not vary at all.
+   *
+   * There is one tab per feature now, so "which variant is mounted" is not a
+   * question any more. The thing worth enforcing is the one the original
+   * comment gave as the reason: a reader must not be told about a power they
+   * do not hold, or left unaware of one they do. That is a CAPABILITY
+   * question, so the copy has to turn on a capability — a
+   * `<CapabilitySection capability="…">`, which renders only for a holder, or
+   * a ternary on a `can…` answer.
+   */
+  const explainerAdaptsToReader = (src: string): boolean => {
+    const at = src.indexOf("<TabExplainer");
+    if (at < 0) return false;
+    const block = src.slice(at, src.indexOf("</TabExplainer>", at));
+    return /<CapabilitySection capability="/.test(block)
+        || /\bcan[A-Z]\w*\s*\?/.test(block)
+        || /can\("[a-z.\-]+"\)\s*\?/.test(block);
+  };
+
   const MONEY_TABS: Array<{ file: string; roleAware: boolean }> = [
     { file: "PaymentsTab.tsx", roleAware: true },
     { file: "PayrollTab.tsx", roleAware: true },
     { file: "PricingTab.tsx", roleAware: true },
     { file: "SuppliesTab.tsx", roleAware: true },
-    { file: "BusinessExpensesTab.tsx", roleAware: false }, // Ledger — super only
-    { file: "PromotionsTab.tsx", roleAware: false },       // super only
-    { file: "ForecastTab.tsx", roleAware: false },         // super only
+    { file: "BusinessExpensesTab.tsx", roleAware: false }, // Ledger — `books.view`
+    { file: "PromotionsTab.tsx", roleAware: false },       // `marketing.manage`
+    { file: "ForecastTab.tsx", roleAware: false },         // `forecasts.view`
   ];
 
   // Every tab under the Records category, and whether more than one role sees
   // it. Worker sees only Guides; admin adds Engagement, History, Timeline and
   // Documents; super adds Reconcile, Workdays, Compliance and Audit.
   const RECORDS_TABS: Array<{ file: string; roleAware: boolean }> = [
-    { file: "GuidesTab.tsx", roleAware: true },          // worker / admin / super
-    { file: "TimelineTab.tsx", roleAware: true },        // admin / super
-    { file: "DocumentsTab.tsx", roleAware: true },       // admin / super
+    { file: "GuidesTab.tsx", roleAware: true },          // three tiers
+    { file: "TimelineTab.tsx", roleAware: true },        // view vs manage
+    { file: "DocumentsTab.tsx", roleAware: true },       // view vs manage
     { file: "ActivityTab.tsx", roleAware: false },
     { file: "HistoryTab.tsx", roleAware: false },
-    { file: "ReconcileTab.tsx", roleAware: false },      // super only
-    { file: "WorkdaysTab.tsx", roleAware: false },       // super only
-    { file: "AdminComplianceTab.tsx", roleAware: false },// super only
-    { file: "AuditTab.tsx", roleAware: false },          // super only
+    { file: "ReconcileTab.tsx", roleAware: false },      // `books.view`
+    { file: "WorkdaysTab.tsx", roleAware: false },       // `time.view` / `time.manage`
+    { file: "ComplianceTab.tsx", roleAware: false },// `compliance.view`
+    { file: "AuditTab.tsx", roleAware: false },          // `settings.manage`
   ];
 
   // Directory: all four tabs are visible to ALL THREE roles, and two of them
   // render a wholly separate component for workers — so an explainer on the
   // main render alone would leave a worker with none.
   it("each Directory tab renders one, on the worker path too", () => {
-    for (const f of ["ClientsTab.tsx", "PropertiesTab.tsx", "UsersTab.tsx", "AdminGroupsTab.tsx"]) {
+    for (const f of ["ClientsTab.tsx", "PropertiesTab.tsx", "UsersTab.tsx", "CrewsTab.tsx"]) {
       expect(web(f), `${f} needs an explainer`).toContain("<TabExplainer");
     }
-    // UsersTab returns <WorkerTeamRoster /> and AdminGroupsTab returns
+    // UsersTab returns <WorkerTeamRoster /> and CrewsTab returns
     // <WorkerMyCrews /> for workers — separate render trees, separate copy.
-    for (const [f, comp] of [["UsersTab.tsx", "WorkerTeamRoster"], ["AdminGroupsTab.tsx", "WorkerMyCrews"]] as const) {
+    for (const [f, comp] of [["UsersTab.tsx", "WorkerTeamRoster"], ["CrewsTab.tsx", "WorkerMyCrews"]] as const) {
       const src = web(f);
       const at = src.indexOf(`function ${comp}`);
       expect(at, `${comp} must exist`).toBeGreaterThan(-1);
@@ -5009,21 +5195,23 @@ describe("[build-gate] every Money tab explains itself", () => {
     const U = web("UsersTab.tsx").replace(/\s+/g, " ");
     const at = U.indexOf("function WorkerTeamRoster");
     expect(U.slice(at)).toMatch(/not here and not withheld by accident/);
-    // AdminGroupsTab is the one flat explainer that earned a RoleSection:
+    // CrewsTab is the one flat explainer that earned a RoleSection:
     // the worker mount is a different render tree (early return), so both
-    // mounts carry the same base copy and only the admin one adds to it.
+    // mounts carry the same base copy and only one of them adds to it.
     // The base states the withholding as a FACT about workers, not as
-    // "you cannot" — an admin reads the same sentence and it stays true.
-    const G = web("AdminGroupsTab.tsx").replace(/\s+/g, " ");
+    // "you cannot" — someone with `schedule.manage` reads the same sentence and it stays true.
+    const G = web("CrewsTab.tsx").replace(/\s+/g, " ");
     expect(G.slice(G.indexOf("function WorkerMyCrews")))
       .toMatch(/cost splits and anyone.{0,8}s pay details\s*are never shown to them/i);
   });
 
-  it("Users tells an admin that approving is not theirs", () => {
-    // POST /admin/users/:id/approve is superGuard, and the admin mount passes
-    // `readOnly` so no mutation control renders at all.
+  it("Users tells a reader without people.approve that approving is not theirs", () => {
+    // POST /users/:id/approve requires `people.approve`. The pending rows
+    // render for anyone who can see the directory, so a reader without it
+    // sees a queue they cannot clear and has to be told why.
     const U = web("UsersTab.tsx").replace(/\s+/g, " ");
-    expect(U, "an admin must be told approving is not theirs").toMatch(/Read-only for you|super-only/);
+    expect(U, "a reader without `people.approve` must be told approving is not theirs")
+      .toMatch(/Read-only for you/);
     expect(U).toMatch(/Approving a new sign-up is yours alone/);
   });
 
@@ -5031,19 +5219,13 @@ describe("[build-gate] every Money tab explains itself", () => {
   // Services only for admin and super. Jobs is the odd one — its explainer
   // lives in its own component file because it carries the whole card-type
   // reference that used to be an (i) modal.
-  const WORK_TABS = ["HomeTab.tsx", "PreviewRoutesTab.tsx", "ServicesTab.tsx", "AdminTasksTab.tsx"];
+  const WORK_TABS = ["HomeTab.tsx", "PreviewRoutesTab.tsx", "ServicesTab.tsx", "TasksTab.tsx"];
 
-  it("each Work tab renders a role-tailored TabExplainer", () => {
-    const flat: string[] = [];
-    for (const f of WORK_TABS) {
-      const src = web(f);
-      expect(src, `${f} needs an explainer`).toContain("<TabExplainer");
-      const at = src.indexOf("<TabExplainer");
-      const block = src.slice(at, src.indexOf("</TabExplainer>", at));
-      const keyed = /explainerId=\{`[^`]*\$\{/.test(block);
-      const branched = /isSuper \?|scope\.isSuper \?|isAdminView \?/.test(block);
-      if (!keyed || !branched) flat.push(f);
-    }
+  it("each Work tab's explainer adapts to what the reader may do", () => {
+    const flat = WORK_TABS.filter((f) => {
+      expect(web(f), `${f} needs an explainer`).toContain("<TabExplainer");
+      return !explainerAdaptsToReader(web(f));
+    });
     expect(flat, "a Work tab whose explainer is one-size-fits-all").toEqual([]);
   });
 
@@ -5056,7 +5238,11 @@ describe("[build-gate] every Money tab explains itself", () => {
     expect(J, "…and the tab must mount the explainer instead").toContain("<JobsExplainer");
     const E = readFileSync(join(__dirname, "../../../web/src/ui/components/JobsExplainer.tsx"), "utf8");
     expect(E).toContain("<TabExplainer");
-    expect(E, "role-keyed identity, via the shared jobsExplainerKey helper").toMatch(/explainerId=\{jobsExplainerKey\(role\)\}/);
+    // One tab, one collapse state. This required the id to be keyed on a
+    // `role` argument, which is how three variants of one tab each kept
+    // their own; the SECTIONS still vary, on capabilities.
+    expect(E, "the shared jobsExplainerKey helper, not a second literal")
+      .toMatch(/explainerId=\{jobsExplainerKey\(\)\}/);
   });
 
   it("the Jobs reference states the claim rules the server actually enforces", () => {
@@ -5087,8 +5273,11 @@ describe("[build-gate] every Money tab explains itself", () => {
     // A default CREW outranks the per-user default assignees.
     expect(E, "the default crew wins over default assignees")
       .toMatch(/default crew is put on it; failing that, its default assignees/);
-    // Start/complete/accept-payment is claimer OR ADMIN, and never a trainee.
-    expect(E, "admins can act as well as the claimer").toMatch(/claimer .{0,12}or an admin.{0,12} can start/);
+    // Start/complete/accept-payment is the claimer OR someone holding
+    // `schedule.manage`, and never a trainee. The copy says that WITHOUT
+    // naming a role — "someone with `schedule.manage`" was a row an operator can rename.
+    expect(E, "the copy must say someone else can act as well as the claimer")
+      .toMatch(/claimer[\s\S]{0,60}runs the schedule[\s\S]{0,40}start/);
     // "Insured Only" is the compliance-policy gate above a price threshold,
     // not a hardcoded insurance flag.
     expect(E, "the high-value gate is the policy gate")
@@ -5145,17 +5334,11 @@ describe("[build-gate] every Money tab explains itself", () => {
   // reserve at all.
   const EQUIPMENT_TABS = ["InventoryTab.tsx", "CollectionsTab.tsx", "VehiclesTab.tsx"];
 
-  it("each Equipment tab renders a TabExplainer, and all three tailor it", () => {
-    const flat: string[] = [];
-    for (const f of EQUIPMENT_TABS) {
-      const src = web(f);
-      expect(src, `${f} needs an explainer`).toContain("<TabExplainer");
-      const at = src.indexOf("<TabExplainer");
-      const block = src.slice(at, src.indexOf("</TabExplainer>", at));
-      const keyed = /explainerId=\{`[^`]*\$\{/.test(block);
-      const branched = /showSuperExtras \?/.test(block);
-      if (!keyed || !branched) flat.push(f);
-    }
+  it("each Equipment tab renders a TabExplainer, and all three adapt it", () => {
+    const flat = EQUIPMENT_TABS.filter((f) => {
+      expect(web(f), `${f} needs an explainer`).toContain("<TabExplainer");
+      return !explainerAdaptsToReader(web(f));
+    });
     expect(flat, "an Equipment tab whose explainer is one-size-fits-all").toEqual([]);
   });
 
@@ -5163,37 +5346,50 @@ describe("[build-gate] every Money tab explains itself", () => {
     // Three different money stories, and the tab already renders three
     // different rate badges for them (workerRateBadge). The copy has to agree
     // with the badge the same reader is looking at:
-    //   TRAINEE    — canWorkerReserve is false for them, and splits are $0.
-    //   EMPLOYEE   — calculateContractorSplits zeroes them out, always, even
-    //                inside a contractor-led crew.
-    //   CONTRACTOR — billable, at flat-daily or per-job-capped-at-daily, and
-    //                the amount is computed at release, not at checkout.
+    //   not cleared — canWorkerReserve is false for them, and splits are $0.
+    //   EMPLOYEE    — calculateContractorSplits zeroes them out, always, even
+    //                 inside a contractor-led crew.
+    //   CONTRACTOR  — billable, at flat-daily or per-job-capped-at-daily, and
+    //                 the amount is computed at release, not at checkout.
+    // PERMISSION COMES FIRST, because it is not a worker type: an employee
+    // who may not reserve reads a different story from one who may.
+    //
+    // The capability is `inventory.pull`, NOT field clearance. This asserted
+    // `notFieldCleared`, which is `work.claim` — a different grant that the
+    // starter roles split on purpose ("May pull inventory" is the office
+    // person who fetches but never runs a visit). Holding the gate to the
+    // wrong name kept the wrong gate in place.
     const I = web("InventoryTab.tsx").replace(/\s+/g, " ");
     const at = I.indexOf("<TabExplainer");
     const block = I.slice(at, I.indexOf("</TabExplainer>", at));
-    expect(block, "the worker branch must split on worker type")
-      .toMatch(/isTrainee \? .* : me\?\.workerType === "EMPLOYEE" \?/);
-    expect(block, "a trainee must be told reserving is off for them")
+    expect(block, "the worker branch must split on the reserve capability, then worker type")
+      .toMatch(/cannotPullInventory \? .* : me\?\.workerType === "EMPLOYEE" \?/);
+    expect(block, "someone who may not reserve must be told reserving is off")
       .toMatch(/reserving is off/);
     expect(block, "an employee must be told they are not billed")
       .toMatch(/not<\/Em> billed to you|not billed to you/);
     expect(block, "a contractor must be told the charge lands at return, not checkout")
       .toMatch(/when you return it/);
-    expect(block, "…and that a crew's employees and trainees still pay nothing")
-      .toMatch(/employees or trainees in it pay nothing/);
+    expect(block, "…and that a crew's employees and unpaid helpers still pay nothing")
+      .toMatch(/employees or unpaid helpers in it pay nothing/);
   });
 
-  it("Inventory does not offer an admin the two controls that are Super-only", () => {
-    // POST /admin/equipment (create) and DELETE /admin/equipment/:id are
-    // superGuard; the UI gates both on showSuperExtras. An admin told they can
-    // add a piece goes looking for a button that is not rendered.
+  it("Inventory offers the act-on-behalf controls only with `equipment.manage`", () => {
+    // POST /equipment (create) and DELETE /equipment/:id both require
+    // `equipment.manage`, which is what the UI gates both on. Someone told
+    // they can add a piece goes looking for a button that is not rendered.
     const I = web("InventoryTab.tsx").replace(/\s+/g, " ");
     const at = I.indexOf("<TabExplainer");
     const block = I.slice(at, I.indexOf("</TabExplainer>", at));
-    expect(I, "an admin must be told these two are not theirs")
-      .toMatch(/Adding a new piece and deleting a retired one are <Em>super-only<\/Em>|Adding a new piece and deleting a retired one are Super-only/);
-    // …and the create button really is still super-gated.
-    expect(web("InventoryTab.tsx")).toMatch(/showSuperExtras && \(\s*<Button[\s\S]{0,400}?onClick=\{openCreate\}/);
+    // WAS: assert the copy names a rank for these two. That claim was
+    // false — `POST /equipment` and `DELETE /equipment/:x` are both
+    // `equipment.manage`, which every admin holds. The copy now says they
+    // need the same permission as the rest of the section, which is true.
+    expect(I, "the copy must not claim a role owns these")
+      .toMatch(/Adding a new piece and deleting a retired one need the same permission/);
+    // …and the create button is still gated. It is a SURFACE gate today;
+    // tightening it to `equipment.manage` is the §6 follow-up.
+    expect(web("InventoryTab.tsx")).toMatch(/canViewReports && \(\s*<Button[\s\S]{0,400}?onClick=\{openCreate\}/);
   });
 
   it("no equipment rate shown to a worker is read straight off dailyRate", () => {
@@ -5216,39 +5412,41 @@ describe("[build-gate] every Money tab explains itself", () => {
     }
   });
 
-  it("Vehicles tells both non-super roles they are read-only, and where miles come from", () => {
-    // Every mutation on this tab is superGuard, and so is the mileage
-    // drill-down. A worker also needs pointing at the MileageStrip on Home —
+  it("Vehicles tells a reader without equipment.manage it is read-only, and where miles come from", () => {
+    // Every mutation on this tab requires `equipment.manage`, and the mileage
+    // drill-down requires `time.view`. A worker also needs pointing at the MileageStrip on Home —
     // that is where their driving is actually recorded, and stopping a trip is
     // what moves Vehicle.currentOdometer.
     const V = web("VehiclesTab.tsx").replace(/\s+/g, " ");
     const at = V.indexOf("<TabExplainer");
     const block = V.slice(at, V.indexOf("</TabExplainer>", at));
-    expect(V, "a non-super must be told the controls are not theirs").toMatch(/Read-only<\/Em> for you|super-only/);
+    expect(V, "a reader without `equipment.manage` must be told the controls are not theirs")
+      .toMatch(/Read-only<\/Em> for you/);
     expect(block, "the worker branch must point at the Home mileage strip")
       .toMatch(/mileage strip on your Home tab/);
     expect(block, "and must not imply miles are logged here")
       .toMatch(/not recorded here/);
   });
 
-  it("Collections tells a worker kits are admin-authored, and an admin that deleting is safe", () => {
-    // Kits are a label over equipment: DELETE /admin/equipment-collections/:id
+  it("Collections tells a reader kits are authored elsewhere, and someone with schedule authority that deleting is safe", () => {
+    // Kits are a label over equipment: DELETE /equipment-collections/:id
     // removes the JobRecommendedCollection/collection rows only. The worker
-    // path has no mutation at all — every write endpoint is adminGuard.
+    // path has no mutation at all — every write endpoint requires
+    // `equipment.manage`.
     const C = web("CollectionsTab.tsx").replace(/\s+/g, " ");
     const at = C.indexOf("<TabExplainer");
     const block = C.slice(at, C.indexOf("</TabExplainer>", at));
-    expect(C, "a worker must be told kits are admin-authored")
-      .toMatch(/kits are built and changed by an admin/);
-    expect(block, "an admin must be told deleting a kit spares the equipment")
+    expect(C, "a worker must be told who authors kits, without naming a role")
+      .toMatch(/kits are built and changed by whoever manages equipment/);
+    expect(block, "the reader must be told deleting a kit spares the equipment")
       .toMatch(/deleting one never touches the equipment itself/);
   });
 
   const SYSTEM_TABS: Array<{ file: string; roleAware: boolean }> = [
-    { file: "ProfileTab.tsx", roleAware: true },      // worker / admin / super
+    { file: "ProfileTab.tsx", roleAware: true },      // three tiers
     { file: "SettingsTab.tsx", roleAware: true },     // admin reads, super writes
-    { file: "AdminNotifyTab.tsx", roleAware: false }, // admin / super, same view
-    { file: "VanityUrlsTab.tsx", roleAware: false },  // super only
+    { file: "NotifyTab.tsx", roleAware: false }, // one view for everyone
+    { file: "VanityUrlsTab.tsx", roleAware: false },  // `marketing.manage`
   ];
 
   it("each System tab renders a TabExplainer", () => {
@@ -5256,14 +5454,20 @@ describe("[build-gate] every Money tab explains itself", () => {
     expect(missing, "a System tab with no explainer").toEqual([]);
   });
 
-  it("Settings tells an admin it is read-only for them", () => {
-    // GET /admin/settings is adminGuard; PATCH /admin/settings/:key is
-    // superGuard, and the UI gates its edit controls on isSuper. An admin
-    // told "changing one here changes behaviour everywhere" would be reading
-    // about controls that are not rendered for them.
+  it("Settings tells someone with schedule authority it is read-only for them", () => {
+    // GET /settings requires `settings.view`; PATCH /settings/:key requires
+    // `settings.manage`, which is what the UI gates its edit controls on.
+    // Someone told "changing one here changes behaviour everywhere" would be
+    // reading about controls that are not rendered for them.
     const S = web("SettingsTab.tsx").replace(/\s+/g, " ");
-    expect(S, "an admin must be told changing a value is not theirs").toMatch(/Read-only for you|super-only/);
-    expect(S, "and the super branch must warn that changes are immediate")
+    // WAS: assert the copy names a rank for changing a value. The
+    // section that describes changing values now gates itself on
+    // `settings.manage`, so a reader who sees it can do it — there is
+    // nobody left to warn. What survives is the standing invitation to
+    // raise a wrong value rather than work around it.
+    expect(S, "a reader who cannot change a value must be told to raise it")
+      .toMatch(/worth raising rather than working around/);
+    expect(S, "and the settings branch must warn that changes are immediate")
       .toMatch(/changes\s*behaviour/i);
     // A rate change must NOT be described as re-rating past work — payouts
     // are snapshotted at pricing and at approval.
@@ -5279,7 +5483,7 @@ describe("[build-gate] every Money tab explains itself", () => {
     // channel" and "20 sends per person per day". BOTH were wrong, and the
     // gate had been pinning the error in place:
     //
-    //   • routes/notify.ts reads `body.channels`, and AdminNotifyTab ships a
+    //   • routes/notify.ts reads `body.channels`, and NotifyTab ships a
     //     Push-only switch that sends `channels: ["push"]`. The channel IS a
     //     choice. (`pushOnly` skips notifyWorker entirely for sendPushToUser.)
     //   • RATE_LIMIT_PER_DAY counts NOTIFICATION.SENT audit rows for the
@@ -5292,10 +5496,10 @@ describe("[build-gate] every Money tab explains itself", () => {
     // home banner") also appear as switch labels further down the file, so a
     // whole-file match would pass on the labels alone and assert nothing
     // about the help text — which is exactly what it did on first writing.
-    const whole = web("AdminNotifyTab.tsx").replace(/\s+/g, " ");
+    const whole = web("NotifyTab.tsx").replace(/\s+/g, " ");
     const open_ = whole.indexOf("<TabExplainer");
     const close = whole.indexOf("</TabExplainer>");
-    expect(open_, "AdminNotifyTab needs an explainer").toBeGreaterThan(-1);
+    expect(open_, "NotifyTab needs an explainer").toBeGreaterThan(-1);
     expect(close).toBeGreaterThan(open_);
     const N = whole.slice(open_, close);
     expect(N, "the default fan-out is all three channels").toMatch(/text, email and push at once/);
@@ -5317,10 +5521,10 @@ describe("[build-gate] every Money tab explains itself", () => {
   // ── The 2026-09-20 accuracy pass over the single-audience explainers ──
   //
   // Fourteen explainers had no role branching. Thirteen of them are genuinely
-  // single-audience (twelve are mounted only in the Super array; Activity,
-  // History and Notify are mounted for admin and super with IDENTICAL props
-  // and no internal role gate), so they get no RoleSection — only
-  // AdminGroupsTab earned one. Reading them against the code turned up five
+  // single-audience (twelve are mounted in one array only; Activity, History
+  // and Notify are mounted twice with IDENTICAL props and no internal gate),
+  // so they get no RoleSection — only
+  // CrewsTab earned one. Reading them against the code turned up five
   // claims that were simply false. Each is pinned below, with the truth.
 
   it("Promotions does not claim a campaign can only ride along", () => {
@@ -5343,7 +5547,7 @@ describe("[build-gate] every Money tab explains itself", () => {
   });
 
   it("Reconcile does not claim a period gets filed, and owns its one mutation", () => {
-    // There is no period-close anywhere: /super/reconcile/period is a GET and
+    // There is no period-close anywhere: /reconcile/period is a GET and
     // ReconcileTab posts nothing but the Gusto payroll import. "The period is
     // filed" described a state machine that does not exist.
     const whole = explainerOf("ReconcileTab.tsx");
@@ -5376,18 +5580,19 @@ describe("[build-gate] every Money tab explains itself", () => {
   });
 
   it("Workdays says approval is reversible, because the route exists", () => {
-    // POST /super/workdays/:id/unapprove. An operator who thinks approving is
+    // POST /workdays/:id/unapprove. An operator who thinks approving is
     // final will hesitate over a day they are unsure about.
     const whole = explainerOf("WorkdaysTab.tsx");
     expect(whole).toMatch(/reversible/);
-    const api = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8");
+    // Workday routes live in routes/time.ts since the split.
+    const api = readFileSync(join(__dirname, "../routes/time.ts"), "utf8");
     expect(api, "the copy promises an unapprove route that must exist")
       .toMatch(/workdays\/:id\/unapprove/);
   });
 
   it("both Tools tabs render one, and say the estimate hand-off is not built", () => {
-    // Super-only, one audience each, so no role branching. Both are pure
-    // calculators — they read /api/admin/pricing and mutate nothing — and
+    // One entitlement opens each, so one audience and no branching. Both are pure
+    // calculators — they read /api/pricing and mutate nothing — and
     // both "Use for new estimate" buttons are `disabled` stubs titled
     // "Coming soon". Copy that promised a hand-off would be describing a
     // control the reader can see greyed out.
@@ -5413,31 +5618,29 @@ describe("[build-gate] every Money tab explains itself", () => {
   });
 
   it("a Records tab seen by more than one role tailors the copy", () => {
-    const flat: string[] = [];
-    for (const t of RECORDS_TABS.filter((x) => x.roleAware)) {
-      const src = web(t.file);
-      const at = src.indexOf("<TabExplainer");
-      const block = src.slice(at, src.indexOf("</TabExplainer>", at));
-      const keyed = /explainerId=\{`[^`]*\$\{/.test(block);
-      const branched = /showSuperExtras \?|showAdminExtras \?|isSuper \?/.test(block);
-      if (!keyed || !branched) flat.push(t.file);
-    }
+    const flat = RECORDS_TABS.filter((x) => x.roleAware)
+      .filter((t) => !explainerAdaptsToReader(web(t.file)))
+      .map((t) => t.file);
     expect(flat, "role-aware Records tab whose explainer is one-size-fits-all").toEqual([]);
   });
 
   it("a read-only role is told it is read-only", () => {
-    // An admin reading "you can add and edit" on Timeline or Documents goes
+    // Someone with `schedule.manage` reading "you can add and edit" on Timeline or Documents goes
     // looking for buttons that are super-gated. Both tabs' admin branch must
     // say so; Guides' admin branch must say publishing is not theirs.
-    // "Read-only for you" belonged to the old ALTERNATIVE shape, where a whole
-    // branch was written for the role that lacked the power. The additive
-    // shape states the limit ONCE in the shared copy as "super-only", so every
-    // reader sees it — including the super, who now learns what admins cannot
-    // do. Either wording satisfies this; being told is not optional.
-    const TOLD = /Read-only for you|super-only/;
-    expect(web("TimelineTab.tsx"), "an admin must be told editing is not theirs").toMatch(TOLD);
-    expect(web("DocumentsTab.tsx"), "an admin must be told editing is not theirs").toMatch(TOLD);
-    expect(web("GuidesTab.tsx"), "an admin writes drafts but cannot publish")
+    // BOTH ASSERTIONS ARE GONE, and the reasoning with them.
+    //
+    // They required the copy to name a rank so a reader without the
+    // power would be told. Three things replaced that: the control is not
+    // rendered for them, a refusal names the capability in its own words,
+    // and the paragraph describing the power is a <CapabilitySection> that
+    // only renders for someone who has it. Naming a role to apportion
+    // access is now a failure, asserted by "no explainer names a role".
+    //
+    // What is still worth checking is the one place the limit is real
+    // POLICY rather than a permission: an author cannot approve their own
+    // guide, which education.md makes deliberate.
+    expect(web("GuidesTab.tsx"), "authoring writes drafts but cannot publish")
       .toMatch(/You cannot publish/);
   });
 
@@ -5448,55 +5651,90 @@ describe("[build-gate] every Money tab explains itself", () => {
 
   it("tabs seen by more than one role tailor the copy to the reader", () => {
     // A worker told "recording a purchase creates no tax entry" is being
-    // answered a question they cannot act on; an admin told "you can add
-    // entries" goes looking for a button that is not rendered for them. The
-    // The id carries the role too. That NO LONGER protects the collapse state
-    // — open/closed is one shared preference now — but it still names which
-    // variant is mounted, which is what makes a duplicate or wrong-variant
-    // mount visible here instead of in production.
-    const flat: string[] = [];
-    for (const t of MONEY_TABS.filter((x) => x.roleAware)) {
-      const src = web(t.file);
-      const at = src.indexOf("<TabExplainer");
-      const block = src.slice(at, src.indexOf("</TabExplainer>", at));
-      const keyed = /explainerId=\{`[^`]*\$\{/.test(block);
-      const branched = /showSuperExtras \?|showAdminExtras \?|role === "|canEdit\s*\?/.test(block);
-      if (!keyed || !branched) flat.push(t.file);
-    }
+    // answered a question they cannot act on; someone with `schedule.manage` told "you can add
+    // entries" goes looking for a button that is not rendered for them.
+    const flat = MONEY_TABS.filter((x) => x.roleAware)
+      .filter((t) => !explainerAdaptsToReader(web(t.file)))
+      .map((t) => t.file);
     expect(flat, "role-aware tab whose explainer is one-size-fits-all").toEqual([]);
   });
 
   it("no explainer credits a role with an action it cannot perform", () => {
-    // THIS COPY WAS WRITTEN FROM ASSUMPTION AND WAS WRONG. It told admins
+    // THIS COPY WAS WRITTEN FROM ASSUMPTION AND WAS WRONG. It told holders of `schedule.manage`
     // they approve payments and workers that they record one here. Every
-    // payment mutation is superGuard, and a payment is recorded from the JOB
-    // card. Explanatory text naming a capability is a claim about
+    // payment mutation requires `money.approve`, and a payment is recorded
+    // from the JOB card. Explanatory text naming a capability is a claim about
     // authorization, and authorization lives in the route guards.
     const PAY = web("PaymentsTab.tsx");
-    // The admin copy is a <RoleSection role="Admin"> now, not a ternary arm.
-    const at = PAY.indexOf('<RoleSection role="Admin">');
-    expect(at, "the admin section must exist").toBeGreaterThan(-1);
-    const adminBlock = PAY.slice(at, PAY.indexOf("</RoleSection>", at));
+    // The read-only copy is a <CapabilitySection capability="money.view">
+    // now, not a ternary arm and not a role-named section. The section
+    // RENDERS on the capability, so a reader who sees it necessarily holds
+    // `money.view` — but the prose inside can still credit them with
+    // approving, which `money.approve` gates.
+    const at = PAY.indexOf('<CapabilitySection capability="money.view"');
+    expect(at, "the money.view section must exist").toBeGreaterThan(-1);
+    const viewBlock = PAY.slice(at, PAY.indexOf("</CapabilitySection>", at));
     for (const verb of ["approving is", "you approve", "you can adjust", "write the job off"]) {
-      expect(adminBlock.toLowerCase(), `admin copy must not claim: ${verb}`)
+      expect(viewBlock.toLowerCase(), `read-only copy must not claim: ${verb}`)
         .not.toContain(verb);
     }
-    // Stated once in the shared copy above the section, so every reader sees
-    // it — assert on the whole explainer rather than the admin block alone.
-    expect(PAY, "the copy must say the money actions are super-only")
-      .toMatch(/super-admin only|super-only/);
 
     expect(PAY.replace(/\s+/g, " "), "a payment is recorded on the JOB, not here")
       .toMatch(/taken on the job itself|you take a payment on the job itself/);
+  });
 
-    // Read-only surfaces must say so rather than describing buttons that are
-    // not rendered for the reader.
-    expect(web("PricingTab.tsx"), "a non-super must be told editing is not theirs")
-      .toMatch(/Read-only for you|super-only/);
-    expect(web("SuppliesTab.tsx"), "a non-super must be told buying is not theirs")
-      .toMatch(/Read-only here|super-only/);
-    expect(web("PayrollTab.tsx"), "an admin must be told importing is not theirs")
-      .toMatch(/Read-only\.|super-only/);
+  it("no explainer names a role", () => {
+    // THE RULE THAT REPLACED "say it is super-only".
+    //
+    // The previous version of this gate REQUIRED the phrase "super-only" in
+    // four tabs, on the reasoning that a reader should be told an action is
+    // not theirs. Both halves were wrong. A role is a row an operator can
+    // rename, redefine or delete, so the copy described seed data as though
+    // it were the product. And apportioning in prose is an authorization
+    // claim the route guard actually decides — four of those claims were
+    // already FALSE, naming actions as super-only that `schedule.manage` and
+    // `equipment.manage` grant, which every admin holds.
+    //
+    // What replaced it: the UI hides what you cannot do, a refusal explains
+    // itself in the entitlement's own words, and a <CapabilitySection> gates
+    // its copy on the same capability the route checks. None of that needs
+    // the copy to name anybody.
+    // The literal role words this gate exists to BAN from explainer copy.
+    // A blunt prose sweep rewrote the alternatives inside this very regex
+    // once, which left it compiling and matching nothing it was written for
+    // — a detector that passes because it can no longer see its subject.
+    const ROLE_WORD = /\b(super-only|super-admin only|supers?|admins?)\b/i;
+    const offenders: string[] = [];
+    // EVERY explainer, not just the Money ones. Scoping this to MONEY_TABS
+    // would have left 17 of the 24 files that carried role language
+    // unchecked — and the rule is not about money.
+    const UI = join(__dirname, "../../../web/src/ui/");
+    const files = [
+      ...readdirSync(join(UI, "tabs")).filter((f) => f.endsWith(".tsx")).map((f) => `tabs/${f}`),
+      "components/JobsExplainer.tsx",
+    ];
+    // A scan that finds nothing passes. Count what it actually read, so a
+    // broken path or a renamed directory fails loudly instead of going
+    // quiet — the same way a dead entry in the build-gate filter list
+    // shrinks the run without saying so.
+    let scanned = 0;
+    for (const rel of files) {
+      const src = readFileSync(join(UI, rel), "utf8");
+      const i = src.indexOf("<TabExplainer");
+      if (i < 0) continue;
+      scanned += 1;
+      const j = src.indexOf("</TabExplainer>", i);
+      for (const line of src.slice(i, j < 0 ? undefined : j).split("\n")) {
+        // `explainerId` carries a surface suffix so the three screens get
+        // three distinct panels. That is a layout identity, not prose.
+        if (line.includes("explainerId")) continue;
+        if (ROLE_WORD.test(line)) offenders.push(`${rel}: ${line.trim().slice(0, 80)}`);
+      }
+    }
+    expect(offenders, "explainer copy naming a role — say what it needs, not who has it")
+      .toEqual([]);
+    expect(scanned, "no explainers scanned — the path is wrong, not the copy clean")
+      .toBeGreaterThan(20);
   });
 
   it("the overpayment rule names TIPS — money that does reach a worker", () => {
@@ -5511,7 +5749,7 @@ describe("[build-gate] every Money tab explains itself", () => {
     expect(PAY).toMatch(/Unless it is called a tip/);
     expect(PAY, "and a tip is not reduced by fee or margin")
       .toMatch(/without any fee or margin taken off it/);
-    // The super designates it — that is a real capability and was missing.
+    // A caller with `settings.manage` designates it — that is a real capability and was missing.
     expect(PAY).toMatch(/designate part of it a tip/);
 
     // A contractor is CAPPED at promised on an overpayment
@@ -5549,14 +5787,24 @@ describe("[build-gate] every Money tab explains itself", () => {
     // because Gusto pays them 1099. One sentence for both told contractors
     // the opposite of what happens to their money, on the screen where they
     // go to check it.
+    // ASKED THROUGH THE CANONICAL HELPER, not `=== "CONTRACTOR"`.
+    //
+    // This gate used to REQUIRE the raw string comparison, which is the
+    // shape G30 bans a few files away: a literal is a second copy of the
+    // class rule that cannot follow the enum if it moves, and it answers
+    // "is this a contractor" for an UNPAID helper by accident of spelling
+    // rather than by asking. Both tabs now call `isFeeable`. The point of
+    // the assertion is unchanged — the copy must still BRANCH, because one
+    // sentence for both told contractors the opposite of what happens to
+    // their money.
     const PAY = web("PaymentsTab.tsx");
-    expect(PAY, "the payments explainer must branch on worker type")
-      .toMatch(/workerType === "CONTRACTOR"/);
+    expect(PAY, "the payments explainer must branch on pay class")
+      .toMatch(/isFeeable\(/);
     expect(PAY, "…and must not tell every worker they are made whole")
       .toMatch(/your share is reduced in proportion/);
 
     const PR = web("PayrollTab.tsx");
-    expect(PR).toMatch(/workerType === "CONTRACTOR"/);
+    expect(PR, "the payroll explainer must branch on pay class").toMatch(/isFeeable\(/);
     expect(PR, "a contractor has no withholding to show").toMatch(/nothing is withheld/);
 
     // Collapse state is keyed by type too, or one reading hides the other.
@@ -5735,8 +5983,8 @@ describe("[build-gate] the card shows what the job actually made", () => {
     expect(T).toMatch(/Upper bound — no cost recorded on/);
   });
 
-  it("it is gated on the SELECTED scope, never forAdmin", () => {
-    // A Super sitting on the Worker chip must not see the business's take.
+  it("it is gated on the capability, not on which chip you are on", () => {
+    // Someone with `settings.manage` sitting on the Worker chip must not see the business's take.
     const T = TAB();
     const at = T.indexOf("Est. job profit");
     expect(at).toBeGreaterThan(-1);
@@ -5746,9 +5994,10 @@ describe("[build-gate] the card shows what the job actually made", () => {
     const open = T.lastIndexOf("&& (() => {", T.lastIndexOf("const rawPay = occ.payment as any;", at));
     expect(open, "could not find the job-profit block's guard").toBeGreaterThan(-1);
     const guard = T.slice(Math.max(0, open - 60), open + 12);
-    expect(guard).toMatch(/\{\(isAdmin \|\| isSuper\) && \(\(\) => \{/);
-    expect(guard, "forAdmin would light it up for a Super on the Worker chip")
-      .not.toMatch(/forAdmin/);
+    // `schedule.manage`, read from the PERSPECTIVE-NARROWED set, so taking a
+    // narrower perspective hides the business's take. It was
+    // a pair of role flags asking the same question twice.
+    expect(guard).toMatch(/\{canManageSchedule && \(\(\) => \{/);
   });
 });
 
@@ -5822,16 +6071,17 @@ describe("[build-gate] supplies carry the same loose link, as a growing list", (
   });
 
   it("linking is recorded as touching neither money nor stock", () => {
-    const at = ADMIN.indexOf("supply-purchases/:id/ledger-link");
-    const body = ADMIN.slice(at, ADMIN.indexOf("\n  app.", at));
+    const at = BOOKS.indexOf("supply-purchases/:id/ledger-link");
+    expect(at, "the ledger-link route must exist").toBeGreaterThan(-1);
+    const body = BOOKS.slice(at, BOOKS.indexOf("\n  app.", at));
     expect(body).toMatch(/action: "ledger_link_changed"/);
     expect(body).toMatch(/affectsMoney: false/);
     expect(body).toMatch(/affectsStock: false/);
   });
 
   it("the job-line link is likewise a pointer, not plumbing", () => {
-    const at = ADMIN.indexOf("/admin/invoice-charges/:id/ledger-link");
-    const body = ADMIN.slice(at, ADMIN.indexOf("\n  app.", at));
+    const at = ROUTE_LAYER.indexOf("/invoice-charges/:id/ledger-link");
+    const body = ROUTE_LAYER.slice(at, ROUTE_LAYER.indexOf("\n  app.", at));
     expect(body).toMatch(/action: "ledger_link_changed"/);
     expect(body).toMatch(/affectsMoney: false/);
     // It may only touch the pointer.
@@ -5858,29 +6108,29 @@ describe("[build-gate] the spec exists", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // A button lives on the LOWEST role row that applies to it
 //
-// The job card has three rows: the everyday one, an Admin row (purple badge)
-// and a Super row (orange badge). A button only an admin can press reads wrong
+// The job card has three rows: the everyday one, the row (purple badge)
+// and the row (orange badge). A button only someone with `schedule.manage` can press reads wrong
 // sitting beside Manage Team, which any assignee can use — and it hides the
 // fact that it's privileged at all.
 //
-// This gate is mechanical rather than a list, so a new admin-only button
+// This gate is mechanical rather than a list, so a new elevated button
 // dropped into the everyday row fails without anyone remembering the rule.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("[build-gate] admin-only buttons sit on the Admin row", () => {
+describe("[build-gate] elevated buttons sit on the elevated row", () => {
   const TAB = web("ui/tabs/JobsTab.tsx");
   const lines = TAB.split("\n");
-  const extrasAt = TAB.indexOf("adminExtras={");
+  const extrasAt = TAB.indexOf("elevatedExtras={");
   const extrasLine = TAB.slice(0, extrasAt).split("\n").length;
   const adminRow = TAB.slice(extrasAt, TAB.indexOf("\n                />", extrasAt));
 
-  it("the Admin row exists and is gated on the SELECTED scope", () => {
+  it("the row exists and is gated on the SELECTED scope", () => {
     expect(extrasAt, "the card must hand buttons to ElevatedActionRow").toBeGreaterThan(-1);
-    // `forAdmin` alone would light it up for a super on another chip.
-    expect(adminRow).toMatch(/!isCardCompact && \(isAdmin \|\| isSuper\)/);
+    // The old tab-scoped flag would light it up on another chip.
+    expect(adminRow).toMatch(/!isCardCompact && canManageSchedule/);
   });
 
-  it("these admin-only buttons are on it", () => {
+  it("these elevated buttons are on it", () => {
     // "Invoice preview" was removed from this list 2026-09-16 — it moved to
     // the everyday row on purpose. See the preview policy gate above; the
     // rule ElevatedActionRow states is that a button lives on the LOWEST role
@@ -5889,17 +6139,17 @@ describe("[build-gate] admin-only buttons sit on the Admin row", () => {
       "Manage in Services", "Review Hours", "Reset Job",
       "Edit Charges", "Adjust Price",
     ]) {
-      expect(adminRow, `"${label}" belongs on the Admin row`).toContain(label);
+      expect(adminRow, `"${label}" belongs on the row`).toContain(label);
     }
   });
 
-  it("no admin-only button is left in the everyday row", () => {
+  it("no elevated button is left in the everyday row", () => {
     // Scans for BUTTON TAGS, not labels — a one-line
-    // `{(isAdmin) && (<Button>…</Button>)}` has no label on its own line and
+    // `{(flag) && (<Button>…</Button>)}` has no label on its own line and
     // slipped straight through a label-based check.
     // ANCHORED ON THE FOOTER, not on a line number. This used to scan from a
     // hardcoded 7700, tuned so it began just below the AI-estimate display
-    // panels — which are `{forAdmin && …}` Boxes that happen to contain a
+    // panels — which are `{flag && …}` Boxes that happen to contain a
     // button. Inserting thirty-odd lines anywhere above slid those panels into
     // the window and the gate failed on untouched code. A gate that breaks
     // when you edit a different part of the file gets deleted, so it is
@@ -5916,7 +6166,7 @@ describe("[build-gate] admin-only buttons sit on the Admin row", () => {
       for (let j = i; j > Math.max(scanFrom - 100, i - 45); j--) {
         const t = (lines[j] ?? "").trim();
         if (t.startsWith("{") && t.includes("&&") && !t.includes("/*")) {
-          const admin = /isAdmin|isSuper|forAdmin/.test(t);
+          const admin = /canManageSchedule|canManageSettings/.test(t);
           const worker = /isClaimer|isActiveAssignee|isUnassigned|isWorkerView|c\.author\.id|needsConfirmation/.test(t);
           if (admin && !worker) {
             const label = /label="([^"]+)"/.exec(l)?.[1]
@@ -5930,8 +6180,8 @@ describe("[build-gate] admin-only buttons sit on the Admin row", () => {
     }
     expect(
       offenders,
-      "A button only an admin can press belongs on the Admin row, not beside " +
-        "Manage Team. Move it into the adminExtras prop.",
+      "A button only someone with schedule authority can press belongs on the row, not beside " +
+        "Manage Team. Move it into the elevatedExtras prop.",
     ).toEqual([]);
   });
 });
@@ -5958,7 +6208,7 @@ describe("[build-gate] invoice detail fields have an input, not just a column", 
     // undefined leaves it alone; null/"" clears it.
     expect(fn).toMatch(/laborDetail !== undefined/);
     expect(fn).toMatch(/laborDetail: laborDetail\?\.trim\(\) \|\| null/);
-    expect(ADMIN, "the route must forward it").toMatch(/"laborDetail" in body/);
+    expect(ROUTE_LAYER, "the route must forward it").toMatch(/"laborDetail" in body/);
   });
 
   it("the dialog collects it, and keeps it distinct from the internal reason", () => {
@@ -6020,8 +6270,8 @@ describe("[build-gate] invoice detail fields have an input, not just a column", 
 
   it("no invoice-visible field is render-only", () => {
     // Each detail the invoice can show must have a writer somewhere.
-    const api = readFileSync(join(__dirname, "../routes/admin.ts"), "utf8")
-      + readFileSync(join(__dirname, "../routes/worker.ts"), "utf8");
+    const api = routeLayer()
+      + routeLayer();
     for (const field of ["laborDetail", "detail"]) {
       expect(api.includes(field), `${field} is rendered on the invoice but nothing writes it`)
         .toBe(true);
@@ -6220,7 +6470,7 @@ describe("[build-gate] a next-visit instruction reaches the next visit", () => {
   const SOURCES: [string, string][] = [
     ["services/jobs.ts", readFileSync(join(__dirname, "./jobs.ts"), "utf8")],
     ["services/payments.ts", readFileSync(join(__dirname, "./payments.ts"), "utf8")],
-    ["routes/admin.ts", readFileSync(join(__dirname, "../routes/admin.ts"), "utf8")],
+    ["routes/*.ts (whole layer)", routeLayer()],
   ];
 
   it("there is exactly one carry implementation", () => {
@@ -6270,7 +6520,7 @@ describe("[build-gate] a next-visit instruction reaches the next visit", () => {
       }
       // Guards the gate: a filter that matches nothing passes silently, which
       // is how the shorthand miss above went unnoticed.
-      if (name !== "routes/admin.ts") expect(checked, `${name}: no job visits matched`).toBeGreaterThan(0);
+      if (name !== "routes/*.ts (whole layer)") expect(checked, `${name}: no job visits matched`).toBeGreaterThan(0);
     }
   });
 

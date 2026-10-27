@@ -13,7 +13,7 @@ NOT_CLAIMER, and the Jobs card hides Start/Complete with no explanation, so
 the worker at the property has no controls and no reason given.
 
 Canonical: `apps/api/src/lib/claimerInvariant.ts` — pure `planClaimerRepair(rows)`
-plus `enforceClaimerInvariant(tx, occurrenceId, actor)`. Gated by
+plus `enforceAssigneeInvariants(tx, occurrenceId, actor)`. Gated by
 `claimer-invariant-build-gate.test.ts`: every `jobOccurrenceAssignee` write
 either ends its function with the enforcer or carries
 `// claimer-invariant-allow: <reason>` directly above it. Repair existing rows
@@ -30,9 +30,34 @@ branch never repaired `assignedById`. (4) `removeOccurrenceAssignee` let an
 admin delete the claimer. `assignedById` is also `onDelete: SetNull`, so
 deleting a User nulls it.
 
-**How to apply:** the UI gate is `isClaimer || forAdmin` where `forAdmin` is the
-VIEW; the server gate is `isClaimer || isAdmin` where `isAdmin` is the ROLE. A
+**How to apply:** both gates are now the same question —
+`isClaimer || canManageSchedule`, i.e. `schedule.manage`, on the client and
+on the server. It used to be the tab's view flag on one side against a role
+flag on the other — two different things that could disagree. A
 SUPER in Worker view therefore sees a stricter UI than the server enforces —
 which is why this hid for months behind "just switch to Admin and it works".
 See also [[feedback_role_resolution_from_req_user]] and
 [[reference_build_gates_roster]].
+
+## Second invariant, same chokepoint (2026-10-12)
+
+`enforceAssigneeInvariants` (renamed from `enforceClaimerInvariant`) now
+enforces a second rule: **only a paid person takes a paid seat**. A
+non-observer assignee must satisfy `isPaid()` — EMPLOYEE or CONTRACTOR.
+UNPAID, or no worker type at all, means observer only.
+
+Why it is in the same function: it has to run BEFORE the claimer repair,
+because demoting someone can remove the claimer. Putting it in a separate
+exported function callers must remember would rot the way the claimer
+invariant did across four write paths.
+
+Why it matters: `rateFor` refuses to price a worker with no pay class, so an
+unpaid person in a paid seat makes `computeBreakdown` throw — the visit
+cannot be completed by anyone. Proven by execution, not inferred.
+
+A row whose `workerType` was not loaded is **left alone**. Reading an absent
+join as "not on payroll" would demote a whole team over a missing `select`.
+
+Gate: G33 in `claimer-invariant-build-gate.test.ts`. Boundary refusal is
+`canHoldPaidSeat` in `changeAssigneeRole`; `setWorkerType` vacates open paid
+seats when someone leaves payroll, and leaves COMPLETED work alone.

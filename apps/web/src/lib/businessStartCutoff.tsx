@@ -12,7 +12,7 @@
 //      render differently based on whether a filter applies (e.g. job
 //      payment badges, Settings active-state indicator).
 //
-//   2. The Super "Reveal Pre-Cutoff" override. Session-only — a manual
+//   2. A caller with `settings.manage` "Reveal Pre-Cutoff" override. Session-only — a manual
 //      page reload (F5, navigate-then-back) always reverts to the filtered
 //      view. Toggling the reveal switch (via SettingsTab or the global
 //      banner) triggers a full window.location.reload() so every open
@@ -52,7 +52,7 @@ type CutoffResponse = { cutoff: string | null };
 type Ctx = {
   /** Effective cutoff Date, or null when the filter is off. */
   cutoff: Date | null;
-  /** True iff the Super reveal override is currently active. */
+  /** True iff the reveal override is currently active. */
   reveal: boolean;
   /** Toggle the reveal override. Triggers a refetch of `cutoff`. */
   setReveal: (v: boolean) => void;

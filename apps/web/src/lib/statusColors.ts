@@ -100,7 +100,7 @@ export function occurrenceStatusColor(value: string): string {
   if (t === "PAUSED") return "orange";
   // Stream-pause chip uses purple to visually distinguish from the
   // orange "worker timer paused" chip. Two different concepts sharing
-  // color would confuse admins reading the same list.
+  // color would confuse holders of `schedule.manage` reading the same list.
   if (t === "STREAM_PAUSED") return "purple";
   if (t === "SCHEDULED") return "blue";
   if (t === "PROPOSAL_SUBMITTED") return "teal";

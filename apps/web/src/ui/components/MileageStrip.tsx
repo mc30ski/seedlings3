@@ -14,7 +14,7 @@
 //      closes and moves into the day's log.
 //
 // Multiple sessions per day are allowed. Approvals happen daily on
-// the Super side; this component only surfaces the driver-side flow.
+// the side; this component only surfaces the driver-side flow.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {

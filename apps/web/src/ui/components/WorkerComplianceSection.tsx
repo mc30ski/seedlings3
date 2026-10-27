@@ -77,7 +77,7 @@ type WorkerPoliciesView = {
 //      signed-by / signed-date / upload status.
 //
 // Skips rendering entirely when the user has no applicable policies AND
-// nothing in history (e.g., admins with workerType=null).
+// nothing in history (e.g., holders of `compliance.manage` with workerType=null).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function WorkerComplianceSection() {
@@ -127,8 +127,8 @@ export default function WorkerComplianceSection() {
   if (data.required.length === 0 && awaitingReview.length === 0 && data.history.length === 0) return null;
 
   // `requiredCount` drives the header chip + "Sign now" button, i.e. things
-  // the worker can act on right now. Items awaiting admin review are NOT
-  // included — the worker's done their part, ball is in the admin's court.
+  // the signer can act on right now. Items awaiting review are NOT
+  // included — they've done their part, the ball is with `compliance.manage`.
   const requiredCount = data.required.length;
   // Split required items so the header chips can distinguish "must do to
   // work" (BLOCK) from "should do when you can" (WARN/INFO). Individual
@@ -335,7 +335,7 @@ export default function WorkerComplianceSection() {
             void load();
             // Cancel bumps the pending-review policy back into REQUIRED,
             // so the worker's "Documents to sign" alert count needs to
-            // increase and the super's "Uploads to review" count needs to
+            // increase and the "Uploads to review" count needs to
             // decrease. Dispatch handles both listeners in one shot.
             window.dispatchEvent(new CustomEvent("policies:signed"));
           } catch (err) {

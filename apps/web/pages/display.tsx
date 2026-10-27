@@ -6,7 +6,7 @@
 //
 // It is NOT signed in. A session would expire and need someone to carry a
 // keyboard to the wall, so instead the page pairs once — it shows six digits, a
-// Super approves them in the app — and keeps a long-lived token in
+// The operator approves them in the app — and keeps a long-lived token in
 // localStorage. See services/displays.ts and the Display model for why.
 //
 // THREE RULES THIS PAGE IS BUILT AROUND
@@ -297,7 +297,7 @@ export default function DisplayPage() {
   const DEVICE_SECRET_KEY = slot ? `${DEVICE_SECRET_KEY_BASE}:${slot}` : DEVICE_SECRET_KEY_BASE;
 
   // The same green/fall mark the app uses. Resolved on the client because the
-  // season helper reads localStorage for an admin's override — a wall screen
+  // season helper reads localStorage for someone with `displays.manage`'s override — a wall screen
   // has none, so it follows the natural ET season, which is the right
   // behaviour for a device nobody signs into.
   const [logo, setLogo] = useState<string | null>(null);
@@ -641,7 +641,7 @@ function Pairing({ code, scale, logo, slot }: { code: string | null; scale: numb
         {code ? `${code.slice(0, 3)} ${code.slice(3)}` : "— — —"}
       </div>
       <div style={{ fontSize: `${1.8 * scale}vmin`, color: C.inkDim, marginTop: "2vmin" }}>
-        Super → System → Displays
+        System → Displays
       </div>
       {slot ? (
         <div style={{ fontSize: `${1.5 * scale}vmin`, color: C.inkDim, marginTop: "1.2vmin", opacity: 0.8 }}>
@@ -1775,7 +1775,7 @@ function PublicView({
         }}
       >
         {/* The photo wall. AUTOMATIC — the latest finished work, the same
-            instinct as the client photo lists. Nothing is curated in; a Super
+            instinct as the client photo lists. Nothing is curated in; someone with display authority
             can only pull a photo OUT, via hiddenFromPublicAt.
             With no photos at all it does NOT render an empty frame: a big
             blank box is worse than not being there, so the evergreen content

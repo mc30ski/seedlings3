@@ -2,23 +2,23 @@
 // What a WORKER can see on a job card. Runs under the `employee` project.
 //
 // The role rules here are enforced only by source-scanning gates today, which
-// cannot tell whether a button renders. `showSuperExtras` falling back to
-// `forAdmin ||` is a bug class that has shipped repeatedly in this repo.
+// cannot tell whether a button renders. A narrow gate falling back to a
+// wider one is a bug class that has shipped repeatedly in this repo.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { test, expect } from "@playwright/test";
-import { gotoWorkerHome } from "../helpers/nav";
+import { gotoWorkerHome, waitForJobsListSettled } from "../helpers/nav";
 
-test("a worker sees no admin-only money affordance on a job card", async ({ page }) => {
+test("without `schedule.manage` no money affordance renders on a job card", async ({ page }) => {
   test.setTimeout(120_000);
   await gotoWorkerHome(page);
   await page.evaluate(() => {
-    localStorage.setItem("seedlings_workerTab", JSON.stringify("jobs"));
-    localStorage.setItem("seedlings_workerCategory", JSON.stringify("Work"));
+    localStorage.setItem("seedlings_staffTab", JSON.stringify("jobs"));
+    localStorage.setItem("seedlings_staffCategory", JSON.stringify("Work"));
   });
   await page.goto("/");
   await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(4000);
+  await waitForJobsListSettled(page);
 
   const body = await page.locator("body").innerText();
   console.log(`worker page chars: ${body.length}`);
@@ -27,11 +27,11 @@ test("a worker sees no admin-only money affordance on a job card", async ({ page
   for (const forbidden of [/Job profit/, /Est\. job profit/, /materials\b.*=/]) {
     expect(body, `worker view leaked: ${forbidden}`).not.toMatch(forbidden);
   }
-  // Adjust Price and Invoice preview are admin-only.
+  // Adjust Price and Invoice preview need `schedule.manage`.
   expect(await page.getByRole("button", { name: /Adjust Price/i }).count(),
-    "Adjust Price is admin-only").toBe(0);
+    "Adjust Price needs `schedule.manage`").toBe(0);
   expect(await page.getByRole("button", { name: /Invoice preview/i }).count(),
-    "Invoice preview is admin-only").toBe(0);
+    "Invoice preview needs `schedule.manage`").toBe(0);
 
   // …and the page must actually have been the jobs list, or this proved nothing.
   const sawJobs =
@@ -43,12 +43,12 @@ test("a worker's add-on list carries no remove control", async ({ page }) => {
   test.setTimeout(120_000);
   await gotoWorkerHome(page);
   await page.evaluate(() => {
-    localStorage.setItem("seedlings_workerTab", JSON.stringify("jobs"));
-    localStorage.setItem("seedlings_workerCategory", JSON.stringify("Work"));
+    localStorage.setItem("seedlings_staffTab", JSON.stringify("jobs"));
+    localStorage.setItem("seedlings_staffCategory", JSON.stringify("Work"));
   });
   await page.goto("/");
   await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(4000);
+  await waitForJobsListSettled(page);
 
   // Services are removed in the dialog, never from the card — for anyone.
   const addonHeaders = page.getByText(/^Added Services:/);

@@ -33,12 +33,12 @@ Per-table date anchors (canonical):
 | AuditEvent | `createdAt` | |
 | SupplyPurchase | `date` | |
 
-**Client side:** [apps/web/src/lib/businessStartCutoff.tsx](apps/web/src/lib/businessStartCutoff.tsx) exposes `useBusinessStartCutoff()` and `useIsPreCutoff(date)`. The Super "reveal" override is IN-MEMORY only (not localStorage) — page reload resets it to filtered. Header `X-Reveal-Pre-Cutoff` is attached automatically by [apps/web/src/lib/api.ts](apps/web/src/lib/api.ts) when the toggle is on.
+**Client side:** [apps/web/src/lib/businessStartCutoff.tsx](apps/web/src/lib/businessStartCutoff.tsx) exposes `useBusinessStartCutoff()` and `useIsPreCutoff(date)`. A caller with `settings.manage` "reveal" override is IN-MEMORY only (not localStorage) — page reload resets it to filtered. Header `X-Reveal-Pre-Cutoff` is attached automatically by [apps/web/src/lib/api.ts](apps/web/src/lib/api.ts) when the toggle is on.
 
 **Client portal — BSD does NOT apply.** Routes in [apps/api/src/routes/client.ts](apps/api/src/routes/client.ts) (`/client/me`, `/client/jobs`, `/client/upcoming`, `/client/change-requests`, `/client/estimates/*`, etc.) deliberately never call `resolveCutoff(req)`. Reason: BSD is an internal accounting boundary; a customer should always see their own service history regardless of the operator's cutoff. The 12-month rolling window on `/client/jobs` is the independent client-side cap. Do not propagate `cutoff` into client routes — there's a guard comment at the top of `clientRoutes` saying so.
 
 **Safety invariants** (preserve when extending):
-1. When the filter is off OR the Super reveal is honored, every helper returns `{}` / `extras` unchanged — the underlying query is byte-identical to its pre-feature shape.
+1. When the filter is off OR a caller with `settings.manage` reveal is honored, every helper returns `{}` / `extras` unchanged — the underlying query is byte-identical to its pre-feature shape.
 2. Any failure path (settings throw, parse fail, role lookup throw) defaults to NO FILTER. Never hide data on a transient error.
 3. Production deploys land OFF. The seed for `BUSINESS_START_DATE_ENABLED` is `"false"`.
 
@@ -48,11 +48,11 @@ Per-table date anchors (canonical):
 - Both live in the `fresh_start` section, pinned to the top of the Settings tab via [apps/web/src/lib/settingSections.ts](apps/web/src/lib/settingSections.ts).
 
 **UI surfaces that adjust visibly:**
-- Settings tab — top section shows active-state indicator and the Super reveal toggle. See `BusinessStartStatusPanel` in [apps/web/src/ui/tabs/SettingsTab.tsx](apps/web/src/ui/tabs/SettingsTab.tsx).
+- Settings tab — top section shows active-state indicator and a caller with `settings.manage` reveal toggle. See `BusinessStartStatusPanel` in [apps/web/src/ui/tabs/SettingsTab.tsx](apps/web/src/ui/tabs/SettingsTab.tsx).
 - JobsTab — pre-cutoff occurrences are HIDDEN ENTIRELY (server filters them out of `/occurrences` via `occurrenceWorkDateCutoff`). The old dash-badge treatment was removed 2026-06-01 — operator preferred hiding to match Payments tab behavior. Pre-cutoff data still exists in the DB and still feeds analytics (e.g. `time_estimate_mismatch` audit check), it's just invisible on the operator JobsTab while the filter is on.
 - Payments tab — pre-cutoff payments hidden via the listMyPayments/listAllPayments cutoff filter.
 
-**Endpoints touched** (search for `resolveCutoff` to see the full list): worker money endpoints (/payments/mine, /payments/earnings-summary, /payments/title-bar-earnings, /payments/equipment-charges, /dashboard-summary, /dashboard-summary/aggregate, /me/outstanding-payment-requests), admin money endpoints (/admin/payments, /admin/payments/equipment-charges, /admin/payments/pending, /admin/payment-requests/outstanding, /admin/audit, /admin/business-expenses, /admin/business-expenses/vs-revenue, /admin/business-expenses/summary, /admin/users/:id/earnings-summary, /admin/statistics, /admin/operations, /admin/export, /admin/export-summary, /admin/supplies/:id/history, /admin/exports/* including bundles), and a small `/me/business-start` endpoint that returns the effective cutoff to the client.
+**Endpoints touched.** Do not maintain a list here — it rotted into one. `resolveCutoff` is called from 21 route files (`grep -rl resolveCutoff apps/api/src/routes`), currently: books, calendarFeeds, client, crews, customers, displays, documents, equipment, jobs, me, money, occurrences, people, policies, reports, settings, supplies, time, timeline, vehicles, weather. Routes are named for their resource.
 
 **Tax-export integrity:** see [[project-tax-export-integrity]]. The cutoff is layered ON TOP OF each export's existing date range — it can hide rows the date-range query would have returned. Each export endpoint logs a warning when running with cutoff active, and the operator should toggle reveal ON before exporting full-history files for the CPA.
 

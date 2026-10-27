@@ -1,17 +1,31 @@
 "use client";
 
-// Equipment → Vehicles. Blended across all roles via the additive
-// `scope` prop, gated by what the API actually permits:
-//   • scope.isWorker → read-only view of the fleet list. Workers get
-//     their own driving history from the MileageStrip on HomeTab.
-//   • scope.isAdmin  → same read-only view as worker for now. The
-//     underlying mutation + mileage-drilldown endpoints are still
-//     super-guarded; if admin CRUD is opened up later, gate those
-//     UI branches on `scope.isAdmin || scope.isSuper` and loosen
-//     the corresponding endpoints in admin.ts in the same pass.
-//   • scope.isSuper  → adds full vehicle CRUD (create / edit /
-//     archive / unarchive / assign / unassign), per-vehicle mileage
-//     log with drill-down, AND the orange Insights strip at the top.
+// Equipment → Vehicles. ONE tab. Every control asks for the entitlement
+// its own endpoint is guarded on:
+//   • `equipment.view`   — opens the tab (TAB_REQUIREMENTS) and is the
+//     guard on `GET /vehicles`, the fleet list. A driver's own history
+//     comes from the MileageStrip on HomeTab, not from here.
+//   • `equipment.manage` — `POST /vehicles`, `PATCH /vehicles/:id`, and
+//     archive / unarchive / assign / unassign. Also the driver dropdown,
+//     which reads `/users`, and the Insights strip.
+//   • `time.view`        — `GET /vehicles/:id/mileage`, so it gates the
+//     per-vehicle mileage log drill-down.
+//   • `time.manage`      — `POST /vehicles/:id/mileage` (Add entry) and
+//     every action in MileageReviewDialog (`PATCH /mileage/:id`,
+//     approve / unapprove / reject).
+//
+// The mileage log was gated on `equipment.manage`, which is neither of
+// the two entitlements its endpoints check: a bookkeeper holding
+// `time.view` could not open a log the API would have served, and
+// somebody holding `equipment.manage` without `time.view` got a 403 on
+// expanding one.
+//
+// This header described three roles — worker, admin and super — each
+// getting a different build of the tab, and said admin CRUD might be
+// "opened up later". That was the old model's whole problem in one
+// sentence: whether you may edit a vehicle is `equipment.manage`, which
+// an operator grants by putting it in a role, not something the code
+// decides by rank.
 //
 // Approval of individual mileage entries flows through the unified
 // daily approval UX (Workday + Mileage in one shot); this tab is
@@ -57,7 +71,20 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import { Dashboard } from "@/src/ui/components/Dashboard";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import {
+  ALL_TIME_PERIOD,
+  DEFAULT_PERIOD,
+  FULL_PERIODS,
+  periodKey,
+  periodTimeframe,
+  periodToRange,
+  usePersistedPeriod,
+  type Period,
+} from "@/src/ui/components/WorkerHourlyPayCard";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
+import type { Scope } from "@/src/lib/scope";
+import { isPaid } from "@repo/money";
 
 type Vehicle = {
   id: string;
@@ -94,14 +121,31 @@ type MileageEntry = {
 
 type WorkerLite = { id: string; displayName: string | null; email: string | null };
 
-type VehiclesTabScope = { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
 
-export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
+export default function VehiclesTab({ scope }: { scope: Scope }) {
   // Capabilities layer additively. Worker + Admin see the fleet
-  // list read-only; only Super gets mutations and the per-vehicle
+  // list read-only; only `equipment.manage` gets mutations and the per-vehicle
   // mileage drill-down (the underlying endpoints are all
-  // super-guarded). Super also adds the orange Insights strip.
-  const showSuperExtras = scope.isSuper;
+  // `time.manage`-guarded). `equipment.manage` also adds the orange Insights strip.
+  // Adding and editing vehicles is `equipment.manage`.
+  // EVERY VEHICLE MUTATION ON THIS TAB IS `equipment.capital`, not
+  // `equipment.manage`. The two were one entitlement until 2026-10-20 and it
+  // spanned two authorities: editing the fleet you own, and deciding what
+  // the fleet IS. Adding a vehicle, editing it, archiving it and assigning a
+  // driver are all the second — `POST /vehicles`, `PATCH /vehicles/:id`,
+  // `POST /vehicles/:id/archive|unarchive|assign|unassign` are guarded on
+  // `equipment.capital`. Name the capability the control's own endpoint
+  // checks; asking for the wrong one is a guaranteed 403 the UI hides.
+  const canManageFleet = scope.can("equipment.capital");
+  // The Insights strip's travel figures come from `/routes/operations`,
+  // which is guarded on `routes.plan` — NOT on the capability that opens
+  // this tab. Asking for the wrong one made a scheduler's every visit here
+  // a silent 403. Take the capability from the control's own endpoint.
+  const canPlanRoutes = scope.can("routes.plan");
+  // The mileage log's own endpoints: `GET /vehicles/:id/mileage` is
+  // `time.view`, and every write in it is `time.manage`.
+  const canViewTime = scope.can("time.view");
+  const canManageTime = scope.can("time.manage");
 
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,7 +160,7 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
     setLoading(true);
     try {
       const list = await apiGet<Vehicle[]>(
-        `/api/super/vehicles${showArchived ? "?includeArchived=true" : ""}`,
+        `/api/vehicles${showArchived ? "?includeArchived=true" : ""}`,
       );
       setVehicles(Array.isArray(list) ? list : []);
     } catch (err) {
@@ -135,20 +179,34 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
     // Worker directory — used by the assign dialog. Admin+ only; the
     // list endpoint is admin-guarded and workers don't need it (they
     // can't open the assign dialog anyway).
-    if (!showSuperExtras) return;
-    apiGet<any[]>("/api/admin/users?includeInactive=false")
+    //
+    // FILTERED BY PAY CLASS. `/users` is every account in the system, and
+    // this mapped all of them straight into the picker — so "Assign a
+    // worker to Crew Van" offered Client User, Client Pending User and a
+    // client placeholder account alongside the crew. Assigning one would
+    // have worked: nothing on either side checked. A vehicle assignment is
+    // the right to log deductible miles, so a customer would have been
+    // filing business mileage.
+    //
+    // `isPaid` is the same call `assignUserToVehicle` now makes before it
+    // writes, from the one module that decides worker class — so the list
+    // and the endpoint cannot disagree about who is eligible.
+    if (!canManageFleet) return;
+    apiGet<any[]>("/api/users?includeInactive=false")
       .then((raw) => {
         if (!Array.isArray(raw)) return;
         setWorkers(
-          raw.map((u) => ({
-            id: u.id,
-            displayName: u.displayName ?? u.name ?? null,
-            email: u.email ?? null,
-          })),
+          raw
+            .filter((u) => isPaid(u.workerType))
+            .map((u) => ({
+              id: u.id,
+              displayName: u.displayName ?? u.name ?? null,
+              email: u.email ?? null,
+            })),
         );
       })
       .catch(() => {});
-  }, [showSuperExtras]);
+  }, [canManageFleet]);
 
   function toggle(id: string) {
     setExpanded((prev) => {
@@ -161,13 +219,13 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
 
   return (
     <VStack align="stretch" gap={3} pb={3}>
-      {/* Role-tailored orientation. Admin and worker copy are close
-          but not identical: both are read-only here (every mutation
-          and the mileage drill-down are superGuard-ed), but a worker
-          needs pointing at the MileageStrip on Home, where their own
-          driving actually gets recorded. */}
+      {/* Surface-tailored orientation. The two variants are close but not
+          identical: both are read-only here (mutations need
+          `equipment.manage`, the mileage drill-down `time.view`), but the
+          worker layout needs pointing at the MileageStrip on Home, where
+          their own driving actually gets recorded. */}
       <TabExplainer
-        explainerId={`seedlings:vehiclesTab:guideOpen:${showSuperExtras ? "super" : scope.isAdmin ? "admin" : "worker"}`}
+        explainerId="seedlings:vehiclesTab:guideOpen"
       >
         <ExplainerText>
           The company vehicles and who is assigned to each, so you know which truck is yours
@@ -176,25 +234,40 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
         </ExplainerText>
         <ExplainerText>
           The miles you drive are not recorded here: start and stop your trips on the mileage
-          strip on your Home tab, and that is what feeds these odometer readings. Adding
-          vehicles, assigning drivers, archiving and the per-vehicle mileage log are all{" "}
-          <Em>super-only</Em>.
+          strip on your Home tab, and that is what feeds these odometer readings.
         </ExplainerText>
-        {showSuperExtras && (
-          <RoleSection role="Super">
-            <ExplainerText>
-              Add and edit vehicles, assign or unassign drivers, and <Em>archive</Em> one that
-              is out of service — archiving keeps all of its history, and &ldquo;Show
-              archived&rdquo; brings it back into view.
-            </ExplainerText>
-            <ExplainerText>
-              Expand a vehicle for its <Em>mileage log</Em> — the last 365 days of driving
-              sessions, with approved and unapproved miles split out — and add an entry by
-              hand when one is missing. Day-to-day approval happens in the combined
-              workday-and-mileage flow; this tab is where you come to fix things outside it.
-            </ExplainerText>
-          </RoleSection>
+        {/* Say so when the fleet is read-only for this reader, rather than
+            letting them hunt for buttons that are not rendered. */}
+        {!canManageFleet && (
+          <ExplainerText>
+            The fleet is <Em>Read-only</Em> for you — adding, editing, archiving and
+            assigning a vehicle all need equipment-management authority.
+          </ExplainerText>
         )}
+        <CapabilitySection capability="equipment.manage" scope={scope}>
+          <ExplainerText>
+            Add and edit vehicles, assign or unassign drivers, and <Em>archive</Em> one that
+            is out of service — archiving keeps all of its history, and &ldquo;Show
+            archived&rdquo; brings it back into view.
+          </ExplainerText>
+        </CapabilitySection>
+        {/* The mileage log is its OWN pair of entitlements, because it is
+            its own pair of endpoints: `GET /vehicles/:id/mileage` is
+            `time.view` and `POST` is `time.manage`. It used to be described
+            here as part of managing equipment, which is neither. */}
+        <CapabilitySection capability="time.view" scope={scope}>
+          <ExplainerText>
+            Expand a vehicle for its <Em>mileage log</Em> — the last 365 days of driving
+            sessions, with approved and unapproved miles split out.
+          </ExplainerText>
+        </CapabilitySection>
+        <CapabilitySection capability="time.manage" scope={scope}>
+          <ExplainerText>
+            Add a mileage entry by hand when one is missing, and correct or approve one
+            that is wrong. Day-to-day approval happens in the combined
+            workday-and-mileage flow; this tab is where you come to fix things outside it.
+          </ExplainerText>
+        </CapabilitySection>
       </TabExplainer>
       <HStack justify="space-between">
         <Text fontSize="lg" fontWeight="semibold">Vehicles</Text>
@@ -206,7 +279,7 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
           >
             {showArchived ? "Hide archived" : "Show archived"}
           </Button>
-          {showSuperExtras && (
+          {canManageFleet && (
             <Button size="sm" colorPalette="teal" onClick={() => setAddDialogOpen(true)}>
               <Plus size={14} />
               <Text ml={1}>Add vehicle</Text>
@@ -215,7 +288,13 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
         </HStack>
       </HStack>
 
-      {showSuperExtras && <VehiclesInsightsSection vehicles={vehicles} />}
+      {/* INSIGHTS is business-wide and gated on `reports.business`
+          everywhere. It was mounted on fleet-management authority, which
+          is a different question: managing the fleet is not the same as
+          reading the company's rollup. */}
+      {scope.can("reports.business") && (
+        <VehiclesInsightsSection vehicles={vehicles} canPlanRoutes={canPlanRoutes} />
+      )}
 
       {loading ? (
         <HStack justify="center" py={8}><Spinner /></HStack>
@@ -230,14 +309,16 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
             <VehicleCard
               key={v.id}
               vehicle={v}
-              showSuperExtras={showSuperExtras}
+              canManageFleet={canManageFleet}
+              canViewTime={canViewTime}
+              canManageTime={canManageTime}
               expanded={expanded.has(v.id)}
               onToggle={() => toggle(v.id)}
               onEdit={() => setEditing(v)}
               onAssign={() => setAssigningVehicle(v)}
               onArchive={async () => {
                 try {
-                  await apiPost(`/api/super/vehicles/${v.id}/archive`);
+                  await apiPost(`/api/vehicles/${v.id}/archive`);
                   publishInlineMessage({ type: "SUCCESS", text: "Vehicle archived." });
                   void load();
                 } catch (err) {
@@ -249,7 +330,7 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
               }}
               onUnarchive={async () => {
                 try {
-                  await apiPost(`/api/super/vehicles/${v.id}/unarchive`);
+                  await apiPost(`/api/vehicles/${v.id}/unarchive`);
                   publishInlineMessage({ type: "SUCCESS", text: "Vehicle restored." });
                   void load();
                 } catch (err) {
@@ -261,7 +342,7 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
               }}
               onUnassign={async (userId) => {
                 try {
-                  await apiPost(`/api/super/vehicles/${v.id}/unassign`, { userId });
+                  await apiPost(`/api/vehicles/${v.id}/unassign`, { userId });
                   publishInlineMessage({ type: "SUCCESS", text: "Assignment removed." });
                   void load();
                 } catch (err) {
@@ -276,7 +357,7 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
         </VStack>
       )}
 
-      {showSuperExtras && addDialogOpen && (
+      {canManageFleet && addDialogOpen && (
         <EditVehicleDialog
           onClose={() => setAddDialogOpen(false)}
           onSaved={() => {
@@ -285,7 +366,7 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
           }}
         />
       )}
-      {showSuperExtras && editing && (
+      {canManageFleet && editing && (
         <EditVehicleDialog
           vehicle={editing}
           onClose={() => setEditing(null)}
@@ -295,7 +376,7 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
           }}
         />
       )}
-      {showSuperExtras && assigningVehicle && (
+      {canManageFleet && assigningVehicle && (
         <AssignWorkerDialog
           vehicle={assigningVehicle}
           workers={workers}
@@ -313,12 +394,19 @@ export default function VehiclesTab({ scope }: { scope: VehiclesTabScope }) {
 // Vehicle card — one per fleet vehicle. Replaces the earlier
 // Table.Row-based layout which overflowed on narrow mobile screens.
 // Fields stack vertically inside a Card so the row always fits the
-// viewport regardless of width. Super gets the expand chevron +
-// action buttons + mileage log drill-down; worker/admin see the
-// same static summary card.
+// viewport regardless of width.
+//
+// Three separate answers decide what the card offers, because its
+// controls call three different endpoints: `equipment.manage` for the
+// edit/assign/archive actions, `time.view` for the mileage log, and
+// `time.manage` for adding to it. This comment used to say "Super gets
+// the chevron + actions + log; everyone else sees the static card",
+// which bundled all three into one rank.
 function VehicleCard({
   vehicle,
-  showSuperExtras,
+  canManageFleet,
+  canViewTime,
+  canManageTime,
   expanded,
   onToggle,
   onEdit,
@@ -328,7 +416,9 @@ function VehicleCard({
   onUnassign,
 }: {
   vehicle: Vehicle;
-  showSuperExtras: boolean;
+  canManageFleet: boolean;
+  canViewTime: boolean;
+  canManageTime: boolean;
   expanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
@@ -348,7 +438,7 @@ function VehicleCard({
             status badge on right. Wraps if title is unusually long. */}
         <HStack gap={2} align="flex-start" justify="space-between" flexWrap="wrap">
           <HStack gap={2} align="flex-start" flex="1" minW={0}>
-            {showSuperExtras && (
+            {canManageFleet && (
               <Button size="xs" variant="ghost" onClick={onToggle} p={1} flexShrink={0} mt={0.5}>
                 {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </Button>
@@ -391,7 +481,7 @@ function VehicleCard({
                 gap={1}
               >
                 {a.user.displayName ?? a.user.email ?? a.userId}
-                {showSuperExtras && (
+                {canManageFleet && (
                   <Box
                     as="button"
                     onClick={() => onUnassign(a.userId)}
@@ -408,7 +498,7 @@ function VehicleCard({
         </HStack>
 
         {/* Super actions row */}
-        {showSuperExtras && (
+        {canManageFleet && (
           <HStack gap={1} mt={2} wrap="wrap">
             <Button size="xs" variant="outline" onClick={onAssign}>
               <UserPlus size={12} /><Text ml={1}>Assign</Text>
@@ -429,19 +519,19 @@ function VehicleCard({
         )}
       </Card.Body>
 
-      {/* Mileage log drill-down — expanded state is super-only. Kept
-          inline within the card so the log's rows sit with their
-          parent vehicle rather than in a modal. */}
-      {showSuperExtras && expanded && (
+      {/* Mileage log drill-down — `time.view`, which is the guard on
+          `GET /vehicles/:id/mileage`. Kept inline within the card so the
+          log's rows sit with their parent vehicle rather than in a modal. */}
+      {canViewTime && expanded && (
         <Box bg="gray.faint" borderTopWidth="1px" borderColor="gray.emphasized" px={0} py={0}>
-          <MileageLog vehicle={vehicle} />
+          <MileageLog vehicle={vehicle} canManageTime={canManageTime} />
         </Box>
       )}
     </Card.Root>
   );
 }
 
-function MileageLog({ vehicle }: { vehicle: Vehicle }) {
+function MileageLog({ vehicle, canManageTime }: { vehicle: Vehicle; canManageTime: boolean }) {
   const vehicleId = vehicle.id;
   const [rows, setRows] = useState<MileageEntry[]>([]);
   const [addOpen, setAddOpen] = useState(false);
@@ -467,7 +557,7 @@ function MileageLog({ vehicle }: { vehicle: Vehicle }) {
       const res = await apiGet<{
         entries: MileageEntry[];
         totals: any | null;
-      }>(`/api/super/vehicles/${vehicleId}/mileage?from=${fromKey}&to=${toKey}`);
+      }>(`/api/vehicles/${vehicleId}/mileage?from=${fromKey}&to=${toKey}`);
       setRows(res.entries ?? []);
       setTotals(res.totals ?? null);
     } catch (err) {
@@ -494,10 +584,13 @@ function MileageLog({ vehicle }: { vehicle: Vehicle }) {
             <b>{totals.unapprovedMiles.toLocaleString()}</b> unapproved)
           </Text>
         ) : <Box />}
-        <Button size="xs" colorPalette="teal" onClick={() => setAddOpen(true)}>
-          <Plus size={12} />
-          <Text ml={1}>Add entry</Text>
-        </Button>
+        {/* `POST /vehicles/:id/mileage` is `time.manage`. */}
+        {canManageTime && (
+          <Button size="xs" colorPalette="teal" onClick={() => setAddOpen(true)}>
+            <Plus size={12} />
+            <Text ml={1}>Add entry</Text>
+          </Button>
+        )}
       </HStack>
       {rows.length === 0 ? (
         <Text fontSize="sm" color="fg.muted" py={2}>No mileage entries yet.</Text>
@@ -629,13 +722,13 @@ function AddMileageEntryDialog({
     try {
       // Combine YYYY-MM-DD + HH:MM ET wall-clock into UTC ISO instants.
       // Previously used `new Date(`${date}T${startTime}:00`)` which
-      // parses in the BROWSER's local timezone — a super in another zone
+      // parses in the BROWSER's local timezone — someone with `equipment.manage` in another zone
       // (e.g. traveling) would submit an instant that misrepresents the
       // ET wall-clock the operator typed. bizInstantFromEtParts is the
       // canonical fix and DST-safe (auto-picks EDT vs EST).
       const startedAt = bizInstantFromEtParts(date as EtDateKey, startTime);
       const endedAt = bizInstantFromEtParts(date as EtDateKey, endTime);
-      await apiPost(`/api/super/vehicles/${vehicle.id}/mileage`, {
+      await apiPost(`/api/vehicles/${vehicle.id}/mileage`, {
         driverUserId,
         startedAt,
         endedAt,
@@ -829,9 +922,9 @@ function EditVehicleDialog({
         inServiceDate: inServiceDate.trim() || null,
       };
       if (isEdit && vehicle) {
-        await apiPatch(`/api/super/vehicles/${vehicle.id}`, payload);
+        await apiPatch(`/api/vehicles/${vehicle.id}`, payload);
       } else {
-        await apiPost(`/api/super/vehicles`, payload);
+        await apiPost(`/api/vehicles`, payload);
       }
       publishInlineMessage({
         type: "SUCCESS",
@@ -942,7 +1035,7 @@ function AssignWorkerDialog({
     if (!userId) return;
     setBusy(true);
     try {
-      await apiPost(`/api/super/vehicles/${vehicle.id}/assign`, { userId });
+      await apiPost(`/api/vehicles/${vehicle.id}/assign`, { userId });
       publishInlineMessage({ type: "SUCCESS", text: "Worker assigned." });
       onSaved();
     } catch (err) {
@@ -1023,14 +1116,27 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-// ─── Super Insights ───────────────────────────────────────────────
-// Fleet-view rollups computed from the loaded vehicle list, mirroring
-// the orange Insights strip on the Inventory + Collections tabs.
-// Fetches unapproved mileage counts + last-30-days miles rollup once
-// on mount from the super endpoint; skips silently if the caller
-// isn't super (defensive — the guard is also enforced at the render
-// gate in the parent).
-function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
+// ─── Insights ─────────────────────────────────────────────────────
+// Fleet-view rollups, mirroring the orange Insights strip on the
+// Inventory + Collections tabs. TWO SOURCES, and they need different
+// capabilities:
+//
+//   Fleet / Unassigned      — the already-loaded vehicle list. Nothing
+//                             beyond what opened the tab.
+//   Pending approvals /     — GET /routes/operations, guarded on
+//   Last 30d miles            `routes.plan`.
+//
+// The whole strip used to render on `equipment.manage` and fetch
+// unconditionally, so anyone holding that without `routes.plan` — the
+// scheduler — got a 403 on every open. A bare `catch {}` swallowed it and
+// the tiles just sat at zero, so nobody would ever have reported it.
+function VehiclesInsightsSection({
+  vehicles,
+  canPlanRoutes,
+}: {
+  vehicles: Vehicle[];
+  canPlanRoutes: boolean;
+}) {
   const [rollup, setRollup] = useState<{
     unapprovedEntries: number;
     activeDrivers: number;
@@ -1038,8 +1144,26 @@ function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
     windowEntries: number;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  // Bumped by the header refresh control; re-runs the rollup fetch.
+  const [refreshTick, setRefreshTick] = useState(0);
+  // THE WINDOW WAS HARDCODED AT 30 DAYS. The card showed a tile reading
+  // "Last 30d miles" with no way to change it, while every other INSIGHTS
+  // card takes a period — so the one number here that actually HAS a
+  // window was the one you could not adjust.
+  const [period, setPeriod] = usePersistedPeriod(
+    "seedlings:vehiclesTab:insightsPeriod",
+    FULL_PERIODS,
+    DEFAULT_PERIOD,
+  );
+  const range = useMemo(() => periodToRange(period), [period]);
+  // Holds the pending all-time selection while its confirm is open.
+  const [pendingAllTime, setPendingAllTime] = useState<Period | null>(null);
 
   useEffect(() => {
+    if (!canPlanRoutes) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       setLoading(true);
@@ -1050,7 +1174,7 @@ function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
           pendingCount: number;
           activeDrivers: number;
         }>(
-          `/api/super/routes/operations?from=${bizAddDays(bizToday(), -30)}&to=${bizToday()}`,
+          `/api/routes/operations?from=${range.from}&to=${range.to}`,
         );
         if (cancelled) return;
         setRollup({
@@ -1065,7 +1189,7 @@ function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [canPlanRoutes, refreshTick, range.from, range.to]);
 
   const fleetSummary = useMemo(() => {
     const active = vehicles.filter((v) => !v.archivedAt);
@@ -1080,6 +1204,29 @@ function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
       title="Insights"
       icon={BarChart3}
       variant="insights"
+      // In the title bar, like every other section.
+      onRefresh={() => setRefreshTick((t) => t + 1)}
+      refreshing={loading}
+      timeframe={(() => {
+        const tf = periodTimeframe(FULL_PERIODS, period, setPeriod);
+        return {
+          ...tf,
+          // ALL TIME GOES THROUGH A CONFIRM, as it does on Jobs Insights
+          // and on ServicesTab. It is the one option with no bound: it
+          // scans every mileage entry the fleet has ever logged, and a
+          // mis-click in a dropdown is far easier to make than a click on
+          // a button labelled "Load All".
+          onChange: (v: string) => {
+            const next = FULL_PERIODS.find((p) => periodKey(p) === v);
+            if (!next) return;
+            if (periodKey(next) !== periodKey(ALL_TIME_PERIOD)) {
+              setPeriod(next);
+              return;
+            }
+            setPendingAllTime(next);
+          },
+        };
+      })()}
     >
         <SimpleGrid columns={{ base: 2, md: 4 }} gap={2}>
           <InsightPanel
@@ -1087,22 +1234,26 @@ function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
             value={String(fleetSummary.active)}
             hint={`${fleetSummary.assignedActive} assigned · ${fleetSummary.archived} archived`}
           />
-          <InsightPanel
-            title="Pending approvals"
-            value={loading ? "…" : String(rollup?.unapprovedEntries ?? 0)}
-            hint={loading
-              ? "loading…"
-              : (rollup?.activeDrivers ?? 0) === 0
-                ? "no drivers this month"
-                : `${rollup!.activeDrivers} driver${rollup!.activeDrivers === 1 ? "" : "s"} active`}
-            palette={(rollup?.unapprovedEntries ?? 0) > 0 ? "red" : "gray"}
-          />
-          <InsightPanel
-            title="Last 30d miles"
-            value={loading ? "…" : (rollup?.windowMiles ?? 0).toLocaleString()}
-            hint={loading ? "loading…" : `${rollup?.windowEntries ?? 0} sessions`}
-            palette="blue"
-          />
+          {canPlanRoutes && (
+            <>
+              <InsightPanel
+                title="Pending approvals"
+                value={loading ? "…" : String(rollup?.unapprovedEntries ?? 0)}
+                hint={loading
+                  ? "loading…"
+                  : (rollup?.activeDrivers ?? 0) === 0
+                    ? `no drivers ${period.label}`
+                    : `${rollup!.activeDrivers} driver${rollup!.activeDrivers === 1 ? "" : "s"} active`}
+                palette={(rollup?.unapprovedEntries ?? 0) > 0 ? "red" : "gray"}
+              />
+              <InsightPanel
+                title={`Miles · ${period.label}`}
+                value={loading ? "…" : (rollup?.windowMiles ?? 0).toLocaleString()}
+                hint={loading ? "loading…" : `${rollup?.windowEntries ?? 0} sessions`}
+                palette="blue"
+              />
+            </>
+          )}
           <InsightPanel
             title="Unassigned"
             value={String(fleetSummary.active - fleetSummary.assignedActive)}
@@ -1110,6 +1261,18 @@ function VehiclesInsightsSection({ vehicles }: { vehicles: Vehicle[] }) {
             palette={(fleetSummary.active - fleetSummary.assignedActive) > 0 ? "yellow" : "gray"}
           />
         </SimpleGrid>
+        <ConfirmDialog
+          open={!!pendingAllTime}
+          title="Load All Data"
+          message="This will roll up every mileage entry for all time. This may be slow. Are you sure?"
+          confirmLabel="Load All"
+          confirmColorPalette="orange"
+          onConfirm={() => {
+            if (pendingAllTime) setPeriod(pendingAllTime);
+            setPendingAllTime(null);
+          }}
+          onCancel={() => setPendingAllTime(null)}
+        />
     </Dashboard>
   );
 }

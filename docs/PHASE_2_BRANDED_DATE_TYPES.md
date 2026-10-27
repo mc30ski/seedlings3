@@ -1,6 +1,14 @@
 # Phase 2 — Branded Date Types
 
-**Status:** Draft. No code changes yet. Awaiting operator approval before starting.
+**Status: PARTLY SHIPPED — this document is now a plan with a stale status
+line.** `EtDateKey` and `IsoInstant` exist and are exported from BOTH
+[`apps/api/src/lib/dates.ts`](../apps/api/src/lib/dates.ts) (lines 92, 96)
+and [`apps/web/src/lib/dates.ts`](../apps/web/src/lib/dates.ts) (16, 21),
+and 62 files reference them. What did NOT happen is the
+`apps/api/src/db/prismaTypes.ts` re-export layer described in step 1 below —
+that file does not exist, and the brands are applied at the date helpers
+instead of at the Prisma boundary. Read the steps below as "what was
+proposed", and check each against the two `dates.ts` files before acting.
 **Companion doc:** [`DATE_HANDLING.md`](DATE_HANDLING.md) (current policy + runtime helpers).
 **Motivation memory:** `feedback_fmtdate_eats_date_keys.md` (the shipped bug that triggered Phase 1 + this plan).
 

@@ -4,15 +4,26 @@ Summary: how it all works together
  - The system creates JobOccurrences (instances) either:
    - manually (createOccurrence → source=MANUAL), or
  - Each occurrence can be assigned to one or more workers using JobOccurrenceAssignee.
-   -The service enforces “assignable only if Role.WORKER” by checking UserRole before writing assignment rows.
+   - Assignment is NOT gated on a role — the `Role` enum and the `UserRole`
+     table are deleted. Two invariants apply instead, and every function that
+     writes an assignee row must end by awaiting `enforceAssigneeInvariants`
+     (lib/claimerInvariant.ts) or carry the documented allow-annotation that
+     file describes:
+       1. an occurrence is UNCLAIMED or has exactly ONE claimer; and
+       2. only a PAID person (EMPLOYEE or CONTRACTOR, per isPaid() in
+          packages/money/workerClass.ts) may hold a non-observer seat — an
+          UNPAID helper or an untyped worker can only be an observer, because
+          rateFor() refuses to price them and the visit would be
+          uncompletable for everyone on it.
  - Default assignees on the Job template get copied to the occurrence when you create/generate it, but you can override on the occurrence at any time.
 */
 
 import { prisma } from "../db/prisma";
+import { withArea } from "../lib/areaScope";
+import type { CallerCan } from "../lib/callerCan";
 import { resolveHoursBaseline, type BaselineSource } from "../lib/hoursBaseline";
 import {
   Prisma,
-  Role,
   JobStatus,
   JobOccurrenceStatus,
   JobOccurrenceSource,
@@ -28,7 +39,7 @@ import type { ServicesJobs } from "../types/services";
  * not anyone had actually dealt with the stalled visit. The reminder
  * went quiet on its own schedule instead of on the operator's.
  *
- * The warning now persists until an admin explicitly suppresses it
+ * The warning now persists until someone with `schedule.manage` explicitly suppresses it
  * (`JobOccurrence.nextVisitWarningSuppressedAt`), which is audited and
  * reversible, or until the stall resolves and the next occurrence
  * actually generates. Archiving the Job also clears it — an ARCHIVED job
@@ -54,7 +65,13 @@ export const GHOST_EXPIRING_SOON_DAYS = 3;
 import { AUDIT } from "../lib/auditActions";
 import { invoiceTotal } from "../lib/jobPricing";
 import { writeAudit } from "../lib/auditLogger";
-import { enforceClaimerInvariant } from "../lib/claimerInvariant";
+import {
+  enforceAssigneeInvariants,
+  canHoldPaidSeat,
+  PAID_SEAT_REFUSAL,
+} from "../lib/claimerInvariant";
+import { userCan } from "../lib/userCapabilities";
+import { resolveOccurrenceArea } from "../lib/occurrenceArea";
 import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween, etAddDays, type EtDateKey } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import {
@@ -262,16 +279,21 @@ export async function rebuildRecurringChainInTx(
   const nextEnd = lastOcc.endAt
     ? new Date(nextStart.getTime() + (lastOcc.endAt.getTime() - lastOcc.startAt.getTime()))
     : null;
+  const nextAreaId = await resolveOccurrenceArea(tx, {
+    jobId,
+    previousOccurrenceId: lastOcc.id,
+  });
   const nextOcc = await tx.jobOccurrence.create({
     data: {
       jobId,
+      areaId: nextAreaId,
       kind: lastOcc.kind,
       startAt: nextStart,
       endAt: nextEnd,
       status: JobOccurrenceStatus.SCHEDULED,
       source: JobOccurrenceSource.GENERATED,
       workflow: OccurrenceWorkflow.STANDARD,
-      isAdminOnly: !!(lastOcc as any).isAdminOnly,
+      mustBeAssigned: !!(lastOcc as any).mustBeAssigned,
       jobType: (lastOcc as any).jobType ?? null,
       jobTags: (lastOcc as any).jobTags ?? null,
       notes: lastOcc.notes ?? lastOcc.job.notes ?? null,
@@ -325,7 +347,7 @@ export async function rebuildRecurringChainInTx(
       skipDuplicates: true,
     });
   }
-  await enforceClaimerInvariant(tx, nextOcc.id, currentUserId);
+  await enforceAssigneeInvariants(tx, nextOcc.id, currentUserId);
   await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
     id: jobId,
     action: sideEffectAction,
@@ -337,16 +359,25 @@ export async function rebuildRecurringChainInTx(
 
 // ---- helpers ----
 
+/**
+ * May this person be put on a visit in a PAID seat?
+ *
+ * This required a role. The role is gone, and the question it
+ * was standing in for is the one G33 enforces: a non-observer assignee is
+ * somebody the money system will try to pay, so they must be on payroll.
+ * Asking about payroll rather than a role also means an operator can take
+ * somebody off field work without removing them from the system.
+ */
 async function assertWorkerAssignable(
   tx: Prisma.TransactionClient,
   userId: string
 ) {
-  const hasWorker = await tx.userRole.findFirst({
-    where: { userId, role: Role.WORKER },
-    select: { id: true },
+  const target = await tx.user.findUnique({
+    where: { id: userId },
+    select: { workerType: true },
   });
-  if (!hasWorker) {
-    throw new Error("Only users with Role.WORKER can be assigned to jobs.");
+  if (!canHoldPaidSeat(target?.workerType)) {
+    throw new ServiceError("NOT_ON_PAYROLL", PAID_SEAT_REFUSAL, 400);
   }
 }
 
@@ -391,7 +422,7 @@ const VALID_TRANSITIONS: Record<string, Record<string, string[]>> = {
 };
 
 /** Admin-allowed transitions — includes reversals for correcting mistakes */
-const ADMIN_TRANSITIONS: Record<string, Record<string, string[]>> = {
+const MANAGER_TRANSITIONS: Record<string, Record<string, string[]>> = {
   STANDARD: {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
     IN_PROGRESS: ["PAUSED", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
@@ -429,8 +460,8 @@ function isValidTransition(workflow: string, from: string, to: string): boolean 
   return VALID_TRANSITIONS[workflow]?.[from]?.includes(to) ?? false;
 }
 
-function isValidAdminTransition(workflow: string, from: string, to: string): boolean {
-  return ADMIN_TRANSITIONS[workflow]?.[from]?.includes(to) ?? false;
+function isValidManagerTransition(workflow: string, from: string, to: string): boolean {
+  return MANAGER_TRANSITIONS[workflow]?.[from]?.includes(to) ?? false;
 }
 
 // Default for the hours-variance threshold when no Setting row is present.
@@ -595,7 +626,7 @@ export function evaluateHoursApproval(args: {
 // transition into any of these must have a real worker (non-observer
 // assignee) on the occurrence, otherwise downstream payment/payout logic
 // has no claimer to split against. Reverts back to SCHEDULED/CANCELED/etc.
-// are intentionally exempt — those are the cleanup paths admins use to
+// are intentionally exempt — those are the cleanup paths holders of `schedule.manage` use to
 // undo a bad state.
 const STATUSES_REQUIRING_WORKER: ReadonlySet<JobOccurrenceStatus> = new Set([
   JobOccurrenceStatus.IN_PROGRESS,
@@ -608,8 +639,8 @@ const STATUSES_REQUIRING_WORKER: ReadonlySet<JobOccurrenceStatus> = new Set([
 /**
  * Refuse status transitions that would leave the occurrence in a "someone
  * is working on this" state when no actual worker is assigned. Prevents
- * the contradiction where an admin/super completes an unclaimed occurrence
- * (using the admin bypass in updateOccurrenceStatus) and lands it in
+ * the contradiction where someone with `schedule.manage` completes an
+ * unclaimed occurrence (using that bypass in updateOccurrenceStatus) and lands it in
  * PENDING_PAYMENT with zero assignees — which breaks the payment flow
  * because split percentages need at least one worker to apply to.
  */
@@ -648,7 +679,7 @@ export const jobs: ServicesJobs = {
     const q = (params?.q ?? "").trim();
     const limit = Math.min(Math.max(params?.limit ?? 100, 1), 500);
 
-    const where: Prisma.JobWhereInput = {};
+    let where: Prisma.JobWhereInput = {};
     if (params?.propertyId) where.propertyId = params.propertyId;
     if (params?.status === "ALL") {
       // no status filter — return all including ARCHIVED
@@ -686,6 +717,13 @@ export const jobs: ServicesJobs = {
 
     if (andClauses.length) where.AND = andClauses;
 
+    // Territory. A Job reaches its area through `defaultArea`, so the
+    // caller passes a fragment built with `areaWhereOn`, not `areaWhere`.
+    // Only the manage branch of GET /jobs comes through here — the worker
+    // branch is already scoped to jobs they are assigned to, which is
+    // narrower than territory and must stay that way so cover work shows.
+    where = withArea(where, params?.areaWhere ?? {});
+
     const rows = await prisma.job.findMany({
       where,
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
@@ -704,7 +742,10 @@ export const jobs: ServicesJobs = {
             // standing at a locked gate cannot go and look it up, and the one
             // who knew is not always the one sent.
             accessNotes: true,
-            client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
+            // The property's TERRITORY, for the badge beside the address on
+            // a job card. The NAME only.
+            area: { select: { name: true } },
+            client: { select: { id: true, displayName: true, isVip: true, vipReason: true, internalTags: true } },
           },
         },
         defaultAssignees: {
@@ -830,7 +871,7 @@ export const jobs: ServicesJobs = {
           // date so pre-cutoff occurrences drop out of the Services job
           // detail view, matching JobsTab + Statistics + Operations. Pattern
           // B layered on payment / expenses below as defense-in-depth.
-          // Super reveal resolves cutoff to null so this becomes a no-op.
+          // the reveal resolves cutoff to null so this becomes a no-op.
           where: { ...occurrenceWorkDateCutoff(cutoff) },
           orderBy: [{ createdAt: "desc" }],
           take: 50,
@@ -964,9 +1005,11 @@ export const jobs: ServicesJobs = {
         },
       });
 
+      const manualAreaId = await resolveOccurrenceArea(tx, { jobId });
       const occ = await tx.jobOccurrence.create({
         data: {
           jobId,
+          areaId: manualAreaId,
           kind: input.kind ?? job.kind,
           startAt: toDate(input.startAt),
           endAt: toDate(input.endAt),
@@ -988,7 +1031,7 @@ export const jobs: ServicesJobs = {
           isOneOff: input.workflow === "ONE_OFF" || input.isOneOff || false,
           isTentative: input.isTentative ?? false,
           isEstimate: input.workflow === "ESTIMATE" || input.isEstimate || false,
-          isAdminOnly: input.isAdminOnly ?? (input.workflow === "ESTIMATE" || input.isEstimate ? true : false),
+          mustBeAssigned: input.mustBeAssigned ?? (input.workflow === "ESTIMATE" || input.isEstimate ? true : false),
           frequencyDays: input.frequencyDays ?? null,
           title: input.title ?? null,
         } as any,
@@ -1056,7 +1099,7 @@ export const jobs: ServicesJobs = {
           })),
           skipDuplicates: true,
         });
-        await enforceClaimerInvariant(tx, occ.id, currentUserId);
+        await enforceAssigneeInvariants(tx, occ.id, currentUserId);
       }
 
       // Copy job's default property photo instructions to the new occurrence
@@ -1080,6 +1123,7 @@ export const jobs: ServicesJobs = {
 
   async createTask(currentUserId: string, input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string }) {
     return prisma.$transaction(async (tx) => {
+      // occurrence-area-allow: a task is work for a person, not work at a property.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1116,6 +1160,7 @@ export const jobs: ServicesJobs = {
 
   async createStandaloneReminder(currentUserId: string, input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string; isHighPriority?: boolean }) {
     return prisma.$transaction(async (tx) => {
+      // occurrence-area-allow: a reminder is a note to self, tied to no property.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1150,9 +1195,10 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async createEvent(adminUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }) {
+  async createEvent(actingUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }) {
     return prisma.$transaction(async (tx) => {
       const isRepeating = input.frequencyDays != null && input.frequencyDays > 0;
+      // occurrence-area-allow: an event is a date in the calendar, not a visit.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1172,12 +1218,12 @@ export const jobs: ServicesJobs = {
       await tx.jobOccurrenceAssignee.create({
         data: {
           occurrenceId: occ.id,
-          userId: adminUserId,
-          assignedById: adminUserId,
+          userId: actingUserId,
+          assignedById: actingUserId,
         },
       });
 
-      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, actingUserId, {
         occurrenceId: occ.id,
         type: "EVENT",
         title: input.title,
@@ -1187,7 +1233,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async completeEvent(adminUserId: string, occurrenceId: string) {
+  async completeEvent(actingUserId: string, occurrenceId: string) {
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.findUnique({ where: { id: occurrenceId } });
       if (!occ) throw new Error("Event not found");
@@ -1240,6 +1286,7 @@ export const jobs: ServicesJobs = {
           nextStart.setDate(nextStart.getDate() + freq);
         }
 
+        // occurrence-area-allow: closing an event creates its follow-on, which is also not a visit.
         nextOccurrence = await tx.jobOccurrence.create({
           data: {
             kind: null,
@@ -1254,7 +1301,7 @@ export const jobs: ServicesJobs = {
         });
       }
 
-      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, actingUserId, {
         occurrenceId,
         action: "COMPLETE_EVENT",
         nextOccurrenceId: nextOccurrence?.id ?? null,
@@ -1264,8 +1311,9 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async createFollowup(adminUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null; clientIds?: string[]; jobIds?: string[] }) {
+  async createFollowup(actingUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null; clientIds?: string[]; jobIds?: string[] }) {
     return prisma.$transaction(async (tx) => {
+      // occurrence-area-allow: a follow-up is a conversation to have, not work at a property.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1296,12 +1344,12 @@ export const jobs: ServicesJobs = {
       await tx.jobOccurrenceAssignee.create({
         data: {
           occurrenceId: occ.id,
-          userId: adminUserId,
-          assignedById: adminUserId,
+          userId: actingUserId,
+          assignedById: actingUserId,
         },
       });
 
-      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, actingUserId, {
         occurrenceId: occ.id,
         type: "FOLLOWUP",
         title: input.title,
@@ -1311,7 +1359,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async completeFollowup(adminUserId: string, occurrenceId: string) {
+  async completeFollowup(actingUserId: string, occurrenceId: string) {
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.findUnique({
         where: { id: occurrenceId },
@@ -1353,6 +1401,7 @@ export const jobs: ServicesJobs = {
           nextStart.setDate(nextStart.getDate() + freq);
         }
 
+        // occurrence-area-allow: closing a follow-up creates the next one — still a conversation.
         nextOccurrence = await tx.jobOccurrence.create({
           data: {
             kind: null,
@@ -1379,7 +1428,7 @@ export const jobs: ServicesJobs = {
         }
       }
 
-      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, actingUserId, {
         occurrenceId,
         action: "COMPLETE_FOLLOWUP",
         nextOccurrenceId: nextOccurrence?.id ?? null,
@@ -1389,9 +1438,10 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async createAnnouncement(adminUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }) {
+  async createAnnouncement(actingUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }) {
     return prisma.$transaction(async (tx) => {
       const isRepeating = input.frequencyDays != null && input.frequencyDays > 0;
+      // occurrence-area-allow: an announcement goes to people, not to a property.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1411,12 +1461,12 @@ export const jobs: ServicesJobs = {
       await tx.jobOccurrenceAssignee.create({
         data: {
           occurrenceId: occ.id,
-          userId: adminUserId,
-          assignedById: adminUserId,
+          userId: actingUserId,
+          assignedById: actingUserId,
         },
       });
 
-      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, actingUserId, {
         occurrenceId: occ.id,
         type: "ANNOUNCEMENT",
         title: input.title,
@@ -1426,7 +1476,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async completeAnnouncement(adminUserId: string, occurrenceId: string) {
+  async completeAnnouncement(actingUserId: string, occurrenceId: string) {
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.findUnique({ where: { id: occurrenceId } });
       if (!occ) throw new Error("Announcement not found");
@@ -1465,6 +1515,7 @@ export const jobs: ServicesJobs = {
           nextStart.setDate(nextStart.getDate() + freq);
         }
 
+        // occurrence-area-allow: closing an announcement creates its successor.
         nextOccurrence = await tx.jobOccurrence.create({
           data: {
             kind: null,
@@ -1479,7 +1530,7 @@ export const jobs: ServicesJobs = {
         });
       }
 
-      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, actingUserId, {
         occurrenceId,
         action: "COMPLETE_ANNOUNCEMENT",
         nextOccurrenceId: nextOccurrence?.id ?? null,
@@ -1489,7 +1540,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async createLightEstimate(adminUserId: string, input: {
+  async createLightEstimate(actingUserId: string, input: {
     title: string;
     notes?: string;
     startAt: string;
@@ -1513,6 +1564,7 @@ export const jobs: ServicesJobs = {
     const addressData: Record<string, any> = {};
     applyEstimateAddressParts(addressData, input);
     return prisma.$transaction(async (tx) => {
+      // occurrence-area-allow: an estimate is a quote; the visit it becomes resolves its own area on conversion.
       const occ = await tx.jobOccurrence.create({
         data: {
           jobId: input.jobId ?? null,
@@ -1524,7 +1576,7 @@ export const jobs: ServicesJobs = {
           source: JobOccurrenceSource.MANUAL,
           workflow: OccurrenceWorkflow.ESTIMATE,
           isEstimate: true,
-          isAdminOnly: true,
+          mustBeAssigned: true,
           contactName: input.contactName ?? null,
           contactPhone: input.contactPhone ?? null,
           contactEmail: input.contactEmail ?? null,
@@ -1550,9 +1602,9 @@ export const jobs: ServicesJobs = {
         });
       }
 
-      await enforceClaimerInvariant(tx, occ.id, adminUserId);
+      await enforceAssigneeInvariants(tx, occ.id, actingUserId);
 
-      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, actingUserId, {
         occurrenceId: occ.id,
         type: "LIGHT_ESTIMATE",
         title: input.title,
@@ -1581,7 +1633,7 @@ export const jobs: ServicesJobs = {
       assigneeUserIds?: string[];
       jobId?: string | null;
     } & EstimateAddressParts,
-    options?: { isAdmin?: boolean },
+    options?: { canManageSchedule?: boolean },
   ) {
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.findUnique({
@@ -1595,10 +1647,10 @@ export const jobs: ServicesJobs = {
       const isActiveAssignee = occ.assignees.some(
         (a: any) => a.userId === actorUserId && a.role !== "observer",
       );
-      if (!isActiveAssignee && !options?.isAdmin) {
+      if (!isActiveAssignee && !options?.canManageSchedule) {
         throw new ServiceError(
           "FORBIDDEN",
-          "Only assignees or admins can edit this estimate.",
+          "Only assignees or holders of schedule authority can edit this estimate.",
           403,
         );
       }
@@ -1643,7 +1695,7 @@ export const jobs: ServicesJobs = {
           });
         }
         if (toAdd.length > 0) {
-          // assignedById names the claimer. `actorUserId` here meant an admin
+          // assignedById names the claimer. `actorUserId` here meant someone with `schedule.manage`
           // editing the team produced workers assigned by a non-member, and a
           // visit with no claimer when the team started empty.
           const survivors = occ.assignees.filter((a: any) => desired.includes(a.userId));
@@ -1658,7 +1710,7 @@ export const jobs: ServicesJobs = {
           });
         }
       }
-      await enforceClaimerInvariant(tx, occurrenceId, actorUserId);
+      await enforceAssigneeInvariants(tx, occurrenceId, actorUserId);
 
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, actorUserId, {
         occurrenceId,
@@ -1828,7 +1880,7 @@ export const jobs: ServicesJobs = {
     currentUserId: string,
     occurrenceId: string,
     patch: any,
-    options?: { isAdmin?: boolean }
+    options?: { canManageSchedule?: boolean }
   ) {
     return prisma.$transaction(async (tx) => {
       // Fetch original before update (for link cascade delta + status validation)
@@ -1840,10 +1892,10 @@ export const jobs: ServicesJobs = {
       if ("jobId" in patch) data.jobId = patch.jobId ?? null;
       if (patch.kind != null) data.kind = patch.kind;
       if (patch.status != null) {
-        // Enforce valid status transitions — admins get expanded transitions (can revert)
+        // Enforce valid status transitions — holders of `schedule.manage` get expanded transitions (can revert)
         if (patch.status !== original.status) {
           const workflow = (original as any).workflow ?? "STANDARD";
-          const validate = options?.isAdmin ? isValidAdminTransition : isValidTransition;
+          const validate = options?.canManageSchedule ? isValidManagerTransition : isValidTransition;
           if (!validate(workflow, original.status, patch.status)) {
             throw new ServiceError(
               "INVALID_TRANSITION",
@@ -1861,7 +1913,7 @@ export const jobs: ServicesJobs = {
           }
         }
         // Same claimer-required gate as updateOccurrenceStatus — applied
-        // here too because admins can flip status through this path.
+        // here too because holders of `schedule.manage` can flip status through this path.
         await assertOccurrenceHasWorker(tx, occurrenceId, patch.status as JobOccurrenceStatus);
         data.status = patch.status;
       }
@@ -1875,7 +1927,7 @@ export const jobs: ServicesJobs = {
       if ("estimatedMinutes" in patch) data.estimatedMinutes = patch.estimatedMinutes ?? null;
       if ("isTentative" in patch) data.isTentative = !!patch.isTentative;
       if ("isEstimate" in patch) data.isEstimate = !!patch.isEstimate;
-      if ("isAdminOnly" in patch) data.isAdminOnly = !!patch.isAdminOnly;
+      if ("mustBeAssigned" in patch) data.mustBeAssigned = !!patch.mustBeAssigned;
       if ("isClientConfirmed" in patch) data.isClientConfirmed = !!patch.isClientConfirmed;
       if ("pinnedNote" in patch) data.pinnedNote = patch.pinnedNote ?? null;
       if ("pinnedNoteRepeats" in patch) data.pinnedNoteRepeats = !!patch.pinnedNoteRepeats;
@@ -1902,7 +1954,7 @@ export const jobs: ServicesJobs = {
       }
 
       // Auto-revert status when admin clears a timestamp that
-      // semantically defines a status. Without this, an admin clearing
+      // semantically defines a status. Without this, someone with `schedule.manage` clearing
       // startedAt on an IN_PROGRESS occurrence leaves status=IN_PROGRESS
       // with startedAt=null — internally inconsistent, and the JobsTab
       // "Complete Job" button (which gates on status, not startedAt)
@@ -1927,7 +1979,7 @@ export const jobs: ServicesJobs = {
         ]);
         // Also treat SCHEDULED-with-stale-time as "needs cleanup": some
         // historical rows have status=SCHEDULED but lingering startedAt/
-        // completedAt because the admin reset via a status-only flip
+        // completedAt because a caller with `schedule.manage` reset via a status-only flip
         // before the symmetric auto-clear branch existed. Clicking Reset
         // Job on such a row should null out the whole run-time block.
         const staleScheduled =
@@ -1974,7 +2026,7 @@ export const jobs: ServicesJobs = {
       // status back to SCHEDULED from any "started"/"completed" state, the
       // occurrence semantically "never happened" — so clear all run-time
       // artifacts (timestamps, GPS, hours-approval, payment rejection
-      // metadata). Without this, admins who reset via a status edit are
+      // metadata). Without this, holders of `schedule.manage` who reset via a status edit are
       // left with an internally inconsistent row (SCHEDULED + startedAt
       // populated). Patch wins over auto-clear: any explicit values the
       // caller sent in `data` for the same fields stay as-is.
@@ -2128,7 +2180,7 @@ export const jobs: ServicesJobs = {
       //
       // CRITICAL — must check BOTH original AND new status. Earlier versions
       // checked only `data.status !== CLOSED/ARCHIVED`, which silently nuked
-      // payments any time an admin saved a non-CLOSED occurrence that
+      // payments any time someone with `schedule.manage` saved a non-CLOSED occurrence that
       // happened to have a payment row (e.g. an OccurrenceDialog save on a
       // PENDING_PAYMENT occurrence with a pending-approval payment, or any
       // PATCH that re-sent `status: "PENDING_PAYMENT"` for an already-paid
@@ -2269,7 +2321,7 @@ export const jobs: ServicesJobs = {
       });
       if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
 
-      // PENDING_PAYMENT policy: team changes are allowed by admins (the
+      // PENDING_PAYMENT policy: team changes are allowed by holders of `schedule.manage` (the
       // common case is correcting an as-built team after work is done —
       // e.g. a worker was sick and didn't actually show up). But if a
       // Payment row already exists, blocking is the safer move:
@@ -2362,7 +2414,7 @@ export const jobs: ServicesJobs = {
         });
       }
 
-      await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
+      await enforceAssigneeInvariants(tx, occurrenceId, currentUserId);
 
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
         occurrenceId,
@@ -2402,7 +2454,12 @@ export const jobs: ServicesJobs = {
     const hasDates = params?.from || params?.to;
 
     const occs = await prisma.jobOccurrence.findMany({
-      where: {
+      // THE JOBS FEED IS THE MAIN TERRITORIAL READ. An occurrence carries
+      // its own `areaId`, so this is a direct prefix test. Note what is NOT
+      // scoped: `work.claim` and `work.complete` are in NEVER_AREA_SCOPED,
+      // so a worker can still pick up and finish a visit outside their
+      // district — people cover for each other. Only the LIST narrows.
+      where: withArea({
         status: { not: JobOccurrenceStatus.ARCHIVED },
         ...(hasDates ? { startAt: dateRange } : {}),
         // Business Start Date filter — pre-cutoff occurrences (anchored on
@@ -2411,16 +2468,20 @@ export const jobs: ServicesJobs = {
         // off-state matches pre-feature behavior exactly. Client-facing
         // routes deliberately do NOT pass a cutoff — see routes/client.ts.
         ...occurrenceWorkDateCutoff(params?.cutoff ?? null),
-      },
+      }, params?.areaWhere ?? {}),
       include: {
         job: {
           include: {
             property: {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
+                // The property's TERRITORY, for the badge beside the
+                // address on a job card. The NAME only — the card shows
+                // where this work sits, it does not filter by it.
+                area: { select: { name: true } },
                 client: {
                   select: {
-                    id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
+                    id: true, displayName: true, isVip: true, vipReason: true, internalTags: true,
                     // Active client contacts as a fallback target for the
                     // "Request Confirmation" message when the property has
                     // no pointOfContactId set. Primary first so the worker
@@ -2512,8 +2573,8 @@ export const jobs: ServicesJobs = {
           include: { job: { include: { property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } } } } },
         },
         // Most-recent change request that resolved with a note. Used to
-        // surface the admin's dismiss/approve note on the job card on
-        // both the worker/admin JobsTab and the client's My Properties.
+        // surface the manager’s dismiss/approve note on the job card on
+        // both the staff JobsTab and the client's My Properties.
         // Filtered down to resolutionNote != null so we never grab a
         // resolved-without-note row that has nothing to display.
         // Naturally disappears for the next recurring occurrence: that
@@ -2597,7 +2658,7 @@ export const jobs: ServicesJobs = {
    * generation of the next one hasn't fired.
    *
    * Expired ghosts NEVER expire out on their own — they stay until the
-   * stall resolves, the Job is paused, or an admin suppresses the
+   * stall resolves, the Job is paused, or someone with `schedule.manage` suppresses the
    * warning. See the note on GHOST_EXPIRING_SOON_DAYS above.
    *
    * Purpose: gives the operator/worker a visible reminder to chase
@@ -2633,6 +2694,10 @@ export const jobs: ServicesJobs = {
     to?: string;
     assigneeUserId?: string | null;
     cutoff?: Date | null;
+    /** Territory filter built with `areaWhereOn(principal, cap,
+     *  "defaultArea")` — a ghost is projected from a Job, and a Job reaches
+     *  its area through `defaultArea`. */
+    areaWhere?: Record<string, unknown>;
   }) {
     const fromDate = params?.from ? etMidnight(params.from as EtDateKey) : null;
     const toDate = params?.to ? etEndOfDay(params.to as EtDateKey) : null;
@@ -2640,7 +2705,12 @@ export const jobs: ServicesJobs = {
     // Load all candidate jobs. Small scale (<a few hundred per business);
     // Prisma handles the include tree without a materially large query.
     const jobs = await prisma.job.findMany({
-      where: {
+      // A ghost is a PROJECTED visit, so it has no occurrence row to carry
+      // an areaId — scope the job it is projected from instead. Without
+      // this, the feed was correctly scoped and the ghosts beside it were
+      // not, which is the same "one surface, two read paths" shape that put
+      // the claimer invariant into production broken.
+      where: withArea({
         status: JobStatus.ACCEPTED,
         // "Repeating" is Job.frequencyDays, resolved below as
         // `occurrence.frequencyDays ?? job.frequencyDays` — the same
@@ -2652,11 +2722,15 @@ export const jobs: ServicesJobs = {
         // this card had never appeared in production at all. It looked
         // healthy in dev only because seed.ts created the rows.
         // JobSchedule has since been removed entirely.
-      },
+      }, params?.areaWhere ?? {}),
       include: {
         property: {
           select: {
             id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
+                // The property's TERRITORY, for the badge beside the
+                // address on a job card. The NAME only — the card shows
+                // where this work sits, it does not filter by it.
+                area: { select: { name: true } },
             client: {
               select: {
                 id: true, displayName: true, isVip: true, vipReason: true,
@@ -2748,7 +2822,7 @@ export const jobs: ServicesJobs = {
       const isExpired = daysUntilExpiry < 0;
 
       // NO GRACE WINDOW. An expired ghost stays until the stall resolves,
-      // the Job is paused, or an admin suppresses it. Nothing ages out on
+      // the Job is paused, or someone with `schedule.manage` suppresses it. Nothing ages out on
       // a timer — see the note where GHOST_EXPIRED_GRACE_DAYS used to be.
 
       // Date-range filter (matches the caller's from/to on the real
@@ -2760,7 +2834,7 @@ export const jobs: ServicesJobs = {
       if (fromDate && rawStartAt.getTime() < fromDate.getTime()) continue;
       if (toDate && rawStartAt.getTime() > toDate.getTime()) continue;
 
-      // Assignee filter for worker view — only ghost cards for jobs the
+      // Assignee filter for self-scoped view — only ghost cards for jobs the
       // caller was on. Admin caller omits `assigneeUserId` and gets all.
       if (params.assigneeUserId) {
         const isAssignee = latest.assignees.some(
@@ -2786,7 +2860,7 @@ export const jobs: ServicesJobs = {
         estimatedMinutes: latest.estimatedMinutes ?? job.estimatedMinutes ?? null,
         frequencyDays: effectiveFreq,
         workflow: "STANDARD",
-        isAdminOnly: !!latest.isAdminOnly,
+        mustBeAssigned: !!latest.mustBeAssigned,
         job: {
           id: job.id,
           kind: job.kind,
@@ -2804,7 +2878,7 @@ export const jobs: ServicesJobs = {
         _daysUntilExpiry: daysUntilExpiry,
         _isExpired: isExpired,
         _ghostDate: rawStartAt.toISOString(),
-        /** Set when an admin suppressed this warning. Only ever populated
+        /** Set when someone with `schedule.manage` suppressed this warning. Only ever populated
          *  when the caller asked for suppressed ghosts — in the normal
          *  feed a ghost carrying this would not be here at all. */
         _warningSuppressedAt: (latest as any).nextVisitWarningSuppressedAt
@@ -2846,8 +2920,12 @@ export const jobs: ServicesJobs = {
   async countGhostExpiry(params: {
     assigneeUserId?: string | null;
     cutoff?: Date | null;
+      areaWhere?: Record<string, unknown>;
   }) {
+    // Rides the same (already territorial) ghost query, so the count and
+    // the list it summarises cannot disagree.
     const ghosts = await this.listNextOccurrenceGhosts({
+      areaWhere: params?.areaWhere ?? {},
       assigneeUserId: params.assigneeUserId ?? null,
       cutoff: params.cutoff ?? null,
     });
@@ -2881,9 +2959,13 @@ export const jobs: ServicesJobs = {
             property: {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
+                // The property's TERRITORY, for the badge beside the
+                // address on a job card. The NAME only — the card shows
+                // where this work sits, it does not filter by it.
+                area: { select: { name: true } },
                 client: {
                   select: {
-                    id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
+                    id: true, displayName: true, isVip: true, vipReason: true, internalTags: true,
                     // Active client contacts as a fallback target for the
                     // "Request Confirmation" message when the property has
                     // no pointOfContactId set. Primary first so the worker
@@ -2972,17 +3054,16 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async listMyOccurrences(userId, options?: { isAdmin?: boolean }) {
+  async listMyOccurrences(userId, options?: { canManageSchedule?: boolean }) {
     return prisma.jobOccurrence.findMany({
       where: {
         status: { in: [JobOccurrenceStatus.SCHEDULED, JobOccurrenceStatus.IN_PROGRESS] },
         assignees: { some: { userId } },
-        // Timeline events (workflow=EVENT) are admin-only. Non-admin
-        // workers must never see them even if they were somehow assigned
-        // — same gate as the other /worker/* endpoints. The caller
-        // (routes/worker.ts) passes isAdmin based on the requesting
-        // user's effective roles.
-        ...(options?.isAdmin ? {} : { workflow: { not: OccurrenceWorkflow.EVENT } }),
+        // Timeline events (workflow=EVENT) need `timeline.view`. A caller
+        // without it must never see them, even if somehow assigned. The
+        // calling route passes `canManageSchedule` from the requesting
+        // user's effective capabilities.
+        ...(options?.canManageSchedule ? {} : { workflow: { not: OccurrenceWorkflow.EVENT } }),
       },
       include: {
         job: {
@@ -2990,9 +3071,13 @@ export const jobs: ServicesJobs = {
             property: {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
+                // The property's TERRITORY, for the badge beside the
+                // address on a job card. The NAME only — the card shows
+                // where this work sits, it does not filter by it.
+                area: { select: { name: true } },
                 client: {
                   select: {
-                    id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
+                    id: true, displayName: true, isVip: true, vipReason: true, internalTags: true,
                     // Active client contacts as a fallback target for the
                     // "Request Confirmation" message when the property has
                     // no pointOfContactId set. Primary first so the worker
@@ -3043,27 +3128,35 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async listAvailableOccurrences() {
+  async listAvailableOccurrences(areaWhere: Record<string, unknown> = {}) {
     return prisma.jobOccurrence.findMany({
-      where: {
+      // The unclaimed pool is a LIST, so it narrows — even though claiming
+      // itself never does (`work.claim` is in NEVER_AREA_SCOPED). Seeing
+      // your own district's open work by default is the point; being able
+      // to cover another district is still allowed, just not the default view.
+      where: withArea({
         status: JobOccurrenceStatus.SCHEDULED,
         assignees: { none: {} },
         // Timeline events (workflow=EVENT) and tasks are NOT claimable
-        // by workers. Events are admin-only; tasks are non-job items.
+        // by workers. Events need `timeline.view`; tasks are non-job items.
         // Only STANDARD and ONE_OFF (and possibly PROPOSAL_SUBMITTED in
         // some flows) are claimable. Keep this narrow rather than open
         // so future workflow additions default to "not claimable".
         workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
-      },
+      }, areaWhere),
       include: {
         job: {
           include: {
             property: {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true, accessNotes: true,
+                // The property's TERRITORY, for the badge beside the
+                // address on a job card. The NAME only — the card shows
+                // where this work sits, it does not filter by it.
+                area: { select: { name: true } },
                 client: {
                   select: {
-                    id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
+                    id: true, displayName: true, isVip: true, vipReason: true, internalTags: true,
                     // Active client contacts as a fallback target for the
                     // "Request Confirmation" message when the property has
                     // no pointOfContactId set. Primary first so the worker
@@ -3089,99 +3182,32 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async addOccurrenceAssignee(currentUserId, occurrenceId, targetUserId, role?: string | null) {
-    return prisma.$transaction(async (tx) => {
-      // Only someone already assigned can add team members
-      const isClaimer = await tx.jobOccurrenceAssignee.findFirst({
-        where: { occurrenceId, userId: currentUserId },
-      });
-      if (!isClaimer) {
-        throw new ServiceError("FORBIDDEN", "Only an assigned worker can add team members.", 403);
-      }
-
-      await assertWorkerAssignable(tx, targetUserId);
-
-      // Idempotent — skip if already assigned
-      const existing = await tx.jobOccurrenceAssignee.findFirst({
-        where: { occurrenceId, userId: targetUserId },
-      });
-      if (existing) return { added: false as const, reason: "already_assigned" };
-
-      // assignedById names the CLAIMER, not whoever clicked. Stamping the
-      // actor here made an admin-added worker a non-claimer on a visit that
-      // had no claimer at all — nobody could then start it. See
-      // lib/claimerInvariant.ts.
-      const priorRows = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
-      const priorClaimer = priorRows.find((a) => a.assignedById === a.userId && a.role !== "observer");
-      const assignedById = role === "observer"
-        ? null
-        : priorClaimer?.userId ?? targetUserId;
-
-      await tx.jobOccurrenceAssignee.create({
-        data: { occurrenceId, userId: targetUserId, assignedById, role: role ?? null },
-      });
-
-      await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
-
-      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
-        occurrenceId,
-        targetUserId,
-        action: "added",
-        role: role ?? undefined,
-      });
-
-      return { added: true as const };
-    });
-  },
-
-  async removeOccurrenceAssignee(currentUserId, occurrenceId, targetUserId) {
-    return prisma.$transaction(async (tx) => {
-      // Only the claimer (self-assigned) or admin can remove team members
-      const callerUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId }, include: { roles: true } });
-      const callerIsAdmin = callerUser.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
-      const callerAssignee = await tx.jobOccurrenceAssignee.findFirst({
-        where: { occurrenceId, userId: currentUserId },
-      });
-      if (!callerIsAdmin && (!callerAssignee || callerAssignee.assignedById !== currentUserId)) {
-        throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can remove team members.", 403);
-      }
-      // Cannot remove yourself via this endpoint — use unclaim instead
-      if (targetUserId === currentUserId) {
-        throw new ServiceError("INVALID_INPUT", "Use unclaim to remove yourself.", 400);
-      }
-
-      // Mirrors adminRemoveOccurrenceAssignee. Without this an admin could
-      // delete the claimer out from under a team and leave the survivors
-      // unable to start the visit, with nothing on screen explaining why.
-      const rowsBefore = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
-      const targetRow = rowsBefore.find((a) => a.userId === targetUserId);
-      const targetIsClaimer = !!targetRow && targetRow.assignedById === targetUserId && targetRow.role !== "observer";
-      const otherWorkers = rowsBefore.filter((a) => a.userId !== targetUserId && a.role !== "observer");
-      if (targetIsClaimer && otherWorkers.length > 0) {
-        throw new ServiceError("CLAIMER_CANNOT_BE_REMOVED", "Reassign the claimer role to someone else before removing this person.", 400);
-      }
-
-      await tx.jobOccurrenceAssignee.deleteMany({
-        where: { occurrenceId, userId: targetUserId },
-      });
-
-      await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
-
-      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
-        occurrenceId,
-        targetUserId,
-        action: "removed",
-      });
-
-      return { removed: true as const };
-    });
-  },
-
-  async adminAddOccurrenceAssignee(adminUserId, occurrenceId, targetUserId, role?: string | null) {
+  /**
+   * Add somebody to a visit.
+   *
+   * WAS TWO IMPLEMENTATIONS under this one key, and the second silently
+   * replaced the first — object literals keep the LAST duplicate. The dead
+   * copy held the caller check ("only an assigned worker can add team
+   * members"); the live one held the group-attached refusal and no caller
+   * check at all. Neither behaviour was the one anybody had chosen; it was
+   * whichever happened to be written second. Merged here. 2026-10-18.
+   *
+   * WHO MAY ADD: somebody already on the visit, or any holder of
+   * `schedule.manage`. The route is `approvedUser` (OWNERSHIP), so this
+   * function IS the scoping — there is no guard above it to fall back on.
+   *
+   * `role` defaults to a PAID seat, so a non-paid person must be added
+   * explicitly as an observer. Refused here rather than demoted later: a
+   * caller that asked for a worker and got an observer has been told
+   * something untrue about what happened. The check is skipped for an
+   * observer seat, because an UNPAID helper IS allowed to observe (G33) —
+   * the dead copy asserted unconditionally and so contradicted its own
+   * docstring.
+   */
+  async addOccurrenceAssignee(actingUserId, callerCan, occurrenceId, targetUserId, role?: string | null) {
     return prisma.$transaction(async (tx) => {
       // Reject individual adds when the occurrence is group-attached.
-      // Admins must detach the group first if they want to switch to
-      // individual assignment.
+      // The group must be detached first to switch to individual assignment.
       const occMeta = await tx.jobOccurrence.findUniqueOrThrow({
         where: { id: occurrenceId },
         select: { assignedGroupId: true } as any,
@@ -3193,49 +3219,105 @@ export const jobs: ServicesJobs = {
           409,
         );
       }
+
+      // Scoping. `schedule.manage` reaches any visit; everyone else must
+      // already be on this one.
+      if (!callerCan("schedule.manage")) {
+        const callerAssignee = await tx.jobOccurrenceAssignee.findFirst({
+          where: { occurrenceId, userId: actingUserId },
+        });
+        if (!callerAssignee) {
+          throw new ServiceError(
+            "FORBIDDEN",
+            "Only someone already on this visit, or a person with schedule authority, can add team members.",
+            403,
+          );
+        }
+      }
+
+      // Only a paid person takes a paid seat (G33). An observer seat is
+      // open to anyone, which is the whole point of having one.
+      if (role !== "observer") {
+        await assertWorkerAssignable(tx, targetUserId);
+      }
+
+      // Idempotent — skip if already assigned
       const existing = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: targetUserId },
       });
       if (existing) return { added: false as const, reason: "already_assigned" };
 
-      // First assignee becomes the claimer (assignedById = themselves).
-      // Subsequent assignees are assigned by the claimer.
-      const existingAssignees = await tx.jobOccurrenceAssignee.findMany({
-        where: { occurrenceId },
-        orderBy: { assignedAt: "asc" },
-      });
-      const assignedById =
-        existingAssignees.length === 0
-          ? targetUserId
-          : existingAssignees[0].assignedById ?? existingAssignees[0].userId;
+      // assignedById names the CLAIMER, not whoever clicked. Stamping the
+      // actor here made a worker added by the office a non-claimer on a visit
+      // that had no claimer at all — nobody could then start it. See
+      // lib/claimerInvariant.ts.
+      const priorRows = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
+      const priorClaimer = priorRows.find((a) => a.assignedById === a.userId && a.role !== "observer");
+      const assignedById = role === "observer"
+        ? null
+        : priorClaimer?.userId ?? targetUserId;
 
       await tx.jobOccurrenceAssignee.create({
         data: { occurrenceId, userId: targetUserId, assignedById, role: role ?? null },
       });
 
-      await enforceClaimerInvariant(tx, occurrenceId, adminUserId);
+      await enforceAssigneeInvariants(tx, occurrenceId, actingUserId);
 
-      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, actingUserId, {
         occurrenceId,
         targetUserId,
         action: "added",
+        role: role ?? undefined,
       });
 
       return { added: true as const };
     });
   },
 
-  async adminRemoveOccurrenceAssignee(adminUserId, occurrenceId, targetUserId) {
+  /**
+   * Remove somebody from a visit.
+   *
+   * ALSO WAS TWO IMPLEMENTATIONS, same story as `addOccurrenceAssignee`
+   * above — and here the copy that lost held the ONLY caller check, so the
+   * running code authorised nobody at all. Merged 2026-10-18.
+   *
+   * WHO MAY REMOVE: the claimer, or any holder of `schedule.manage`. The
+   * route is `approvedUser` (OWNERSHIP), so this function IS the scoping.
+   */
+  async removeOccurrenceAssignee(actingUserId, callerCan, occurrenceId, targetUserId) {
     return prisma.$transaction(async (tx) => {
       const assignees = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
       const target = assignees.find((a) => a.userId === targetUserId);
       if (!target) throw new ServiceError("NOT_FOUND", "Assignee not found.", 404);
 
-      const isClaimer = target.assignedById === targetUserId && target.role !== "observer";
-      const otherWorkers = assignees.filter((a) => a.userId !== targetUserId && a.role !== "observer");
+      // Scoping. `schedule.manage` reaches any visit; otherwise the caller
+      // must be the claimer of this one.
+      if (!callerCan("schedule.manage")) {
+        const callerAssignee = assignees.find((a) => a.userId === actingUserId);
+        const callerIsClaimer =
+          !!callerAssignee &&
+          callerAssignee.assignedById === actingUserId &&
+          callerAssignee.role !== "observer";
+        if (!callerIsClaimer) {
+          throw new ServiceError(
+            "FORBIDDEN",
+            "Only the claimer, or a person with schedule authority, can remove team members.",
+            403,
+          );
+        }
+      }
 
-      // Prevent removing the claimer if other workers exist — must reassign first
-      if (isClaimer && otherWorkers.length > 0) {
+      // Cannot remove yourself via this endpoint — use unclaim instead
+      if (targetUserId === actingUserId) {
+        throw new ServiceError("INVALID_INPUT", "Use unclaim to remove yourself.", 400);
+      }
+
+      // Without this, removing the claimer out from under a team leaves the
+      // survivors unable to start the visit, with nothing on screen
+      // explaining why. See lib/claimerInvariant.ts.
+      const targetIsClaimer = target.assignedById === targetUserId && target.role !== "observer";
+      const otherWorkers = assignees.filter((a) => a.userId !== targetUserId && a.role !== "observer");
+      if (targetIsClaimer && otherWorkers.length > 0) {
         throw new ServiceError("CLAIMER_CANNOT_BE_REMOVED", "Reassign the claimer role to someone else before removing this person.", 400);
       }
 
@@ -3243,9 +3325,9 @@ export const jobs: ServicesJobs = {
         where: { occurrenceId, userId: targetUserId },
       });
 
-      await enforceClaimerInvariant(tx, occurrenceId, adminUserId);
+      await enforceAssigneeInvariants(tx, occurrenceId, actingUserId);
 
-      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, actingUserId, {
         occurrenceId,
         targetUserId,
         action: "removed",
@@ -3255,7 +3337,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async reassignClaimer(adminUserId: string, occurrenceId: string, newClaimerUserId: string) {
+  async reassignClaimer(actingUserId: string, occurrenceId: string, newClaimerUserId: string) {
     return prisma.$transaction(async (tx) => {
       const assignees = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
       const target = assignees.find((a) => a.userId === newClaimerUserId);
@@ -3285,9 +3367,9 @@ export const jobs: ServicesJobs = {
         });
       }
 
-      await enforceClaimerInvariant(tx, occurrenceId, adminUserId);
+      await enforceAssigneeInvariants(tx, occurrenceId, actingUserId);
 
-      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, actingUserId, {
         occurrenceId,
         newClaimerUserId,
         action: "reassign_claimer",
@@ -3297,7 +3379,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async changeAssigneeRole(adminUserId: string, occurrenceId: string, targetUserId: string, newRole: string | null) {
+  async changeAssigneeRole(actingUserId: string, occurrenceId: string, targetUserId: string, newRole: string | null) {
     return prisma.$transaction(async (tx) => {
       const assignees = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
       const target = assignees.find((a) => a.userId === targetUserId);
@@ -3310,6 +3392,19 @@ export const jobs: ServicesJobs = {
       }
 
       const updates: any = { role: newRole };
+
+      // Promoting someone into a PAID seat: refuse unless they are on
+      // payroll. The chokepoint would demote them straight back, so without
+      // this the role change appears to succeed and silently undoes itself.
+      if (newRole !== "observer") {
+        const targetUser = await tx.user.findUnique({
+          where: { id: targetUserId },
+          select: { workerType: true },
+        });
+        if (!canHoldPaidSeat(targetUser?.workerType)) {
+          throw new ServiceError("NOT_ON_PAYROLL", PAID_SEAT_REFUSAL, 400);
+        }
+      }
 
       // If promoting from observer to worker, set assignedById to current claimer
       if (target.role === "observer" && newRole !== "observer") {
@@ -3327,9 +3422,9 @@ export const jobs: ServicesJobs = {
         data: updates,
       });
 
-      await enforceClaimerInvariant(tx, occurrenceId, adminUserId);
+      await enforceAssigneeInvariants(tx, occurrenceId, actingUserId);
 
-      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, actingUserId, {
         occurrenceId,
         targetUserId,
         newRole,
@@ -3340,16 +3435,16 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async unclaimOccurrence(currentUserId, occurrenceId) {
+  async unclaimOccurrence(currentUserId, callerCan, occurrenceId) {
     return prisma.$transaction(async (tx) => {
       // Only the claimer or admin can unclaim
-      const callerUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId }, include: { roles: true } });
-      const callerIsAdmin = callerUser.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      const callerUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId },  });
+      const callerCanManageSchedule = callerCan("schedule.manage");
       const callerAssignee = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: currentUserId },
       });
-      if (!callerIsAdmin && (!callerAssignee || callerAssignee.assignedById !== currentUserId)) {
-        throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can unclaim this job.", 403);
+      if (!callerCanManageSchedule && (!callerAssignee || callerAssignee.assignedById !== currentUserId)) {
+        throw new ServiceError("FORBIDDEN", "Only the claimer or someone with schedule authority can unclaim this job.", 403);
       }
       // Can only unclaim if not yet started
       const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
@@ -3378,14 +3473,24 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async claimOccurrence(currentUserId, occurrenceId, opts?: { groupId?: string | null }) {
+  async claimOccurrence(currentUserId, callerCan, occurrenceId, opts?: { groupId?: string | null }) {
     return prisma.$transaction(async (tx) => {
       await assertWorkerAssignable(tx, currentUserId);
 
-      // Trainees cannot claim jobs — they must be added to a team by someone else
-      const claimUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
-      if (claimUser.workerType === "TRAINEE") {
-        throw new ServiceError("TRAINEE_CANNOT_CLAIM", "Trainees cannot claim jobs. A team lead must add you to the occurrence.", 403);
+      // Field clearance, not a worker type. Someone without it must be added
+      // to a visit by a team lead rather than picking one up themselves.
+      // `roles` is loaded so someone with `schedule.manage` keeps their override — see the
+      // same note in services/equipment.ts.
+      const claimUser = await tx.user.findUniqueOrThrow({
+        where: { id: currentUserId },
+        
+      });
+      if (!callerCan("inventory.pull")) {
+        throw new ServiceError(
+          "NOT_CLEARED_FOR_FIELD_WORK",
+          "You are not cleared to claim visits yet. A team lead must add you to the occurrence.",
+          403,
+        );
       }
 
       const occ = await tx.jobOccurrence.findUniqueOrThrow({
@@ -3399,10 +3504,10 @@ export const jobs: ServicesJobs = {
         throw new ServiceError("INVALID_STATUS", "Only SCHEDULED occurrences can be claimed.", 409);
       }
       if (occ.isTentative) {
-        throw new ServiceError("TENTATIVE", "Tentative occurrences cannot be claimed until confirmed by an admin.", 409);
+        throw new ServiceError("TENTATIVE", "Tentative occurrences cannot be claimed until confirmed by someone with schedule authority.", 409);
       }
-      if ((occ as any).isAdminOnly) {
-        throw new ServiceError("ADMIN_ONLY", "This job is administered and can only be assigned by an admin.", 409);
+      if ((occ as any).mustBeAssigned) {
+        throw new ServiceError("MUST_BE_ASSIGNED", "This visit cannot be claimed — it has to be assigned to you.", 409);
       }
 
       // Group attachment rules.
@@ -3505,7 +3610,7 @@ export const jobs: ServicesJobs = {
             update: { role: m.role === "observer" ? "observer" : null, assignedById: currentUserId },
           });
         }
-        await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
+        await enforceAssigneeInvariants(tx, occurrenceId, currentUserId);
         await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
           occurrenceId,
           action: "claimed-for-group",
@@ -3529,33 +3634,37 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async updateOccurrenceStatus(currentUserId, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }, timestamps?: { startedAt?: string; completedAt?: string; totalPausedMs?: number }, extras?: { completionSplits?: Array<{ userId: string; percent: number }> }) {
+  async updateOccurrenceStatus(currentUserId, callerCan, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }, timestamps?: { startedAt?: string; completedAt?: string; totalPausedMs?: number }, extras?: { completionSplits?: Array<{ userId: string; percent: number }> }) {
     return prisma.$transaction(async (tx) => {
-      const actionUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId }, include: { roles: true } });
-      const isAdmin = actionUser.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      const actionUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId },  });
+      const canManageSchedule = callerCan("schedule.manage");
 
       const assignee = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: currentUserId },
       });
-      if (!assignee && !isAdmin) {
+      if (!assignee && !canManageSchedule) {
         throw new ServiceError("FORBIDDEN", "You are not assigned to this occurrence.", 403);
       }
 
       // Only the claimer (or admin) can start, complete, or manage jobs
       const isClaimer = assignee?.assignedById === currentUserId && assignee?.role !== "observer";
-      if (!isClaimer && !isAdmin) {
+      if (!isClaimer && !canManageSchedule) {
         throw new ServiceError("NOT_CLAIMER", "Only the claimer can perform this action.", 403);
       }
 
-      // Trainees cannot take actions
-      if (actionUser.workerType === "TRAINEE") {
-        throw new ServiceError("TRAINEE_CANNOT_ACT", "Trainees cannot start, complete, or manage jobs. The team lead must take this action.", 403);
+      // Field clearance, not a worker type.
+      if (!callerCan("inventory.pull")) {
+        throw new ServiceError(
+          "NOT_CLEARED_FOR_FIELD_WORK",
+          "You are not cleared to start, complete or manage visits yet. The team lead must take this action.",
+          403,
+        );
       }
 
       const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
       // Tentative jobs cannot be started
       if (occ.isTentative && status === JobOccurrenceStatus.IN_PROGRESS) {
-        throw new ServiceError("TENTATIVE", "Tentative jobs cannot be started until confirmed by an admin.", 409);
+        throw new ServiceError("TENTATIVE", "Tentative jobs cannot be started until confirmed by someone with schedule authority.", 409);
       }
 
       const workflow = occ.workflow ?? "STANDARD";
@@ -3566,9 +3675,9 @@ export const jobs: ServicesJobs = {
         finalStatus = JobOccurrenceStatus.PROPOSAL_SUBMITTED;
       }
 
-      // Validate transition — admins get expanded reversal options
-      const validTransition = isAdmin
-        ? isValidAdminTransition(workflow, occ.status, finalStatus)
+      // Validate transition — holders of `schedule.manage` get expanded reversal options
+      const validTransition = canManageSchedule
+        ? isValidManagerTransition(workflow, occ.status, finalStatus)
         : isValidTransition(workflow, occ.status, finalStatus);
       if (!validTransition) {
         throw new ServiceError(
@@ -3579,13 +3688,13 @@ export const jobs: ServicesJobs = {
       }
 
       // Block forward transitions when no worker is assigned. Without this,
-      // the admin-bypass above would let a super complete an unclaimed
+      // a caller with `schedule.manage`-bypass above would let someone with `schedule.manage` complete an unclaimed
       // occurrence, stranding it in PENDING_PAYMENT with no claimer.
       await assertOccurrenceHasWorker(tx, occurrenceId, finalStatus);
 
       // Workday gate — defense in depth alongside the client-side guard
       // dialog. A worker can't transition a job into IN_PROGRESS without
-      // an active workday. Admins are exempt (they may be cleaning up).
+      // an active workday. Holders of `schedule.manage` are exempt (they may be cleaning up).
       // The PAUSED → IN_PROGRESS path (resume) is also gated since it
       // resumes work and should require an open workday.
       //
@@ -3595,7 +3704,7 @@ export const jobs: ServicesJobs = {
       // 409 listing the teammates who need to start their workday.
       // Observers are exempt (they're not doing the work).
       if (
-        !isAdmin &&
+        !canManageSchedule &&
         finalStatus === JobOccurrenceStatus.IN_PROGRESS &&
         (occ.status === JobOccurrenceStatus.SCHEDULED || occ.status === JobOccurrenceStatus.PAUSED)
       ) {
@@ -3725,7 +3834,7 @@ export const jobs: ServicesJobs = {
       // Payroll-hours approval on completion. Auto-approves jobs whose actual
       // time falls within the variance threshold; jobs outside the threshold
       // get hoursApprovedAt = null and surface in the title-bar alert + a
-      // Jobs filter until an admin/super reviews. Reverts (clearing
+      // Jobs filter until someone with `schedule.manage` reviews. Reverts (clearing
       // completedAt) drop the approval below in the SCHEDULED/IN_PROGRESS
       // branches so a re-completion gets re-evaluated.
       let hoursApprovalBasis: ReturnType<typeof evaluateHoursApproval>["basis"] = null;
@@ -4062,12 +4171,17 @@ export const jobs: ServicesJobs = {
     return opts?.tx ? run(opts.tx) : prisma.$transaction(run);
   },
 
-  async listArchivedJobs(params?: { page?: number; pageSize?: number }) {
+  async listArchivedJobs(params?: { page?: number; pageSize?: number; areaWhere?: Record<string, unknown> }) {
     const page = Math.max(params?.page ?? 1, 1);
     const pageSize = Math.min(Math.max(params?.pageSize ?? 25, 1), 100);
     const skip = (page - 1) * pageSize;
 
-    const where: Prisma.JobWhereInput = { status: JobStatus.ARCHIVED };
+    // Archived work stays in its district — history resolves through a
+    // closed territory, which is why areas retire rather than delete.
+    const where: Prisma.JobWhereInput = withArea(
+      { status: JobStatus.ARCHIVED },
+      params?.areaWhere ?? {},
+    );
 
     const [rows, total] = await prisma.$transaction([
       prisma.job.findMany({

@@ -19,6 +19,7 @@ import {
   useDialogError,
 } from "@/src/ui/components/DialogErrorAlert";
 import type { Me, WorkerOccurrence } from "@/src/lib/types";
+import { isFeeable, isW2 } from "@repo/money";
 
 type Props = {
   open: boolean;
@@ -48,8 +49,13 @@ export default function ClaimAgreementDialog({
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
 
-  const isContractor = me?.workerType === "CONTRACTOR" || !me?.workerType;
-  const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
+  // `|| !me?.workerType` used to treat an untyped worker as a contractor, so
+  // they were shown contractor claim terms — commission language and
+  // pro-rata loss — for an agreement they actually accept. Under the current
+  // model nobody without a worker type holds any entitlement, so they cannot
+  // reach a claim at all; the fallback was both wrong and dead.
+  const isContractor = isFeeable(me?.workerType);
+  const isEmployee = isW2(me?.workerType);
 
   const basePrice = occurrence?.price ?? 0;
   const addonsTotal = ((occurrence as any)?.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);

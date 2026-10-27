@@ -68,7 +68,7 @@ export default function EquipmentInstructionsDialog({
   async function addPreset(text: string) {
     dlgErr.clear();
     try {
-      const created = await apiPost<EquipmentInstruction>(`/api/admin/equipment/${equipmentId}/instructions`, {
+      const created = await apiPost<EquipmentInstruction>(`/api/equipment/${equipmentId}/instructions`, {
         text,
         isPreset: true,
       });
@@ -82,7 +82,7 @@ export default function EquipmentInstructionsDialog({
     dlgErr.clear();
     if (!customText.trim()) return;
     try {
-      const created = await apiPost<EquipmentInstruction>(`/api/admin/equipment/${equipmentId}/instructions`, {
+      const created = await apiPost<EquipmentInstruction>(`/api/equipment/${equipmentId}/instructions`, {
         text: customText.trim(),
         isPreset: false,
       });
@@ -96,7 +96,7 @@ export default function EquipmentInstructionsDialog({
   async function removeInstruction(id: string) {
     dlgErr.clear();
     try {
-      await apiDelete(`/api/admin/equipment/${equipmentId}/instructions/${id}`);
+      await apiDelete(`/api/equipment/${equipmentId}/instructions/${id}`);
       setInstructions((prev) => prev.filter((i) => i.id !== id));
     } catch (err) {
       dlgErr.setError(getErrorMessage("Failed to remove.", err));

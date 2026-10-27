@@ -16,7 +16,7 @@ import path from "node:path";
  * rule has to hold for paths nobody has thought of yet.
  *
  * The rule: any function that writes `jobOccurrenceAssignee` either ends by
- * awaiting `enforceClaimerInvariant`, or the write carries a
+ * awaiting `enforceAssigneeInvariants`, or the write carries a
  * `// claimer-invariant-allow: <reason>` comment directly above it.
  */
 
@@ -60,7 +60,7 @@ function findWriteSites(): Site[] {
       let covered = false;
       for (let j = i + 1; j < lines.length; j++) {
         if (SEGMENT_RE.test(lines[j]) && !/jobOccurrenceAssignee/.test(lines[j])) break;
-        if (/enforceClaimerInvariant\s*\(/.test(lines[j])) { covered = true; break; }
+        if (/enforceAssigneeInvariants\s*\(/.test(lines[j])) { covered = true; break; }
       }
       sites.push({
         file: path.relative(API_SRC, file),
@@ -84,14 +84,14 @@ describe("[build-gate] an occurrence is UNCLAIMED or has exactly one claimer", (
     expect(files).toContain(path.join("services", "groups.ts"));
   });
 
-  it("every assignee write is followed by enforceClaimerInvariant or annotated", () => {
+  it("every assignee write is followed by enforceAssigneeInvariants or annotated", () => {
     const orphans = sites
       .filter((s) => !s.covered && !s.allowed)
       .map((s) => `${s.file}:${s.line}  ${s.text}`);
     expect(
       orphans,
       "Each of these writes JobOccurrenceAssignee without re-establishing the " +
-        "claimer invariant. Either await enforceClaimerInvariant(tx, occurrenceId, actor) " +
+        "claimer invariant. Either await enforceAssigneeInvariants(tx, occurrenceId, actor) " +
         "at the end of the function, or put `// claimer-invariant-allow: <why>` " +
         "directly above the write. See lib/claimerInvariant.ts.",
     ).toEqual([]);
@@ -134,10 +134,11 @@ describe("[build-gate] an occurrence is UNCLAIMED or has exactly one claimer", (
   });
 
   // A visit that has lost its claimer must always have a way OUT. Unclaim was
-  // gated on `isClaimer` alone while every sibling action admitted `forAdmin`,
+  // gated on `isClaimer` alone while every sibling action admitted the
+  // schedule-manage capability,
   // so a claimer-less visit could not be started, completed OR unclaimed by
   // anyone at any role — a dead end with no message explaining it.
-  it("an admin can always unclaim, so a stuck visit is never a dead end", () => {
+  it("someone with schedule authority can always unclaim, so a stuck visit is never a dead end", () => {
     const tab = path.join(WEB_SRC, "ui", "tabs", "JobsTab.tsx");
     if (!fs.existsSync(tab)) return;
     const src = fs.readFileSync(tab, "utf8");
@@ -147,16 +148,16 @@ describe("[build-gate] an occurrence is UNCLAIMED or has exactly one claimer", (
     const gate = src.slice(Math.max(0, at - 400), at);
     expect(
       gate,
-      "Unclaim must admit forAdmin like every sibling action, or a visit with " +
+      "Unclaim must admit `canManageSchedule` like every sibling action, or a visit with " +
         "no claimer can never be released by anyone.",
-    ).toMatch(/\(isClaimer \|\| forAdmin\)[\s\S]*occ\.status === "SCHEDULED"/);
+    ).toMatch(/\(isClaimer \|\| canManageSchedule\)[\s\S]*occ\.status === "SCHEDULED"/);
   });
 
-  it("the server lets an admin unclaim, which is what the UI gate mirrors", () => {
+  it("the server lets `schedule.manage` unclaim, which is what the UI gate mirrors", () => {
     const src = fs.readFileSync(path.join(API_SRC, "services", "jobs.ts"), "utf8");
     const fn = src.slice(src.indexOf("async unclaimOccurrence"));
     const body = fn.slice(0, fn.indexOf("\n  async ", 1));
-    expect(body).toMatch(/callerIsAdmin/);
+    expect(body).toMatch(/callerCanManageSchedule/);
   });
 
   it("server and UI still agree on what a claimer is", () => {
@@ -166,5 +167,108 @@ describe("[build-gate] an occurrence is UNCLAIMED or has exactly one claimer", (
     if (fs.existsSync(tab)) {
       expect(fs.readFileSync(tab, "utf8")).toMatch(/myAssignee\.assignedById === myId/);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G33 — ONLY A PAID PERSON TAKES A PAID SEAT.
+//
+// A non-observer assignee is someone the money system will try to pay, so
+// they must be on payroll. The rule is enforced in two places and this gate
+// checks both are still wired:
+//
+//   • `planObserverOnlyDemotions` inside `enforceAssigneeInvariants`, which
+//     every assignee write path already awaits (the gate above). That is the
+//     net under rows that already exist.
+//   • `canHoldPaidSeat` at the add/promote boundary, which refuses up front
+//     so the UI can explain itself rather than appearing to succeed.
+//
+// Why it is worth a gate: an UNPAID person in a paid seat does not degrade,
+// it BREAKS. `rateFor` refuses to price a worker with no pay class, so
+// `computeBreakdown` throws and completing the visit fails for everyone on
+// it. And before that refusal existed, the same person was read as a
+// contractor by every `!isEmployeeClass` in the money code — equipment fees,
+// QuickBooks Contract Labor, and the employer payroll-tax base.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("[build-gate] G33 — only a paid person takes a paid seat", () => {
+  const INV = fs.readFileSync(
+    path.join(__dirname, "..", "lib", "claimerInvariant.ts"),
+    "utf8",
+  );
+
+  it("the demotion runs INSIDE the chokepoint every write path already awaits", () => {
+    // If it moved out into its own exported function that callers must
+    // remember separately, it would rot exactly the way the claimer
+    // invariant did across four write paths.
+    const fn = INV.slice(INV.indexOf("export async function enforceAssigneeInvariants"));
+    expect(fn).toMatch(/planObserverOnlyDemotions\(/);
+  });
+
+  it("the demotion runs BEFORE the claimer repair", () => {
+    // Order is load-bearing: demoting someone can remove the claimer, so the
+    // repair has to see the rows as they end up. Reversed, a visit is left
+    // with workers and no claimer — unstartable for everyone below admin.
+    const fn = INV.slice(INV.indexOf("export async function enforceAssigneeInvariants"));
+    const demote = fn.indexOf("planObserverOnlyDemotions(");
+    const repair = fn.indexOf("planClaimerRepair(");
+    expect(demote).toBeGreaterThan(-1);
+    expect(repair).toBeGreaterThan(-1);
+    expect(demote).toBeLessThan(repair);
+  });
+
+  it("eligibility is asked POSITIVELY, via isPaid", () => {
+    // `!isW2(x)` or `workerType !== "UNPAID"` would both let an untyped
+    // person keep a paid seat, which is the same class of bug G30 covers.
+    expect(INV).toMatch(/isPaid\(/);
+    expect(INV).not.toMatch(/workerType\s*[!=]==\s*["']UNPAID["']/);
+  });
+
+  it("a row whose workerType was not loaded is LEFT ALONE", () => {
+    // The dangerous direction. Treating an absent join as "not on payroll"
+    // would demote a whole team over a missing `select`.
+    const planner = INV.slice(
+      INV.indexOf("export function planObserverOnlyDemotions"),
+      INV.indexOf("export type ClaimerPlan") >= 0
+        ? INV.length
+        : INV.length,
+    );
+    expect(planner).toMatch(/workerType !== undefined/);
+  });
+
+  it("every demotion is audited", () => {
+    // A silently-moved person would look like they were always an observer.
+    const fn = INV.slice(INV.indexOf("export async function enforceAssigneeInvariants"));
+    const demoteBlock = fn.slice(fn.indexOf("planObserverOnlyDemotions("));
+    expect(demoteBlock).toMatch(/writeAudit\(/);
+    expect(demoteBlock).toMatch(/demoted_to_observer_not_on_payroll/);
+  });
+
+  it("an observer's assignedById is cleared when they are demoted", () => {
+    // A self-assigned row left behind reads as a claimer to every
+    // `find(a => a.assignedById === a.userId)` downstream.
+    const fn = INV.slice(INV.indexOf("export async function enforceAssigneeInvariants"));
+    const demoteBlock = fn.slice(fn.indexOf("planObserverOnlyDemotions("), fn.indexOf("planClaimerRepair("));
+    expect(demoteBlock).toMatch(/role: "observer"/);
+    expect(demoteBlock).toMatch(/assignedById: null/);
+  });
+
+  it("the add/promote boundary refuses rather than relying on the net", () => {
+    const jobs = fs.readFileSync(path.join(__dirname, "jobs.ts"), "utf8");
+    expect(jobs, "changeAssigneeRole must refuse a non-paid promotion").toMatch(
+      /canHoldPaidSeat\(/,
+    );
+    expect(jobs).toMatch(/NOT_ON_PAYROLL/);
+  });
+
+  it("leaving payroll vacates open paid seats, and leaves COMPLETED work alone", () => {
+    // Promised payouts were locked at completion under the class the person
+    // held then. Rewriting them restates what someone was owed for work
+    // already done.
+    const users = fs.readFileSync(path.join(__dirname, "users.ts"), "utf8");
+    const fn = users.slice(users.indexOf("async setWorkerType"));
+    const body = fn.slice(0, fn.indexOf("async setIsOwner"));
+    expect(body).toMatch(/canHoldPaidSeat\(/);
+    expect(body).toMatch(/completedAt: null/);
+    expect(body).toMatch(/enforceAssigneeInvariants\(/);
   });
 });

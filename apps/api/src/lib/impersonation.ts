@@ -1,76 +1,77 @@
-import type { Role, WorkerType } from "@prisma/client";
+import type { Entitlement } from "@repo/permissions";
 
-// Super-only "View as another role" support. The frontend sets the header
-// `X-Impersonate-As` when an active impersonation is selected; both the /me
-// endpoint and the requireApproved auth decorator parse it through this
-// helper, then call `applyImpersonation` to produce a swapped role payload.
+// ─────────────────────────────────────────────────────────────────────────────
+// PERSPECTIVES — looking at the app as someone with less access would.
 //
-// Security model: the parser only accepts safe targets — never SUPER, never
-// a way to elevate. The caller layer (users.me + requireApproved) is
-// responsible for gating the swap on the underlying user actually being a
-// SUPER. If a non-Super sends this header, parse may succeed but the caller
-// will ignore the result.
+// WHAT THIS REPLACED
+// The old `X-Impersonate-As` header SWAPPED the caller's roles array for
+// a synthetic one. That had two problems the perspective model fixes:
+//
+//   1. It showed the GENERIC worker experience, not "what I would see if
+//      demoted" — custom-role grants were dropped wholesale, because there
+//      was no other user whose grants applied. So someone with `settings.manage` could not actually
+//      check what one of their own people sees.
+//   2. It was expressed as a role, and roles no longer authorize anything.
+//      There is no roles array left to swap.
+//
+// A perspective is a named SUBSET of what the caller ALREADY HOLDS. It can
+// only ever narrow (G35), and it is offered only when the caller holds its
+// role or one that inherits it — which is what stops an unpaid observer
+// being offered a scheduler's perspective. The subset property is why the
+// downgrade is safe: there is no value of the header that grants anything.
+//
+// THE HEADER CARRIES A ROLE ID, and `resolvePerspective` only returns one
+// that appeared in the caller's own resolved `perspectives` list. A roleId
+// the caller cannot reach is ignored silently rather than refused, so the
+// feature's existence does not leak through a 4xx.
+// ─────────────────────────────────────────────────────────────────────────────
 
-export const IMPERSONATE_HEADER = "x-impersonate-as";
+export const PERSPECTIVE_HEADER = "x-perspective";
 
-export type ImpersonationTarget = {
-  roles: Role[];
-  workerType: WorkerType | null;
+export type AvailablePerspective = {
+  roleId: string;
+  key: string | null;
+  name: string;
+  order: number;
+  entitlements: string[];
 };
 
-const VALID_WORKER_TYPES: ReadonlySet<string> = new Set<string>([
-  "EMPLOYEE",
-  "CONTRACTOR",
-  "TRAINEE",
-]);
+export type ActivePerspective = {
+  roleId: string;
+  entitlements: readonly Entitlement[];
+};
 
-/**
- * Parse the X-Impersonate-As header into an effective role/workerType.
- * Accepted forms:
- *   - "ADMIN"                  → roles: ["ADMIN"], workerType: null
- *   - "WORKER:EMPLOYEE"        → roles: ["WORKER"], workerType: "EMPLOYEE"
- *   - "WORKER:CONTRACTOR"      → roles: ["WORKER"], workerType: "CONTRACTOR"
- *   - "WORKER:TRAINEE"         → roles: ["WORKER"], workerType: "TRAINEE"
- *
- * Anything else (including "SUPER" or a malformed value) returns null. The
- * caller must then leave the user's real role intact — silent fallback, no
- * error response, so the feature's existence doesn't leak via 400s.
- */
-export function parseImpersonationHeader(
+/** Parse the header into a candidate roleId. Shape check only. */
+export function parsePerspectiveHeader(
   value: string | string[] | undefined | null,
-): ImpersonationTarget | null {
+): string | null {
   if (!value) return null;
-  const raw = (Array.isArray(value) ? value[0] : value).trim().toUpperCase();
-  if (!raw) return null;
-  if (raw === "ADMIN") {
-    return { roles: ["ADMIN" as Role], workerType: null };
-  }
-  if (raw.startsWith("WORKER:")) {
-    const wt = raw.slice("WORKER:".length);
-    if (VALID_WORKER_TYPES.has(wt)) {
-      return { roles: ["WORKER" as Role], workerType: wt as WorkerType };
-    }
-  }
-  return null;
+  const raw = (Array.isArray(value) ? value[0] : value).trim();
+  if (!/^[A-Za-z0-9_-]{10,40}$/.test(raw)) return null;
+  return raw;
 }
 
 /**
- * Decide whether to apply an impersonation target. Returns the target only
- * when (a) the caller really is a SUPER and (b) the header parsed cleanly.
- * Centralizes the SUPER gate so the two call sites (users.me + rbac) can't
- * accidentally drift.
+ * Decide which perspective is active.
+ *
+ * Returns one ONLY when the requested roleId is in the caller's own
+ * `perspectives` list — the list already filtered to roles they hold or
+ * inherit. That single check is what makes this incapable of elevating:
+ * every candidate is, by construction, a subset of what they hold.
  */
-export function resolveImpersonation(
-  realRoles: Role[],
+export function resolvePerspective(
+  available: readonly AvailablePerspective[],
   headerValue: string | string[] | undefined | null,
-): ImpersonationTarget | null {
-  const isReallySuper = realRoles.includes("SUPER" as Role);
-  if (!isReallySuper) return null;
-  return parseImpersonationHeader(headerValue);
+): ActivePerspective | null {
+  const wanted = parsePerspectiveHeader(headerValue);
+  if (!wanted) return null;
+  const hit = available.find((p) => p.roleId === wanted);
+  if (!hit) return null;
+  return { roleId: hit.roleId, entitlements: hit.entitlements as Entitlement[] };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Client "View as" — Super-only impersonation of a specific ClientContact.
+// Client "View as" — `clients.view-as` impersonation of a specific ClientContact.
 //
 // Distinct from the role impersonation above: role impersonation says
 // "treat me as if my role were X". Client impersonation says "treat me as

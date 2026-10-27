@@ -8,7 +8,7 @@ metadata:
 # Property parcel lookup (built 2026-09-01, prototype in dev)
 
 A map icon on every job card opens a dialog showing the property's **acreage**,
-**overhead imagery with the parcel boundary drawn**, and (admins only) the
+**overhead imagery with the parcel boundary drawn**, and (holders of `schedule.manage` only) the
 county assessment and owner of record.
 
 All three external services are **free and unauthenticated** — no API keys:

@@ -65,9 +65,9 @@ export type WorkdayTodayPayload = {
 };
 
 /** When `viewAsUserId` is set, the call operates on that worker's workday
- *  (the Admin/Super viewing-as-worker flow). Server permission gate:
- *    • Reads: caller must be ADMIN or SUPER
- *    • Mutations: caller MUST be SUPER
+ *  (a `time.manage` holder viewing-as-worker flow). Server permission gate:
+ *    • Reads: `time.view`
+ *    • Mutations: `time.manage`
  *  Falls through to the self-service path when omitted or matches the caller. */
 type AsParam = { viewAsUserId?: string | null };
 
@@ -83,7 +83,7 @@ function asQuery(opts?: AsParam): string {
  *  rather than a reminder. */
 type MileagePromptOpt = { skipMileagePrompt?: boolean };
 
-/** Fire the driving-log reminder unless this call was an admin acting
+/** Fire the driving-log reminder unless this call was someone with `time.manage` acting
  *  as another worker (mileage is self-only server-side) or the caller
  *  already handled the prompt itself. `startWorkday` / `endWorkday` are
  *  the choke point every surface goes through — the strip, the banner,

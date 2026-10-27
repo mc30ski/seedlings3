@@ -40,7 +40,7 @@ it after ANY `apps/api/` edit (see
 unchanged; this one only scopes the *Playwright* suite.
 
 **Targeted Playwright runs DO work.** I previously concluded that
-`--project=super` broke Clerk setup and that subsets were unusable.
+`--project=owner` broke Clerk setup and that subsets were unusable.
 That was wrong: `auth-setup` runs fine as a dependency — the Clerk
 errors in that run were downstream of a dev server I'd killed with a
 concurrent `next build` (see

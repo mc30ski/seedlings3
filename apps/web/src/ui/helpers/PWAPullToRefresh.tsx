@@ -1,4 +1,4 @@
-// apps/web/src/components/PWAPullToRefresh.tsx
+// apps/web/src/ui/helpers/PWAPullToRefresh.tsx
 import { useEffect, useRef, useState } from "react";
 import { Box, HStack, Spinner, Text } from "@chakra-ui/react";
 

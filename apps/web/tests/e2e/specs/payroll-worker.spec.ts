@@ -40,7 +40,7 @@ test.beforeEach(async () => {
     periodStart: "2026-07-06",
     periodEnd: "2026-07-12",
     payDay: "2026-07-17",
-    uploadedById: USERS.super,
+    uploadedById: USERS.owner,
     workers: [
       { userId: USERS.employee, firstName: "Mine", ...ME },
       { userId: USERS.contractor, firstName: "Theirs", ...OTHER },
@@ -83,9 +83,10 @@ async function apiAs(page: any, path: string): Promise<{ status: number; json: a
 async function gotoWorkerPayroll(page: any) {
   await page.goto("/");
   await page.evaluate(() => {
-    localStorage.setItem("seedlings_topTab", JSON.stringify("worker"));
-    localStorage.setItem("seedlings_workerTab", JSON.stringify("payroll"));
-    localStorage.setItem("seedlings_workerCategory", JSON.stringify("Money"));
+    localStorage.setItem("seedlings_topTab", JSON.stringify("staff"));
+    localStorage.setItem("seedlings_lastAppOpenedAt", new Date().toISOString());
+    localStorage.setItem("seedlings_staffTab", JSON.stringify("payroll"));
+    localStorage.setItem("seedlings_staffCategory", JSON.stringify("Money"));
   });
   await page.goto("/");
   await page.waitForLoadState("networkidle");
@@ -140,7 +141,7 @@ test.describe("Payroll — worker view", () => {
 
   test("a worker sees their OWN full tax breakdown", async ({ page }) => {
     // Their own pay-stub data. The hours/gross/net restriction applies to
-    // an ADMIN looking at someone else, not to a worker's own row.
+    // someone with `payroll.view` looking at someone else, not to a worker's own row.
     await gotoWorkerPayroll(page);
 
     const list = await apiAs(page, "/api/me/payroll");
@@ -204,7 +205,7 @@ test.describe("Payroll — worker view", () => {
   });
 
   test("a worker cannot read another worker's payroll via viewAsUserId", async ({ page }) => {
-    // The parameter exists for ADMIN/SUPER. A plain worker passing it must
+    // The parameter exists for `payroll.view` / `payroll.manage`. A plain worker passing it must
     // be refused, not quietly served.
     await gotoWorkerPayroll(page);
 

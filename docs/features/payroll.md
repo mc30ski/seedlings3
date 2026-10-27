@@ -166,7 +166,7 @@ another person's net pay.
 
 **Names are never auto-matched.**
 
-**The queue surfaces in three places, all Super-only** (added 2026-08-26 —
+**The queue surfaces in three places, all `payroll.manage`-only** (added 2026-08-26 —
 before that it was only the in-tab banner, so the one person who could fix
 it had to happen to visit the Payroll tab while the affected worker was
 told to go ask them):
@@ -174,11 +174,12 @@ told to go ask them):
 | Surface | Behaviour |
 |---|---|
 | Payroll tab banner | The original. Full picker, in place. |
-| Header alerts dropdown | `"Payroll names to match"`, purple, routes to Super → Money → Payroll. |
+| Header alerts dropdown | `"Payroll names to match"`, purple, routes to Money → Payroll. |
 | Tasks page | An **inline** `CollapsibleSectionCard` embedding `PayrollIdentityReview` verbatim — the whole action is one picker plus a confirm, so navigating away would be more steps than doing it there. Sits directly above "Job hours awaiting payroll review". |
 
-Both new surfaces count via `GET /payroll/identities/unmatched` (already
-`superGuard`ed) and refresh on the **`seedlings:payroll-changed`** event,
+Both new surfaces count via `GET /payroll/identities/unmatched` (guarded by
+the payroll-identities entitlement) and refresh on the
+**`seedlings:payroll-changed`** event,
 which `notifyPayrollChanged()` in `apps/web/src/lib/payroll.ts` fires on
 both edges: an import adds names, a match removes one. Without it the
 header badge kept showing the pre-match number until a full reload — the
@@ -190,7 +191,7 @@ page does not pull that (large) tab module in for a one-line dispatch.
 
 1. On upload, each row is looked up in `PayrollIdentity`.
 2. Known names link automatically.
-3. Unknown names land in a **mapping review** the Super confirms once —
+3. Unknown names land in a **mapping review** a caller with `payroll.manage` confirms once —
    pick the app user, or mark the row as "not an app user".
 4. The confirmed mapping persists. Later uploads only surface genuinely
    new names.
@@ -232,17 +233,24 @@ how much.
 
 ## Visibility
 
-| Role | Whose rows | What they see |
-|---|---|---|
-| **Worker** | own only | their pay stub — gross, every WITHHOLDING line, net. **No employer-side column.** |
-| **Admin** | any worker | **hours / gross / net only** |
-| **Super** | any worker | everything, incl. the employer side, plus unmatched rows |
+THREE TIERS, NAMED FOR THE AUTHORITY, NOT FOR A ROLE. This was a
+Worker/Admin/Super table; there are no such roles. The tiers are the
+`PayrollViewer` union in
+[`services/payroll.ts`](../../apps/api/src/services/payroll.ts), and the
+projection is applied when the payload is BUILT — tax columns are never
+serialized and hidden with CSS.
 
-A worker's own tax breakdown is their own pay-stub data, so they get all
-of it. The hours/gross/net restriction is about **Admin looking at
-someone else**.
+| Tier | Reached by | Whose rows | What they see |
+|---|---|---|---|
+| `self` | **ownership**, not a capability | own only | their pay stub — gross, every WITHHOLDING line, net. **No employer-side column.** |
+| `operator` | `payroll.view` | anyone | **hours / gross / net only** (`EXACT_NUMERIC`) |
+| `manager` | `payroll.manage` | anyone | everything, incl. the employer side, plus unmatched rows (`ALL_NUMERIC_FIELDS`) |
 
-### Employer cost — Super only, on every surface
+Your own tax breakdown is your own pay-stub data, so `self` gets all of it.
+The hours/gross/net restriction is about **`payroll.view` looking at someone
+else**.
+
+### Employer cost — `payroll.manage` only, on every surface
 
 The employer side is Social Security, Medicare, FUTA, NC unemployment,
 total employer taxes, and total employer cost. It appears in three places,
@@ -254,32 +262,34 @@ total employer taxes, and total employer cost. It appears in three places,
 | Per period | On the period row, and as an **EMPLOYER COST — WHOLE RUN** block when the period is expanded (Gusto's own `"Payroll Totals"` row, not a client-side sum) |
 | Per worker | An **EMPLOYER COST** block on each entry |
 
-**Every surface needs BOTH a role gate and a presence check. Neither
+**Every surface needs BOTH a capability gate and a presence check. Neither
 substitutes for the other** — this was shipped wrong once (2026-08-26,
-employer cost visible on the Admin tab) and the two halves are load-bearing
+employer cost visible on the tab) and the two halves are load-bearing
 for different reasons:
 
-- **`showSuperExtras` — the surface.** `operatorViewer` resolves the
-  viewer by **role**, so a SUPER+ADMIN+WORKER account receives a super
-  payload on *every* tab; the server cannot know which tab is being
-  rendered. Presence alone therefore leaks onto the Admin tab. This is the
-  same shape as the standing rule that `showSuperExtras` must never fall
-  back to `forAdmin ||`.
-- **The presence check — the data.** A genuine admin-only account gets a
-  payload with no `employerCost` at all. Rendering `$0.00` for them would
+- **The capability — the surface.** `operatorViewer` resolves the viewer
+  from `callerPayrollAccess(req).canManage`, i.e. `payroll.manage`. Anyone
+  holding it receives the manager payload on *every* screen, because the
+  server cannot know which screen is being rendered. Presence alone
+  therefore leaks. The client must still ask whether THIS reader may see
+  the figure. (This bullet named a role flag; that flag, and the standing
+  rule about it not falling back to another, are both deleted — the rule
+  they encoded survives as "ask the capability".)
+- **The presence check — the data.** An account with `payroll.view` but
+  not `payroll.manage` gets a payload with no `employerCost` at all. Rendering `$0.00` for them would
   read as "payroll cost the business nothing" rather than "you cannot see
   this".
 
 **The aggregates are gated server-side too.** `listPeriods` omits
 `teamTotals.employerCost`, and the period-detail route omits
 `employerTotals`, unless `viewer.kind === "super"`. The per-entry
-projection already withholds `employerCost` from an admin, so shipping an
+projection already withholds `employerCost` from someone with `payroll.view`, so shipping an
 aggregate would return it through the back door — and on a three-person
 payroll an aggregate is close enough to per-person to matter.
 
 **A worker never receives the employer side at all.** `fieldsFor` used to
 read `admin ? ADMIN_VISIBLE_FIELDS : ALL_NUMERIC_FIELDS`, which made
-"everything" the default for anything that was not an admin — so `worker`
+"everything" the default for anything that was not someone with `payroll.view` — so `worker`
 and `super` shared one projection and a worker's own payload carried
 `employerTaxes`, FUTA, NC unemployment and `employerCost`. The UI never
 rendered them; they were one DevTools tab away. Client-side omission is
@@ -315,8 +325,8 @@ appear only once a worker is selected.
   ADMIN/SUPER role gate, or carries `// view-as-allow: <reason>`. Enforced
   by `view-as-endpoints-build-gate.test.ts`. See
   [`docs/VIEW_AS_ENDPOINTS.md`](../VIEW_AS_ENDPOINTS.md).
-- The Admin projection is built **server-side**. The tax columns must not
-  be sent to an Admin client and hidden with CSS.
+- A caller with `payroll.view` projection is built **server-side**. The tax columns must not
+  be sent to someone with `payroll.view` client and hidden with CSS.
 
 ## Upload, replace, delete
 
@@ -344,7 +354,7 @@ Individual parsed values are **not** hand-editable. Editing imported
 payroll breaks its correspondence with the stored source file, and the
 stored file is the only thing making these numbers trustworthy.
 
-**Delete.** Super only, soft delete via `archivedAt` (the repo's existing
+**Delete.** `payroll.manage` only, soft delete via `archivedAt` (the repo's existing
 pattern), confirm dialog, audit snapshot before archiving.
 
 **Audit.** Upload, replace, and delete each write an `AuditEvent` in the
@@ -356,10 +366,10 @@ same edit as the mutation. `AuditScope` is a Prisma enum, so the new
 
 **Money → Payroll tab.** Carries the same timeframe picker (defaulting to
 "all time" — this is the tab you open to go back through history), with
-running totals for the selected window. Blended additive-scope (`scope: { isWorker,
-isAdmin, isSuper }`) per
+running totals for the selected window. One tab, rendered from
+entitlements (`scope.can("payroll.view")` / `payroll.manage`) per
 [`reference_tab_blend_pattern`](file:///Users/michaelwanderski/.claude/projects/-Users-michaelwanderski-dev-seedlings3/memory/reference_tab_blend_pattern.md).
-`showSuperExtras` must **not** fall back to `forAdmin ||`. Periods listed
+Periods listed
 newest-first; a worker opens any past period. No fixed "1 week" range —
 periods are whatever was uploaded, filtered by date range or picked from
 the list.
@@ -393,7 +403,7 @@ category and the Payments tab.
 > next date would be inferred from history and wrong the first time a
 > schedule changes. Do not add it.
 
-**Super → Records → Reconcile.** Shortcut opening the same upload dialog,
+**Records → Reconcile.** Shortcut opening the same upload dialog,
 so the common case doesn't require navigating to Money → Payroll. It sits
 on the **always-visible timeframe row**, not inside one of the collapsible
 cards — every card on that tab is collapsed by default, so a shortcut
@@ -434,7 +444,7 @@ on the newest period so the identity-review queue is never empty.
 |---|---|
 | Worker with no matched rows (incl. every contractor today) | "No payroll records for you yet" — must not read as an error |
 | Zero-value row (Caleb Serrano: on payroll, no hours) | Renders a real $0 period; copy must not imply failure |
-| Row not matched to any user | Super-only, flagged unmatched; invisible to workers |
+| Row not matched to any user | `payroll.manage`-only, flagged unmatched; invisible to workers |
 | Conservation check fails | Upload rejected with the offending column named; nothing persisted |
 
 ## The estimate/actual firewall — do not cross it
@@ -486,18 +496,19 @@ separately-labelled line** — not a substitution into the existing one.
 
 | Layer | Where | Proves |
 |---|---|---|
-| Parser | `payrollImport.test.ts` (36) | Real Gusto export parses; blank ≠ zero; rates aren't additive; totals conserve |
-| Projections + wiring | `payroll-build-gate.test.ts` (28) | Admin field list; worker projection excludes the employer side; no viewer kind falls through to "everything"; worker `where` clause; route guards; estimate/actual firewall; employer-cost aggregate gating |
-| Worker isolation | `payroll-worker.spec.ts` (employee) | A worker sees ONLY their own row, and no employer-side field in the response or on the page — **in a browser, against the real response** |
-| Admin projection | `adminrole-payroll.spec.ts` (admin-role) | An admin payload carries no tax field, and no employer cost in the period aggregate either |
-| Operator surfacing | `payroll-alerts-admin.spec.ts` (super) | The queue appears in the alerts dropdown with a count matching the endpoint, and as an inline Tasks section with the real picker embedded |
-| Super flows | `payroll-admin.spec.ts` (super) | Upload, replace-not-duplicate (figures actually move), no-op re-import reports "no change", identity match, archive, **and a SUPER-role user on the ADMIN tab sees no employer cost** |
+| Parser | `payrollImport.test.ts` | Real Gusto export parses; blank ≠ zero; rates aren't additive; totals conserve |
+| Projections + wiring | `payroll-build-gate.test.ts` | The `operator` field list; the `self` projection excludes the employer side; no viewer kind falls through to "everything"; the `self` `where` clause; route guards; estimate/actual firewall; employer-cost aggregate gating |
+| `self` isolation | `payroll-worker.spec.ts` (project `employee`) | A person sees ONLY their own row, and no employer-side field in the response or on the page — **in a browser, against the real response** |
+| `operator` projection | `scheduler-payroll.spec.ts` (project `scheduler`) | the payload carries no tax field, and no employer cost in the period aggregate either |
+| Queue surfacing | `payroll-alerts-owner.spec.ts` (project `owner`) | The queue appears in the alerts dropdown with a count matching the endpoint, and as an inline Tasks section with the real picker embedded |
+| `manager` flows | `payroll-owner.spec.ts` (project `owner`) | Upload, replace-not-duplicate (figures actually move), no-op re-import reports "no change", identity match, archive, **and a `payroll.view`-only account on the tab sees no employer cost** |
 
-**The `admin-role` Playwright project exists for one reason.** SUPER
-outranks ADMIN and receives the full payload, so an admin-only restriction
-is invisible from a `super` session — testing it there would pass while
-proving nothing. The project uses an ADMIN-but-not-SUPER account, and its
-specs are named with the `adminrole-` prefix (mirroring `mobile-`).
+**The `scheduler` Playwright project exists for one reason.** An account
+holding `payroll.manage` receives the full payload, so a restriction that
+only `payroll.view` feels is invisible from it — testing there would pass
+while proving nothing. The project signs in as an account that holds
+`payroll.view` and NOT `payroll.manage`, and its specs carry the
+`scheduler-` prefix (mirroring `mobile-`).
 
 Both browser suites read the **API response**, not just the DOM. A payload
 that carried tax figures and hid them in the UI would still be a leak.
@@ -506,11 +517,11 @@ that carried tax figures and hid them in the UI would still be a leak.
 
 | Invariant | Enforced by |
 |---|---|
-| Worker query cannot return another user's row | `payroll-build-gate.test.ts` |
-| Employer cost withheld from admin, aggregate included | `payroll-build-gate.test.ts` + `adminrole-payroll.spec.ts` |
-| Employer cost withheld from a worker's own row | `payroll-build-gate.test.ts` + `payroll-worker.spec.ts` |
-| Employer cost hidden on the Admin tab for a SUPER-role user | `payroll-admin.spec.ts` |
-| Identity queue is Super-only on every surface | `adminrole-payroll.spec.ts` |
+| The `self` query cannot return another user's row | `payroll-build-gate.test.ts` |
+| Employer cost withheld from `operator`, aggregate included | `payroll-build-gate.test.ts` + `scheduler-payroll.spec.ts` |
+| Employer cost withheld from a person's own (`self`) row | `payroll-build-gate.test.ts` + `payroll-worker.spec.ts` |
+| Employer cost hidden on the tab for someone with `payroll.manage`-role user | `payroll-owner.spec.ts` |
+| Identity queue is `payroll.manage`-only on every surface | `scheduler-payroll.spec.ts` |
 | Admin projection omits tax columns server-side | `payroll-build-gate.test.ts` |
 | Entries sum to the `"Payroll Totals"` row | import-time check + build gate |
 | Blank vs `0.00` preserved as null vs 0 | parser unit tests |
@@ -528,7 +539,7 @@ that carried tax figures and hid them in the UI would still be a leak.
 - [x] 5. `payroll-build-gate.test.ts` — 21 tests, mutation-verified
 - [x] 6. Money → Payroll tab + identity review UI — `PayrollTab`, `PayrollUploadDialog`, `PayrollIdentityReview`
 - [x] 7. Home PAYROLL section + Reconcile shortcut — `PayrollHomeSection`, timeframe-row button on ReconcileTab
-- [x] 8. Playwright specs — `payroll-worker` (employee), `adminrole-payroll` (admin-role), `payroll-admin` (super)
+- [x] 8. Playwright specs — `payroll-worker` (employee), `scheduler-payroll` (admin-role), `payroll-admin` (super)
 
 Migrations go through `prisma migrate dev` — never `db push` — and are
 applied to dev before any dependent code lands.
@@ -552,7 +563,7 @@ reproduces the same silence:
 
 1. the `NumericField` union,
 2. the parser's header map (`EXACT_NUMERIC`),
-3. `ALL_NUMERIC_FIELDS`, the SUPER projection list.
+3. `ALL_NUMERIC_FIELDS`, a caller with `payroll.manage` projection list.
 
 **(3) is now a compile error.** `ALL_NUMERIC_FIELDS` is declared
 `as const satisfies readonly NumericField[]` — *not* annotated

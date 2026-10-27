@@ -5,7 +5,7 @@
 // When a client signs up with a different email than what's on their
 // ClientContact, /client/link's email-match auto-link fails silently — they
 // have a Clerk account that isn't tied to any client record. This section
-// surfaces those phantoms so an admin can manually link them to the right
+// surfaces those phantoms so someone with `clients.manage` can manually link them to the right
 // contact in a few taps. Mirrors the OutstandingRequestsSection pattern:
 // renders nothing when the list is empty.
 
@@ -25,6 +25,7 @@ import {
 } from "@chakra-ui/react";
 import { RefreshCw, Link2, Search, X } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import type { Scope } from "@/src/lib/scope";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -65,7 +66,8 @@ function daysAgoLabel(iso: string): string {
   return `${days} days ago`;
 }
 
-export default function UnlinkedClientAccountsSection({ onReady }: {
+export default function UnlinkedClientAccountsSection({ onReady, scope }: {
+  scope?: Scope;
   /**
    * Hands this section's refresh, busy flag and row count to whatever
    * frames it. The component renders CONTENT ONLY — Dashboard (or
@@ -75,12 +77,16 @@ export default function UnlinkedClientAccountsSection({ onReady }: {
 } = {}) {
   const [users, setUsers] = useState<UnlinkedUser[]>([]);
   const [loading, setLoading] = useState(false);
+  // Linking posts to /client-contacts/:id/link-clerk, guarded on
+  // "identity.link". Both mounts gate on it today; asking here is what
+  // keeps a third one honest.
+  const canLink = scope ? scope.can("identity.link") : true;
   const [pickerFor, setPickerFor] = useState<UnlinkedUser | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await apiGet<UnlinkedUser[]>("/api/admin/clients/unlinked-accounts");
+      const list = await apiGet<UnlinkedUser[]>("/api/clients/unlinked-accounts");
       setUsers(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load unlinked accounts.", err) });
@@ -138,6 +144,7 @@ export default function UnlinkedClientAccountsSection({ onReady }: {
                   )}
                   <Text fontSize="xs" color="fg.muted">Signed up {daysAgoLabel(u.createdAt)}</Text>
                 </VStack>
+                {canLink && (
                 <Button
                   size="xs"
                   colorPalette="orange"
@@ -145,6 +152,7 @@ export default function UnlinkedClientAccountsSection({ onReady }: {
                 >
                   <Link2 size={12} /> Link to contact
                 </Button>
+                )}
               </HStack>
             ))}
           </VStack>
@@ -182,7 +190,7 @@ function ContactPickerDialog({
   useEffect(() => {
     setLoading(true);
     const qs = user.email ? `?nearEmail=${encodeURIComponent(user.email)}` : "";
-    apiGet<UnlinkedContact[]>(`/api/admin/client-contacts/unlinked${qs}`)
+    apiGet<UnlinkedContact[]>(`/api/client-contacts/unlinked${qs}`)
       .then((list) => setContacts(Array.isArray(list) ? list : []))
       .catch((err) => {
         publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load contacts.", err) });
@@ -208,7 +216,7 @@ function ContactPickerDialog({
   async function performLink(c: UnlinkedContact) {
     setLinking(true);
     try {
-      await apiPost(`/api/admin/client-contacts/${c.id}/link-clerk`, {
+      await apiPost(`/api/client-contacts/${c.id}/link-clerk`, {
         clerkUserId: user.clerkUserId,
       });
       publishInlineMessage({

@@ -64,11 +64,12 @@ line.
 
 ### `recurrence-series-build-gate.test.ts` (3 tests)
 
-Text-scans `apps/api/src/routes/admin.ts` to keep the "Due to record"
+Text-scans `apps/api/src/routes/books.ts` (the ledger routes moved there
+when the role-named route files were split up) to keep the "Due to record"
 panel from forking a recurring expense series into phantom siblings.
 Three assertions:
 
-1. `POST /admin/business-expenses` references `recurrenceSeriesId` at
+1. `POST /business-expenses` references `recurrenceSeriesId` at
    least twice in the handler window (mint + persist). Without it no
    series id is written and the panel falls back to the fragile legacy
    `(type, description, vendor)` key.
@@ -76,7 +77,7 @@ Three assertions:
    `source.recurrenceSeriesId` — the Record-flow inheritance path.
    Dropping it mints a new series id on every Record and instantly
    splits the stream.
-3. Both `/admin/business-expenses/due-soon` and `…/due-soon/count`
+3. Both `/business-expenses/due-soon` and `…/due-soon/count`
    key their dedup Map by `recurrenceSeriesId` with a `sid::` prefix
    so series-keyed entries can't collide with legacy keys.
 
@@ -195,41 +196,35 @@ deletion). Mutation-tested against all four.
 **Adding a gate now means: create the file, add it to `test:build-gate`,
 and add it here.** The middle step is enforced; this file is not.
 
-## super-scope-build-gate (added 2026-08-31)
+## super-scope-build-gate (added 2026-08-31) — **NOW VACUOUS, 2026-10-17**
 
 `apps/api/src/services/super-scope-build-gate.test.ts` — 3 tests.
-Scans `apps/web/src` + `apps/web/pages` for super-scope bindings that
-fall back to `forAdmin`.
 
-**Why.** This bug class has now shipped TWICE under two names. First
-`showSuperExtras` (see [[reference-tab-blend-pattern]]), then on
-2026-08-31 in JobsTab:
+**It passes because its subject no longer exists.** It scans
+`apps/web/src` + `apps/web/pages` for a const or JSX prop whose name
+named for the top role that read the staff-shell flag. Both were deleted in the
+one-tab-per-feature collapse, so the scan can never match. A green run
+here now means nothing. **Decide: repoint or delete it** — see the open
+item below.
 
-```ts
-const isSuper = (forAdmin || scope.isSuper) && hasSuperRole;
-```
+**The bug it caught, twice.** Both times a boolean meaning "the most
+privileged build of this tab" was computed by ORing in one meaning "the
+staff build" — and since both shells mounted the tab identically, the second
+was true on both. The reader got the highest-privilege rendering from
+whichever screen they were on; the 2026-08-31 instance pulled restricted
+Timeline rows into a feed not meant to carry them.
 
-Both the Admin tab and the Super tab mount JobsTab with
-`purpose="ADMIN"`, so `forAdmin` is true on **both** — a super on the
-Admin chip got `isSuper === true` and the jobs feed fetched
-`/api/super/timeline/upcoming`, pulling adminHidden Timeline activity
-cards (and the document-expiration card path, 21 adminHidden docs in
-prod, none with an expiry yet) into the admin's own feed.
-
-**The rule.** Super extras are gated on SCOPE, never role:
-`scope.isSuper && hasSuperRole`. Note the deliberate asymmetry —
-`isAdmin` MAY use `forAdmin ||`, because `purpose="ADMIN"` legitimately
-means "show admin extras". Only SUPER is scope-only. Don't "fix" the
-asymmetry.
+**What the bug class actually was**, stated without the dead names: an
+authorization answer derived from the SHELL the reader arrived through
+rather than from what they hold. The shells are gone, but the shape has
+a live successor — deriving a capability answer from anything other than
+the PERSPECTIVE-NARROWED set the server sent in `me.capabilities`.
+Re-deriving from `roleGrants`, or caching an answer from before a
+perspective was taken, restores powers the perspective was meant to
+remove. That is the thing worth gating now.
 
 **Suppression.** `// super-scope-allow: <reason>` on the line or the
 line above.
-
-**Why JobsTab was the only leak.** Every other super/admin split gets
-scope handed to it: TimelineTab/DocumentsTab are mounted twice (bare
-under admin, `isSuper` under super) and TasksPage receives
-`scopeIsWorker/Admin/Super`. JobsTab was the one component deriving it
-internally.
 
 The gate includes a self-test asserting its own regexes still match the
 2026-08-31 line — without it a pattern typo turns the gate into a

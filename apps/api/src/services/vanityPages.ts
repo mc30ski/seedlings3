@@ -12,7 +12,7 @@ import { Prisma, type VanityPage } from "@prisma/client";
 // See schema.prisma model VanityPage for the data-shape rationale.
 // Serves two flows:
 //   • Public read (from Next.js SSR) — routes/public.ts GET /public/vanity/:slug
-//   • Super CRUD (from the admin editor) — routes/vanityPages.ts
+//   • CRUD on `marketing.manage` (from the editor) — routes/vanityPages.ts
 //
 // Hostname enforcement lives at the ROUTE layer (currently hardcoded to
 // seedlings.pro; moves to an ALLOWED_DOMAINS Setting when Phase 2 of the
@@ -448,7 +448,7 @@ async function assertValidAliasTarget(
   }
 }
 
-// ── Writes (Super only — auth enforced at route layer) ────────────────
+// ── Writes (`marketing.manage` — enforced at the route layer) ────────────────
 
 export async function createVanityPage(params: {
   actorUserId: string;

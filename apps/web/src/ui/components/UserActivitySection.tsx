@@ -1,6 +1,6 @@
 "use client";
 
-// Per-user "Sign-ins & activity" widget for Super → Users.
+// Per-user "Sign-ins & activity" widget for Users.
 //
 // Renders inline at the bottom of each user card. Header shows the
 // derived "Last signed in" timestamp (or "Never signed in") so the
@@ -11,8 +11,8 @@
 //
 // Self-contained state: each section owns its own page list, cursor,
 // and loading flag so multiple sections can be expanded at once
-// without crosstalk. Super-only at the API layer (the route is gated
-// by superGuard); this component does NOT re-gate, since the
+// without crosstalk. The API route requires `audit.view`; this component
+// does NOT re-gate, since the
 // containing UsersTab already mounts it under `!readOnly` (which the
 // page wiring restricts to Super).
 
@@ -116,7 +116,7 @@ export default function UserActivitySection({ userId, lastSignInAt }: Props) {
   const loadFirstPage = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await apiGet<ActivityPage>(`/api/super/users/${userId}/activity?limit=20`);
+      const r = await apiGet<ActivityPage>(`/api/users/${userId}/activity?limit=20`);
       setPage({
         items: r.items ?? [],
         nextCursor: r.nextCursor ?? null,
@@ -137,7 +137,7 @@ export default function UserActivitySection({ userId, lastSignInAt }: Props) {
     setLoading(true);
     try {
       const r = await apiGet<ActivityPage>(
-        `/api/super/users/${userId}/activity?limit=20&cursor=${encodeURIComponent(page.nextCursor)}`,
+        `/api/users/${userId}/activity?limit=20&cursor=${encodeURIComponent(page.nextCursor)}`,
       );
       setPage((prev) => ({
         items: [...(prev?.items ?? []), ...(r.items ?? [])],

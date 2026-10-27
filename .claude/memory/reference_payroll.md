@@ -16,13 +16,16 @@ it. The visibility rules were signed off in writing before code existed.
 
 ## Visibility (server-side, never client filtering)
 
-| Role | Whose rows | What |
-|---|---|---|
-| Worker | own only | full detail incl. every tax line (own pay stub) |
-| Admin | any worker | **hours / gross / net / check only** |
-| Super | any worker | full detail + unmatched rows + all mutations |
+Three views, chosen by `fieldsFor(viewer)` in `services/payroll.ts`. The
+viewer kind comes from the caller's entitlements, never from a role:
 
-The admin restriction is applied when BUILDING the payload — tax fields are
+| Viewer | Whose rows | What |
+|---|---|---|
+| `self` (anyone) | own only | full detail incl. every tax line — your own pay stub |
+| `operator` (`payroll.view`) | anyone's | **hours / gross / net / check only** |
+| `manager` (`payroll.manage`) | anyone's | full detail + unmatched rows + all mutations |
+
+The restriction is applied when BUILDING the payload — withheld fields are
 absent from the response, not hidden with CSS.
 
 ## Things that bit during the build
@@ -46,12 +49,12 @@ absent from the response, not hidden with CSS.
 
 `payrollImport.test.ts` (36) + `payroll-build-gate.test.ts` (24) in the API
 build gate. Browser: `payroll-worker.spec.ts` (employee),
-`adminrole-payroll.spec.ts`, `payroll-admin.spec.ts` (super).
+`scheduler-payroll.spec.ts` (holds `payroll.view` only), `payroll-owner.spec.ts` (holds `payroll.manage`).
 
-**New Playwright project `admin-role`** (storageState `admin.json`, specs
-prefixed `adminrole-`). It exists because SUPER outranks ADMIN — an
-admin-only restriction is invisible from a `super` session, so testing it
-there would pass while proving nothing.
+**Playwright project `scheduler`** (storageState `scheduler.json`, specs
+prefixed `scheduler-`). It exists because a restriction that only
+`payroll.view` feels is invisible from an account that also holds
+`payroll.manage` — testing it there would pass while proving nothing.
 
 ## Hard rules
 
@@ -59,6 +62,6 @@ there would pass while proving nothing.
   export, not even `employerCost`. See
   [[feedback-payroll-estimate-actual-firewall]].
 - Re-upload is the ONLY edit path; individual values are not hand-editable.
-- Delete is soft (`archivedAt`), Super only, snapshots before hiding.
+- Delete is soft (`archivedAt`), `payroll.manage` only, snapshots before hiding.
 - No "next pay day" anywhere — uploads are manual, so it would be inferred
   and wrong the first time a schedule changes.

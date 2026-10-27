@@ -18,7 +18,7 @@ import {
 } from "@chakra-ui/react";
 import { Filter, LayoutList, Link2, Mail, MessageCircle, PauseCircle, Plus, RefreshCw, Star, Tag, Wrench, X } from "lucide-react";
 import { prettyStatus, clientLabel } from "@/src/lib/labels";
-import { determineRoles } from "@/src/lib/roles";
+import { scopeFromMe } from "@/src/lib/roles";
 import { clientStatusColor } from "@/src/lib/statusColors";
 import {
   type TabPropsType,
@@ -49,11 +49,13 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
-import { parseAdminTags, adminTagLabel, adminTagColor, ADMIN_TAGS } from "@/src/ui/components/AdminTagPicker";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
+import { parseInternalTags, internalTagLabel, internalTagColor, INTERNAL_TAGS } from "@/src/ui/components/InternalTagPicker";
 import { MailLink, CallLink, MapLink } from "@/src/ui/helpers/Link";
 import { FiStar, FiMapPin, FiUsers } from "react-icons/fi";
 import { Dashboard } from "@/src/ui/components/Dashboard";
+import type { Scope } from "@/src/lib/scope";
+import { isFieldCleared } from "../../lib/scope";
 
 // Constant representing the kind states for this entity.
 const kindStates = ["ALL", ...CLIENT_KIND] as const;
@@ -61,41 +63,43 @@ const kindStates = ["ALL", ...CLIENT_KIND] as const;
 // Constant representing the status states for this entity.
 
 type ClientsTabProps = TabPropsType & {
-  /** Additive scope — capabilities ADD as you climb the ladder.
-   *  scope.isWorker → worker-only affordances (currently none unique
-   *  to Clients; kept for parity with the Inventory/Vehicles pattern).
-   *  scope.isAdmin  → adds admin list endpoint + CRUD + tags + banner.
-   *  scope.isSuper  → adds "View as this client" + hard-delete.
-   *  Falls back to a scope derived from the legacy `purpose` prop when
-   *  not passed, so mounts still on the old shape keep working. */
-  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  /** What the caller may do, as capabilities.
+   *  `clients.view`    → the list, detail and contacts.
+   *  `clients.manage`  → CRUD, tags, the banner, and delete.
+   *  `clients.view-as` → "View as this client".
+   *  Absent fails closed — it grants nothing. */
+  scope?: Scope;
 };
 
-export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTabProps) {
+export default function ClientsTab({ me, scope }: ClientsTabProps) {
   // See PaymentsTab — same content-only + host-frames-it contract.
   const [unlinkedApi, setUnlinkedApi] = useState<{ refresh: () => void; loading: boolean; count: number } | null>(null);
 
-  const { isSuper: hasSuperRole, isAvail, isAdmin, forAdmin } = determineRoles(me, purpose);
 
   // Effective scope: prefer the additive prop; fall back to a scope
   // derived from `purpose` for any callsite still on the old shape.
   const effScope = scope ?? {
-    isWorker: purpose === "WORKER",
-    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
-    isSuper: purpose === "SUPER",
+    // Derived from CAPABILITIES, not from the shell that mounted
+    // this tab. These three read `purpose` and so answered
+    // "what may I do" with "where did you come from".
+    ...scopeFromMe(me),
+    
   };
   // Capabilities render additively AND are strictly governed by the
-  // scope prop — not by the underlying role. A user with admin+super
-  // roles viewing the *Admin* tab must NOT see Super buttons (that's
-  // what the Super top-tab is for). Super scope inherits Admin
-  // capabilities so a super sees admin controls too.
-  const showWorkerExtras = effScope.isWorker;
-  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
-  const showSuperExtras = effScope.isSuper && hasSuperRole;
+  // scope prop. Every control asks for the capability its own endpoint is
+  // guarded on, so there is no second vocabulary that can drift from the
+  // server's answer.
+  const canViewClients = effScope.can("clients.view");
+  // What this actually gates, per the route map.
+  const canManageClients = effScope.can("clients.manage");
+  const canViewAsClient = effScope.can("clients.view-as");
 
-  const pfx = showAdminExtras ? "aclients" : "wclients";
-  const isTrainee = !forAdmin && me?.workerType === "TRAINEE";
-  const [traineeClientIds, setTraineeClientIds] = useState<Set<string> | null>(null);
+  const pfx = canManageClients ? "aclients" : "wclients";
+  // Not cleared for field work: sees only what they are assigned to.
+  // Clearance is a capability — see isFieldCleared(), which asks for
+  // `work.claim`.
+  const notFieldCleared = !canManageClients && !isFieldCleared(me);
+  const [restrictedClientIds, setRestrictedClientIds] = useState<Set<string> | null>(null);
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
@@ -118,6 +122,21 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
 
   const [items, setItems] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
+  /**
+   * Has the first fetch finished? NOT the same question as `loading`.
+   *
+   * `loading` starts false and the fetch is kicked off by an effect, which
+   * runs AFTER the first paint — so the very first render had no data and
+   * no loading flag, fell through to the list, and announced "No clients
+   * or contacts match current filters." Then the effect set `loading`, the
+   * spinner appeared, and the cards replaced it. Three states in the wrong
+   * order, the first of which is a claim about the data that nothing had
+   * checked yet.
+   *
+   * "Nothing here" has to be something the app has LOOKED for. Same class
+   * as the JobsTab empty-state flash the e2e helpers exist to wait out.
+   */
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Client | null>(null);
@@ -164,12 +183,12 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
   async function load(displayLoading: boolean = true) {
     setLoading(displayLoading);
     try {
-      const base = showAdminExtras ? "/api/admin/clients" : "/api/clients";
+      const base = canManageClients ? "/api/clients" : "/api/clients";
       const list: Client[] = await apiGet(base);
       setItems(
         list
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
-          .filter((i) => showAdminExtras || i.status === "ACTIVE")
+          .filter((i) => canManageClients || i.status === "ACTIVE")
       );
     } catch (err) {
       publishInlineMessage({
@@ -179,17 +198,18 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
       setItems([]);
     } finally {
       setLoading(false);
+      setHasLoaded(true);
     }
   }
 
   // Loads all the items for the first time.
   useEffect(() => {
     void load();
-  }, [showAdminExtras]);
+  }, [canManageClients]);
 
   // For trainees: fetch their assigned client IDs
   useEffect(() => {
-    if (!isTrainee) { setTraineeClientIds(null); return; }
+    if (!notFieldCleared) { setRestrictedClientIds(null); return; }
     apiGet<any[]>("/api/occurrences")
       .then((occs) => {
         const myId = me?.id;
@@ -199,10 +219,10 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             if (occ.job?.property?.client?.id) ids.add(occ.job.property.client.id);
           }
         }
-        setTraineeClientIds(ids);
+        setRestrictedClientIds(ids);
       })
-      .catch(() => setTraineeClientIds(new Set()));
-  }, [isTrainee, me?.id]);
+      .catch(() => setRestrictedClientIds(new Set()));
+  }, [notFieldCleared, me?.id]);
 
   useEffect(() => {
     // EVERY disposer is kept and run on unmount. These were fire-and-forget:
@@ -220,22 +240,32 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
   }, []);
 
   // Filtered items based on search, kind or status.
+  /**
+   * The clients this person is PERMITTED to see — before any of the UI's
+   * own search / kind / status filters.
+   *
+   * Split out because two things need it and were each reaching past it:
+   * the "N Active" badge counted the raw fetch, so a trainee was told
+   * "15 Active" above the 4 cards they can actually open; and the
+   * highlight-by-id path below looked the row up in the raw fetch too,
+   * which let a deep link render a client they are not on.
+   */
+  const scopedItems = useMemo(() => {
+    if (!notFieldCleared) return items;
+    // Wait for the restriction data rather than briefly showing everything.
+    if (!restrictedClientIds) return [];
+    return items.filter((r) => restrictedClientIds.has(r.id));
+  }, [items, notFieldCleared, restrictedClientIds]);
+
   const filtered = useMemo(() => {
-    // If navigated here by ID, show only that entity
+    // If navigated here by ID, show only that entity — looked up in the
+    // SCOPED set, so a link cannot reach past the restriction.
     if (highlightId) {
-      const exact = items.find((r) => r.id === highlightId);
+      const exact = scopedItems.find((r) => r.id === highlightId);
       if (exact) return [exact];
     }
 
-    // Trainees: wait for filter data before showing anything
-    if (isTrainee && !traineeClientIds) return [];
-
-    let rows = items;
-
-    // Trainees only see clients they are assigned to
-    if (isTrainee && traineeClientIds) {
-      rows = rows.filter((r) => traineeClientIds.has(r.id));
-    }
+    let rows = scopedItems;
 
     // Filter based on entity type.
     if (kind[0] !== "ALL") {
@@ -287,11 +317,11 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
     }
 
     if (tagFilter !== "ALL") {
-      rows = rows.filter((r) => parseAdminTags((r as any).adminTags).includes(tagFilter));
+      rows = rows.filter((r) => parseInternalTags((r as any).internalTags).includes(tagFilter));
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, vipOnly, pausedOnly, tagFilter, highlightId, isTrainee, traineeClientIds]);
+  }, [scopedItems, q, kind, statusFilter, vipOnly, pausedOnly, tagFilter, highlightId]);
 
   function openCreate() {
     setEditing(null);
@@ -344,7 +374,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
   async function openArchiveClientConfirm(c: Client) {
     try {
       const preview = await apiGet<{ propertiesToArchive: number; jobsToArchive: number }>(
-        `/api/admin/clients/${c.id}/archive-preview`,
+        `/api/clients/${c.id}/archive-preview`,
       );
       setArchiveClientConfirm({ client: c, ...preview });
     } catch (err) {
@@ -358,7 +388,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
   async function openUnarchiveClientConfirm(c: Client) {
     try {
       const preview = await apiGet<{ propertiesToUnarchive: number; jobsToUnarchive: number }>(
-        `/api/admin/clients/${c.id}/unarchive-preview`,
+        `/api/clients/${c.id}/unarchive-preview`,
       );
       setUnarchiveClientConfirm({ client: c, ...preview });
     } catch (err) {
@@ -392,7 +422,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
 
   async function deleteContact(clientId: string, contactId: string) {
     try {
-      await apiDelete(`/api/admin/clients/${clientId}/contacts/${contactId}`);
+      await apiDelete(`/api/clients/${clientId}/contacts/${contactId}`);
       publishInlineMessage({
         type: "SUCCESS",
         text: "Contact deleted.",
@@ -413,15 +443,18 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
   // is mounted, the icon blinked out and back on every visit to this tab.
   // Rendering it in the gate branches too keeps it mounted from the first
   // paint. Closed, it renders nothing, so the loading view is unchanged.
+  // One tab, one collapse state. The explainerId carried the reader's role
+  // so three variants could each remember their own; there is one variant
+  // now, and the copy below branches on capability instead.
   const tabHelp = (
-      <TabExplainer explainerId={`seedlings:clientsTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}>
+      <TabExplainer explainerId="seedlings:clientsTab:guideOpen">
         <ExplainerText>
           Everyone you work for, their contacts and their properties — so you know whose
-          property you are on and who to expect. Internal admin notes and tags are not shown
+          property you are on and who to expect. Internal notes and tags are not shown
           to workers.
         </ExplainerText>
-        {showAdminExtras && (
-          <RoleSection role="Admin">
+        {canManageClients && (
+          <CapabilitySection capability="clients.manage" scope={scope}>
             <ExplainerText>
               You can create and edit clients, add contacts, archive a client that has left,
               and <Em>pause services</Em> for one going quiet without losing their history.
@@ -430,27 +463,35 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
               Archiving and pausing both <Em>show you what they will affect</Em> before you
               commit — scheduled visits, open jobs — so neither is a blind action.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
-        {showSuperExtras && (
-          <RoleSection role="Super">
+        {canViewAsClient && (
+          <CapabilitySection capability="clients.view-as" scope={scope}>
             <ExplainerText>
               <Em>View as a client contact</Em> renders the client portal exactly as that
               person sees it. It is read-only, and the fastest way to answer &ldquo;what does
               my client actually see&rdquo;.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
       </TabExplainer>
   );
 
-  if (!isAvail) return <>{tabHelp}<UnavailableNotice /></>;
-  if (loading && items.length === 0) return <>{tabHelp}<LoadingCenter /></>;
+  if (!canViewClients) return <>{tabHelp}<UnavailableNotice /></>;
+  // `!hasLoaded` covers the first paint, before the effect has even asked.
+  // The restriction set is the second half: for somebody who only sees
+  // their assigned clients it arrives on its OWN request, and until it
+  // does `scopedItems` is deliberately empty — which would read as "no
+  // clients" for exactly as long as that round trip takes.
+  const scopeStillResolving = notFieldCleared && !restrictedClientIds;
+  if (!hasLoaded || scopeStillResolving || (loading && items.length === 0)) {
+    return <>{tabHelp}<LoadingCenter /></>;
+  }
 
   return (
     <Box w="full">
       {tabHelp}
-      {forAdmin && (
+      {canManageClients && (
         <Box mb={3}>
           <Dashboard
             storageKey="seedlings:clientsTab:unlinkedAccountsOpen"
@@ -462,7 +503,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             onRefresh={unlinkedApi?.refresh}
             refreshing={!!unlinkedApi?.loading}
           >
-            <UnlinkedClientAccountsSection onReady={setUnlinkedApi} />
+            <UnlinkedClientAccountsSection onReady={setUnlinkedApi} scope={scope} />
           </Dashboard>
         </Box>
       )}
@@ -525,9 +566,9 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        {forAdmin && (
+        {canManageClients && (
           <Select.Root
-            collection={createListCollection({ items: [{ label: "All Tags", value: "ALL" }, ...ADMIN_TAGS.map((t) => ({ label: t.label, value: t.id }))] })}
+            collection={createListCollection({ items: [{ label: "All Tags", value: "ALL" }, ...INTERNAL_TAGS.map((t) => ({ label: t.label, value: t.id }))] })}
             value={[tagFilter]}
             onValueChange={(e) => setTagFilter(e.value[0] ?? "ALL")}
             size="sm"
@@ -542,7 +583,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             </Select.Control>
             <Select.Positioner>
               <Select.Content>
-                {[{ label: "All Tags", value: "ALL" }, ...ADMIN_TAGS.map((t) => ({ label: t.label, value: t.id }))].map((it) => (
+                {[{ label: "All Tags", value: "ALL" }, ...INTERNAL_TAGS.map((t) => ({ label: t.label, value: t.id }))].map((it) => (
                   <Select.Item key={it.value} item={it.value}>
                     <Select.ItemText>{it.label}</Select.ItemText>
                   </Select.Item>
@@ -565,7 +606,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
         >
           <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
         </Button>
-        {forAdmin && (
+        {canManageClients && (
           <Button
             size="sm"
             variant={pausedOnly ? "solid" : "outline"}
@@ -582,7 +623,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             <PauseCircle size={14} />
           </Button>
         )}
-        {forAdmin && (
+        {canManageClients && (
           <Button
             variant="solid"
             size="sm"
@@ -598,8 +639,10 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
       </HStack>
       <HStack mb={2} gap={2} px={1} wrap="wrap">
         {(() => {
-          const active = items.filter((c) => c.status === "ACTIVE").length;
-          const archived = items.filter((c) => c.status === "ARCHIVED").length;
+          // `scopedItems`, not `items`: these counts describe what this
+          // person can open, not what the fetch happened to return.
+          const active = scopedItems.filter((c) => c.status === "ACTIVE").length;
+          const archived = scopedItems.filter((c) => c.status === "ARCHIVED").length;
           return (
             <>
               <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">{active} Active</Badge>
@@ -607,7 +650,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                   the only thing that says they exist. Clicking it is how you
                   get to them — a dead number next to a filter that hides
                   them would just be a puzzle. */}
-              {forAdmin && archived > 0 && (
+              {canManageClients && archived > 0 && (
                 <Badge
                   colorPalette="red"
                   variant="subtle"
@@ -704,7 +747,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
               );
             const isVip = !!(c as any).isVip;
             const isArchived = c.status === "ARCHIVED";
-            const tags = forAdmin ? parseAdminTags((c as any).adminTags) : [];
+            const tags = canManageClients ? parseInternalTags((c as any).internalTags) : [];
             const paused = c.pausedRepeatingCount ?? 0;
 
             // Border does the work a badge row used to. Unreachable is the
@@ -727,9 +770,15 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             <Card.Body py="2" px="3">
               <VStack align="start" gap={0.5} w="full" minW={0}>
                 <HStack gap={1.5} minW={0} w="full">
+                  {/* The CHARACTER, not an escape. JSX text children are
+                      literal — only a JS string processes `\uXXXX` — so this
+                      rendered the seven characters "\u2b50" on every VIP
+                      client row. The five other VIP markers (PropertiesTab,
+                      ServicesTab, UnclaimedTab, JobsTab, ClientDialog) all
+                      use the character directly. */}
                   {isVip && (
                     <Text title={(c as any).vipReason || "VIP Client"} cursor="help" flexShrink={0}>
-                      \u2b50
+                      ⭐
                     </Text>
                   )}
                   <Text fontSize="sm" fontWeight="semibold" minW={0} truncate>
@@ -766,11 +815,11 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                         key={tag}
                         size="xs"
                         variant="solid"
-                        colorPalette={adminTagColor(tag)}
+                        colorPalette={internalTagColor(tag)}
                         px="2"
                         borderRadius="full"
                       >
-                        \u26a0 {adminTagLabel(tag)}
+                        ⚠ {internalTagLabel(tag)}
                       </Badge>
                     ))}
                   </HStack>
@@ -784,7 +833,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
             </Card.Body>
             <Card.Footer py="1.5" px="3" pt="1.5">
               <HStack gap={1.5} wrap="wrap" w="full">
-                {forAdmin && (
+                {canManageClients && (
                   <>
                     <StatusButton
                       id={"client-edit"}
@@ -799,24 +848,23 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                       setBusyId={setStatusButtonBusyId}
                       size="xs"
                     />
-                    {/* Super-only "View as this client" — sits next to
-                        Edit in the action row so operators debugging a
-                        client-facing issue can reach it quickly. Three
-                        gates:
-                          1. `isSuper` — actor has the SUPER role.
-                          2. `purpose === "SUPER"` — ClientsTab is
-                             mounted under the Super shell (never the
-                             admin variant).
-                          3. At least one contact on this client has a
+                    {/* "View as this client" — sits next to Edit in the
+                        action row so operators debugging a client-facing
+                        issue can reach it quickly. Two gates now; it was
+                        three, and the first two asked for a role AND for
+                        the shell it was reached through:
+                          1. `clients.view-as`, which is also the guard on
+                             the impersonation routes.
+                          2. At least one contact on this client has a
                              clerkUserId. Rendering the button when no
                              contact can be impersonated would only lead
                              to an inline error toast on click — better
                              to hide it entirely.
                         The `clerkUserId` field is already included in
-                        the admin clients list response (see
+                        a caller with client authority clients list response (see
                         services/clients.ts), so this check adds no
                         extra request. */}
-                    {showSuperExtras && c.contacts?.some((ct) => !!ct.clerkUserId) && (
+                    {canViewAsClient && c.contacts?.some((ct) => !!ct.clerkUserId) && (
                       <ViewAsClientButton clientId={c.id} clientName={c.displayName} />
                     )}
                     {/* NO client-level pause. There is no such thing as a
@@ -833,7 +881,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
 
                         Pausing is a per-service decision, so it lives on
                         the service. This button is the way to get there.  */}
-                    {showAdminExtras && c.status === "ACTIVE" && (
+                    {canManageClients && c.status === "ACTIVE" && (
                       <Button
                         // xs to match the StatusButtons beside it. This was
                         // written before those dropped from sm to xs and was
@@ -846,7 +894,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                           openEventSearch(
                             "clientsTabToServicesTabSearch",
                             c.displayName,
-                            true,
+                            
                             c.id,
                           )
                         }
@@ -912,7 +960,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                     The Spacer eats the slack, so it lands right-aligned on
                     a wide row and simply last once the row wraps. */}
                 <Spacer />
-                {forAdmin && (
+                {canManageClients && (
                   <>
                     {/* Archive now applies directly from ACTIVE (previous
                         two-step ACTIVE → PAUSED → ARCHIVED flow retired
@@ -964,13 +1012,20 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                             let hasProperties = false;
                             try {
                               const props = await apiGet<any[]>(
-                                `/api/admin/properties?clientId=${c.id}&limit=500`
+                                `/api/properties?clientId=${c.id}&limit=500`
                               );
                               hasProperties = Array.isArray(props) && props.length > 0;
                             } catch { /* proceed; server will guard */ }
 
-                            const superRequired = !showSuperExtras;
-                            const blocked = hasProperties || superRequired;
+                            // `DELETE /clients/:x` is `clients.manage`.
+                            // This blocked on `clients.view-as`, an
+                            // unrelated entitlement that happened to be
+                            // held by the same people before roles were
+                            // separable — so somebody who could manage
+                            // clients but not impersonate one was shown a
+                            // disabled button the server would have allowed.
+                            const cannotDelete = !canManageClients;
+                            const blocked = hasProperties || cannotDelete;
 
                             void setToDelete({
                               id: c.id,
@@ -984,9 +1039,9 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                 <Text color="red.fg">
                                   This client has associated properties. Delete all properties before deleting the client.
                                 </Text>
-                              ) : superRequired ? (
+                              ) : cannotDelete ? (
                                 <Text color="red.fg">
-                                  You must be a Super Admin to delete.
+                                  Deleting a client needs client-management authority.
                                 </Text>
                               ) : contactCount > 0 ? (
                                 <Box
@@ -1051,17 +1106,17 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                 +(a.isPrimary ?? false)
                             )
                             // Tab-aware gate: inactive contacts are an
-                            // admin-only concern (worker UI keeps the
+                            // a `clients.manage` concern (the read-only view keeps the
                             // contacts list to active rows only). Use
-                            // forAdmin instead of raw isAdmin so this
-                            // matches the rest of the file — an admin
+                            // the capability rather than a role flag, so this
+                            // matches the rest of the file — someone with `clients.manage`
                             // browsing the Worker Clients tab still
-                            // sees the clean worker view.
+                            // sees the clean self-scoped view.
                             .filter(
-                              (ct: any) => forAdmin || ct.status === "ACTIVE"
+                              (ct: any) => canManageClients || ct.status === "ACTIVE"
                             )
                             .map((ct: any) => {
-                              return forAdmin || ct.status === "ACTIVE" ? (
+                              return canManageClients || ct.status === "ACTIVE" ? (
                                 <VStack
                                   key={ct.id}
                                   align="start"
@@ -1129,7 +1184,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                       </Button>
                                     </HStack>
                                   )}
-                                  {forAdmin && (
+                                  {canManageClients && (
                                     <HStack gap={2} mt={3}>
                                       <StatusButton
                                         id={"contact-edit"}
@@ -1200,14 +1255,17 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                                 title:
                                                   "Delete contact from client?",
                                                 summary: `${ct.firstName} ${ct.lastName}`,
-                                                disabled: me?.roles?.includes(
-                                                  "SUPER"
+                                                // This was a role check.
+                                                // Removing a client's contact
+                                                // is client management.
+                                                disabled: scope?.can?.(
+                                                  "clients.manage"
                                                 )
                                                   ? false
                                                   : true,
                                                 details: (
                                                   <Text color="red.fg">
-                                                    You must be a Super Admin to
+                                                    You must be someone with client view-as Admin to
                                                     delete.
                                                   </Text>
                                                 ),
@@ -1231,7 +1289,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                 </VStack>
                               ) : undefined;
                             })}
-                          {forAdmin && (
+                          {canManageClients && (
                             <Button
                               size="xs"
                               variant="ghost"
@@ -1265,7 +1323,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                               .filter(Boolean)
                               .join(", ");
 
-                            return forAdmin || p.status === "ACTIVE" ? (
+                            return canManageClients || p.status === "ACTIVE" ? (
                               <VStack
                                 key={p.id}
                                 opacity={p.status === "ACTIVE" ? 1.0 : 0.5}
@@ -1285,7 +1343,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
                                     onClick={() => openEventSearch(
                                       "clientTabToPropertiesTabSearch",
                                       p.displayName,
-                                      forAdmin,
+                                      
                                       p.id,
                                     )}
                                   >
@@ -1313,28 +1371,28 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
       </VStack>
       </Box>
 
-      {forAdmin && (
+      {canManageClients && (
         <ClientDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
           mode={editing ? "UPDATE" : "CREATE"}
-          role={forAdmin ? "ADMIN" : "WORKER"}
+          scope={effScope}
           initial={editing ?? undefined}
           onSaved={() => void load()}
         />
       )}
-      {forAdmin && (
+      {canManageClients && (
         <ContactDialog
           open={contactDialogOpen}
           onOpenChange={setContactDialogOpen}
           mode={contactEditing ? "UPDATE" : "CREATE"}
-          role={forAdmin ? "ADMIN" : "WORKER"}
+          scope={effScope}
           initial={contactEditing ?? undefined}
           onSaved={() => void load()}
           clientId={contactClientId}
         />
       )}
-      {forAdmin && (
+      {canManageClients && (
         <DeleteDialog
           toDelete={toDelete}
           cancel={() => void setToDelete(null)}
@@ -1345,7 +1403,7 @@ export default function ClientsTab({ me, purpose = "WORKER", scope }: ClientsTab
           }}
         />
       )}
-      {forAdmin && (
+      {canManageClients && (
         <DeleteDialog
           toDelete={toDeleteContact}
           cancel={() => void setToDeleteContact(null)}

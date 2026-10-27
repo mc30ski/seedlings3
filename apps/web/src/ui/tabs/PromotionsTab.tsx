@@ -30,7 +30,8 @@ import { compressOnly } from "@/src/lib/imageRedact";
 import { fmtDate, fmtDateTime, bizDateKey, bizInstantFromEtParts, type EtDateKey } from "@/src/lib/dates";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Promotions tab — Super-only surface.
+// Promotions tab — `marketing.campaigns` throughout. (Split out of
+// `marketing.manage` on 2026-10-20; that one is banners and announcements.)
 // Three top-level views:
 //   Campaigns — list + detail with editor, lifecycle actions, delivery log,
 //                Send Now, Send-to-self test
@@ -216,7 +217,8 @@ type ContactRow = {
   promoSmsOptedOut: boolean;
 };
 
-/** Super-only tab, so there is one audience and one version of the copy.
+/** One entitlement opens this tab (`marketing.campaigns`), so there is one
+ *  audience and one version of the copy.
  *
  *  EVERY CLAIM IS A RULE THE SERVICE ENFORCES — the cooldown, the
  *  one-SMS-per-message limit, the opt-out skip and the CAN-SPAM footer are all
@@ -300,7 +302,7 @@ function CampaignsView() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await apiGet<Promotion[]>("/api/super/promotions");
+      const rows = await apiGet<Promotion[]>("/api/promotions");
       setPromos(rows);
     } catch (err: any) {
       publishInlineMessage({ type: "ERROR", text: `Failed to load promotions: ${err?.message ?? err}` });
@@ -509,8 +511,8 @@ function PromotionDetail({
   useEffect(() => {
     void (async () => {
       const [d, a] = await Promise.all([
-        apiGet<any[]>(`/api/super/promotions/${promotion.id}/deliveries`),
-        apiGet<any[]>(`/api/super/promotions/${promotion.id}/audit`),
+        apiGet<any[]>(`/api/promotions/${promotion.id}/deliveries`),
+        apiGet<any[]>(`/api/promotions/${promotion.id}/audit`),
       ]);
       setDeliveries(d);
       setAudit(a);
@@ -519,7 +521,7 @@ function PromotionDetail({
 
   async function doDelete(confirmText?: string) {
     try {
-      await apiDelete(`/api/super/promotions/${promotion.id}`, confirmText ? { confirm: confirmText } : {});
+      await apiDelete(`/api/promotions/${promotion.id}`, confirmText ? { confirm: confirmText } : {});
       publishInlineMessage({ type: "SUCCESS", text: `"${promotion.title}" permanently deleted.` });
       setDeleting(null);
       onClose();
@@ -542,7 +544,7 @@ function PromotionDetail({
   async function act(action: string) {
     setBusy(true);
     try {
-      await apiPost(`/api/super/promotions/${promotion.id}/${action}`, {});
+      await apiPost(`/api/promotions/${promotion.id}/${action}`, {});
       publishInlineMessage({ type: "SUCCESS", text: `Promotion ${action} succeeded.` });
       onChanged();
     } catch (err: any) {
@@ -563,7 +565,7 @@ function PromotionDetail({
         subject?: string;
         body?: string;
         error?: string;
-      }>(`/api/super/promotions/${promotion.id}/test-send`, { channel });
+      }>(`/api/promotions/${promotion.id}/test-send`, { channel });
       if (!res.ok) {
         if (res.error === "no_target_on_file") {
           publishInlineMessage({
@@ -586,7 +588,7 @@ function PromotionDetail({
         publishInlineMessage({ type: "SUCCESS", text: `Test ${channel} sent to ${res.target}.` });
         return;
       }
-      // CLAIMER mode → hand off to the Super's device via `sms:` /
+      // CLAIMER mode → hand off to the caller's own device via `sms:` /
       // `mailto:` intent, same pattern the invoice claimer path uses.
       const target = res.target ?? "";
       if (channel === "sms") {
@@ -725,7 +727,7 @@ function PromotionDetail({
                   setPreviewingLanding(true);
                   try {
                     const r = await apiPost<{ url: string; ttlMinutes: number }>(
-                      `/api/super/promotions/${promotion.id}/landing/preview-url`,
+                      `/api/promotions/${promotion.id}/landing/preview-url`,
                       {},
                     );
                     window.open(r.url, "_blank", "noopener,noreferrer");
@@ -1097,7 +1099,7 @@ function PromotionEditor({
   const [allowedDomains, setAllowedDomains] = useState<{ origins: string[]; primaryHostname: string } | null>(null);
   useEffect(() => {
     let cancelled = false;
-    apiGet<{ origins: string[]; primaryHostname: string }>("/api/super/promotions/allowed-domains")
+    apiGet<{ origins: string[]; primaryHostname: string }>("/api/promotions/allowed-domains")
       .then((r) => { if (!cancelled) setAllowedDomains(r); })
       .catch(() => { if (!cancelled) setAllowedDomains({ origins: [], primaryHostname: "" }); });
     return () => { cancelled = true; };
@@ -1183,10 +1185,10 @@ function PromotionEditor({
       };
       let id = savedPromoId;
       if (initial) {
-        await apiPatch(`/api/super/promotions/${initial.id}`, payload);
+        await apiPatch(`/api/promotions/${initial.id}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Promotion updated." });
       } else {
-        const created = await apiPost<{ id: string }>("/api/super/promotions", payload);
+        const created = await apiPost<{ id: string }>("/api/promotions", payload);
         id = created.id;
         setSavedPromoId(id);
         publishInlineMessage({ type: "SUCCESS", text: "Promotion created." });
@@ -1194,7 +1196,7 @@ function PromotionEditor({
       // If they chose LANDING_PAGE and no page exists yet, ensure one
       // gets created so they can edit its items immediately.
       if (linkKind === "LANDING_PAGE" && id && !initial?.landingPageId) {
-        await apiPost(`/api/super/promotions/${id}/landing`, {}).catch(() => {});
+        await apiPost(`/api/promotions/${id}/landing`, {}).catch(() => {});
       }
       // Flush unsaved landing-page headline / intro / slug. Those fields
       // live in a nested editor with its own Save button, and an operator
@@ -1827,7 +1829,7 @@ function InvoicePreviewDialog({
     // landing image the client would never see, and rendered a broken
     // icon once that landing photo's bytes were gone.
     apiGet<{ photos: { url: string | null }[] }>(
-      `/api/super/promotions/${promoId}/invoice-photos`,
+      `/api/promotions/${promoId}/invoice-photos`,
     )
       .then((res) => {
         if (cancelled) return;
@@ -2048,7 +2050,7 @@ function ContactsView() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await apiGet<ContactRow[]>("/api/super/promotions/contacts");
+      const list = await apiGet<ContactRow[]>("/api/promotions/contacts");
       setRows(list);
     } catch (err: any) {
       publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
@@ -2173,7 +2175,7 @@ function OptToggleDialog({
   async function submit() {
     setBusy(true);
     try {
-      await apiPost(`/api/super/promotions/contacts/${contactId}/opt`, {
+      await apiPost(`/api/promotions/contacts/${contactId}/opt`, {
         channel,
         optedOut,
         approve: isReOptIn ? approveText : undefined,
@@ -2253,7 +2255,7 @@ function OptToggleDialog({
 function OptHistoryDialog({ contactId, onClose }: { contactId: string; onClose: () => void }) {
   const [rows, setRows] = useState<any[] | null>(null);
   useEffect(() => {
-    void apiGet<any[]>(`/api/super/promotions/contacts/${contactId}/history`).then(setRows);
+    void apiGet<any[]>(`/api/promotions/contacts/${contactId}/history`).then(setRows);
   }, [contactId]);
   return (
     <Dialog.Root open onOpenChange={(e) => { if (!e.open) onClose(); }}>
@@ -2366,7 +2368,7 @@ function LandingPageEditor({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const p = await apiGet<LandingPage>(`/api/super/promotions/${promoId}/landing`);
+      const p = await apiGet<LandingPage>(`/api/promotions/${promoId}/landing`);
       setPage(p);
       setHeadline(p.headline ?? "");
       setIntro(p.intro ?? "");
@@ -2389,7 +2391,7 @@ function LandingPageEditor({
         intro: intro.trim(),
       };
       if (slug !== origSlug) payload.slug = slug.trim();
-      await apiPatch(`/api/super/promotions/landing/${pageId}`, payload);
+      await apiPatch(`/api/promotions/landing/${pageId}`, payload);
       publishInlineMessage({ type: "SUCCESS", text: "Landing page saved." });
       await load();
     } catch (err: any) {
@@ -2427,7 +2429,7 @@ function LandingPageEditor({
 
   async function deletePhoto(photoId: string) {
     try {
-      await apiDelete(`/api/super/promotions/landing/photos/${photoId}`);
+      await apiDelete(`/api/promotions/landing/photos/${photoId}`);
       await load();
     } catch (err: any) {
       publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
@@ -2444,7 +2446,7 @@ function LandingPageEditor({
     if (i <= 0) return;
     [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
     try {
-      await apiPost(`/api/super/promotions/landing/items/${item.id}/photos/reorder`, {
+      await apiPost(`/api/promotions/landing/items/${item.id}/photos/reorder`, {
         photoIds: ids,
       });
       await load();
@@ -2457,7 +2459,7 @@ function LandingPageEditor({
     if (!newTitle.trim()) return;
     setAddingItem(true);
     try {
-      await apiPost(`/api/super/promotions/landing/${pageId}/items`, {
+      await apiPost(`/api/promotions/landing/${pageId}/items`, {
         title: newTitle.trim(),
         description: newDesc.trim(),
       });
@@ -2473,7 +2475,7 @@ function LandingPageEditor({
 
   async function saveItem(itemId: string, title: string, description: string) {
     try {
-      await apiPatch(`/api/super/promotions/landing/items/${itemId}`, { title, description });
+      await apiPatch(`/api/promotions/landing/items/${itemId}`, { title, description });
       await load();
     } catch (err: any) {
       publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
@@ -2482,7 +2484,7 @@ function LandingPageEditor({
 
   async function deleteItem(itemId: string) {
     try {
-      await apiDelete(`/api/super/promotions/landing/items/${itemId}`);
+      await apiDelete(`/api/promotions/landing/items/${itemId}`);
       await load();
     } catch (err: any) {
       publishInlineMessage({ type: "ERROR", text: err?.message ?? String(err) });
@@ -2499,7 +2501,7 @@ function LandingPageEditor({
     [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
     setPage({ ...page, items: next });
     try {
-      await apiPost(`/api/super/promotions/landing/${pageId}/items/reorder`, {
+      await apiPost(`/api/promotions/landing/${pageId}/items/reorder`, {
         itemIds: next.map((i) => i.id),
       });
     } catch (err: any) {
@@ -2539,7 +2541,7 @@ function LandingPageEditor({
       const compressed = await compressOnly(file);
       const contentType = "image/jpeg";
       const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-        `/api/super/promotions/landing/${pageId}/items/${itemId}/upload-url`,
+        `/api/promotions/landing/${pageId}/items/${itemId}/upload-url`,
         { contentType },
       );
       const put = await fetch(uploadUrl, {
@@ -2548,7 +2550,7 @@ function LandingPageEditor({
         body: compressed,
       });
       if (!put.ok) throw new Error(`R2 upload failed (${put.status})`);
-      await apiPost(`/api/super/promotions/landing/items/${itemId}/confirm-image`, {
+      await apiPost(`/api/promotions/landing/items/${itemId}/confirm-image`, {
         key,
         contentType,
       });
@@ -2986,7 +2988,7 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
   const load = useCallback(async () => {
     try {
       const res = await apiGet<{ photos: InvoicePhoto[] }>(
-        `/api/super/promotions/${promotionId}/invoice-photos`,
+        `/api/promotions/${promotionId}/invoice-photos`,
       );
       setPhotos(res.photos ?? []);
     } catch (err: any) {
@@ -3020,7 +3022,7 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
       const compressed = await compressOnly(file);
       const contentType = "image/jpeg";
       const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-        `/api/super/promotions/${promotionId}/invoice-photos/upload-url`,
+        `/api/promotions/${promotionId}/invoice-photos/upload-url`,
         { contentType },
       );
       const put = await fetch(uploadUrl, {
@@ -3029,7 +3031,7 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
         body: compressed,
       });
       if (!put.ok) throw new Error(`Upload failed (${put.status})`);
-      await apiPost(`/api/super/promotions/${promotionId}/invoice-photos/confirm`, {
+      await apiPost(`/api/promotions/${promotionId}/invoice-photos/confirm`, {
         key,
         contentType,
       });
@@ -3061,7 +3063,7 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
     setPhotos(reordered); // optimistic
     setBusy(true);
     try {
-      await apiPost(`/api/super/promotions/${promotionId}/invoice-photos/reorder`, {
+      await apiPost(`/api/promotions/${promotionId}/invoice-photos/reorder`, {
         photoIds: reordered.map((p) => p.id),
       });
       await load();
@@ -3077,7 +3079,7 @@ function InvoicePhotosPanel({ promotionId }: { promotionId: string }) {
     if (!deleting) return;
     setBusy(true);
     try {
-      await apiDelete(`/api/super/promotions/invoice-photos/${deleting.id}`);
+      await apiDelete(`/api/promotions/invoice-photos/${deleting.id}`);
       setDeleting(null);
       await load();
     } catch (err: any) {

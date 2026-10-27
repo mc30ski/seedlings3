@@ -2,10 +2,10 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { createClerkClient } from "@clerk/backend";
 import { prisma } from "../db/prisma";
-import { IMPERSONATE_HEADER } from "../lib/impersonation";
+import { PERSPECTIVE_HEADER } from "../lib/impersonation";
 import { resolveCutoff } from "../lib/businessStartCutoff";
 import { resolveParcel, parcelImageUrl, redactParcelForWorker } from "../services/parcels";
-import { Role as RoleVal } from "@prisma/client";
+import { callerCan } from "../lib/callerCan";
 
 function readBearer(req: any): string | null {
   const h = req.headers?.authorization ?? "";
@@ -41,13 +41,14 @@ export default async function meRoutes(app: FastifyInstance) {
         message: "Missing token (header/cookie)",
       });
     } else {
-      // Super-only impersonation headers — services.users.me ignores both
-      // unless the underlying user is actually SUPER (silent fallback), so
-      // no extra gating is needed here.
+      // The perspective header is ignored unless the caller can actually
+      // reach that perspective (it must be in their own resolved `perspectives`),
+      // and the client-contact header unless they are someone with `routes.plan`. Both fall
+      // back silently rather than 4xx, so neither feature's existence leaks.
       const t = Date.now();
       const result = await services.users.me(
         token,
-        req.headers[IMPERSONATE_HEADER],
+        req.headers[PERSPECTIVE_HEADER],
         req.impersonatedContact?.id ?? null,
       );
       // TEMP diagnostic (part of the hang-hunt): report how long
@@ -64,21 +65,25 @@ export default async function meRoutes(app: FastifyInstance) {
   //
   // Available to every approved role, but the PAYLOAD DIFFERS. Workers get
   // the parcel size and the picture — what they need to plan the work.
-  // Admins and Supers additionally get the county's appraised value and the
+  // Holders of `routes.plan` and Holders of `routes.plan` additionally get the county's appraised value and the
   // owner of record. The stripping happens here, on the server: a redaction
   // that only hides fields in the UI is still sitting in the network
   // response for anyone who opens devtools.
   //
-  // Role comes from `req.user.roles`, which requireApproved attaches with
-  // the impersonation-adjusted set — so a Super using "view as Worker" sees
-  // the worker payload here too, which is the whole point of view-as.
+  // The redaction level comes from `req.principal`, which requireApproved
+  // attaches with any active perspective already applied — so someone with `routes.plan`
+  // looking through the Worker perspective sees the worker payload here too, which
+  // is the whole point of the perspective.
   //
   // view-as-allow: a parcel is a property of the LAND, identical for every
   // caller. There is no per-worker state to impersonate — only the redaction
   // level, which already follows the caller's effective roles above.
   app.get("/me/properties/:id/parcel", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
-    const roles = new Set((req.user?.roles ?? []) as RoleVal[]);
-    const privileged = roles.has(RoleVal.ADMIN) || roles.has(RoleVal.SUPER);
+    // Unredacted parcel detail is owner/valuation data about somebody's
+    // land, which the worker sensitive-data guardrail keeps out of worker
+    // views. `clients.manage` is the level that may already edit the client
+    // and property records this describes.
+    const privileged = callerCan(req, "clients.manage");
     const result = await resolveParcel(String(req.params.id), {
       force: String(req.query?.refresh ?? "") === "1",
     });
@@ -94,7 +99,7 @@ export default async function meRoutes(app: FastifyInstance) {
   // Business Start Date — exposes the EFFECTIVE cutoff for the current
   // request so the client can render UI consistently with the API filter.
   // Honors the X-Reveal-Pre-Cutoff header the same way every money endpoint
-  // does — i.e. when a Super sends reveal=true, this returns null and the
+  // does — i.e. when someone with `routes.plan` sends reveal=true, this returns null and the
   // UI shows the unfiltered state. See lib/businessStartCutoff.ts.
   // view-as-allow: returns the EFFECTIVE Business Start Date cutoff for
   // the current request, driven by the caller's own reveal header. Not a
@@ -107,6 +112,64 @@ export default async function meRoutes(app: FastifyInstance) {
       // to decide whether to show "—" for hidden money fields.
       cutoff: cutoff ? cutoff.toISOString() : null,
     };
+  });
+
+  // The areas this caller may point their LENS at.
+  //
+  // Not `GET /areas`, which is gated on `areas.manage` — that endpoint is for
+  // BUILDING the tree, and the people who need to narrow a view are mostly
+  // not the people who edit territories. Choosing what to look at is not
+  // administering anything.
+  //
+  // Each row is somewhere the caller can already see data, so offering it
+  // discloses nothing: a global reader gets the live tree, and anyone else
+  // gets only their own granted subtrees. Retired areas are excluded because
+  // this feeds a PICKER — retirement hides an area from pickers and leaves it
+  // in reporting, so a lens already set to one keeps working.
+  //
+  // A SOLE ROOT IS OMITTED. Its path prefixes every other area, so choosing
+  // it filters nothing while looking like it filters something; the picker's
+  // own "All areas" entry is the clear-the-lens option. With several roots
+  // each one is a real slice, so none are dropped.
+  //
+  // view-as-allow: the lens belongs to the SESSION doing the looking, not to
+  // any worker being looked at. Viewing as someone else does not hand you
+  // their territories, and must not — that would make view-as a way to read
+  // a district you hold nothing in.
+  app.get("/me/areas", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
+    const principal = req.principal;
+    const all = await prisma.area.findMany({
+      where: { retiredAt: null },
+      orderBy: [{ path: "asc" }],
+      select: { id: true, name: true, tier: true, path: true, parentId: true },
+    });
+
+    // Global in ANY role means the whole tree; otherwise the union of the
+    // subtrees they are granted. This deliberately asks "do they hold
+    // anything globally", not "do they hold capability X" — the lens spans
+    // every view at once, so there is no single capability to test it on.
+    const roles: Array<{ areaPath?: string }> = principal?.roles ?? [];
+    const global = principal?.kind === "system" || roles.some((r) => !r.areaPath);
+    const grantedPaths = roles.map((r) => r.areaPath).filter(Boolean) as string[];
+    const visible = global
+      ? all
+      : all.filter((a) =>
+          grantedPaths.some((g) => a.path.startsWith(g) || g.startsWith(a.path)),
+        );
+
+    const roots = visible.filter((a) => a.parentId === null);
+    // `trail` is the chain of names from the top of the tree down to this
+    // area, root excluded — so a notice can read "Chapel Hill → Carrboro"
+    // instead of a bare leaf name that two districts might share. Built
+    // from `all`, not `visible`: an ancestor the caller cannot SELECT is
+    // still needed to describe where the area they can select sits.
+    const nameById = new Map(all.map((a) => [a.id, a.name]));
+    const trailOf = (path: string) =>
+      path.split("/").filter(Boolean).slice(1).map((id) => nameById.get(id) ?? "?");
+    const options = (roots.length === 1 ? visible.filter((a) => a.id !== roots[0]!.id) : visible).map(
+      ({ id, name, tier, path }) => ({ id, name, tier, path, trail: trailOf(path) }),
+    );
+    return { areas: options };
   });
 
   app.post("/me/sync", async (req: any, reply: FastifyReply) => {

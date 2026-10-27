@@ -9,10 +9,10 @@ A failing e2e spec in the final pre-deploy run BLOCKS the report. Never
 summarize a run as "50 e2e tests pass" when one failed, and never assume a
 lone failure is flakiness without reproducing the assertion it made.
 
-**2026-09-08:** `supplies-and-ledger-link-admin.spec.ts:96` ("clicking a
+**2026-09-08:** `supplies-and-ledger-link-owner.spec.ts:96` ("clicking a
 ledger row actually writes the breadcrumb") failed in the last run before the
 user deployed. It was reported as a green run. It was a real 500 —
-`GET /admin/business-expenses` had a stale Prisma `include` naming
+`GET /business-expenses` had a stale Prisma `include` naming
 `supplyPurchase` after the relation became `supplyPurchases` — and it took
 down the entire Ledger tab plus the owner-equity panel the moment production
 came up. The user found it in the first screen they looked at.

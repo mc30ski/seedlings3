@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, HStack, Text, Icon, CloseButton, Portal } from "@chakra-ui/react";
 import { CheckCircle2, Info, AlertTriangle, OctagonAlert } from "lucide-react";
+import { refusalPhrase } from "@repo/permissions";
 
 export const MESSAGE_KIND = ["SUCCESS", "WARNING", "INFO", "ERROR"] as const;
 
@@ -285,8 +286,24 @@ export function publishInlineMessage(detail: InlineMessageEventDetail) {
 
 export function getErrorMessage(message: string, err: unknown): string {
   const anyErr = err as any;
-  let msg = message + " ";
 
+  // A capability refusal, which the server now names. It used to arrive
+  // here as the bare word NOT_AUTHORIZED, preceded by a sentence that could
+  // not tell a missing capability from an unapproved account — so the user
+  // was told twice, vaguely and then in machine vocabulary.
+  //
+  // The sentence is built from the entitlement's OWN copy, the same words
+  // the role builder and the help text use, rather than from new strings
+  // that drift from the policy they describe.
+  if (anyErr?.code === "NOT_AUTHORIZED") {
+    const entitlement = anyErr?.details?.entitlement as string | undefined;
+    const action = entitlement ? refusalPhrase(entitlement) : null;
+    return action
+      ? `${message} You don't have permission to ${action}.`
+      : `${message} You don't have permission to do that.`;
+  }
+
+  let msg = message + " ";
   if (anyErr?.status === 401 || anyErr?.status === 403) {
     msg += "Not authorized or not approved.";
   }
@@ -294,3 +311,4 @@ export function getErrorMessage(message: string, err: unknown): string {
     typeof anyErr?.message === "string" ? anyErr.message : "Unexpected error.";
   return msg;
 }
+

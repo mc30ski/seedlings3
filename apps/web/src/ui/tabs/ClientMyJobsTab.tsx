@@ -98,7 +98,7 @@ type UpcomingJob = {
     createdAt: string;
   } | null;
   /** Most-recent resolved change request that carried a note from
-   *  the admin. Naturally disappears for the next recurring occurrence
+   *  a caller with `clients.manage`. Naturally disappears for the next recurring occurrence
    *  because that's a different row. */
   lastResolvedRequest?: {
     id: string;
@@ -233,7 +233,7 @@ export default function ClientMyJobsTab() {
   const [confirmingCandidate, setConfirmingCandidate] = useState(false);
 
   async function load() {
-    // Skip the auto-link bootstrap when a Super is viewing this as a
+    // Skip the auto-link bootstrap when someone with `clients.view-as` is viewing this as a
     // client. Two reasons:
     //   1. The impersonated contact is BY DEFINITION already linked (we
     //      couldn't have reached this view otherwise), so the POST would
@@ -309,7 +309,7 @@ export default function ClientMyJobsTab() {
       setLoading(true);
       await load();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't confirm — please ask an admin to link you.", err) });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't confirm — please ask us to link your account.", err) });
     } finally {
       setConfirmingCandidate(false);
     }

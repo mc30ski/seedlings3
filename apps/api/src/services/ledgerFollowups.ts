@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Ledger Followup service — Super-only "flag this row for follow-up" affordance
-// for the Money → Ledger view. Lets a Super attach an open-ended reminder to
+// Ledger Followup service — the `books.manage` "flag this row for follow-up" affordance
+// for the Money → Ledger view. Lets someone with `books.manage` attach an open-ended reminder to
 // any Payment, BusinessExpense, or Checkout (equipment rental income) row when
 // something needs attention (e.g. waiting on an ACH posting, vendor dispute,
 // month-end reconciliation note).
@@ -16,7 +16,7 @@
 // `(entityType, entityId, resolvedAt)` index in the schema makes the "is this
 // row already flagged?" lookup O(log n).
 //
-// Routes live at `/api/super/ledger-followups/*` and all require Super. The
+// Routes live at `/api/ledger-followups/*` and all require `books.manage`. The
 // route layer is responsible for setting `actorId` from the authenticated
 // user; this service trusts the value it receives.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ export async function openFollowupMap(): Promise<Record<string, LedgerFollowupRo
 
 /**
  * Flag a ledger row for follow-up. Throws CONFLICT if the row already has
- * an open flag (Super resolved it via Edit instead). Note is optional but
+ * an open flag (resolved via Edit instead). Note is optional but
  * highly encouraged — the operator a month from now will thank past-them.
  */
 export async function createFollowup(input: {

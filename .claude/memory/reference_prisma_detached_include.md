@@ -13,14 +13,14 @@ as a bare Fastify 500.
 
 Shipped to production 2026-09-08: `BusinessExpense.supplyPurchase` became
 `supplyPurchases` (list) when the ledger link went many-to-one; the detached
-include in `apps/api/src/routes/admin.ts` still said `supplyPurchase`. Both
+include in the route layer still said `supplyPurchase`. Both
 apps typechecked, 1047 gate tests passed, the Ledger tab was down.
 
 **Correct form:** `Prisma.validator<Prisma.<Model>Include>()({ ... })` — it
 key-checks AND preserves the literal type, so downstream payload inference
 stays narrow. A bare `: Prisma.XInclude` annotation checks the keys but
 WIDENS the result, which breaks callers reading nested relations (it broke
-`groups.ts` → `worker.ts` `m.user`).
+`groups.ts` → the crews routes' `m.user`).
 
 Mechanically enforced by the "a detached Prisma include/select is
 type-annotated" test in

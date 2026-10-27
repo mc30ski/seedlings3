@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Property parcel — public county record + overhead imagery.
 //
-// Opened from the icon on a job card. Admin/Super only: the county's
+// Opened from the icon on a job card. `clients.manage`: the county's
 // appraised value and the owner of record are public record, but they are not
 // something a worker needs, nor something to have on screen mid-conversation
 // with a client.

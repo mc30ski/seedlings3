@@ -112,7 +112,7 @@ export default function NextStartOverrideAffordance({
     setSaving(true);
     try {
       const result: any = await apiPost(
-        `/api/admin/occurrences/${occurrenceId}/next-start-override`,
+        `/api/occurrences/${occurrenceId}/next-start-override`,
         { date: draft, forceApprove: force },
       );
       if (result?.needsApprove) {
@@ -145,7 +145,7 @@ export default function NextStartOverrideAffordance({
   async function clear() {
     setSaving(true);
     try {
-      await apiPost(`/api/admin/occurrences/${occurrenceId}/next-start-override`, {
+      await apiPost(`/api/occurrences/${occurrenceId}/next-start-override`, {
         date: null,
       });
       publishInlineMessage({

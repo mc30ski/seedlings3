@@ -43,9 +43,9 @@ export default function JobDefaultGuidanceDialog({ open, onOpenChange, jobId, pr
     dlgErr.clear();
     setSaving(true);
     try {
-      await apiPatch(`/api/admin/jobs/${jobId}`, { guidanceNote: note.trim() || null });
+      await apiPatch(`/api/jobs/${jobId}`, { guidanceNote: note.trim() || null });
       if (photoIds !== null) {
-        await apiPut(`/api/admin/jobs/${jobId}/property-photos`, { propertyPhotoIds: photoIds });
+        await apiPut(`/api/jobs/${jobId}/property-photos`, { propertyPhotoIds: photoIds });
       }
       publishInlineMessage({ type: "SUCCESS", text: "Default guidance updated." });
       onSaved?.();

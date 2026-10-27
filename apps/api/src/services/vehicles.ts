@@ -10,6 +10,8 @@
 import { prisma } from "../db/prisma";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
+import { isPaid } from "@repo/money";
+import { ServiceError } from "../lib/errors";
 
 export type VehicleInput = {
   displayName: string;
@@ -21,7 +23,7 @@ export type VehicleInput = {
 };
 
 /** Load all vehicles, active first, then archived. Include the active
- *  assignment list so the admin UI can render worker chips without a
+ *  assignment list so the UI can render driver chips without a
  *  follow-up roundtrip. */
 export async function listVehicles(opts: { includeArchived?: boolean } = {}) {
   return prisma.vehicle.findMany({
@@ -169,11 +171,49 @@ export async function unarchiveVehicle(currentUserId: string, id: string) {
 
 /** Assign a worker to a vehicle. Idempotent — re-activates a
  *  previously-archived assignment. */
+/**
+ * THE ASSIGNEE MUST BE SOMEONE YOU PAY.
+ *
+ * A vehicle assignment is not a label — the audit note below calls it the
+ * right to log DEDUCTIBLE MILES, and the mileage those drivers file lands in
+ * the tax export. Nothing checked who was being assigned, and the picker
+ * offered every row of `/users`, so a CLIENT CONTACT could be made a driver
+ * of the crew van and their mileage would have gone to the books as a
+ * business deduction against a customer's name.
+ *
+ * `isPaid` is the bar, from the one place worker class is decided
+ * (`packages/money/workerClass.ts`) and never by negation — EMPLOYEE or
+ * CONTRACTOR. It rejects a client contact (no worker type at all, which is
+ * the payroll gate) and an UNPAID helper, for the same reason G33 keeps an
+ * unpaid person out of a paid seat: the money system will try to account
+ * for them.
+ */
+async function assertAssignableDriver(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, workerType: true, displayName: true },
+  });
+  // ServiceError, not a bare Error: the error mapper reads `statusCode`, and
+  // a plain throw here would surface as a 500 — "Internal Server Error" for
+  // what is a perfectly ordinary refusal the caller can act on.
+  if (!user) throw new ServiceError("NOT_FOUND", "No such user.", 404);
+  if (!isPaid(user.workerType)) {
+    throw new ServiceError(
+      "UNASSIGNABLE_DRIVER",
+      "A vehicle can only be assigned to an employee or a contractor — the " +
+        "miles they log are a business deduction. Set a worker type on this " +
+        "account first.",
+      400,
+    );
+  }
+}
+
 export async function assignUserToVehicle(
   currentUserId: string,
   vehicleId: string,
   userId: string,
 ) {
+  await assertAssignableDriver(userId);
   const existing = await prisma.vehicleAssignment.findUnique({
     where: { vehicleId_userId: { vehicleId, userId } },
   });

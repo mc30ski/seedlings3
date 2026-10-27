@@ -4,12 +4,12 @@
 // (User.isApproved = false) with the two most-common actions:
 //   • Approve as Client → opens ApproveAndLinkClientDialog so the
 //     operator can pick a ClientContact to bind to in one step.
-//   • Decline → typed-confirm dialog → DELETE /admin/users/:id.
+//   • Decline → typed-confirm dialog → DELETE /users/:id.
 //
 // "Approve as Worker" is intentionally NOT inline. That path requires
 // a typed-email confirmation + role-grant + worker-type decision; it's
 // rare enough that the Goto Task button on the Tasks page (which
-// jumps to Super → Users) handles it. Keeping the inline scope narrow
+// jumps to Users) handles it. Keeping the inline scope narrow
 // keeps this component small and reusable.
 
 import { useCallback, useEffect, useState } from "react";
@@ -45,7 +45,7 @@ export default function PendingUserSignupsSection() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await apiGet<PendingUser[]>("/api/admin/users?approved=false");
+      const list = await apiGet<PendingUser[]>("/api/users?approved=false");
       setItems(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({
@@ -67,7 +67,7 @@ export default function PendingUserSignupsSection() {
   async function performDecline(u: PendingUser) {
     setBusyId(u.id);
     try {
-      await apiDelete(`/api/admin/users/${u.id}`);
+      await apiDelete(`/api/users/${u.id}`);
       window.dispatchEvent(new Event("seedlings3:users-changed"));
       publishInlineMessage({ type: "SUCCESS", text: `Declined ${userLabel(u)}.` });
       setDeclineTarget(null);

@@ -1,63 +1,74 @@
-export type Role = "SUPER" | "ADMIN" | "WORKER";
+/**
+ * WHICH LAYOUT IS ON SCREEN — not what anyone is allowed to do.
+ *
+ * This was called `Role`, which is the name of a concept that no longer
+ * exists: the `Role` enum and the `UserRole` table are deleted, and
+ * authorization is `scope.can(capability)`. The type survived the cutover
+ * because the question it answers survived — "am I rendering the worker, the
+ * admin or the shell?" — but keeping the old NAME on it invites exactly
+ * the mistake the rename exists to prevent, the way `mustBeAssigned` once read
+ * as a visibility rule and caused a client-visibility bug.
+ *
+ * The VALUES stay as they are: they are the three shells, they are persisted
+ * in `topTab`, and they are matched against in ~26 places. Renaming them is a
+ * separate change with a migration of stored state behind it.
+ *
+ * A surface never decides permission. `scope.can(capability)` does.
+ */
 
-export type AdminTabs =
-  | "tasks"
-  | "home"
-  | "equipment"
-  | "vehicles"
-  | "clients"
-  | "properties"
-  | "users"
+/**
+ * Every staff tab id. ONE union, because there is one staff tab list.
+ *
+ * This was three unions, one per shell — overlapping
+ * heavily and named after roles — all three are DELETED. They were the
+ * type-level half of the
+ * duplicate-tab problem: three descriptions of one set of features, which
+ * is what let three copies of each tab look legitimate. Derived from what
+ * `index.tsx` actually renders, so it cannot drift from the tab list.
+ */
+export type StaffTabs =
   | "activity"
-  | "jobs"
-  | "services"
-  | "payments"
-  | "routes"
-  | "history"
-  | "settings"
-  | "profile"
-  | "notify"
+  | "areas"
+  | "audit"
+  | "clients"
   | "collections"
-  | "supplies"
-  | "groups"
-  | "pricing"
+  | "compliance"
+  | "displays"
   | "documents"
-  | "timeline"
-  | "payroll"
-  | "guides";
-
-export type SuperTabs =
+  | "equipment"
+  | "forecast"
+  | "groups"
+  | "guides"
+  | "history"
   | "home"
   | "jobs"
+  | "ledger"
+  | "notify"
+  | "payments"
+  | "payroll"
+  | "pricing"
+  | "profile"
+  | "promotions"
+  | "properties"
+  | "reconcile"
+  | "roles"
   | "routes"
   | "services"
-  | "audit"
   | "settings"
-  | "profile"
-  | "ledger"
   | "supplies"
-  | "pricing"
-  | "documents"
+  | "tasks"
   | "timeline"
-  | "payments"
-  | "users"
-  | "clients"
-  | "reconcile"
-  | "workdays"
-  | "compliance"
-  | "vanity"
-  | "equipment"
-  | "vehicles"
-  | "promotions"
   | "tools-mowing"
   | "tools-mulch"
-  | "payroll"
-  | "guides";
+  | "users"
+  | "vanity"
+  | "vehicles"
+  | "workdays";
 
 // Client "Services" uses `client-services` (not just `services`) so
 // BreadcrumbNav's cross-role chip logic (matches inner-tab values
-// across outer roles) doesn't pair it with the Admin Work "Services"
-// tab. Those two tabs share the label but are unrelated: Admin Work →
+// across shells) doesn't pair it with the staff Work "Services" tab.
+// Those two tabs share the label but are unrelated: staff Work →
 // Services is the operator's service-catalog / job-recipe manager;
 // Client → Services is the client's list of services they subscribe
 // to. Wrong-way cross-navigation between them was reported as
@@ -65,25 +76,6 @@ export type SuperTabs =
 export type ClientTabs = "my-jobs" | "public" | "client-services" | "statements" | "client-promotions";
 
 export type PreviewTabs = "routes";
-
-export type WorkerTabs =
-  | "home"
-  | "tasks"
-  | "routes"
-  | "equipment"
-  | "collections"
-  | "vehicles"
-  | "supplies"
-  | "clients"
-  | "properties"
-  | "users"
-  | "groups"
-  | "pricing"
-  | "jobs"
-  | "profile"
-  | "payments"
-  | "payroll"
-  | "guides";
 
 export type EventTypes =
   | "clientTabToPropertiesTabSearch"
@@ -98,18 +90,38 @@ export type EventTypes =
   | "jobsTabToServicesTabSearch"
   | "servicesTabToJobsTabSearch"
   | "clientsTabToServicesTabSearch"
+  | "areasTabToPropertiesTabSearch"
   | "remindersToJobsTabSearch"
   | "jobsToEquipmentKindFilter";
 
 export type DialogMode = "CREATE" | "UPDATE";
 
-export const WORKER_TYPE = ["EMPLOYEE", "CONTRACTOR", "TRAINEE"] as const;
-export type WorkerType = (typeof WORKER_TYPE)[number];
+/**
+ * The worker-type vocabulary, RE-EXPORTED rather than restated.
+ *
+ * This list used to be declared here independently of the API's enum, which
+ * is how the web kept offering a worker type after the API removed it.
+ * `WorkerType`
+ * now comes from @repo/money — the module that decides pay class owns the
+ * vocabulary — so a change there is a compile error here instead of a
+ * dropdown offering a value the server rejects.
+ */
+export type { WorkerType } from "@repo/money";
+import type { WorkerType } from "@repo/money";
+export const WORKER_TYPE = ["EMPLOYEE", "CONTRACTOR", "UNPAID"] as const satisfies readonly WorkerType[];
 
 export type Me = {
   id: string;
   isApproved?: boolean;
-  roles?: Role[];
+  /** What this caller may DO — resolved server-side, suspended grants
+   *  filtered out, and NARROWED by any active perspective. Replaced `roles`:
+   *  the Role enum is gone. Drives UI gating through `Scope.can`, using the
+   *  same can() the route guard uses. */
+  capabilities?: string[];
+  /** Perspectives they may look through, lowest access first. */
+  perspectives?: Array<{ roleId: string; key: string | null; name: string; icon?: string | null; order: number }>;
+  /** The active perspective, or null for "everything I hold". */
+  activePerspectiveRoleId?: string | null;
   email?: string | null;
   phone?: string | null;
   firstName?: string | null;
@@ -124,21 +136,21 @@ export type Me = {
   // SOP, etc.) is served separately via GET /me/policies in Slice 2 and
   // rendered on the worker Compliance section (Slice 2 UI).
   // Override columns: null means "follow workerType default"; true/false is explicit.
-  canPullInventoryOverride?: boolean | null;
-  canChargeBusinessExpensesOverride?: boolean | null;
-  // Effective privileges after resolution (admin/super always true).
+  // The per-person privilege overrides are GONE. An exception is a named
+  // role now (G20), so it shows up in the role list rather than as a
+  // tri-state tick on a profile nobody thinks to check.
+  // Effective privileges after resolution (management always true).
   privileges?: {
     canPullInventory: boolean;
     canChargeBusinessExpenses: boolean;
   };
   // Payment-request delivery channel override. null = use org default.
   paymentCommsMode?: "SERVER" | "CLAIMER" | null;
-  // Super-only "View as another role" support. realRoles / realWorkerType
+  // "View as" support. realRoles / realWorkerType
   // are the unmodified DB values — present even when no impersonation is
   // active (in which case they mirror roles / workerType). The View-as
-  // picker is gated on realRoles?.includes("SUPER") so it stays visible
+  // picker was gated on a role check so it stayed visible
   // even after Super swaps their effective role to Worker/Trainee/etc.
-  realRoles?: Role[];
   realWorkerType?: WorkerType | null;
   isImpersonating?: boolean;
   // True when Super has an active client "View as" session — /api/me
@@ -148,11 +160,20 @@ export type Me = {
   // ImpersonationBanner reads it via getClientImpersonation() from
   // localStorage, not from here.
   isClientImpersonating?: boolean;
+  /** This login is attached to a customer record. Holding no capability
+   *  means two different things — a customer, or a staff account nobody
+   *  has granted a role to yet — and this is what separates them. */
+  isClientContact?: boolean;
+  /**
+   * The territories this person's access is confined to, or null/absent
+   * when it is not confined. `mixed` means they also hold something
+   * company-wide, so only some views are narrowed. Drives AreaScopeNotice.
+   */
+  areaScope?: { trails: string[][]; mixed: boolean } | null;
 };
 
 export type TabPropsType = {
   me: Me | null;
-  purpose: Role;
 };
 
 export const EQUIPMENT_KIND = [
@@ -202,11 +223,11 @@ export type Equipment = {
   id: string;
   type: EquipmentKind;
   status: EquipmentStatus;
-  qrSlug: string;
-  shortDesc: string;
-  brand: string;
-  model: string;
-  energy: EquipmentEnergy;
+  qrSlug: string | null;
+  shortDesc: string | null;
+  brand: string | null;
+  model: string | null;
+  energy: EquipmentEnergy | null;
 
   longDesc?: string | undefined;
   features?: string | undefined;
@@ -286,11 +307,11 @@ export type Client = {
   contacts?: Contact[];
   /** Repeating visits currently on hold across this client's services —
    *  STREAM_PAUSED occurrences. Drives the "N repeating services paused"
-   *  hint + click-through on the Admin Clients tab. Was `pausedJobsCount`,
+   *  hint + click-through on the Clients tab. Was `pausedJobsCount`,
    *  a count of Jobs in status PAUSED; that operation is gone (it was
    *  archiving under a second name), and a held repeating visit is what
-   *  remains. Populated by /admin/clients only; the read-only /clients
-   *  (worker) endpoint may omit it. */
+   *  remains. Populated by the /clients read, which returns it only to
+   *  callers whose capabilities include the paused-visit detail. */
   pausedRepeatingCount?: number;
 };
 
@@ -444,7 +465,14 @@ export type JobOccurrenceAssigneeWithUser = {
   assignedById?: string | null;
   assignedAt?: string | null;
   role?: string | null;
-  user: { id: string; displayName?: string | null; email?: string | null };
+  user: {
+    id: string;
+    displayName?: string | null;
+    email?: string | null;
+    /** Needed by TeamMemberList (G33): only a person on payroll may hold a
+     *  paid seat. Absent reads as "unknown", which re-enables the control. */
+    workerType?: WorkerType | null;
+  };
 };
 
 export type JobOccurrenceFull = {
@@ -464,7 +492,7 @@ export type JobOccurrenceFull = {
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
-  isAdminOnly?: boolean;
+  mustBeAssigned?: boolean;
   proposalAmount?: number | null;
   proposalNotes?: string | null;
   rejectionReason?: string | null;
@@ -565,7 +593,7 @@ export type InvoiceChargeItem = {
   /** Optional CLIENT-VISIBLE detail, e.g. "25 bags at $6.00". */
   detail?: string | null;
   /** What we actually paid, when recorded. Informational: job margin only,
-   *  never the invoice and never the payout. ADMIN-ONLY on the client. */
+   *  never the invoice and never the payout. `money.view` on the client. */
   actualCost?: number | null;
   /** The loosely-linked ledger charge, when one is pointed at. Decorative. */
   businessExpenseId?: string | null;
@@ -593,7 +621,7 @@ export type InvoiceChargeItem = {
 // ---- Payments ----
 
 // Payment methods are fully configuration-driven via the PAYMENT_METHODS
-// setting (a JSON taxonomy editable in Super → Settings). There is no fixed
+// setting (a JSON taxonomy editable in Settings). There is no fixed
 // enum — `PaymentMethod` is just a string keyed to that taxonomy. Use the
 // usePaymentMethodLabels hook to render a method's display label.
 export type PaymentMethod = string;
@@ -613,7 +641,7 @@ export type PaymentSplitItem = {
   // True when this split belongs to the LLC owner. UI renders these as
   // "Owner Earnings" instead of "Worker payout" to distinguish them.
   ownerEarnings?: boolean;
-  user: { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
+  user: { id: string; displayName?: string | null; email?: string | null; workerType?: WorkerType | null };
 };
 
 export type PaymentInfo = {
@@ -656,7 +684,7 @@ export type PaymentListItem = PaymentInfo & {
     // amount). Null on legacy occurrences that pre-date the snapshot.
     promisedPayouts?: Array<{
       userId: string;
-      workerType: string | null;
+      workerType: WorkerType | null;
       splitPercent: number;
       gross: number;
       ratePercent: number;
@@ -669,7 +697,7 @@ export type PaymentListItem = PaymentInfo & {
     assignees?: Array<{
       userId: string;
       role?: string | null;
-      user?: { id: string; displayName?: string | null; email?: string | null; workerType?: string | null } | null;
+      user?: { id: string; displayName?: string | null; email?: string | null; workerType?: WorkerType | null } | null;
     }>;
     job: {
       id: string;
@@ -758,7 +786,7 @@ export type EquipmentCharge = {
     id: string;
     displayName: string | null;
     email: string | null;
-    workerType?: string | null;
+    workerType?: WorkerType | null;
   };
 };
 
@@ -783,7 +811,7 @@ export type WorkerOccurrence = {
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
-  isAdminOnly?: boolean;
+  mustBeAssigned?: boolean;
   proposalAmount?: number | null;
   proposalNotes?: string | null;
   rejectionReason?: string | null;
@@ -822,7 +850,7 @@ export type WorkerOccurrence = {
    *  null rows. When the worker hits Complete, this is auto-set if actual
    *  time falls within the variance threshold (see jobs.ts
    *  evaluateHoursApproval); outside the threshold it stays null until an
-   *  admin/super approves via the Approve Time button. */
+   *  management approves via the Approve Time button. */
   hoursApprovedAt?: string | null;
   hoursApprovedById?: string | null;
   /** Latest payment-rejection reason for this occurrence — surfaced on the

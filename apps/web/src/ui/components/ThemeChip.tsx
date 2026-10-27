@@ -21,7 +21,16 @@ import {
   SURFACES, THEME_IDS, THEME_LABELS, THEME_DESCRIPTIONS,
 } from "@/src/styles/themeTokens";
 
-export default function ThemeChip() {
+export default function ThemeChip({ label }: {
+  /**
+   * Optional text rendered INSIDE the trigger, for the header drawer.
+   *
+   * Inside, not beside: a caption next to the button is not part of it, so
+   * the words — the bigger target, and the part that says what the icon
+   * does — were the one place a click did nothing.
+   */
+  label?: string;
+}) {
   const { theme, setTheme } = useAppTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -58,9 +67,10 @@ export default function ThemeChip() {
     <Box position="relative" ref={ref} flexShrink={0}>
       <HStack
         as="button"
-        gap={0}
+        gap={label ? 1.5 : 0}
         p={1.5}
-        rounded="full"
+        // A pill when it carries words, a circle when it is just the icon.
+        rounded={label ? "md" : "full"}
         // Quiet by design: this sits beside the role chip, which is the
         // header's one loud control. A theme switch is a preference, not an
         // identity, so it reads as chrome until you reach for it.
@@ -76,7 +86,12 @@ export default function ThemeChip() {
         title={`Appearance: ${THEME_LABELS[theme]}`}
         data-testid="theme-chip"
       >
-        <Contrast size={20} />
+        <Contrast size={label ? 16 : 20} />
+        {label && (
+          <Box as="span" fontSize="xs" lineHeight="1.2" whiteSpace="nowrap">
+            {label}
+          </Box>
+        )}
       </HStack>
 
       {open && (
@@ -90,6 +105,14 @@ export default function ThemeChip() {
           transform={shiftX ? `translateX(${shiftX}px)` : undefined}
           bg="bg.panel"
           color="fg"
+          // RESTORE A LINE HEIGHT. The header's right-hand control strip
+          // sets `lineHeight: 0` inline to kill the whitespace between its
+          // icons, and this panel renders inside it, so every label
+          // inherited a zero line height: each row collapsed to its padding
+          // (16px for `py={2}`) and the text overflowed its own row. Only
+          // the active row looked right, because the check icon gave it a
+          // height the text could not.
+          lineHeight="normal"
           borderWidth="1px"
           borderColor="border.emphasis"
           rounded="lg"

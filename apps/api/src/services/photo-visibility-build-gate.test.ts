@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
+import { guardEntitlement } from "../lib/guardIntrospection";
 
 /**
  * WHO A JOB PHOTO IS HIDDEN FROM, AND WHO IT IS NEVER HIDDEN FROM.
@@ -90,6 +91,24 @@ describe("[build-gate] job photo visibility", () => {
     const pubBoard = disp.slice(pubAt);
     expect(pubBoard, "the public board must filter on it").toContain(`${FLAG}: null`);
 
+    // THE SHARE WALL — `GET /photos`, which feeds the Share Photos
+    // workflow: pick job photos, post them to Instagram. That is the
+    // furthest out a photo can go, and the route predated this gate, so it
+    // was offering pulled-down photos for publication. It is also the one
+    // outward surface the caller picks FROM by hand, which makes a quiet
+    // leak here likelier to be acted on than one on a screen nobody curates.
+    const photosAt = disp.length ? read("routes/displays.ts").indexOf('app.get("/photos"') : -1;
+    const routes = read("routes/displays.ts");
+    expect(photosAt, "the share wall route must exist").toBeGreaterThan(-1);
+    const wall = routes.slice(photosAt, routes.indexOf("app.", photosAt + 10));
+    expect(wall, "the share wall must filter on the opt-out — it posts to social media")
+      .toContain(`${FLAG}: null`);
+    // And it must not hand the whole book to the base rung: `schedule.contribute`
+    // is its guard, and without in-handler scoping that is every property's
+    // address for every trainee.
+    expect(wall, "the share wall must scope to the caller's own visits")
+      .toMatch(/callerCan\(req, "schedule\.manage"\)/);
+
     // The PRIVATE board shows today's photos too. It is a back-office screen,
     // not a client-facing one, so the instinct is to let it see everything —
     // but that instinct produces a broken panel, not a more informative one.
@@ -129,18 +148,24 @@ describe("[build-gate] job photo visibility", () => {
     ).not.toContain(FLAG);
   });
 
-  it("only a Super can change it", () => {
-    const admin = read("routes/admin.ts");
-    const at = admin.indexOf('app.post("/super/photos/:photoId/visibility"');
+  it("only someone with settings authority can change it", () => {
+    // Photo visibility sits with the wall screens it governs.
+    const admin = read("routes/displays.ts");
+    const at = admin.indexOf('app.post("/photos/:photoId/visibility"');
     expect(at, "the visibility route must exist").toBeGreaterThan(-1);
+    // Asserts the CAPABILITY, not a role. Phrased in roles this gate would
+    // have had to be relaxed the moment somebody delegated display
+    // management without handing over everything else.
+    const guard = /,\s*([A-Za-z][A-Za-z0-9_]*)\s*,/.exec(admin.slice(at, at + 160))?.[1];
+    expect(guard, "could not read the guard off the visibility route").toBeTruthy();
     expect(
-      admin.slice(at, at + 120),
-      "changing what the outside world sees is a Super decision, like pairing a screen",
-    ).toContain("superGuard");
+      guardEntitlement(admin, guard!),
+      "changing what the outside world sees belongs with managing the screens it shows on",
+    ).toBe("displays.manage");
   });
 
   it("no route is named for a single surface any more", () => {
-    // `/super/displays/photos` was the original home, and it stopped being
+    // The `super`-prefixed displays-photos route was the original home, and
     // honest the moment the public feed turned out to show the same photos.
     const files = readdirSync(join(API, "src/routes")).filter((f) => f.endsWith(".ts"));
     for (const f of files) {

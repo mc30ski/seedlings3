@@ -4,7 +4,7 @@
  * Admin-facing CRUD + version lifecycle + exception management + upload
  * review for the PolicyDocument system. Every state transition uses
  * compare-and-swap (`updateMany` with expected-status guards) so two
- * concurrent admins can't race each other into an inconsistent state.
+ * concurrent holders of `compliance.manage` can't race each other into an inconsistent state.
  * Every write is inside a transaction with an audit event.
  *
  * Slice 1 delivers admin CRUD only — the worker-facing sign / acknowledge /
@@ -71,7 +71,7 @@ export type CreatePolicyInput = {
   targetWorkerTypes: WorkerType[];
   enforcement: PolicyEnforcement;
   workerAction: PolicyWorkerAction;
-  adminCanUploadOnBehalf?: boolean;
+  allowUploadOnBehalf?: boolean;
   requiresWorkerUpload?: boolean;
   workerUploadLabel?: string | null;
   workerUploadAcceptedTypes?: string | null;
@@ -114,7 +114,7 @@ export function computeContentDigest(input: string | Buffer): string {
 
 /**
  * Compare-and-swap version status transition. Prevents lost updates when
- * two admins act on the same version at once (fix #19 in the policy
+ * two holders of `compliance.manage` act on the same version at once (fix #19 in the policy
  * design memo). Split into two steps because Prisma's updateMany doesn't
  * accept FK-scalar fields like `submittedById` in its update payload:
  *
@@ -171,14 +171,14 @@ async function getSettingBool(key: string, fallback: boolean): Promise<boolean> 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const policies = {
-  // ── Admin: Policy template CRUD ──────────────────────────────────────────
+  // ── `compliance.manage`: Policy template CRUD ───────────────────────────
 
   async createPolicy(currentUserId: string, input: CreatePolicyInput) {
     // Validation — enforce the invariants the schema alone can't express.
-    if (input.workerAction === PolicyWorkerAction.NONE && !input.adminCanUploadOnBehalf) {
+    if (input.workerAction === PolicyWorkerAction.NONE && !input.allowUploadOnBehalf) {
       throw new ServiceError(
         "INVALID_POLICY_CONFIG",
-        "Policies with workerAction=NONE must set adminCanUploadOnBehalf=true (admin is the only path).",
+        "Policies with workerAction=NONE must set allowUploadOnBehalf=true (admin is the only path).",
         400,
       );
     }
@@ -233,7 +233,7 @@ export const policies = {
           targetWorkerTypes: input.targetWorkerTypes,
           enforcement: input.enforcement,
           workerAction: input.workerAction,
-          adminCanUploadOnBehalf: input.adminCanUploadOnBehalf ?? false,
+          allowUploadOnBehalf: input.allowUploadOnBehalf ?? false,
           requiresWorkerUpload: input.requiresWorkerUpload ?? false,
           workerUploadLabel: input.workerUploadLabel ?? null,
           workerUploadAcceptedTypes: input.workerUploadAcceptedTypes ?? null,
@@ -298,7 +298,7 @@ export const policies = {
       if (patch.targetWorkerTypes !== undefined) data.targetWorkerTypes = patch.targetWorkerTypes;
       if (patch.enforcement !== undefined) data.enforcement = patch.enforcement;
       if (patch.workerAction !== undefined) data.workerAction = patch.workerAction;
-      if (patch.adminCanUploadOnBehalf !== undefined) data.adminCanUploadOnBehalf = patch.adminCanUploadOnBehalf;
+      if (patch.allowUploadOnBehalf !== undefined) data.allowUploadOnBehalf = patch.allowUploadOnBehalf;
       if (patch.requiresWorkerUpload !== undefined) data.requiresWorkerUpload = patch.requiresWorkerUpload;
       if (patch.workerUploadLabel !== undefined) data.workerUploadLabel = patch.workerUploadLabel;
       if (patch.workerUploadAcceptedTypes !== undefined) data.workerUploadAcceptedTypes = patch.workerUploadAcceptedTypes;
@@ -353,7 +353,7 @@ export const policies = {
       // this policy must have it removed first — otherwise reservation
       // would silently stop enforcing the requirement (archived policies
       // are skipped by the predicate). Surface the blocking equipment by
-      // name so the admin knows what to detach.
+      // name so the caller knows what to detach.
       const blockingEquipment = await tx.equipment.findMany({
         where: { requiredPolicyIds: { has: id } },
         select: { id: true, shortDesc: true, brand: true, model: true, qrSlug: true },
@@ -403,7 +403,7 @@ export const policies = {
     });
   },
 
-  // ── Admin: Version lifecycle ─────────────────────────────────────────────
+  // ── `compliance.manage`: Version lifecycle ──────────────────────────────
 
   async createVersion(currentUserId: string, policyId: string, input: CreateVersionInput) {
     return prisma.$transaction(async (tx) => {
@@ -485,7 +485,7 @@ export const policies = {
   /**
    * Confirms a completed R2 upload for a PDF version, capturing the byte
    * digest + page count computed by the caller (Slice 2 will add a
-   * pdf-lib-based page counter; for Slice 1 the admin submits both).
+   * pdf-lib-based page counter; for Slice 1 a caller with `compliance.manage` submits both).
    */
   async confirmPdfUpload(
     currentUserId: string,
@@ -689,7 +689,7 @@ export const policies = {
     });
   },
 
-  // ── Admin: Exceptions ────────────────────────────────────────────────────
+  // ── `compliance.manage`: Exceptions ─────────────────────────────────────
 
   async grantException(
     currentUserId: string,
@@ -758,7 +758,7 @@ export const policies = {
     });
   },
 
-  // ── Admin: Force resign (bulk revoke) ────────────────────────────────────
+  // ── `compliance.manage`: Force resign (bulk revoke) ─────────────────────
 
   async forceResignAll(currentUserId: string, policyId: string, reason: string) {
     if (!reason?.trim()) {
@@ -791,7 +791,7 @@ export const policies = {
   /**
    * Bulk compliance summary — one row per active user with a workerType,
    * summarizing whether they're current + how many BLOCK policies they
-   * still owe. Used by the admin UsersTab chip and any admin surface that
+   * still owe. Used by the UsersTab chip and any staff-side surface that
    * wants to answer "who's out of compliance?" at a glance.
    *
    * Loads every applicable policy, signature, and exception once, then
@@ -938,11 +938,13 @@ export const policies = {
     });
   },
 
-  // ── Admin: Nudge worker ─────────────────────────────────────────────────
+  // ── Nudge (`compliance.manage`) ─────────────────────────────────────────
   //
-  // Send a push notification to a worker with pending policies, prompting
+  // Send a push notification to someone with pending policies, prompting
   // them to open the Compliance tab and finish signing. Silent no-op if the
-  // worker has no push subscriptions or no pending policies.
+  // target has no push subscriptions; 400 if they have nothing pending.
+  // Manual and one-person-at-a-time — there is no cron that chases late
+  // signers.
 
   async nudgeWorker(currentUserId: string, targetUserId: string) {
     const target = await prisma.user.findUnique({
@@ -994,7 +996,7 @@ export const policies = {
   },
 
 
-  // ── Admin: Sign matrix ───────────────────────────────────────────────────
+  // ── `compliance.manage`: Sign matrix ────────────────────────────────────
   //
   // Grid view — every non-archived worker × every non-archived policy, with
   // per-cell status. Used by the Sign Matrix admin UI + CSV export. Uses the
@@ -1012,7 +1014,7 @@ export const policies = {
       email: string | null;
       workerType: string | null;
     }>;
-    // Approved WORKER-role users who don't have a workerType set. Not
+    // Approved staff who have no workerType set. Not
     // included in `users` because they can't be matched against any
     // policy's targetWorkerTypes and would render as an all-NOT_TARGETED
     // row. Surfaced separately so the frontend can render a warning row
@@ -1051,7 +1053,11 @@ export const policies = {
       where: {
         workerType: null,
         isApproved: true,
-        roles: { some: { role: "WORKER" } },
+        // Holds a role but has no pay class — the state where nothing
+        // resolves. This asked for a role; the
+        // capability model makes this sharper, because holding a role AND
+        // having no worker type is precisely the stuck combination.
+        customRoles: { some: { suspendedAt: null } },
       },
       select: { id: true, displayName: true, email: true },
       orderBy: { displayName: "asc" },
@@ -1239,7 +1245,7 @@ export const policies = {
     };
   },
 
-  // ── Admin: Signature review + revoke + upload-on-behalf ─────────────────
+  // ── `compliance.manage`: Signature review + revoke + upload-on-behalf ───
 
   async reviewUpload(
     currentUserId: string,
@@ -1301,12 +1307,12 @@ export const policies = {
   /**
    * Admin uploads an artifact on behalf of a worker, bypassing the worker
    * sign wizard entirely. Requires the policy to have
-   * adminCanUploadOnBehalf = true. For SIGN-type policies the client-side
+   * allowUploadOnBehalf = true. For SIGN-type policies the client-side
    * "type APPROVE" dialog gates this — the route layer trusts that gate
    * happened, but writes an especially detailed audit record so the
    * override is discoverable.
    */
-  async adminUploadOnBehalf(
+  async uploadOnBehalf(
     currentUserId: string,
     input: {
       userId: string;
@@ -1328,7 +1334,7 @@ export const policies = {
       });
       if (!policy) throw new ServiceError("NOT_FOUND", "Policy not found.", 404);
       if (policy.archivedAt) throw new ServiceError("POLICY_ARCHIVED", "Policy is archived.", 409);
-      if (!policy.adminCanUploadOnBehalf) {
+      if (!policy.allowUploadOnBehalf) {
         throw new ServiceError(
           "UPLOAD_ON_BEHALF_NOT_ALLOWED",
           "This policy doesn't allow admin upload on behalf.",
@@ -1373,7 +1379,7 @@ export const policies = {
           signatureUserAgent: input.userAgent,
         },
       });
-      await writeAudit(tx, AUDIT.POLICY_SIGNATURE.ADMIN_UPLOADED_ON_BEHALF, currentUserId, {
+      await writeAudit(tx, AUDIT.POLICY_SIGNATURE.UPLOADED_ON_BEHALF, currentUserId, {
         signatureId: created.id,
         userId: input.userId,
         policyId: input.policyId,
@@ -1798,7 +1804,7 @@ export const policies = {
   // commit the final signature (SIGN) or acknowledgment (ACKNOWLEDGE).
   // Every write is inside a transaction with a CAS guard on the target
   // version's status so a signature can't land against a rolled-back or
-  // draft version even if the client raced with an admin action.
+  // draft version even if the client raced with someone with `compliance.manage` action.
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
@@ -1815,7 +1821,7 @@ export const policies = {
 
     const now = new Date();
     // All non-archived policies targeting this worker's type. Owner or
-    // admin-only users with workerType=null still see policies with an
+    // staff with workerType=null still see policies with an
     // empty targetWorkerTypes only — but those don't exist in practice, so
     // in that case they see nothing.
     const workerTypeFilter = user.workerType
@@ -1983,7 +1989,7 @@ export const policies = {
 
     const required = policies
       .filter((p) => {
-        // Anything in the admin's queue is not a worker action right now.
+        // Anything in the manager’s queue is not a worker action right now.
         if (awaitingReviewIds.has(p.id)) return false;
         // Active exception overrides the entire "required" state — the
         // worker is explicitly excused for now regardless of whether they
@@ -2363,7 +2369,7 @@ export const policies = {
       if (sig.uploadStatus !== PolicyUploadStatus.PENDING_REVIEW) {
         throw new ServiceError(
           "NOT_PENDING_REVIEW",
-          "Only pending-review uploads can be cancelled from the worker side. Contact an admin if you need to change an approved record.",
+          "Only pending-review uploads can be cancelled from the worker side. Contact someone with compliance authority if you need to change an approved record.",
           409,
         );
       }
@@ -2467,7 +2473,7 @@ export const policies = {
       if (policy.workerAction !== PolicyWorkerAction.SIGN) {
         throw new ServiceError(
           "NOT_SIGN_POLICY",
-          `Use ${policy.workerAction === PolicyWorkerAction.ACKNOWLEDGE ? "acknowledgePolicy" : "an admin upload"} for this policy.`,
+          `Use ${policy.workerAction === PolicyWorkerAction.ACKNOWLEDGE ? "acknowledgePolicy" : "uploadOnBehalf"} for this policy.`,
           400,
         );
       }
@@ -2650,11 +2656,11 @@ export const policies = {
   },
 
   /**
-   * Admin-only presigned GET for any version's content (any status).
+   * Presigned GET for any version's content, any status — `compliance.manage`.
    * Used by the preview dialog to render PDF versions inline before publish.
    * Returns null if the version has no PDF content (markdown-only versions).
    */
-  async getVersionContentUrlForAdmin(versionId: string): Promise<string | null> {
+  async getAnyVersionContentUrl(versionId: string): Promise<string | null> {
     const version = await prisma.policyDocumentVersion.findUnique({
       where: { id: versionId },
       select: { contentR2Key: true, contentFormat: true },

@@ -41,7 +41,8 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { useBranding } from "@/src/lib/useBranding";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Vanity URLs — Super-only editor.
+// Vanity URLs — `marketing.campaigns` editor. (Split out of
+// `marketing.manage` on 2026-10-20; that one is banners and announcements.)
 //
 // Configurable branded shortcuts served on seedlings.pro (currently
 // hardcoded in the API host allowlist; moves to a Setting when Phase 2
@@ -172,7 +173,7 @@ export default function VanityUrlsTab() {
 
   const load = useCallback(async () => {
     try {
-      const list = await apiGet<VanityPage[]>("/api/super/vanity");
+      const list = await apiGet<VanityPage[]>("/api/vanity");
       setPages(list);
     } catch (e: any) {
       publishInlineMessage({
@@ -196,7 +197,7 @@ export default function VanityUrlsTab() {
     (async () => {
       try {
         const s = await apiGet<{ enabled: boolean; showHistory: boolean }>(
-          "/api/super/vanity/animation-settings",
+          "/api/vanity/animation-settings",
         );
         if (cancelled) return;
         setAnimationEnabled(!!s?.enabled);
@@ -212,7 +213,7 @@ export default function VanityUrlsTab() {
       setAnimationSettingBusy(true);
       try {
         const s = await apiPatch<{ enabled: boolean; showHistory: boolean }>(
-          "/api/super/vanity/animation-settings",
+          "/api/vanity/animation-settings",
           patch,
         );
         setAnimationEnabled(!!s?.enabled);
@@ -249,7 +250,7 @@ export default function VanityUrlsTab() {
   const setAsDefault = useCallback(
     async (id: string) => {
       try {
-        await apiPatch(`/api/super/vanity/${id}/default`, {});
+        await apiPatch(`/api/vanity/${id}/default`, {});
         await load();
       } catch (e: any) {
         publishInlineMessage({
@@ -284,7 +285,7 @@ export default function VanityUrlsTab() {
       // returns success and we reload for authoritative sortOrders.
       setPages(next);
       try {
-        await apiPatch("/api/super/vanity/reorder", {
+        await apiPatch("/api/vanity/reorder", {
           orderedIds: next.map((r) => r.id),
         });
         await load();
@@ -306,7 +307,7 @@ export default function VanityUrlsTab() {
   const toggleStartupAnimation = useCallback(
     async (id: string, enabled: boolean) => {
       try {
-        await apiPatch(`/api/super/vanity/${id}/startup-animation`, { enabled });
+        await apiPatch(`/api/vanity/${id}/startup-animation`, { enabled });
         await load();
       } catch (e: any) {
         publishInlineMessage({
@@ -334,7 +335,7 @@ export default function VanityUrlsTab() {
     const row = pages.find((p) => p.id === pendingDeleteId);
     if (!row) return;
     try {
-      await apiDelete(`/api/super/vanity/${pendingDeleteId}`);
+      await apiDelete(`/api/vanity/${pendingDeleteId}`);
       publishInlineMessage({ type: "SUCCESS", text: `Deleted "${row.slug}".` });
       setPendingDeleteId(null);
       await load();
@@ -861,7 +862,7 @@ function VanityEditor({
 
   async function refreshImage(id: string) {
     try {
-      const fresh = await apiGet<VanityPage>(`/api/super/vanity/${id}`);
+      const fresh = await apiGet<VanityPage>(`/api/vanity/${id}`);
       setImageUrl(fresh?.imageUrl ?? null);
     } catch {
       // Silent — the upload succeeded; only the local preview lags.
@@ -880,7 +881,7 @@ function VanityEditor({
     let key = "";
     try {
       const presigned = await apiPost<{ uploadUrl: string; key: string }>(
-        `/api/super/vanity/${existing.id}/image-upload-url`,
+        `/api/vanity/${existing.id}/image-upload-url`,
         { contentType },
       );
       uploadUrl = presigned.uploadUrl;
@@ -953,7 +954,7 @@ function VanityEditor({
       return;
     }
     try {
-      await apiPost(`/api/super/vanity/${existing.id}/confirm-image`, { key });
+      await apiPost(`/api/vanity/${existing.id}/confirm-image`, { key });
       await refreshImage(existing.id);
       publishInlineMessage({ type: "SUCCESS", text: "Image uploaded." });
     } catch (e: any) {
@@ -970,7 +971,7 @@ function VanityEditor({
     if (!existing) return;
     setImageBusy(true);
     try {
-      await apiDelete(`/api/super/vanity/${existing.id}/image`);
+      await apiDelete(`/api/vanity/${existing.id}/image`);
       setImageUrl(null);
       publishInlineMessage({ type: "SUCCESS", text: "Image removed." });
     } catch (e: any) {
@@ -1071,10 +1072,10 @@ function VanityEditor({
         showInStartupAnimation: existing?.showInStartupAnimation ?? false,
       };
       if (isNew) {
-        await apiPost("/api/super/vanity", payload);
+        await apiPost("/api/vanity", payload);
         publishInlineMessage({ type: "SUCCESS", text: "Vanity URL created." });
       } else {
-        await apiPatch(`/api/super/vanity/${existing!.id}`, payload);
+        await apiPatch(`/api/vanity/${existing!.id}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Vanity URL updated." });
       }
       onSaved();

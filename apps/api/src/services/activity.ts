@@ -2,13 +2,13 @@ import { prisma } from "../db/prisma";
 import { AuditTuple } from "../lib/auditActions";
 import { AuditScope, AuditVerb } from "@prisma/client";
 import { etMidnight, etToday, etAddDays } from "../lib/dates";
-import type { AdminActivityUser, AdminActivityEvent } from "../types/services";
+import type { DirectoryActivityUser, DirectoryActivityEvent } from "../types/services";
 import type { ServicesActivity } from "../types/services";
 import { toActionString } from "../lib/auditActions";
 
 export const activity: ServicesActivity = {
   async listUserActivity() {
-    const results: AdminActivityUser[] = [];
+    const results: DirectoryActivityUser[] = [];
 
     const usersById = await prisma.user.findMany({
       where: {
@@ -56,7 +56,7 @@ export const activity: ServicesActivity = {
         return out;
       }
 
-      const output: AdminActivityEvent[] = userEvents.map((e) => ({
+      const output: DirectoryActivityEvent[] = userEvents.map((e) => ({
         id: e.id,
         at: e.createdAt,
         type: toActionString([e.scope, e.verb]),

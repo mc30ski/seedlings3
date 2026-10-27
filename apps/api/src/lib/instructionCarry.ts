@@ -3,7 +3,7 @@
 //
 // ONE IMPLEMENTATION, because there are four places that create a visit for a
 // job — the recurrence generator, a manual add, the next-visit created when a
-// payment clears, and the admin duplicate path — and an instruction that only
+// payment clears, and the duplicate path — and an instruction that only
 // travels through one of them is an instruction the crew does not get.
 //
 // TWO KINDS OF TRAVEL, and they are not the same query:

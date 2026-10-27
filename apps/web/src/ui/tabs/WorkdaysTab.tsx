@@ -24,16 +24,16 @@ import MileageReviewDialog, { type MileageReviewEntry } from "@/src/ui/dialogs/M
 import { bizToday, bizAddDays, bizToLocalInputValue, bizParseLocalInputValue, bizInstantFromEtParts, fmtTimeOpts, fmtDateOpts, type EtDateKey } from "@/src/lib/dates";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Super → Workdays — day-paged review surface.
+// Workdays — day-paged review surface.
 //
-// Pulls /api/super/workdays/by-date?date=YYYY-MM-DD and groups the result
+// Pulls /api/workdays/by-date?date=YYYY-MM-DD and groups the result
 // into APPROVED / PENDING APPROVAL / NEEDS ENDING / DIDN'T WORK sections.
 // Each row has a Review button that opens the unified ReviewDialog (edit
 // times + approve / unapprove). Bulk approve sits at the bottom of the
 // pending bucket.
 //
 // The 4 AM rule (settings-driven) is enforced server-side; this UI reads
-// `adminWindowOpen` from the response and switches into a "same-day
+// `reviewWindowOpen` from the response and switches into a "same-day
 // approval" mode when false — actions are still allowed but the operator
 // has to clear a typed double-confirm before the request goes out (and
 // the server stamps `sameDayBypass: true` in the audit log). Same-day
@@ -49,7 +49,7 @@ type WorkerLite = {
   workerType: string | null;
 };
 
-type SuperWorkdayRow = {
+type WorkdayReviewRow = {
   id: string;
   userId: string;
   workdayDate: string;
@@ -62,7 +62,7 @@ type SuperWorkdayRow = {
   approvedBy: { id: string; displayName: string | null; email: string | null } | null;
   uiState: "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "APPROVED";
   isOpen: boolean;
-  adminWindowOpen: boolean;
+  reviewWindowOpen: boolean;
   /** Projected earnings for the worker on THIS workday date. Same
    *  math the operations dashboard uses; server-computed so the row
    *  can show a $/hr chip once approved. */
@@ -81,12 +81,12 @@ type DidntWorkUser = {
 
 type WorkdaysByDateResponse = {
   workdayDate: string;
-  adminWindowOpen: boolean;
-  rows: SuperWorkdayRow[];
+  reviewWindowOpen: boolean;
+  rows: WorkdayReviewRow[];
   didntWork: DidntWorkUser[];
 };
 
-// One mileage session as returned by /super/mileage/by-date. Response
+// One mileage session as returned by /mileage/by-date. Response
 // is a map keyed by driverUserId → entries[]. Sessions are surfaced
 // inline on each WorkdayRow with an Approve-mileage button that fires
 // independently of the workday-hours approval.
@@ -115,7 +115,7 @@ function fmtDuration(ms: number): string {
   return `${h}h ${m}m`;
 }
 
-function activeMs(row: SuperWorkdayRow, now: number = Date.now()): number {
+function activeMs(row: WorkdayReviewRow, now: number = Date.now()): number {
   const start = Date.parse(row.startedAt);
   const end = row.endedAt ? Date.parse(row.endedAt) : now;
   let paused = row.totalPausedMs;
@@ -157,7 +157,7 @@ export default function WorkdaysTab({
   );
   const [data, setData] = useState<WorkdaysByDateResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [reviewRow, setReviewRow] = useState<SuperWorkdayRow | null>(null);
+  const [reviewRow, setReviewRow] = useState<WorkdayReviewRow | null>(null);
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   // Backfill dialog state — Super clicks "Add workday" in the Didn't
@@ -208,9 +208,9 @@ export default function WorkdaysTab({
       // for the same date. Mileage endpoint returns {} when nobody
       // drove that day.
       const [r, mileage] = await Promise.all([
-        apiGet<WorkdaysByDateResponse>(`/api/super/workdays/by-date?date=${selectedDate}`),
+        apiGet<WorkdaysByDateResponse>(`/api/workdays/by-date?date=${selectedDate}`),
         apiGet<Record<string, WorkdaysTabMileageEntry[]>>(
-          `/api/super/mileage/by-date?date=${selectedDate}`,
+          `/api/mileage/by-date?date=${selectedDate}`,
         ).catch(() => ({} as Record<string, WorkdaysTabMileageEntry[]>)),
       ]);
       setData(r);
@@ -224,10 +224,10 @@ export default function WorkdaysTab({
     }
   }, [selectedDate]);
 
-  async function approveMileageForRow(row: SuperWorkdayRow) {
+  async function approveMileageForRow(row: WorkdayReviewRow) {
     setBusyMileageId(row.id);
     try {
-      await apiPost(`/api/super/mileage/approve-day`, {
+      await apiPost(`/api/mileage/approve-day`, {
         userId: row.userId,
         entryDate: row.workdayDate,
       });
@@ -251,10 +251,10 @@ export default function WorkdaysTab({
 
   // Bucket the rows for rendering. Sorting is server-side; we just split.
   const grouped = useMemo(() => {
-    const approved: SuperWorkdayRow[] = [];
-    const pending: SuperWorkdayRow[] = [];
-    const needsEnding: SuperWorkdayRow[] = [];
-    const liveToday: SuperWorkdayRow[] = []; // today's IN_PROGRESS / PAUSED
+    const approved: WorkdayReviewRow[] = [];
+    const pending: WorkdayReviewRow[] = [];
+    const needsEnding: WorkdayReviewRow[] = [];
+    const liveToday: WorkdayReviewRow[] = []; // today's IN_PROGRESS / PAUSED
     if (!data) return { approved, pending, needsEnding, liveToday };
     for (const r of data.rows) {
       if (r.uiState === "APPROVED") approved.push(r);
@@ -262,7 +262,7 @@ export default function WorkdaysTab({
       else if (r.uiState === "IN_PROGRESS" || r.uiState === "PAUSED") {
         // If the day's already past, this is "needs ending" (forgot to end).
         // If today, it's just "currently working."
-        if (data.adminWindowOpen) needsEnding.push(r);
+        if (data.reviewWindowOpen) needsEnding.push(r);
         else liveToday.push(r);
       }
     }
@@ -358,14 +358,14 @@ export default function WorkdaysTab({
               approved: string[];
               alreadyApproved: string[];
               failed: { id: string; reason: string }[];
-            }>("/api/super/workdays/bulk-approve", {
+            }>("/api/workdays/bulk-approve", {
               workdayIds,
-              allowSameDay: !!data && !data.adminWindowOpen,
+              allowSameDay: !!data && !data.reviewWindowOpen,
             })
           : Promise.resolve({ approved: [], alreadyApproved: [], failed: [] }),
         Promise.allSettled(
           mileageTargets.map((t) =>
-            apiPost(`/api/super/mileage/approve-day`, {
+            apiPost(`/api/mileage/approve-day`, {
               userId: t.userId,
               entryDate: t.entryDate,
             }),
@@ -461,7 +461,7 @@ export default function WorkdaysTab({
       
       {/* Pending-by-day chip row — only renders when there's a backlog.
           Each chip is a one-click jump to that day; the active chip
-          highlights so Super can tell at a glance where they are. The
+          highlights so the reviewer can tell at a glance where they are. The
           parent (pages/index.tsx) supplies the counts and refreshes
           them via onApprovalsChanged after every mutation. */}
       {pendingByDate.length > 0 && (
@@ -505,7 +505,7 @@ export default function WorkdaysTab({
                   {grouped.approved.length} approved · {grouped.pending.length} pending
                   {grouped.needsEnding.length > 0 && ` · ${grouped.needsEnding.length} needs ending`}
                   {data.didntWork.length > 0 && ` · ${data.didntWork.length} didn't work`}
-                  {!data.adminWindowOpen && " · same-day approval (risky)"}
+                  {!data.reviewWindowOpen && " · same-day approval (risky)"}
                 </Text>
               )}
             </Box>
@@ -539,7 +539,7 @@ export default function WorkdaysTab({
               </Button>
             </HStack>
           </HStack>
-          {!data?.adminWindowOpen && (
+          {!data?.reviewWindowOpen && (
             <Box mt={2} p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" borderRadius="md">
               <HStack gap={2} align="start">
                 <AlertTriangle size={14} color="var(--chakra-colors-orange-700)" style={{ marginTop: 2 }} />
@@ -691,7 +691,7 @@ export default function WorkdaysTab({
 
           {/* DIDN'T WORK — short list of workers without a row, restricted
               to users with ≥1 workday in history (server enforces).
-              Each row gets an "Add workday" affordance so Super can
+              Each row gets an "Add workday" affordance so a `time.manage` holder can
               backfill a row for a worker who forgot to clock in.
 
               Also surfaces mileage sessions on this date for drivers
@@ -845,7 +845,7 @@ export default function WorkdaysTab({
         totalHours={bulkStats.totalHours}
         outliers={bulkStats.outliers}
         mileageCount={bulkStats.mileageCount}
-        sameDay={!!data && !data.adminWindowOpen}
+        sameDay={!!data && !data.reviewWindowOpen}
         onCancel={() => setBulkConfirmOpen(false)}
         onConfirm={() => void runBulkApprove()}
       />
@@ -896,7 +896,7 @@ function WorkdayRow({
   mileageChecked,
   onToggleMileage,
 }: {
-  row: SuperWorkdayRow;
+  row: WorkdayReviewRow;
   onReview: () => void;
   checkbox?: boolean;
   checked?: boolean;
@@ -1063,7 +1063,7 @@ function ReviewDialog({
   onClose,
   onAfter,
 }: {
-  row: SuperWorkdayRow;
+  row: WorkdayReviewRow;
   onClose: () => void;
   onAfter: () => void;
 }) {
@@ -1081,7 +1081,7 @@ function ReviewDialog({
   // until the operator types APPROVE — that's the second "are you sure"
   // beyond the click that opened the confirm.
   const [sameDayConfirmOpen, setSameDayConfirmOpen] = useState(false);
-  const sameDay = !row.adminWindowOpen;
+  const sameDay = !row.reviewWindowOpen;
 
   const dirty = useMemo(() => {
     if (bizToLocalInputValue(row.startedAt) !== startedAt) return true;
@@ -1116,7 +1116,7 @@ function ReviewDialog({
     if (!dirty) return;
     setSaving(true);
     try {
-      await apiPatch(`/api/super/workdays/${row.id}`, payload());
+      await apiPatch(`/api/workdays/${row.id}`, payload());
       publishInlineMessage({ type: "SUCCESS", text: "Workday updated." });
       onAfter();
     } catch (err) {
@@ -1142,7 +1142,7 @@ function ReviewDialog({
     try {
       // Send edits + approval in one call. Server runs the edit first
       // then sets approvedAt atomically.
-      await apiPost(`/api/super/workdays/${row.id}/approve`, payload());
+      await apiPost(`/api/workdays/${row.id}/approve`, payload());
       publishInlineMessage({ type: "SUCCESS", text: "Workday approved." });
       onAfter();
     } catch (err) {
@@ -1155,7 +1155,7 @@ function ReviewDialog({
   async function unapprove() {
     setSaving(true);
     try {
-      await apiPost(`/api/super/workdays/${row.id}/unapprove`, {});
+      await apiPost(`/api/workdays/${row.id}/unapprove`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Workday unapproved." });
       onAfter();
     } catch (err) {
@@ -1222,9 +1222,9 @@ function ReviewDialog({
                 <Box>
                   <HStack justify="space-between" align="center" mb={1}>
                     <Text fontSize="xs" color="fg.muted">Ended at</Text>
-                    {/* Super-only quick-fill for the "worker forgot to
+                    {/* Quick-fill (`time.manage`) for the "worker forgot to
                         end and paused instead" pattern. This dialog is
-                        already Super-guarded (POST /api/super/...), so
+                        already `time.manage`-guarded (POST /api/...), so
                         no extra gate needed. One click fills Ended with
                         the current wall-clock; the operator can still
                         adjust before approving. Only shown when the
@@ -1485,7 +1485,7 @@ function CreateWorkdayDialog({
 }) {
   // Default to the same shape the seed backfill uses: 8 AM → 5 PM ET
   // with 30 minutes of pause. That's a realistic-looking standard
-  // workday — Super edits the fields as needed before saving.
+  // workday — the reviewer edits the fields as needed before saving.
   const defaultStartIso = useMemo(
     () => bizInstantFromEtParts(workdayDate as EtDateKey, "08:00"),
     [workdayDate],
@@ -1512,7 +1512,7 @@ function CreateWorkdayDialog({
     if (saving) return;
     setSaving(true);
     try {
-      await apiPost("/api/super/workdays/create", {
+      await apiPost("/api/workdays/create", {
         userId: worker.userId,
         workdayDate,
         startedAt: bizParseLocalInputValue(startedAt) || null,
@@ -1550,7 +1550,7 @@ function CreateWorkdayDialog({
                   <Text fontSize="xs" color="blue.fg">
                     Backfilling a workday for <b>{workerLabel(worker)}</b> on <b>{friendlyDate}</b>.
                     The row will land in PENDING APPROVAL — you can approve it after creating.
-                    Audit logs the action as a Super-side create.
+                    Audit logs the action as someone with timesheet authority-side create.
                   </Text>
                 </Box>
                 <Box>

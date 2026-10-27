@@ -5,14 +5,17 @@
 //
 // Canonical spec: docs/features/education.md
 //
-// Blended additive-scope tab (see reference-tab-blend-pattern):
-//   worker  → catalog + reader
-//   admin   → + author drafts, submit for approval, own images
-//   super   → + approve/reject/rollback/archive/purge, all media, video
+// One tab, built from entitlements (see reference-tab-blend-pattern):
+//   (no capability) → catalog + reader. Guides reads `/me/guides`, an
+//                     OWNERSHIP route, so the tab itself is ALWAYS in
+//                     TAB_REQUIREMENTS — everyone gets the material
+//                     written for them.
+//   `content.manage`  → + author drafts, submit for approval, own images
+//   `content.approve` → + approve/reject/rollback/archive/purge, all
+//                       media, video
 //
-// `showSuperExtras` is `effScope.isSuper && hasSuperRole` and must NEVER
-// fall back to `forAdmin ||`, or a Super viewing the Admin tab leaks
-// approval controls into a surface that is meant to be an admin's view.
+// The two are SEPARATELY GRANTABLE: a writer who cannot approve their own
+// work is the normal case, which is the whole point of having two.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -32,13 +35,13 @@ import {
   Portal,
 } from "@chakra-ui/react";
 import { AlertTriangle, ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import GuideMarkdown from "@/src/ui/components/GuideMarkdown";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { determineRoles } from "@/src/lib/roles";
+import { scopeFromMe } from "@/src/lib/roles";
 import type { Me } from "@/src/lib/types";
 import {
   fetchGuides,
@@ -64,24 +67,22 @@ import {
 } from "@/src/lib/guides";
 import GuideMediaLibrary from "@/src/ui/components/GuideMediaLibrary";
 import GuideApprovalsSection from "@/src/ui/components/GuideApprovalsSection";
+import type { Scope } from "@/src/lib/scope";
 
 export default function GuidesTab({
   me,
-  purpose = "WORKER",
   scope,
 }: {
   me: Me | null;
-  purpose?: "WORKER" | "ADMIN" | "SUPER";
-  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  scope?: Scope;
 }) {
-  const { isSuper: hasSuperRole } = determineRoles(me, purpose);
-  const effScope = scope ?? {
-    isWorker: true,
-    isAdmin: purpose !== "WORKER",
-    isSuper: purpose === "SUPER",
-  };
-  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
-  const showSuperExtras = effScope.isSuper && hasSuperRole;
+  // Capability-derived, with no `purpose` in it. The old shape read the
+  // mounting shell out of `purpose` — the tab decided what somebody could
+  // do from how they navigated to it.
+  const effScope = scope ?? scopeFromMe(me);
+  // What this actually gates, per the route map.
+  const canWriteGuides = effScope.can("content.manage");
+  const canApproveGuides = effScope.can("content.approve");
 
   const [items, setItems] = useState<GuideListItem[] | null>(null);
   const [cats, setCats] = useState<GuideCategory[]>([]);
@@ -101,23 +102,23 @@ export default function GuidesTab({
     setLoading(true);
     try {
       const rows = await fetchGuides({ q: q.trim() || undefined, categoryKey: categoryKey || undefined });
-      // The Worker tab must show the WORKER catalog even when the person
-      // looking at it is a Super. Role shells are client-side, so without
-      // activating "view as" the API answers with the caller's real
-      // privileges and hands back drafts too — which then rendered on the
-      // Worker tab, badgeless, indistinguishable from published material.
+      // A READER sees only published rows, even when the person reading
+      // happens to hold `content.manage`. The API answers with the
+      // caller's real entitlements and hands back drafts, so without this
+      // filter an author's unpublished work rendered in the plain catalog
+      // badgeless, indistinguishable from approved material.
       //
-      // This is presentation, not access control: a Super is entitled to
-      // every row here. The server remains the only thing standing
-      // between a real worker and an unapproved guide.
-      setItems(showAdminExtras ? rows : rows.filter((r) => r.isPublished));
+      // This is presentation, not access control: an author is entitled to
+      // every row here. The server remains the only thing standing between
+      // somebody without `content.manage` and an unapproved guide.
+      setItems(canWriteGuides ? rows : rows.filter((r) => r.isPublished));
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load guides.", err) });
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, [q, categoryKey, showAdminExtras]);
+  }, [q, categoryKey, canWriteGuides]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), q ? 250 : 0);
@@ -135,8 +136,8 @@ export default function GuidesTab({
 
   useEffect(() => {
     void fetchGuideCategories().then(setCats).catch(() => setCats([]));
-    if (showAdminExtras) void fetchMediaLimits().then(setLimits).catch(() => setLimits(null));
-  }, [showAdminExtras]);
+    if (canWriteGuides) void fetchMediaLimits().then(setLimits).catch(() => setLimits(null));
+  }, [canWriteGuides]);
 
   const catLabel = useCallback(
     (key: string) => cats.find((c) => c.key === key)?.label ?? key,
@@ -174,8 +175,8 @@ export default function GuidesTab({
           setOpenId(null);
           void load();
         }}
-        showAdminExtras={showAdminExtras}
-        showSuperExtras={showSuperExtras}
+        canWriteGuides={canWriteGuides}
+        canApproveGuides={canApproveGuides}
         limits={limits}
         catLabel={catLabel}
         cats={cats}
@@ -185,31 +186,31 @@ export default function GuidesTab({
 
   return (
     <Box w="full">
-      <TabExplainer explainerId={`seedlings:guidesTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}>
+      <TabExplainer explainerId={`seedlings:guidesTab:guideOpen:${canApproveGuides ? "super" : canWriteGuides ? "admin" : "worker"}`}>
         <ExplainerText>
           How-to references for the work — how a job is done, how a machine is handled, what a
           client expects. Everyone sees <Em>published</Em> guides, never drafts. Guides are
-          written by admins and published by a super admin, so if something here is wrong or
+          written and then reviewed before publishing, so if something here is wrong or
           out of date, say so.
         </ExplainerText>
-        {showAdminExtras && (
-          <RoleSection role="Admin">
+        {canWriteGuides && (
+          <CapabilitySection capability="content.manage" scope={scope}>
             <ExplainerText>
               You can <Em>write and revise</Em> guides and upload media for them.{" "}
               <Em>You cannot publish.</Em> Saving a draft and submitting it sends it for
               approval — until then the crew still sees the last published version, not your
               draft.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
-        {showSuperExtras && (
-          <RoleSection role="Super">
+        {canApproveGuides && (
+          <CapabilitySection capability="content.approve" scope={scope}>
             <ExplainerText>
               <Em>Publishing is yours alone</Em> — submitted drafts wait in the approvals
               queue until you approve or reject. You can also roll a guide back to an earlier
               version, unpublish, archive, or purge it outright.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
       </TabExplainer>
       <HStack mb={3} gap={2} align="center" wrap="wrap">
@@ -247,12 +248,12 @@ export default function GuidesTab({
             </Select.Positioner>
           </Select.Root>
         </Box>
-        {showAdminExtras && (
+        {canWriteGuides && (
           <NewGuideButton cats={cats} onCreated={(id) => setOpenId(id)} />
         )}
       </HStack>
 
-      {/* Review queue. Only a Super can approve, and approving is the only
+      {/* Review queue. Only someone with `content.approve` can approve, and approving is the only
           way material becomes readable by a worker — so this is a
           blocked-on-you queue and pulses like the others. The glow matches
           the section's OWN palette (attention = orange), not the blue of
@@ -267,7 +268,7 @@ export default function GuidesTab({
           own count keeps driving this section. Unmounting would remove
           the thing that reports the count, and the queue could never
           reappear after being emptied without a tab reload. */}
-      {showSuperExtras && (
+      {canApproveGuides && (
         <Box mb={approvalCount > 0 ? 3 : 0} display={approvalCount > 0 ? "block" : "none"}>
           <Dashboard
             storageKey="seedlings:guidesTab:approvalsOpen"
@@ -293,7 +294,7 @@ export default function GuidesTab({
         </Box>
       )}
 
-      {showAdminExtras && <GuideMediaLibrary showSuperExtras={showSuperExtras} limits={limits} />}
+      {canWriteGuides && <GuideMediaLibrary canApproveGuides={canApproveGuides} limits={limits} />}
 
       {loading && !items ? (
         <Box textAlign="center" py={8}>
@@ -308,8 +309,8 @@ export default function GuidesTab({
             <Text fontSize="xs" color="fg.muted" mt={1}>
               {q || categoryKey
                 ? "Try a different search or category."
-                : showAdminExtras
-                  ? "Create the first one — it becomes readable once a Super approves it."
+                : canWriteGuides
+                  ? "Create the first one — it becomes readable once it is approved."
                   : "Training material will appear here once it's published."}
             </Text>
           </Card.Body>
@@ -345,30 +346,28 @@ export default function GuidesTab({
                               {g.title}
                             </Text>
                             {/* Authors see WHY a guide isn't readable yet.
-                                Gated on SCOPE, not on whether the payload
-                                happens to carry the fields: role shells are
-                                a client-side view, so a Super browsing the
-                                Worker tab without activating "view as"
-                                still calls the API with Super privileges
-                                and gets author fields back. Reasoning from
-                                the payload put "Draft" and "Pending
-                                approval" badges on the Worker tab. */}
-                            {showAdminExtras && !g.isPublished && (
+                                Gated on the CAPABILITY, not on whether the
+                                payload happens to carry the fields: the API
+                                answers with the caller's real entitlements,
+                                so reasoning from the payload put "Draft" and
+                                "Pending approval" badges in front of every
+                                reader who also happened to be an author. */}
+                            {canWriteGuides && !g.isPublished && (
                               <Badge size="sm" colorPalette="gray" variant="subtle">
                                 Not published
                               </Badge>
                             )}
-                            {showAdminExtras && g.pendingVersionId && (
+                            {canWriteGuides && g.pendingVersionId && (
                               <Badge size="sm" colorPalette="orange" variant="solid">
                                 Pending approval
                               </Badge>
                             )}
-                            {showAdminExtras && g.rejectedVersionId && !g.pendingVersionId && (
+                            {canWriteGuides && g.rejectedVersionId && !g.pendingVersionId && (
                               <Badge size="sm" colorPalette="red" variant="solid">
                                 Sent back
                               </Badge>
                             )}
-                            {showAdminExtras &&
+                            {canWriteGuides &&
                               g.draftVersionId &&
                               !g.pendingVersionId &&
                               !g.rejectedVersionId && (
@@ -452,7 +451,7 @@ function NewGuideButton({
       <ConfirmDialog
         open={open}
         title="New guide"
-        message="Give it a title. You can set the category, summary and body next — it stays invisible to workers until a Super approves it."
+        message="Give it a title. You can set the category, summary and body next — it stays invisible until a `content.approve` holder approves it."
         inputLabel="Title"
         inputPlaceholder="How to fertilize Bermuda grass"
         inputDefaultValue={title}
@@ -477,8 +476,8 @@ function GuideDetailView({
   idOrSlug,
   onBack,
   onOpenGuide,
-  showAdminExtras,
-  showSuperExtras,
+  canWriteGuides,
+  canApproveGuides,
   limits,
   catLabel,
   cats,
@@ -486,8 +485,8 @@ function GuideDetailView({
   idOrSlug: string;
   onBack: () => void;
   onOpenGuide: (slug: string) => void;
-  showAdminExtras: boolean;
-  showSuperExtras: boolean;
+  canWriteGuides: boolean;
+  canApproveGuides: boolean;
   limits: MediaLimits | null;
   catLabel: (key: string) => string;
   cats: GuideCategory[];
@@ -542,7 +541,7 @@ function GuideDetailView({
     try {
       const g = await fetchGuide(idOrSlug);
       setGuide(g);
-      if (showAdminExtras) {
+      if (canWriteGuides) {
         // Best-effort: a failed lookup must not stop the guide rendering.
         setInbound(await fetchInboundLinks(g.slug).catch(() => []));
       }
@@ -551,7 +550,7 @@ function GuideDetailView({
     } finally {
       setLoading(false);
     }
-  }, [idOrSlug, showAdminExtras]);
+  }, [idOrSlug, canWriteGuides]);
 
   useEffect(() => {
     void load();
@@ -632,10 +631,9 @@ function GuideDetailView({
       </HStack>
 
       {/* Author-only status strip. Gated on scope for the same reason as
-          the catalog badges — a Super in the Worker shell has a Super
-          payload, so "a worker's payload has no versions" was never a
+          the catalog badges — someone with approval authority in the Worker shell has the payload, so "a worker's payload has no versions" was never a
           safe thing to reason from. */}
-      {showAdminExtras && (pending || draft || !guide.isPublished) && (
+      {canWriteGuides && (pending || draft || !guide.isPublished) && (
         <Card.Root variant="outline" mb={3} borderColor="orange.emphasized" bg="orange.faint">
           <Card.Body p={3}>
             <VStack align="stretch" gap={1}>
@@ -643,8 +641,8 @@ function GuideDetailView({
                 <Text fontSize="xs" color="orange.fg">
                   <strong>v{pending.versionNumber} is awaiting approval.</strong>{" "}
                   {guide.isPublished
-                    ? "Workers keep reading the published version until a Super approves it."
-                    : "Workers can't see this guide until a Super approves it."}
+                    ? "Readers keep seeing the published version until this is approved."
+                    : "Nobody can read this guide until it is approved."}
                 </Text>
               )}
               {draft?.status === "REJECTED" && draft.rejectionNote && (
@@ -828,7 +826,7 @@ function GuideDetailView({
               // Authors only. On a worker's read this stays false — a
               // "(not published)" marker would reveal that a hidden guide
               // sits behind the link.
-              showUnpublishedLinkState={showAdminExtras}
+              showUnpublishedLinkState={canWriteGuides}
             >
               {live?.contentMarkdown ??
                 draft?.contentMarkdown ??
@@ -845,14 +843,14 @@ function GuideDetailView({
           unrelated groups. They are all "things you can do to this
           guide" — order runs authoring → review → lifecycle, and wrap
           handles narrow screens. */}
-      {!editing && (showAdminExtras || showSuperExtras) && (
+      {!editing && (canWriteGuides || canApproveGuides) && (
         <HStack mt={3} gap={2} wrap="wrap">
-          {showAdminExtras && (
+          {canWriteGuides && (
             <Button size="sm" variant="outline" onClick={beginEdit}>
             {draft ? "Continue draft" : "Edit"}
             </Button>
           )}
-          {showAdminExtras && draft && !pending && (
+          {canWriteGuides && draft && !pending && (
             <Button
             size="sm"
             colorPalette="orange"
@@ -861,7 +859,7 @@ function GuideDetailView({
             setConfirmAction({
             title: "Submit this for approval?",
             message:
-            "A Super reviews it before anyone can read it. You can keep editing until they do.",
+            "It is reviewed before anyone can read it. You can keep editing until then.",
             confirmLabel: "Submit",
             confirmColorPalette: "orange",
             // The note is collected HERE, not only in the editor. This button
@@ -888,8 +886,8 @@ function GuideDetailView({
           {/* Discard sits next to Continue draft because it's the other half
               of the same decision: keep working on this, or throw it away.
               Only for an UNSUBMITTED draft — once it's pending, it's in a
-              Super's queue and gets withdrawn by rejection, not deletion. */}
-          {showAdminExtras && draft && !pending && (
+              the approval queue and gets withdrawn by rejection, not deletion. */}
+          {canWriteGuides && draft && !pending && (
             <Button
             size="sm"
             variant="outline"
@@ -917,7 +915,7 @@ function GuideDetailView({
             {isOnlyVersion ? "Delete guide" : "Discard draft"}
             </Button>
           )}
-          {showSuperExtras && pending && (
+          {canApproveGuides && pending && (
             <>
               <Button
               size="sm"
@@ -944,7 +942,7 @@ function GuideDetailView({
               </Button>
             </>
           )}
-          {showSuperExtras && guide.isPublished && (
+          {canApproveGuides && guide.isPublished && (
             <Button
             size="sm"
             variant="outline"
@@ -965,7 +963,7 @@ function GuideDetailView({
             Unpublish
             </Button>
           )}
-          {showSuperExtras && (
+          {canApproveGuides && (
             <Button
             size="sm"
             variant="outline"
@@ -1004,7 +1002,7 @@ function GuideDetailView({
             {guide.archivedAt ? "Restore" : "Archive"}
             </Button>
           )}
-          {showSuperExtras && guide.archivedAt && (
+          {canApproveGuides && guide.archivedAt && (
             <Button size="sm" variant="outline" colorPalette="red" onClick={() => setPurgeOpen(true)}>
             Delete permanently
             </Button>
@@ -1018,7 +1016,7 @@ function GuideDetailView({
           in it made history look like an outstanding task. Plain
           disclosure instead, matching how the rest of the app reveals
           secondary detail. */}
-      {showAdminExtras && versions.length > 0 && (
+      {canWriteGuides && versions.length > 0 && (
         <Box mt={4}>
           <HStack
             gap={1.5}

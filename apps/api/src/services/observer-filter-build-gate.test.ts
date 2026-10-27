@@ -69,6 +69,13 @@ function scanFile(absPath: string, repoRelPath: string): Violation[] {
   const violations: Violation[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+
+    // Comment lines cannot produce SQL, so they cannot carry this bug — and
+    // the text of a comment EXPLAINING the trap necessarily contains the
+    // pattern it is warning about. Without this the gate fires on its own
+    // documentation, which teaches people to delete the explanation.
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
+
     const m = FORBIDDEN_PATTERNS.some((re) => re.test(line));
     if (!m) continue;
 

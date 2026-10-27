@@ -94,8 +94,8 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
     (async () => {
       try {
         const [clients, jobs] = await Promise.all([
-          apiGet<any[]>("/api/admin/clients"),
-          apiGet<any[]>("/api/admin/jobs?status=ALL"),
+          apiGet<any[]>("/api/clients"),
+          apiGet<any[]>("/api/jobs?status=ALL"),
         ]);
         setAllClients(
           (Array.isArray(clients) ? clients : []).map((c) => ({ id: c.id, displayName: c.displayName }))
@@ -199,7 +199,7 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
         await apiPatch(`/api/followups/${editFollowup!.id}`, body);
         publishInlineMessage({ type: "SUCCESS", text: "Followup updated." });
       } else {
-        await apiPost("/api/admin/followups", body);
+        await apiPost("/api/followups", body);
         publishInlineMessage({ type: "SUCCESS", text: "Followup created." });
       }
       reset();

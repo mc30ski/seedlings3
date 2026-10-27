@@ -34,9 +34,10 @@ The worst finds, all live in production for months:
   at two sites, logged only as `JOB.OCCURRENCE_UPDATED` with
   `{occurrenceId, record}` — amount, method, and who was owed what all
   gone.
-- **`ADMIN_BOOTSTRAP_EMAILS` granted ADMIN silently** — the one
-  privilege-escalation path in the codebase, unaudited, while the normal
-  approve/addRole paths both logged.
+- **An env var granted elevated access silently** — a break-glass list of
+  email addresses, applied on every sign-in. The one privilege-escalation
+  path in the codebase, unaudited, while the normal approve/grant paths
+  both logged. (Deleted; initial setup is the starter script now.)
 - **Crews silently rewrote money math**: removing a member reset *every
   remaining member's* `equipmentCostPercent` to an even split, invisibly.
 

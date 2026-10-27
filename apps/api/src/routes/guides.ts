@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { Role as RoleVal } from "@prisma/client";
 import {
   listCategories,
   mediaLimits,
@@ -29,18 +28,21 @@ import {
   deleteAsset,
   type GuideViewer,
 } from "../services/guides";
+import { makeGuards } from "../lib/routeGuards";
+import { callerCan } from "../lib/callerCan";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Education guide routes. Canonical spec: docs/features/education.md.
 //
 // THE PERMISSION MATRIX IS ENFORCED HERE AND IN services/guides.ts, never
 // in the client:
-//   worker -> read PUBLISHED only
-//   admin  -> + author drafts, submit for approval, manage OWN images
-//   super  -> + approve/publish/reject/rollback/archive/purge, ALL media,
-//             and the only role that may upload video
+//   `content.view`    -> read PUBLISHED only
+//   `content.manage`  -> + author drafts, submit for approval, manage OWN
+//                        images
+//   `content.approve` -> + approve/publish/reject/rollback/archive/purge,
+//                        ALL media, and the only tier that may upload video
 //
-// A worker's list query is scoped by `currentVersionId is not null`, so an
+// A reader's list query is scoped by `currentVersionId is not null`, so an
 // unapproved guide cannot be returned at all — hiding it client-side would
 // leave the draft body in the payload.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,41 +51,51 @@ import {
  * Highest role the caller EFFECTIVELY holds.
  *
  * Reads `req.user`, which `requireApproved` attaches with the
- * impersonation-adjusted roles array — so a Super using "view as Worker"
- * is a worker here too, exactly as they are on every other surface. An
- * independent `prisma.user` lookup would restore their powers and make
- * the whole view-as feature lie about this tab.
+ * impersonation-adjusted capability set — so someone who holds
+ * `content.approve` while viewing as somebody who does not is a reader here
+ * too, exactly as they are on every other surface. An independent
+ * `prisma.user` lookup would restore their powers and make the whole view-as
+ * feature lie about this tab.
  */
 function guideViewer(req: any): GuideViewer {
-  const me = req.user as { id: string; roles?: RoleVal[] } | undefined;
+  const me = req.user as { id: string } | undefined;
   const userId = me?.id;
   if (!userId) throw new Error("guideViewer called before requireApproved");
-  const roles = new Set(me?.roles ?? []);
-  if (roles.has(RoleVal.SUPER)) return { kind: "super", userId };
-  if (roles.has(RoleVal.ADMIN)) return { kind: "admin", userId };
-  return { kind: "worker", userId };
+  // Derived from CAPABILITIES, not roles — and the two authoring tiers stay
+  // SEPARATE capabilities, which is the whole point.
+  //
+  // An earlier pass collapsed both authoring tiers onto `content.manage` and
+  // called it deliberate. It was not: education.md says "Holders of
+  // `content.manage` cannot publish their own work, deliberately", and the
+  // effect was that anyone who could author could also approve a pending
+  // version, roll back a live guide, purge one, and upload video. The
+  // service-level checks below (`viewer.kind !== "approver"`) were all still
+  // correct — they were simply being handed "approver" for everybody who
+  // could author.
+  //
+  // `content.approve` is the publishing authority; `content.manage` is
+  // authoring. Keeping them distinct is what makes submit -> approve a
+  // review step rather than a formality.
+  if (callerCan(req, "content.approve")) return { kind: "approver", userId };
+  if (callerCan(req, "content.manage")) return { kind: "author", userId };
+  return { kind: "reader", userId };
 }
 
 export default async function guideRoutes(app: FastifyInstance) {
-  const workerGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireRole(req, reply, RoleVal.WORKER),
-  };
-  const adminGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireRole(req, reply, RoleVal.ADMIN),
-  };
-  const superGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireRole(req, reply, RoleVal.SUPER),
-  };
-
-  // ── Read surfaces (all roles) ──────────────────────────────────────────
+  const { requires, approvedUser } = makeGuards(app);
+  // These three must stay THREE entitlements. `content.approve` once
+  // resolved to the same entitlement as `content.manage`, which made every
+  // route needing approval reachable by anyone who could author, while the
+  // guard names still claimed otherwise.
+  const req_contentManage = requires("content.manage");
+  const req_contentApprove = requires("content.approve");
+  const req_contentView = requires("content.view");
+  // ── Read surfaces (any approved caller) ────────────────────────────────
 
   // view-as-allow: the guide catalog is identical for every worker — there
   // is no per-user state to impersonate, so ?viewAsUserId would be a
   // parameter that changes nothing.
-  app.get("/me/guides", workerGuard, async (req: any) => {
+  app.get("/me/guides", approvedUser, async (req: any) => {
     const viewer = guideViewer(req);
     return listGuides(viewer, {
       q: typeof req.query?.q === "string" ? req.query.q : undefined,
@@ -93,7 +105,7 @@ export default async function guideRoutes(app: FastifyInstance) {
   });
 
   // view-as-allow: see /me/guides — catalog metadata, no per-user state.
-  app.get("/me/guides/categories", workerGuard, async () => listCategories());
+  app.get("/me/guides/categories", approvedUser, async () => listCategories());
 
   /**
    * Resolve `guide:<slug>` cross-reference tokens.
@@ -102,7 +114,7 @@ export default async function guideRoutes(app: FastifyInstance) {
    * in an approved guide to discover an unapproved one.
    */
   // view-as-allow: resolves catalog metadata, identical for every worker.
-  app.get("/me/guides/resolve", workerGuard, async (req: any) => {
+  app.get("/me/guides/resolve", approvedUser, async (req: any) => {
     const viewer = guideViewer(req);
     const raw = typeof req.query?.slugs === "string" ? req.query.slugs : "";
     return resolveGuideLinks(viewer, raw.split(",").filter(Boolean));
@@ -110,14 +122,14 @@ export default async function guideRoutes(app: FastifyInstance) {
 
   // view-as-allow: see /me/guides — a single guide's content is the same
   // for every worker.
-  app.get("/me/guides/:idOrSlug", workerGuard, async (req: any) => {
+  app.get("/me/guides/:idOrSlug", approvedUser, async (req: any) => {
     const viewer = guideViewer(req);
     return getGuide(viewer, String(req.params.idOrSlug));
   });
 
   /** Signed URL for an in-app image or video. Any signed-in worker. */
   // view-as-allow: media is catalog content, identical for every worker.
-  app.get("/me/guides/assets/:id/url", workerGuard, async (req: any) => {
+  app.get("/me/guides/assets/:id/url", approvedUser, async (req: any) => {
     const viewer = guideViewer(req);
     return { url: await assetUrl(viewer, String(req.params.id)) };
   });
@@ -135,7 +147,7 @@ export default async function guideRoutes(app: FastifyInstance) {
   // comma-joined value because a filename may legally contain a comma.
   //
   // Batched so a guide with six images is one round trip instead of six.
-  app.get("/me/guides/assets/resolve", workerGuard, async (req: any) => {
+  app.get("/me/guides/assets/resolve", approvedUser, async (req: any) => {
     const viewer = guideViewer(req);
     const raw = (req.query ?? {}).ref;
     const refs: string[] = (Array.isArray(raw) ? raw : raw == null ? [] : [raw])
@@ -159,31 +171,31 @@ export default async function guideRoutes(app: FastifyInstance) {
 
   // ── Authoring (admin+) ─────────────────────────────────────────────────
 
-  app.get("/guides/limits", adminGuard, async () => mediaLimits());
+  app.get("/guides/limits", req_contentView, async () => mediaLimits());
 
-  app.post("/guides", adminGuard, async (req: any) => {
+  app.post("/guides", req_contentManage, async (req: any) => {
     const viewer = guideViewer(req);
     return createGuide(viewer, req.body ?? {});
   });
 
-  app.patch("/guides/:id", adminGuard, async (req: any) => {
+  app.patch("/guides/:id", req_contentManage, async (req: any) => {
     const viewer = guideViewer(req);
     return updateGuideMeta(viewer, String(req.params.id), req.body ?? {});
   });
 
-  app.post("/guides/:id/draft", adminGuard, async (req: any) => {
+  app.post("/guides/:id/draft", req_contentManage, async (req: any) => {
     const viewer = guideViewer(req);
     return saveDraft(viewer, String(req.params.id), req.body ?? {});
   });
 
   // DELETE rather than POST /discard: it removes a resource and is
   // idempotent-ish (a second call 404s), which is what DELETE means.
-  app.delete("/guides/versions/:versionId", adminGuard, async (req: any) => {
+  app.delete("/guides/versions/:versionId", req_contentManage, async (req: any) => {
     const viewer = guideViewer(req);
     return discardDraft(viewer, String(req.params.versionId));
   });
 
-  app.post("/guides/versions/:versionId/submit", adminGuard, async (req: any) => {
+  app.post("/guides/versions/:versionId/submit", req_contentManage, async (req: any) => {
     const viewer = guideViewer(req);
     return submitForApproval(
       viewer,
@@ -194,45 +206,54 @@ export default async function guideRoutes(app: FastifyInstance) {
 
   // ── Review queue (super) ───────────────────────────────────────────────
 
-  app.get("/guides/pending-approvals", superGuard, async () => listPendingApprovals());
-  app.get("/guides/pending-approvals/count", superGuard, async () => ({
+  // `content.approve`, AND NOT BECAUSE OF THE ENTITLEMENT'S COPY.
+  //
+  // I moved these two to `content.view` on 2026-10-13 because that
+  // entitlement's one-line copy said "See guides awaiting approval…". That was
+  // wrong on two counts: `docs/features/education.md`'s capability table gives
+  // Approve / publish / send back on `content.approve` alone, and
+  // `adminrole-guides.spec.ts` asserts in so many words that someone with `content.manage` gets 403
+  // from these exact paths. A one-line description does not outrank a feature
+  // spec plus an explicit test. The COPY was the defect; it has been fixed.
+  app.get("/guides/pending-approvals", req_contentApprove, async () => listPendingApprovals());
+  app.get("/guides/pending-approvals/count", req_contentApprove, async () => ({
     count: await pendingApprovalCount(),
   }));
 
-  app.post("/guides/versions/:versionId/approve", superGuard, async (req: any) => {
+  app.post("/guides/versions/:versionId/approve", req_contentApprove, async (req: any) => {
     const viewer = guideViewer(req);
     return approveAndPublish(viewer, String(req.params.versionId));
   });
 
-  app.post("/guides/versions/:versionId/reject", superGuard, async (req: any) => {
+  app.post("/guides/versions/:versionId/reject", req_contentApprove, async (req: any) => {
     const viewer = guideViewer(req);
     return rejectVersion(viewer, String(req.params.versionId), String(req.body?.note ?? ""));
   });
 
-  app.post("/guides/versions/:versionId/rollback", superGuard, async (req: any) => {
+  app.post("/guides/versions/:versionId/rollback", req_contentApprove, async (req: any) => {
     const viewer = guideViewer(req);
     await rollbackTo(viewer, String(req.params.versionId));
     return { ok: true };
   });
 
-  app.post("/guides/:id/unpublish", superGuard, async (req: any) => {
+  app.post("/guides/:id/unpublish", req_contentApprove, async (req: any) => {
     const viewer = guideViewer(req);
     await unpublish(viewer, String(req.params.id));
     return { ok: true };
   });
 
-  app.post("/guides/:id/archive", superGuard, async (req: any) => {
+  app.post("/guides/:id/archive", req_contentApprove, async (req: any) => {
     const viewer = guideViewer(req);
     await setArchived(viewer, String(req.params.id), req.body?.archived !== false);
     return { ok: true };
   });
 
   /**
-   * Permanent delete. Super only, archived-only, and the client gates it
+   * Permanent delete. `content.approve`, archived-only, and the client gates it
    * behind a typed confirmation — the audit snapshot written by the
    * service is the only record that survives.
    */
-  app.post("/guides/:id/purge", superGuard, async (req: any) => {
+  app.post("/guides/:id/purge", req_contentApprove, async (req: any) => {
     const viewer = guideViewer(req);
     await purge(viewer, String(req.params.id));
     return { ok: true };
@@ -240,7 +261,7 @@ export default async function guideRoutes(app: FastifyInstance) {
 
   // ── Media library ──────────────────────────────────────────────────────
 
-  app.get("/guides/assets", adminGuard, async (req: any) => {
+  app.get("/guides/assets", req_contentView, async (req: any) => {
     const viewer = guideViewer(req);
     const n = (v: unknown) => {
       const parsed = Number(v);
@@ -262,26 +283,26 @@ export default async function guideRoutes(app: FastifyInstance) {
    * means the size the browser declares here is advisory; the true size is
    * read back from R2 in /finalize.
    */
-  app.post("/guides/assets/upload-url", adminGuard, async (req: any) => {
+  app.post("/guides/assets/upload-url", req_contentManage, async (req: any) => {
     const viewer = guideViewer(req);
     return presignAssetUpload(viewer, req.body ?? {});
   });
 
-  app.post("/guides/assets/finalize", adminGuard, async (req: any) => {
+  app.post("/guides/assets/finalize", req_contentManage, async (req: any) => {
     const viewer = guideViewer(req);
     return finalizeAsset(viewer, req.body ?? {});
   });
 
   /** Guides that link TO this one — drives the unpublish/archive warning. */
-  app.get("/guides/:idOrSlug/inbound-links", adminGuard, async (req: any) => {
+  app.get("/guides/:idOrSlug/inbound-links", req_contentView, async (req: any) => {
     return guidesLinkingTo(String(req.params.idOrSlug));
   });
 
-  app.get("/guides/assets/:id/references", adminGuard, async (req: any) => {
+  app.get("/guides/assets/:id/references", req_contentView, async (req: any) => {
     return guidesReferencing(String(req.params.id));
   });
 
-  app.delete("/guides/assets/:id", adminGuard, async (req: any) => {
+  app.delete("/guides/assets/:id", req_contentManage, async (req: any) => {
     const viewer = guideViewer(req);
     await deleteAsset(viewer, String(req.params.id));
     return { ok: true };

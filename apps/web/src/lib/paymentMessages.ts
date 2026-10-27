@@ -15,7 +15,7 @@ export type PaymentActionResult = {
    *  didn't schedule this in the past" rather than silently starting
    *  the cycle on a stale date. */
   nextOccurrenceSnappedForward?: boolean;
-  /** True when an admin had set a one-time date override on the
+  /** True when someone with `money.view` had set a one-time date override on the
    *  source occurrence and the server used it to build the next
    *  occurrence's start date instead of the usual cadence. Toast
    *  callout mirrors the snap flag so the operator can see at a

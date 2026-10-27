@@ -22,7 +22,7 @@
 // themes nobody happened to open. Hence a gate.
 //
 // See memory/reference_theming.md. The visual check is
-// `THEME_SWEEP=1 npx playwright test --project=super theme-contrast-sweep`.
+// `THEME_SWEEP=1 npx playwright test --project=owner theme-contrast-sweep`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from "vitest";
@@ -156,6 +156,79 @@ describe("theming build gate", () => {
       "shipped as `#dce5d0` and stayed sage everywhere.\n" + hits.join("\n")).toEqual([]);
   });
 
+  it("no component hardcodes a colour OUTSIDE a JSX prop, beyond a shrinking backlog", () => {
+    // THE HOLE THE RULE ABOVE LEFT. It matches `color="#fff"` — a hex in a
+    // JSX prop — and nothing else. A palette declared as a constant and
+    // then spread into the same props is the identical bug wearing a
+    // variable name, and it is the form the bigger offenders take:
+    //
+    //   const CHART_COLORS = ["#3182CE", …]   ← eight bars, fourteen themes
+    //   const alerts = [{ bg: "#FEE2E2", … }] ← object literal, same thing
+    //
+    // Found 2026-10-26 when StatisticsTab was wired back into the app
+    // carrying an eight-colour hex chart palette that the gate had never
+    // looked at.
+    //
+    // WHY A BACKLOG RATHER THAN A FAILING BUILD. Widening the match
+    // surfaced 158 literals across 16 files at once. Failing on all of them
+    // would mean either a day of unrelated colour work before anything else
+    // can merge, or — far likelier — somebody deleting the rule. So the
+    // debt is RECORDED, with a count per file, and the count may only go
+    // down. A file not listed here may hold none at all.
+    //
+    // TO WORK ONE OFF: fix the literals, then lower or delete its line. The
+    // test fails if a count is too HIGH (new debt) and also if it is too
+    // LOW (debt paid but not recorded) — the second half is what stops the
+    // list rotting into fiction.
+    const PENDING_HARDCODED_COLOUR = new Map<string, number>([
+      ["pages/index.tsx", 78],
+      ["src/ui/pages/TasksPage.tsx", 28],
+      ["src/ui/workflows/PlanWorkdayWorkflow.tsx", 10],
+      ["src/ui/components/ScrollableUnderlineTabs.tsx", 8],
+      ["src/ui/dialogs/MarkdownViewerDialog.tsx", 7],
+      ["src/ui/tabs/InventoryTab.tsx", 5],
+      ["src/ui/components/AddressAutocomplete.tsx", 5],
+      ["src/ui/dialogs/EstimateDialog.tsx", 4],
+      ["src/ui/tabs/JobsTab.tsx", 2],
+      ["src/ui/tabs/ReconcileTab.tsx", 2],
+      ["src/ui/components/RedactPhotoDialog.tsx", 2],
+      ["src/ui/dialogs/OccurrenceDialog.tsx", 2],
+      ["src/ui/helpers/Link.tsx", 2],
+      ["src/ui/components/JobsExplainer.tsx", 1],
+      ["src/ui/helpers/AppSplash.tsx", 1],
+      ["pages/_app.tsx", 1],
+    ]);
+
+    const counted = new Map<string, number>();
+    for (const f of uiFiles()) {
+      const rel = f.replace(WEB + "/", "");
+      const src = stripComments(readFileSync(f, "utf8"));
+      const n = [...src.matchAll(/"(#[0-9a-fA-F]{3,8})"|'(#[0-9a-fA-F]{3,8})'/g)].length;
+      if (n > 0) counted.set(rel, n);
+    }
+
+    const newDebt = [...counted.entries()]
+      .filter(([rel, n]) => n > (PENDING_HARDCODED_COLOUR.get(rel) ?? 0))
+      .map(([rel, n]) => `${rel}: ${n} (allowed ${PENDING_HARDCODED_COLOUR.get(rel) ?? 0})`);
+    expect(
+      newDebt.sort(),
+      "a hardcoded colour is the same in all fourteen themes. Use a theme " +
+        "token — `var(--chakra-colors-<hue>-solid)` for a fill a chart or " +
+        "SVG needs as a real CSS value. See CHART_COLORS in StatisticsTab " +
+        "for the shape.\n",
+    ).toEqual([]);
+
+    const paidOff = [...PENDING_HARDCODED_COLOUR.entries()]
+      .filter(([rel, n]) => (counted.get(rel) ?? 0) < n)
+      .map(([rel, n]) => `${rel}: now ${counted.get(rel) ?? 0}, listed ${n}`);
+    expect(
+      paidOff.sort(),
+      "These hold FEWER hardcoded colours than the backlog records — the " +
+        "work was done. Lower the number, or delete the line if it is now " +
+        "zero, so the list keeps meaning something.",
+    ).toEqual([]);
+  });
+
   it("the theme specs that prove all this still exist", () => {
     // Each was written against a bug that shipped. Deleting one silently
     // removes the only check for that failure mode.
@@ -163,13 +236,13 @@ describe("theming build gate", () => {
       ["theme-live-switch.spec.ts", "switching repaints the page, not just the cards"],
       ["theme-splash.spec.ts", "no white flash on a dark-grounded theme"],
       ["theme-chip-sync.spec.ts", "header and Profile pickers stay in step"],
-      ["theme-header-dropdowns-admin.spec.ts", "nothing inherits the title bar's ink"],
+      ["theme-header-dropdowns-owner.spec.ts", "nothing inherits the title bar's ink"],
       ["theme-pulse-contrast.spec.ts", "every pulse tint reads against its own page"],
-      ["theme-season-logo-admin.spec.ts", "a theme pins the mark; a manual choice survives"],
+      ["theme-season-logo-owner.spec.ts", "a theme pins the mark; a manual choice survives"],
       ["mobile-theme-chip.spec.ts", "the theme menu fits a 320px phone"],
-      ["theme-contrast-sweep-admin.spec.ts", "every element on every tab in every theme"],
+      ["theme-contrast-sweep-owner.spec.ts", "every element on every tab in every theme"],
         [
-      "job-guidance-pulse-admin.spec.ts",
+      "job-guidance-pulse-owner.spec.ts",
       "Guidance renders at every card density and stops pulsing on a finished visit — both shipped broken and both were invisible to static rules",
     ],
 ];

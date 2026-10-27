@@ -1,7 +1,7 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PayrollUploadDialog — Super-only import of a Gusto Payroll Journal CSV.
+// PayrollUploadDialog — `payroll.manage` import of a Gusto Payroll Journal CSV.
 //
 // Canonical spec: docs/features/payroll.md.
 //

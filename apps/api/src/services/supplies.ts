@@ -10,7 +10,6 @@ import { getDownloadUrl } from "../lib/r2";
 import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
 import { parseUserDate } from "../lib/dates";
-import { resolvePrivileges } from "../lib/privileges";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import type {
@@ -21,6 +20,7 @@ import type {
   SupplyAdjustmentInput,
   SupplyHoldInput,
 } from "../types/services";
+import type { CallerCan } from "../lib/callerCan";
 
 // Workflows whose occurrences don't carry physical supply consumption —
 // tasks, reminders, events, followups, and announcements are administrative
@@ -39,12 +39,16 @@ const NON_SUPPLY_WORKFLOWS = new Set([
 // rows. Default "Supplies": most lawn-care consumables land on line 22.
 const DEFAULT_CATEGORY = "Supplies";
 
-async function isAdminUser(userId: string): Promise<boolean> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    include: { roles: true },
-  });
-  return !!user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+/**
+ * May this person act on ANY visit's supply hold, rather than only their own?
+ *
+ * `supplies.hold` and not `supplies.manage`: reserving stock against a visit
+ * is day-to-day work, where the CATALOG and its purchases are money out and
+ * sit a tier up. Naming the function `hasCatalogAuthority` is what hid that — it
+ * read as one authority when the code needed two.
+ */
+function maySupplyHoldAnyVisit(callerCan: CallerCan): boolean {
+  return callerCan("supplies.hold");
 }
 
 /**
@@ -194,23 +198,23 @@ const holdInclude = Prisma.validator<Prisma.SupplyHoldInclude>()({
  * Every CATALOG mutation is admin-or-super. Pulling stock onto a job is not —
  * a claimer does that from the field, and the route already scopes it.
  *
- * The routes are all superGuard'd, so this is defence in depth rather than the
+ * The routes all require `supplies.manage`, so this is defence in depth rather than the
  * only lock. It exists because the sibling service (invoiceCharges) guards
  * itself the same way, and an inconsistency there is how a route eventually
  * gets registered without a guard and nobody notices: an adversarial pass
  * found a worker could reprice the catalog, restock it and adjust counts by
  * calling these functions directly.
  */
-async function requireCatalogAdmin(currentUserId: string, verb: string): Promise<void> {
+async function requireCatalogAuthority(currentUserId: string, callerCan: CallerCan, verb: string): Promise<void> {
   const me = await prisma.user.findUnique({
     where: { id: currentUserId },
-    include: { roles: true },
+    
   });
   if (!me) throw new ServiceError("NOT_FOUND", "User not found.", 404);
-  if (!resolvePrivileges(me).isAdminOrSuper) {
+  if (!callerCan("supplies.manage")) {
     throw new ServiceError(
       "FORBIDDEN",
-      `Only an admin can ${verb} — it changes what every future job is billed.`,
+      `Only someone with supply authority can ${verb} — it changes what every future job is billed.`,
       403,
     );
   }
@@ -319,7 +323,7 @@ export const supplies: ServicesSupplies = {
     const heldById = new Map<string, number>();
     for (const h of heldByIdRaw) heldById.set(h.supplyId, h._sum.quantity ?? 0);
 
-    // Optional: per-supply ACTIVE hold breakdown for the Admin Inventory view.
+    // Optional: per-supply ACTIVE hold breakdown for the Inventory view.
     // Single fan-out query (one per call, not per supply) so this stays cheap
     // even with hundreds of supplies.
     let activeHoldsBySupply = new Map<string, any[]>();
@@ -412,8 +416,8 @@ export const supplies: ServicesSupplies = {
     };
   },
 
-  async create(currentUserId, input) {
-    await requireCatalogAdmin(currentUserId, "add a supply");
+  async create(currentUserId, callerCan, input) {
+    await requireCatalogAuthority(currentUserId, callerCan, "add a supply");
     const name = (input.name ?? "").trim();
     if (!name) throw new ServiceError("INVALID_INPUT", "Name is required.", 400);
     const unit = (input.unit ?? "").trim();
@@ -460,8 +464,8 @@ export const supplies: ServicesSupplies = {
     });
   },
 
-  async update(currentUserId, id, input) {
-    await requireCatalogAdmin(currentUserId, "change a supply");
+  async update(currentUserId, callerCan, id, input) {
+    await requireCatalogAuthority(currentUserId, callerCan, "change a supply");
     const existing = await prisma.supply.findUnique({ where: { id } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
 
@@ -523,8 +527,8 @@ export const supplies: ServicesSupplies = {
     });
   },
 
-  async archive(currentUserId, id) {
-    await requireCatalogAdmin(currentUserId, "archive a supply");
+  async archive(currentUserId, callerCan, id) {
+    await requireCatalogAuthority(currentUserId, callerCan, "archive a supply");
     const existing = await prisma.supply.findUnique({ where: { id } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
     await prisma.$transaction(async (tx) => {
@@ -542,8 +546,8 @@ export const supplies: ServicesSupplies = {
     return { archived: true };
   },
 
-  async unarchive(currentUserId, id) {
-    await requireCatalogAdmin(currentUserId, "unarchive a supply");
+  async unarchive(currentUserId, callerCan, id) {
+    await requireCatalogAuthority(currentUserId, callerCan, "unarchive a supply");
     const existing = await prisma.supply.findUnique({ where: { id } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
     await prisma.$transaction(async (tx) => {
@@ -560,8 +564,8 @@ export const supplies: ServicesSupplies = {
     return { archived: false };
   },
 
-  async recordPurchase(currentUserId, supplyId, input) {
-    await requireCatalogAdmin(currentUserId, "record a purchase");
+  async recordPurchase(currentUserId, callerCan, supplyId, input) {
+    await requireCatalogAuthority(currentUserId, callerCan, "record a purchase");
     const supply = await prisma.supply.findUnique({ where: { id: supplyId } });
     if (!supply) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
     if (supply.archivedAt) {
@@ -632,8 +636,8 @@ export const supplies: ServicesSupplies = {
     });
   },
 
-  async reversePurchase(currentUserId, purchaseId) {
-    await requireCatalogAdmin(currentUserId, "reverse a purchase");
+  async reversePurchase(currentUserId, callerCan, purchaseId) {
+    await requireCatalogAuthority(currentUserId, callerCan, "reverse a purchase");
     const purchase = await prisma.supplyPurchase.findUnique({
       where: { id: purchaseId },
       include: { supply: true },
@@ -681,8 +685,8 @@ export const supplies: ServicesSupplies = {
     return { reversed: true };
   },
 
-  async recordAdjustment(currentUserId, supplyId, input) {
-    await requireCatalogAdmin(currentUserId, "adjust stock");
+  async recordAdjustment(currentUserId, callerCan, supplyId, input) {
+    await requireCatalogAuthority(currentUserId, callerCan, "adjust stock");
     const supply = await prisma.supply.findUnique({ where: { id: supplyId } });
     if (!supply) throw new ServiceError("NOT_FOUND", "Supply not found.", 404);
 
@@ -766,7 +770,7 @@ export const supplies: ServicesSupplies = {
     return out;
   },
 
-  async addHold(currentUserId, occurrenceId, input) {
+  async addHold(currentUserId, callerCan, occurrenceId, input) {
     const occ = await prisma.jobOccurrence.findUnique({
       where: { id: occurrenceId },
       include: { assignees: true },
@@ -781,29 +785,28 @@ export const supplies: ServicesSupplies = {
       );
     }
 
-    const me = await prisma.user.findUnique({
-      where: { id: currentUserId },
-      include: { roles: true },
-    });
-    if (!me) throw new ServiceError("NOT_FOUND", "User not found.", 404);
-    const priv = resolvePrivileges(me);
+    // Capabilities come from `callerCan`, the caller's own test, already
+    // narrowed by any active perspective. This was
+    // `capabilitiesForUsers(prisma, [currentUserId])` — a fresh read of their
+    // REAL grants, which ignored the perspective entirely.
     const isClaimer = occ.assignees.some(
       (a) => a.userId === currentUserId && a.assignedById === currentUserId,
     );
-    // Admin/super: always allowed. Worker: must be the claimer AND have
-    // inventory privilege resolved on (workerType default or override).
-    if (!priv.isAdminOrSuper) {
+    // `supplies.hold` is the escape: whoever may reserve stock against ANY
+    // visit. Everyone else must be the claimer of THIS one and cleared to
+    // pull inventory. Was "admin or super" plus the privilege column.
+    if (!callerCan("supplies.hold")) {
       if (!isClaimer) {
         throw new ServiceError(
           "FORBIDDEN",
-          "Only the claimer or an admin can add supplies to an occurrence.",
+          "Only the claimer, or someone who may reserve stock on any visit, can add supplies to it.",
           403,
         );
       }
-      if (!priv.canPullInventory) {
+      if (!callerCan("inventory.pull")) {
         throw new ServiceError(
           "FORBIDDEN",
-          "You don't have permission to pull from inventory. Ask an admin.",
+          "You don't have permission to pull from inventory. Ask someone with supply authority.",
           403,
         );
       }
@@ -920,7 +923,7 @@ export const supplies: ServicesSupplies = {
     });
   },
 
-  async removeHold(currentUserId, holdId) {
+  async removeHold(currentUserId, callerCan, holdId) {
     const hold = await prisma.supplyHold.findUnique({
       where: { id: holdId },
       include: {
@@ -936,10 +939,10 @@ export const supplies: ServicesSupplies = {
     const isClaimer = hold.occurrence.assignees.some(
       (a) => a.userId === currentUserId && a.assignedById === currentUserId,
     );
-    if (!isClaimer && !(await isAdminUser(currentUserId))) {
+    if (!isClaimer && !(maySupplyHoldAnyVisit(callerCan))) {
       throw new ServiceError(
         "FORBIDDEN",
-        "Only the claimer or an admin can remove a supply hold.",
+        "Only the claimer or someone with supply authority can remove a supply hold.",
         403,
       );
     }
@@ -983,7 +986,7 @@ export const supplies: ServicesSupplies = {
   // (e.g. pulled 10 bags of mulch, only used 9). Reprices the paired payout
   // Expense and reconciles physical stock so the unused unit returns to (or
   // an extra unit leaves) inventory.
-  async adjustHold(currentUserId, holdId, newQuantity) {
+  async adjustHold(currentUserId, callerCan, holdId, newQuantity) {
     const hold = await prisma.supplyHold.findUnique({
       where: { id: holdId },
       include: {
@@ -998,10 +1001,10 @@ export const supplies: ServicesSupplies = {
     const isClaimer = hold.occurrence.assignees.some(
       (a) => a.userId === currentUserId && a.assignedById === currentUserId,
     );
-    if (!isClaimer && !(await isAdminUser(currentUserId))) {
+    if (!isClaimer && !(maySupplyHoldAnyVisit(callerCan))) {
       throw new ServiceError(
         "FORBIDDEN",
-        "Only the claimer or an admin can adjust a supply hold.",
+        "Only the claimer, or someone who may reserve stock on any visit, can adjust a supply hold.",
         403,
       );
     }

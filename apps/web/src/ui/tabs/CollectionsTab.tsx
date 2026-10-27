@@ -22,7 +22,8 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { Dashboard } from "@/src/ui/components/Dashboard";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
+import type { Scope } from "@/src/lib/scope";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ type CollectionItem = {
   id: string;
   equipmentId: string;
   equipment: EquipmentBrief;
-  /** Worker-only — server flags kits the caller is currently holding. */
+  /** Self-scoped-only — server flags kits the caller is currently holding. */
   heldByMe?: boolean;
 };
 
@@ -53,7 +54,7 @@ type Collection = {
   createdAt?: string;
   updatedAt?: string;
   items: CollectionItem[];
-  /** Admin-only — count of Job rows recommending this kit. */
+  /** Present only with `equipment.manage` — count of Job rows recommending this kit. */
   _count?: { jobRecommendations: number };
 };
 
@@ -76,20 +77,28 @@ function statusBadge(e: EquipmentBrief) {
   return null;
 }
 
-// ─── Blended Collections tab ──────────────────────────────────────
-// Same additive-scope model as InventoryTab:
-//   scope.isWorker → read-only view + "You're using this" marker
-//   scope.isAdmin  → adds Create/Edit/Delete + member editor modal
-//   scope.isSuper  → adds Insights section (kits with retired members,
-//                    availability heatmap, job coverage)
+// ─── Collections tab ──────────────────────────────────────────────
+// One tab. `equipment.view` is its row in TAB_REQUIREMENTS, so holding
+// it is what opens the tab; inside, two capabilities decide what it
+// offers:
+//   `equipment.manage` → the authoring endpoints. It chooses the list
+//                        path, and gates Create / Edit / Delete, the
+//                        member editor, and the per-card actions. Its
+//                        ABSENCE is what turns on the reader's
+//                        "You're using this" marker.
+//   `reports.business` → the Insights section (kits with retired
+//                        members, availability heatmap, job coverage).
 export default function CollectionsTab({
   scope,
 }: {
-  scope: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  scope: Scope;
 }) {
-  const showWorkerExtras = scope.isWorker;
-  const showAdminExtras = scope.isAdmin || scope.isSuper;
-  const showSuperExtras = scope.isSuper;
+  const canViewEquipment = scope.can("equipment.view");
+  // What this actually gates, per the route map.
+  const canManageEquipment = scope.can("equipment.manage");
+  // INSIGHTS is business-wide everywhere — `reports.business`, the same
+  // entitlement Home, Jobs, Inventory, Vehicles and Routes ask for.
+  const canViewReports = scope.can("reports.business");
 
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,17 +109,17 @@ export default function CollectionsTab({
   async function load() {
     setLoading(true);
     try {
-      // Admin+ hits the admin endpoint for the extra _count fields
-      // that drive the Insights panel; worker-only hits the public
-      // endpoint for the heldByMe flag on each item chip. The two
+      // With `equipment.manage` this hits the endpoint carrying the extra
+      // _count fields that drive the Insights panel; without it, the public
+      // endpoint, for the heldByMe flag on each item chip. The two
       // endpoints share a schema for everything else, so downstream
       // rendering is uniform.
-      const collectionsPath = showAdminExtras
-        ? "/api/admin/equipment-collections"
+      const collectionsPath = canManageEquipment
+        ? "/api/equipment-collections"
         : "/api/equipment-collections";
       const [list, equipment] = await Promise.all([
         apiGet<Collection[]>(collectionsPath),
-        showAdminExtras
+        canManageEquipment
           ? apiGet<EquipmentBrief[]>("/api/equipment/all")
           : Promise.resolve([] as EquipmentBrief[]),
       ]);
@@ -122,11 +131,11 @@ export default function CollectionsTab({
     setLoading(false);
   }
 
-  useEffect(() => { void load(); }, [showAdminExtras]);
+  useEffect(() => { void load(); }, [canManageEquipment]);
 
   async function remove(id: string) {
     try {
-      await apiDelete(`/api/admin/equipment-collections/${id}`);
+      await apiDelete(`/api/equipment-collections/${id}`);
       await load();
       publishInlineMessage({ type: "SUCCESS", text: "Collection deleted." });
     } catch (err) {
@@ -144,19 +153,16 @@ export default function CollectionsTab({
     });
   }
 
-  // Nav dispatch scoped to the caller's tier so a super clicking a
-  // chip lands on the super Inventory inner-tab (not the admin one).
+  // Nav dispatch so clicking a chip lands on the Inventory inner-tab.
   function openEquipment(equipmentId: string) {
     try {
       window.sessionStorage.setItem("equipmentHighlightId", equipmentId);
     } catch {}
-    const eventName = showSuperExtras
-      ? "navigate:superTab"
-      : showAdminExtras
-        ? "navigate:adminTab"
-        : "navigate:workerTab";
+    // One Equipment tab, so one event. This was a three-arm ternary
+    // picking between super / admin / worker destinations, all three of
+    // which are now the same string.
     window.dispatchEvent(
-      new CustomEvent(eventName, {
+      new CustomEvent("navigate:staffTab", {
         detail: { tab: "equipment", category: "Equipment" },
       }),
     );
@@ -165,18 +171,20 @@ export default function CollectionsTab({
   return (
     <Box w="full">
       <VStack align="stretch" gap={3}>
-        {/* Role-tailored orientation. Kits are admin-authored and
-            read-only for workers, so the worker copy leads with what
-            a kit is FOR (a job telling you what to bring) rather than
-            with controls they do not have. */}
+        {/* Orientation tailored to what the reader may do. Kits are
+            authored under `equipment.manage` and read-only without it,
+            so a reader without it leads with what a kit is FOR (a job
+            telling you what to bring) rather than with controls they do
+            not have. The copy branches below; the id does not, because
+            one tab has one collapse state. */}
         <TabExplainer
-          explainerId={`seedlings:collectionsTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
+          explainerId="seedlings:collectionsTab:guideOpen"
         >
           <ExplainerText>
             Named kits — equipment that travels together, so a job can say &ldquo;bring the
             mowing kit&rdquo; instead of listing six pieces. A kit is{" "}
             <Em>a label over equipment</Em>, so deleting one never touches the equipment
-            itself; kits are built and changed by an admin. Tap any member to open it on the
+            itself; kits are built and changed by whoever manages equipment. Tap any member to open it on the
             Inventory tab, where you can reserve it.
           </ExplainerText>
           <ExplainerText>
@@ -184,34 +192,38 @@ export default function CollectionsTab({
             green once any of the kit is in your hands. A member marked <Em>(retired)</Em> is
             one to swap out — jobs keep recommending the kit either way.
           </ExplainerText>
-          {showAdminExtras && (
-            <RoleSection role="Admin">
+          {canManageEquipment && (
+            <CapabilitySection capability="equipment.manage" scope={scope}>
               <ExplainerText>
                 You can create, edit and delete kits. The blue badge counts the jobs pinned to
                 that kit, so it tells you what a change here will reach.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
-          {showSuperExtras && (
-            <RoleSection role="Super">
+          {canViewReports && (
+            <CapabilitySection capability="reports.business" scope={scope}>
               <ExplainerText>
                 <Em>Insights</Em> adds kits carrying retired pieces (the ones to repack), kits
                 ranked by how much of them is actually available right now, and which kits the
                 most jobs depend on.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
         </TabExplainer>
         <HStack justify="space-between">
           <Text fontWeight="semibold">Equipment collections</Text>
-          {showAdminExtras && (
+          {canManageEquipment && (
             <Button size="sm" colorPalette="blue" onClick={startNew}>
               <Plus size={14} /> New collection
             </Button>
           )}
         </HStack>
 
-        {showSuperExtras && <CollectionsInsightsSection collections={collections} />}
+        {canViewReports && <CollectionsInsightsSection
+            collections={collections}
+            onRefresh={() => void load()}
+            refreshing={loading}
+          />}
 
         {loading ? (
           <Spinner size="sm" />
@@ -219,7 +231,7 @@ export default function CollectionsTab({
           <Card.Root variant="outline">
             <Card.Body py={6} textAlign="center">
               <Text color="fg.muted" fontSize="sm">
-                {showAdminExtras
+                {canManageEquipment
                   ? "No collections yet. Create your first kit to group equipment that gets used together."
                   : "No collections have been set up yet."}
               </Text>
@@ -230,7 +242,7 @@ export default function CollectionsTab({
             <CollectionCard
               key={c.id}
               collection={c}
-              showAdminExtras={showAdminExtras}
+              canManageEquipment={canManageEquipment}
               onOpenEquipment={openEquipment}
               onEdit={() => setEditing(c)}
               onDelete={() => setConfirmDelete(c)}
@@ -239,7 +251,7 @@ export default function CollectionsTab({
         )}
       </VStack>
 
-      {showAdminExtras && editing && (
+      {canManageEquipment && editing && (
         <CollectionEditor
           collection={editing}
           allEquipment={allEquipment}
@@ -248,7 +260,7 @@ export default function CollectionsTab({
         />
       )}
 
-      {showAdminExtras && (
+      {canManageEquipment && (
         <ConfirmDialog
           open={!!confirmDelete}
           title="Delete collection?"
@@ -268,24 +280,24 @@ export default function CollectionsTab({
 }
 
 // ─── Collection card ──────────────────────────────────────────────
-// Renders one collection. Worker-only view uses the "using this"
-// marker + stacked item rows; admin/super view uses the compact chip
+// Renders one collection. Self-scoped-only view uses the "using this"
+// marker + stacked item rows; management view uses the compact chip
 // list + Edit/Delete controls. Item click opens the equipment on the
 // appropriate Inventory tier via the parent's dispatch helper.
 function CollectionCard({
   collection: c,
-  showAdminExtras,
+  canManageEquipment,
   onOpenEquipment,
   onEdit,
   onDelete,
 }: {
   collection: Collection;
-  showAdminExtras: boolean;
+  canManageEquipment: boolean;
   onOpenEquipment: (equipmentId: string) => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const usingIt = !showAdminExtras && c.items.some((it) => it.heldByMe);
+  const usingIt = !canManageEquipment && c.items.some((it) => it.heldByMe);
   const jobCount = c._count?.jobRecommendations ?? 0;
 
   return (
@@ -320,7 +332,7 @@ function CollectionCard({
               <Text fontSize="xs" color="fg.muted">{c.description}</Text>
             )}
             {c.items.length > 0 && (
-              showAdminExtras ? (
+              canManageEquipment ? (
                 <HStack flexWrap="wrap" gap={1.5} mt={1}>
                   {c.items.map((it) => (
                     <Badge
@@ -371,7 +383,7 @@ function CollectionCard({
               )
             )}
           </VStack>
-          {showAdminExtras && (
+          {canManageEquipment && (
             <VStack gap={1}>
               <Button size="xs" variant="ghost" onClick={onEdit}>Edit</Button>
               <Button size="xs" variant="ghost" colorPalette="red" onClick={onDelete}>Delete</Button>
@@ -389,11 +401,22 @@ function CollectionCard({
 //   • Kits with issues     — collections containing retired members
 //                            (admin should replace / remove).
 //   • Availability heatmap — for each kit, live availability ratio
-//                            so a super can spot "everything's out"
+//                            so someone with `equipment.manage` can spot "everything's out"
 //                            at a glance.
 //   • Job coverage         — kits ranked by how many jobs pin them,
 //                            surfaces the most load-bearing kits.
-function CollectionsInsightsSection({ collections }: { collections: Collection[] }) {
+function CollectionsInsightsSection({
+  collections,
+  onRefresh,
+  refreshing,
+}: {
+  collections: Collection[];
+  /** Reloads the tab's collection list. This section derives everything
+   *  from that list, so "refresh the section" IS "refetch the list" —
+   *  the parent owns it. */
+  onRefresh?: () => void;
+  refreshing?: boolean;
+}) {
   const withRetired = useMemo(() => {
     return collections
       .map((c) => {
@@ -432,6 +455,10 @@ function CollectionsInsightsSection({ collections }: { collections: Collection[]
       title="Insights"
       icon={BarChart3}
       variant="insights"
+      // Kit state as it stands, not a window — see `insightsScope`.
+      insightsScope="current"
+      onRefresh={onRefresh}
+      refreshing={refreshing}
     >
         <SimpleGrid columns={{ base: 1, md: 3 }} gap={3}>
           {/* Kits with issues */}
@@ -529,7 +556,7 @@ function CollectionEditor(props: {
   const [saving, setSaving] = useState(false);
 
   // Show non-retired first, then retired (since collections can include retired
-  // pieces but we don't want to push admins toward them). Active members of
+  // pieces but we don't want to push holders of `equipment.manage` toward them). Active members of
   // the collection come first regardless so admin can review what's in it.
   const sortedEquipment = useMemo(() => {
     const memberSet = new Set(memberIds);
@@ -575,9 +602,9 @@ function CollectionEditor(props: {
         equipmentIds: memberIds,
       };
       if (collection.id) {
-        await apiPatch(`/api/admin/equipment-collections/${collection.id}`, payload);
+        await apiPatch(`/api/equipment-collections/${collection.id}`, payload);
       } else {
-        await apiPost("/api/admin/equipment-collections", payload);
+        await apiPost("/api/equipment-collections", payload);
       }
       publishInlineMessage({ type: "SUCCESS", text: "Collection saved." });
       await onSaved();

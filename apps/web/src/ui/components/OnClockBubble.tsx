@@ -47,7 +47,7 @@ type Props = {
   /** True when a real signed-in user is present. Hides the bubble
    *  during sign-out flows / unauthenticated shell. */
   isSignedIn: boolean;
-  /** True when a Super is in a client view-as session. The shell isn't
+  /** True when someone with `settings.manage` is in a client view-as session. The shell isn't
    *  a worker context; hide the bubble to avoid the illusion that the
    *  clock is running for whoever they're impersonating. */
   isClientImpersonating: boolean;

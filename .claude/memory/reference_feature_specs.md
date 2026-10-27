@@ -21,6 +21,6 @@ Each feature spec binds to two enforcement mechanisms:
 **Existing feature specs**:
 - Compliance — `docs/features/compliance.md` (June 2026; first exemplar)
 - Client View-As — `docs/features/client-view-as.md`
-- Documents → Google Drive backup — `docs/features/documents-gdrive-backup.md` (spec only; no code yet — see [[project-documents-gdrive-backup]])
+- Documents → Google Drive backup — `docs/features/documents-gdrive-backup.md` (BUILT — see [[project-documents-gdrive-backup]])
 
 Related: [[reference-playwright-setup]], [[financial-system-doc]], [[date-handling-reference]], [[feedback-run-tests-trigger]].

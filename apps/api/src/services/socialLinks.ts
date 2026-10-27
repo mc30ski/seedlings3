@@ -25,7 +25,7 @@ export type SocialLink = {
   url: string;
   /** Brand icon as a data URL (`data:image/...`). Required — there's no
    *  default-glyph fallback. Uploaded via the SettingsTab editor. No
-   *  size cap — the super admin is the only editor and is responsible
+   *  size cap — `settings.manage` is the only way in, and that holder is responsible
    *  for keeping the icon small enough not to bloat the public pay
    *  payload. */
   iconDataUrl: string;

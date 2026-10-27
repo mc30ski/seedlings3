@@ -16,8 +16,8 @@ test("every pulse tint reads against its own theme's page", async ({ page }) => 
     await page.goto("/");
     await page.evaluate((t) => {
       localStorage.setItem("seedlings_theme", t);
-      localStorage.setItem("seedlings_topTab", JSON.stringify("worker"));
-      localStorage.setItem("seedlings_workerTab", JSON.stringify("home"));
+      localStorage.setItem("seedlings_topTab", JSON.stringify("staff"));
+      localStorage.setItem("seedlings_staffTab", JSON.stringify("home"));
       localStorage.setItem("seedlings_lastAppOpenedAt", new Date().toISOString());
     }, theme);
     await page.goto("/");

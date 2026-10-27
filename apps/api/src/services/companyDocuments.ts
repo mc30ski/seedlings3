@@ -52,17 +52,17 @@ function expirationStatus(expiresAt: Date | null): "active" | "expiring" | "expi
 
 export const companyDocuments = {
   /**
-   * Lists documents. `adminHiddenVisible=false` hides admin-hidden docs (for
+   * Lists documents. `restrictedVisible=false` hides admin-hidden docs (for
    * Admin viewers). Filters apply on the server so counts stay accurate.
    */
   async list(params: {
-    adminHiddenVisible: boolean;
+    restrictedVisible: boolean;
     type?: string;
     status?: "active" | "expiring" | "expired" | "archived" | "all";
     q?: string;
   }) {
     const where: any = {};
-    if (!params.adminHiddenVisible) where.adminHidden = false;
+    if (!params.restrictedVisible) where.restricted = false;
     if (params.type) where.type = params.type;
     if (params.status === "archived") {
       where.archivedAt = { not: null };
@@ -108,7 +108,7 @@ export const companyDocuments = {
     }));
   },
 
-  async get(id: string, opts: { adminHiddenVisible: boolean }) {
+  async get(id: string, opts: { restrictedVisible: boolean }) {
     const doc = await prisma.companyDocument.findUnique({
       where: { id },
       include: {
@@ -123,7 +123,7 @@ export const companyDocuments = {
       },
     });
     if (!doc) throw new ServiceError("NOT_FOUND", "Document not found.", 404);
-    if (!opts.adminHiddenVisible && doc.adminHidden) {
+    if (!opts.restrictedVisible && doc.restricted) {
       throw new ServiceError("NOT_FOUND", "Document not found.", 404);
     }
     return { ...doc, expirationStatus: expirationStatus(doc.expiresAt) };
@@ -140,7 +140,7 @@ export const companyDocuments = {
       title: string;
       description?: string | null;
       expiresAt?: string | null;
-      adminHidden?: boolean;
+      restricted?: boolean;
     },
   ) {
     if (!payload.type) throw new ServiceError("INVALID", "type is required.", 400);
@@ -170,7 +170,7 @@ export const companyDocuments = {
           title: payload.title.trim(),
           description: payload.description?.trim() || null,
           expiresAt: payload.expiresAt ? new Date(payload.expiresAt) : null,
-          adminHidden: !!payload.adminHidden,
+          restricted: !!payload.restricted,
           createdById: currentUserId,
         },
       });
@@ -189,7 +189,7 @@ export const companyDocuments = {
       title?: string;
       description?: string | null;
       expiresAt?: string | null;
-      adminHidden?: boolean;
+      restricted?: boolean;
     },
   ) {
     return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -200,7 +200,7 @@ export const companyDocuments = {
       if (patch.title !== undefined) data.title = patch.title.trim();
       if (patch.description !== undefined) data.description = patch.description?.trim() || null;
       if (patch.expiresAt !== undefined) data.expiresAt = patch.expiresAt ? new Date(patch.expiresAt) : null;
-      if (patch.adminHidden !== undefined) data.adminHidden = !!patch.adminHidden;
+      if (patch.restricted !== undefined) data.restricted = !!patch.restricted;
 
       const updated = await tx.companyDocument.update({ where: { id }, data });
       await writeAudit(tx, AUDIT.DOCUMENT.UPDATED, currentUserId, {
@@ -463,7 +463,7 @@ export const companyDocuments = {
     documentId: string,
     versionId: string,
     mode: "view" | "download",
-    opts: { adminHiddenVisible: boolean },
+    opts: { restrictedVisible: boolean },
   ) {
     const version = await prisma.companyDocumentVersion.findUnique({
       where: { id: versionId },
@@ -472,7 +472,7 @@ export const companyDocuments = {
     if (!version || version.documentId !== documentId) {
       throw new ServiceError("NOT_FOUND", "Version not found.", 404);
     }
-    if (!opts.adminHiddenVisible && version.document.adminHidden) {
+    if (!opts.restrictedVisible && version.document.restricted) {
       throw new ServiceError("NOT_FOUND", "Version not found.", 404);
     }
 
@@ -481,7 +481,7 @@ export const companyDocuments = {
       filename: version.originalFilename,
     });
 
-    if (version.document.adminHidden) {
+    if (version.document.restricted) {
       await writeAudit(
         prisma,
         mode === "view" ? AUDIT.DOCUMENT.VIEWED : AUDIT.DOCUMENT.DOWNLOADED,
@@ -503,7 +503,7 @@ export const companyDocuments = {
     currentUserId: string,
     documentId: string,
     versionId: string,
-    opts: { adminHiddenVisible: boolean },
+    opts: { restrictedVisible: boolean },
   ): Promise<{ text: string; contentType: string; originalFilename: string }> {
     const version = await prisma.companyDocumentVersion.findUnique({
       where: { id: versionId },
@@ -512,7 +512,7 @@ export const companyDocuments = {
     if (!version || version.documentId !== documentId) {
       throw new ServiceError("NOT_FOUND", "Version not found.", 404);
     }
-    if (!opts.adminHiddenVisible && version.document.adminHidden) {
+    if (!opts.restrictedVisible && version.document.restricted) {
       throw new ServiceError("NOT_FOUND", "Version not found.", 404);
     }
 
@@ -532,7 +532,7 @@ export const companyDocuments = {
 
     const text = await getObjectText(version.r2Key, "docs");
 
-    if (version.document.adminHidden) {
+    if (version.document.restricted) {
       await writeAudit(prisma, AUDIT.DOCUMENT.VIEWED, currentUserId, {
         documentId,
         versionId,
@@ -548,9 +548,9 @@ export const companyDocuments = {
   },
 
   /** Counts for the title-bar pill. */
-  async expirationCounts(opts: { adminHiddenVisible: boolean }) {
+  async expirationCounts(opts: { restrictedVisible: boolean }) {
     const baseWhere: any = { archivedAt: null };
-    if (!opts.adminHiddenVisible) baseWhere.adminHidden = false;
+    if (!opts.restrictedVisible) baseWhere.restricted = false;
 
     const now = new Date();
     // ET-anchored 30-day window for "expiring soon" count.

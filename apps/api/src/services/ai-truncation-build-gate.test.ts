@@ -51,7 +51,7 @@ const JSON_PARSING_AI_CALLSITES = [
   // lib/routePlanner.ts, and the "route planning is deterministic" gate below
   // which keeps the call from coming back.
   {
-    file: "apps/api/src/routes/admin.ts",
+    file: "apps/api/src/routes/occurrences.ts",
     what: "estimate generator",
     // Two prose fields in a JSON envelope.
     minTokens: 3000,

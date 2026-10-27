@@ -53,7 +53,7 @@ const NEVER_OVERDUE_STATUSES = new Set([
 
 /** Minimal shape needed to evaluate the predicate. Every consumer of
  *  the Overdue chip already fetches these fields (they come back on
- *  /occurrences and admin variants). */
+ *  /occurrences and management variants). */
 export type OverdueCandidate = {
   status: string;
   workflow?: string | null;

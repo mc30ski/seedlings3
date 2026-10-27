@@ -27,7 +27,8 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   documentId: string | null;
-  /** API base — `/api/super/documents` for super, omitted/none for admin. */
+  /** API base — always `/api/documents`. One route for every caller; the
+    server trims admin-hidden records by capability rather than by URL. */
   apiBase: string;
   /** Current expiration on the doc, ISO string or null. Used as default. */
   defaultExpiresAt?: string | null;

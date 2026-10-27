@@ -106,7 +106,7 @@ export const banners = {
    * Admin-side list — every banner with recipient + dismissal counts so the
    * Notify tab can show a history with delivery stats.
    */
-  async listAdmin() {
+  async listUnscoped() {
     const rows = await prisma.bannerNotification.findMany({
       orderBy: { createdAt: "desc" },
       include: {

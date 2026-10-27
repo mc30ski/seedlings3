@@ -36,7 +36,7 @@ import { cached } from "../lib/cache";
 export const MARKET_RATE_SETTINGS: Record<string, [string, string]> = {
   MARKET_RATE_ENABLED: [
     "true",
-    "Look up the local market wage from the Bureau of Labor Statistics for the metro area your business address sits in. Used only by the Super forecasting tool, to draw the market band behind each worker's hourly rate. Turn off to fall back to the manual override below.",
+    "Look up the local market wage from the Bureau of Labor Statistics for the metro area your business address sits in. Used only by a caller with settings authority forecasting tool, to draw the market band behind each worker's hourly rate. Turn off to fall back to the manual override below.",
   ],
   MARKET_RATE_SOC_CODE: [
     "373011",

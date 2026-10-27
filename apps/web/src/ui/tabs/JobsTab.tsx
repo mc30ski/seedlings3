@@ -2,11 +2,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AdminViewAsBadges,
-  AdminViewAsSelector,
-  type AdminWorker,
+  ViewAsBadges,
+  ViewAsSelector,
+  type ViewAsWorker,
   ElevatedActionRow,
-  OpsSummaryStrip,
+  OpsStatusCounts,
+  JobsInsightsSection,
 } from "@/src/ui/tabs/JobsTab.parts";
 import {
   addonTotal,
@@ -44,6 +45,7 @@ import {
 } from "@chakra-ui/react";
 import { AlertCircle, AlertTriangle, Archive, Camera, CalendarArrowUp, BarChart3, Bell, BellOff, Calendar, CalendarRange, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, ExternalLink, Eye, Filter, Hand, Heart, Inbox, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, Play, RefreshCw, Repeat, Share2, Star, Tag, Users, X,
   Map as MapIcon,
+  MapPin,
   KeyRound,
 } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
@@ -84,12 +86,12 @@ import {
   jobTitleTrail,
   jobTitleText,
 } from "@/src/lib/labels";
-import { determineRoles } from "@/src/lib/roles";
 import { occurrenceStatusColor } from "@/src/lib/statusColors";
 import { isJobOverdue, isActivityOverdue, loadPaymentRequestExpiryHours, DEFAULT_PAYMENT_REQUEST_EXPIRY_HOURS } from "@/src/lib/overdueRule";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { useBranding } from "@/src/lib/useBranding";
-import { type TabPropsType, type WorkerOccurrence, type Role } from "@/src/lib/types";
+import { type TabPropsType, type WorkerOccurrence } from "@/src/lib/types";
+import type { WorkerType } from "@repo/money";
 import { normalizeReceiptNumber } from "@/src/lib/receiptNumber";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -118,11 +120,14 @@ import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, navigateToProfile, bumpTitleBarEarnings } from "@/src/lib/bus";
 import { suggestedEquipment, parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
+import { payClassLabel } from "../../lib/paymentMath";
+import { isFieldCleared } from "../../lib/scope";
+import { ALL_TIME_PERIOD, periodKey } from "@/src/ui/components/WorkerHourlyPayCard";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import OccurrenceInstructions from "@/src/ui/components/OccurrenceInstructions";
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
 import { jobTagLabel as _jobTagLabel, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
-import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
+import { parseInternalTags, internalTagLabel, internalTagColor } from "@/src/ui/components/InternalTagPicker";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { useOffline } from "@/src/lib/offline";
 import { enqueueAction } from "@/src/lib/offlineQueue";
@@ -147,6 +152,8 @@ import {
   parseDocumentTypesConfig,
   type DocumentTypeConfig,
 } from "@/src/ui/components/DocumentTypePicker";
+import type { Scope } from "@/src/lib/scope";
+import { isW2, isFeeable } from "@repo/money";
 
 // `localDate` removed — use `bizDateKey` directly (single canonical
 // helper from @/src/lib/dates). See docs/DATE_HANDLING.md.
@@ -185,7 +192,7 @@ const GHOST_EXPIRING_PRESET: DatePreset = "overdueAndNext3";
 
 const GHOST_CARD_BG = "#7c8698";
 /** A ghost that is NOT pulsing is not overdue — it is a visit still comfortably
- *  ahead of its date, or one an admin has muted. The stark slate above reads as
+ *  ahead of its date, or one someone with `schedule.manage` has muted. The stark slate above reads as
  *  an alarm, so a calm ghost gets a lighter ground and dark ink instead of
  *  light. Two-tone rather than one colour at two opacities: white on the stark
  *  slate is already only 3.67:1, and lightening THAT would take it to 2.19. */
@@ -200,15 +207,15 @@ type OccComment = {
 };
 
 type JobsTabProps = Omit<TabPropsType, "purpose"> & {
-  /** Optional purpose override. Defaults to "WORKER" — the whole point
+  /** Optional purpose override. Defaults to the self-scoped value — the whole point
    *  of this tab is to render the worker layout as the baseline for
-   *  every role, then layer admin/super overlays via `scope`. Callers
+   *  every role, then layer management overlays via `scope`. Callers
    *  don't need to pass this. */
-  purpose?: Role;
   /** When set, filter occurrences to only those assigned to these users */
   viewAsUserIds?: string[];
   /** Simulated worker type when admin is impersonating (for UI behavior like hiding tentative) */
-  viewAsWorkerType?: string | null;
+  viewAsWorkerType?: WorkerType | null;
+  viewAsFieldCleared?: boolean;
   /** Display name of the impersonated worker — only meaningful when
    *  viewAsUserIds has exactly one entry. Used by mutation-confirm
    *  dialogs to surface the ImpersonationWarning. */
@@ -219,20 +226,19 @@ type JobsTabProps = Omit<TabPropsType, "purpose"> & {
   headerBelowSlot?: React.ReactNode;
   /** Called when the "Clear" badge is clicked, to reset external filters (e.g. View as) */
   onClearAll?: () => void;
-  /** Blended-view scope. Admin/super overlays layer additively via
+  /** One-tab scope. Management overlays layer additively via
    *  this flag set; the shipped card + section layout underneath is
    *  untouched. */
-  scope: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  scope: Scope;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// JobsTab — blended-role Jobs tab. One tab serves worker/admin/super
-// via a `scope` prop; `purpose` defaults to "WORKER" so the worker
-// layout is the baseline and admin/super capabilities layer
-// additively:
-//   • scope.isAdmin → AdminViewAsSelector + Client Requests dashboard
+// JobsTab — ONE Jobs tab for all of staff, driven by a `scope` prop. The
+// self-scoped layout is the baseline; management capabilities layer
+// additively on top:
+//   • people.view → ViewAsSelector; schedule.view → Client Requests
 //                     + admin action row (Cancel) on cards
-//   • scope.isSuper → Ops summary strip at the top + super action row
+//   • reports.view → Ops summary strip; schedule.manage → the action row
 //                     (Reopen / Archive / Force next) on cards
 //
 // Nothing is REMOVED for a lower role — capabilities only ADD.
@@ -240,73 +246,75 @@ type JobsTabProps = Omit<TabPropsType, "purpose"> & {
 // Companion files:
 //   • JobsTab.utils.ts   — pure helpers + tab-wide constants
 //   • JobsTab.parts.tsx  — additive UI (Dashboard/CompactBanner
-//                          re-exports, OpsSummaryStrip,
+//                          re-exports, OpsStatusCounts,
 //                          ElevatedActionRow, SkeletonBanner,
 //                          CompliancePromptBanner,
 //                          NotificationOptInBanner,
-//                          AdminViewAsSelector/Badges)
+//                          ViewAsSelector/Badges)
 //   • JobsTab.workday.tsx — WorkdayBanner + MileageBanner (surfaces
 //                          consumed by MyDashboard).
 // ─────────────────────────────────────────────────────────────────────────────
 export default function JobsTab({
   me,
-  purpose = "WORKER",
   viewAsUserIds: propViewAsUserIds,
   viewAsWorkerType: propViewAsWorkerType,
+  viewAsFieldCleared: propViewAsFieldCleared,
   viewAsDisplayName: propViewAsDisplayName,
   headerSlot: propHeaderSlot,
   headerBelowSlot: propHeaderBelowSlot,
   onClearAll: propOnClearAll,
   scope,
 }: JobsTabProps) {
-  const { isAvail, forAdmin, isAdmin: hasAdminRole, isSuper: hasSuperRole } = determineRoles(me, purpose);
-  // Tab-aware role gates. Purpose defaults to WORKER so the worker
-  // layout is the baseline; admin/super capabilities surface
-  // additively for elevated scopes. An actor with the underlying
-  // role AND admin scope gets `isAdmin === true` even when purpose
-  // is still WORKER, which lights up every `{isAdmin && …}` section
-  // (Client Requests, admin filter chips, admin-only sections, …).
-  // Worker scope stays untouched.
-  const isAdmin = (forAdmin || scope.isAdmin) && hasAdminRole;
-  // NOTE the asymmetry with `isAdmin` above, and do not "fix" it: super
-  // must NOT fall back to `forAdmin ||`. Both the Admin tab and the Super
-  // tab mount JobsTab with purpose="ADMIN", so `forAdmin` is true on both
-  // — a super sitting on the ADMIN chip would light up every super-only
-  // path. That shipped: the Admin Jobs feed fetched
-  // /api/super/timeline/upcoming and pulled adminHidden Timeline rows into
-  // the admin's own feed. Scope, not role, decides super extras.
-  const isSuper = scope.isSuper && hasSuperRole;
-  // Admin/super-additive gate. Used in place of `forAdmin` at every
-  // site where forAdmin gates an ADMIN-ONLY ADDITION (Client Requests
-  // fetch/render, admin filter chips, admin data feeds, admin API
-  // path selection). Where forAdmin gates a WORKER-BASELINE default
-  // (daily filter reset, worker-only fetch shape) leave it alone —
-  // admin scope in JobsTab still wants worker-baseline behaviors.
-  const showAdminExtras = forAdmin || scope.isAdmin;
 
-  // Internal admin "View as" state — only wired when scope.isAdmin AND
+  // CAPABILITIES, NAMED FOR WHAT THEY ARE.
+  //
+  // This block used to derive `canManageSchedule`, `canManageSettings` and `canManageSchedule`
+  // from a mix of `purpose`, `scope` and the person's roles, with a long
+  // comment explaining why super must not fall back to `canManageSchedule` —
+  // because the chip and the chip both mounted this tab with
+  // the same prop value, so the shell could not tell them apart. There is
+  // one shell and no `purpose` now, so all of that collapses: each name
+  // below is a single capability, read from the perspective-narrowed set.
+  //
+  // Named after the capability rather than a role so a reader can see
+  // what a gate actually asks. `canManageSchedule` guarding a control told you
+  // nothing about which authority it needed.
+  const canManageSchedule = scope.can("schedule.manage");
+  const canViewPeople = scope.can("people.view");
+  const canViewSchedule = scope.can("schedule.view");
+  // Timeline activities + document expirations mix into this feed as
+  // read-only "foreign rows". They come from `GET /timeline/upcoming`,
+  // which is guarded on `timeline.view` — a different entitlement from the
+  // one that runs the schedule, and separately grantable.
+  const canViewTimeline = scope.can("timeline.view");
+
+  // Internal "View as" state — only wired when `people.view` is held AND
   // the parent didn't already pass its own viewAsUserIds. Workers
   // list is fetched once from /api/workers on mount.
-  const [adminWorkers, setAdminWorkers] = useState<AdminWorker[]>([]);
+  const [viewAsWorkers, setViewAsWorkers] = useState<ViewAsWorker[]>([]);
   const [selfViewAsIds, setSelfViewAsIds] = usePersistedState<string[]>(
     "jobsTab_viewAsIds",
     [],
   );
   useEffect(() => {
-    if (!showAdminExtras) return;
-    apiGet<AdminWorker[]>("/api/workers")
-      .then((list) => setAdminWorkers(Array.isArray(list) ? list : []))
+    // `/api/workers` needs `people.view`, not `schedule.manage`. Gated on
+    // the wrong one, the worker picker was hidden from anyone who can read
+    // the team without running the schedule.
+    if (!canViewPeople) return;
+    apiGet<ViewAsWorker[]>("/api/workers")
+      .then((list) => setViewAsWorkers(Array.isArray(list) ? list : []))
       .catch(() => {});
-  }, [showAdminExtras]);
+  }, [canViewPeople]);
 
   // Pending client-request count — drives the collapsed-glow on the
   // Client Requests Dashboard wrapper. Refetches on the same
   // "something changed" events the child section listens for.
   const [clientRequestPending, setClientRequestPending] = useState<number>(0);
   useEffect(() => {
-    if (!showAdminExtras) return;
+    // `/api/change-requests` needs only `schedule.view`.
+    if (!canViewSchedule) return;
     const load = () => {
-      apiGet<Array<{ id: string }>>("/api/admin/change-requests?status=PENDING")
+      apiGet<Array<{ id: string }>>("/api/change-requests?status=PENDING")
         .then((rows) => setClientRequestPending(Array.isArray(rows) ? rows.length : 0))
         .catch(() => setClientRequestPending(0));
     };
@@ -318,38 +326,43 @@ export default function JobsTab({
       window.removeEventListener("seedlings:change-requests-updated", onChange);
       window.removeEventListener("focus", onChange);
     };
-  }, [showAdminExtras]);
+  }, [canManageSchedule]);
 
   // Effective view-as bindings — either the prop-provided ones (if the
   // parent wrapped us with explicit values, matches JobsTab's
   // contract) or the internal state (blended admin scope, no wrapper).
   // Every downstream reader uses these names, so the shadowing here is
   // the single point of resolution.
-  const usingSelfViewAs = showAdminExtras && !propViewAsUserIds;
+  const usingSelfViewAs = canManageSchedule && !propViewAsUserIds;
   const viewAsUserIds = usingSelfViewAs
     ? (selfViewAsIds.length > 0 ? selfViewAsIds : undefined)
     : propViewAsUserIds;
+  const viewAsFieldCleared = usingSelfViewAs
+    ? (selfViewAsIds.length === 1
+        ? (viewAsWorkers.find((w) => w.id === selfViewAsIds[0])?.fieldCleared ?? undefined)
+        : undefined)
+    : propViewAsFieldCleared;
   const viewAsWorkerType = usingSelfViewAs
     ? (selfViewAsIds.length === 1
-        ? (adminWorkers.find((w) => w.id === selfViewAsIds[0])?.workerType ?? null)
+        ? (viewAsWorkers.find((w) => w.id === selfViewAsIds[0])?.workerType ?? null)
         : undefined)
     : propViewAsWorkerType;
   const viewAsDisplayName = usingSelfViewAs
     ? (selfViewAsIds.length === 1
-        ? (adminWorkers.find((w) => w.id === selfViewAsIds[0])?.displayName ?? null)
+        ? (viewAsWorkers.find((w) => w.id === selfViewAsIds[0])?.displayName ?? null)
         : null)
     : propViewAsDisplayName;
   const headerSlot = usingSelfViewAs
     ? (
-        <AdminViewAsSelector
-          workers={adminWorkers}
+        <ViewAsSelector
+          workers={viewAsWorkers}
           selected={selfViewAsIds}
           onChange={setSelfViewAsIds}
         />
       )
     : propHeaderSlot;
   const headerBelowSlot = usingSelfViewAs
-    ? <AdminViewAsBadges workers={adminWorkers} selected={selfViewAsIds} />
+    ? <ViewAsBadges workers={viewAsWorkers} selected={selfViewAsIds} />
     : propHeaderBelowSlot;
   const onClearAll = usingSelfViewAs
     ? () => setSelfViewAsIds([])
@@ -357,7 +370,7 @@ export default function JobsTab({
   const { isOffline } = useOffline();
   // Workday gate — wraps job-start actions with the "you need an active
   // workday" check. Renders its own dialog at the bottom of the tree.
-  // Worker-purpose only — admins acting on jobs aren't bound by the gate
+  // Worker-purpose only — holders of `schedule.manage` acting on jobs aren't bound by the gate
   // (matches the server-side bypass in services/jobs.ts).
   const workdayGate = useWorkdayGate();
   const teamWorkdayDialog = useTeamWorkdayDialog();
@@ -381,16 +394,19 @@ export default function JobsTab({
     teamWorkdayDialog.show(list);
     return true;
   }
-  const useWorkdayGuard = purpose === "WORKER" && !forAdmin;
+  // Somebody who does NOT run the schedule must start a workday before
+  // acting. Was ANDed with the shell, so the same person skipped the guard
+  // or not depending on which tab they came in through.
+  const useWorkdayGuard = !canManageSchedule;
   // Effective viewAs name for the ImpersonationWarning blocks rendered
   // inside mutation dialogs. Only meaningful when admin is viewing a
   // single worker; otherwise null. Role-impersonation (X-Impersonate-As)
   // still fires its own banner via ImpersonationWarning even when this
   // is null.
   const effectiveViewAsName =
-    forAdmin && viewAsUserIds?.length === 1 ? (viewAsDisplayName ?? null) : null;
+    canManageSchedule && viewAsUserIds?.length === 1 ? (viewAsDisplayName ?? null) : null;
   // Method labels resolved from PAYMENT_METHODS taxonomy (single source of
-  // truth — edit in Super → Settings, no code change here).
+  // truth — edit in Settings, no code change here).
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const { businessName } = useBranding();
 
@@ -399,7 +415,7 @@ export default function JobsTab({
     // date range on the job — without it, a worker's 60-day clamp can hide
     // future jobs (e.g. tomorrow) when the default range is "today".
     const at = startAt ? `&at=${encodeURIComponent(startAt)}` : "";
-    const url = `${window.location.origin}/?occ=${occId}${at}${forAdmin ? "&view=admin" : ""}`;
+    const url = `${window.location.origin}/?occ=${occId}${at}`;
     navigator.clipboard.writeText(url).then(() => {
       publishInlineMessage({ type: "SUCCESS", text: "Link copied to clipboard." });
     }).catch(() => {
@@ -407,7 +423,10 @@ export default function JobsTab({
     });
   }
   const myId = viewAsUserIds?.length === 1 ? viewAsUserIds[0] : me?.id || "";
-  const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
+  // Storage-key prefix for this tab's open/closed state. Keyed on what
+  // the person can do, so it stays stable instead of changing when they
+  // navigate in from a different shell.
+  const pfx = canManageSchedule ? "ajobs" : "wjobs";
 
   // ═══════════════════════════════════════════════════════════════════════
   // STATE — search, density, filters, occurrences, dialogs, comments…
@@ -456,14 +475,16 @@ export default function JobsTab({
       { label: "Followup", value: "FOLLOWUP" },
       { label: "Announcement", value: "ANNOUNCEMENT" },
       { label: "Notices", value: "NOTICES" },
-      // Admin-only: foreign rows from the Timeline tab (activities) and
-      // Documents (per-day expirations). Read-only in this feed.
-      ...(showAdminExtras ? [
+      // Foreign rows from Timeline (activities) and Documents (per-day
+      // expirations), read-only in this feed. Offered on `schedule.manage`
+      // because these are filter options on the schedule; the rows
+      // themselves are fetched on `timeline.view`.
+      ...(canManageSchedule ? [
         { label: "Activity", value: "ACTIVITY" },
         { label: "Doc expiration", value: "DOC_EXPIRATION" },
       ] : []),
     ],
-    [showAdminExtras]
+    [canManageSchedule]
   );
   const typeCollection = useMemo(
     () => createListCollection({ items: typeItems }),
@@ -473,7 +494,7 @@ export default function JobsTab({
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   // Count of next-visit ghosts that are already past due. Unbounded in
   // time — the server's 30-day grace window is gone, so this is every
-  // outstanding stall, however old, minus the ones an admin suppressed.
+  // outstanding stall, however old, minus the ones someone with `schedule.manage` suppressed.
   // The suppressed ones are still in the FEED — only this number, and the
   // alert surfaces that read it, leave them out.
   // Fetched separately from the feed on purpose: ghosts are dated on the
@@ -491,7 +512,7 @@ export default function JobsTab({
 
   // Collapse state for the Insights + Client Requests section frames.
   // Match the Equipment tab pattern — outlined box, icon + UPPERCASE
-  // title, chevron toggle. Insights defaults open (Super lands here),
+  // title, chevron toggle. Insights defaults open (management lands here),
   // Client Requests defaults open too since it only renders when
   // there's actionable content (count > 0).
   const statusItems = useMemo(
@@ -535,7 +556,7 @@ export default function JobsTab({
   const [pausedRepeatingOnly, setPausedRepeatingOnly] = useState(false);
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
-  // Admin-only foreign rows — Timeline activities + doc expirations — that
+  // Foreign rows (`timeline.view`) — Timeline activities + doc expirations — that
   // mix into the date-bucketed feed alongside jobs. Activities slot at their
   // nextDueDate and stick around as overdue until completed. Doc expirations
   // appear ONLY on the day matching expiresAt (no overdue carryover here —
@@ -548,7 +569,7 @@ export default function JobsTab({
     category: string | null;
     rrule: string | null;
     nextDueDate: string;
-    adminHidden: boolean;
+    restricted: boolean;
   };
   type DocExpirationForeignRow = {
     kind: "doc_expiration";
@@ -556,20 +577,20 @@ export default function JobsTab({
     title: string;
     type: string;
     expiresAt: string;
-    adminHidden: boolean;
+    restricted: boolean;
   };
   type ForeignRow = ActivityForeignRow | DocExpirationForeignRow;
   const [foreignRows, setForeignRows] = useState<ForeignRow[]>([]);
   // Label lookups for the foreign rows' category / type fields — pulled from
-  // the configurable taxonomies so cards display the admin-defined label,
+  // the configurable taxonomies so cards display a caller with `schedule.manage`-defined label,
   // not the raw enum key (e.g., "Taxes" instead of "TAXES").
   const [timelineCategories, setTimelineCategories] = useState<TimelineCategoryConfig[]>(DEFAULT_TIMELINE_CATEGORIES);
   const [documentTypes, setDocumentTypes] = useState<DocumentTypeConfig[]>(DEFAULT_DOCUMENT_TYPES);
   useEffect(() => {
-    if (!showAdminExtras) return;
+    if (!canManageSchedule) return;
     (async () => {
       try {
-        const settings = await apiGet<{ key: string; value: string }[]>("/api/admin/settings");
+        const settings = await apiGet<{ key: string; value: string }[]>("/api/settings");
         if (!Array.isArray(settings)) return;
         const tc = settings.find((s) => s.key === "TIMELINE_CATEGORIES");
         const dt = settings.find((s) => s.key === "DOCUMENT_TYPES");
@@ -579,7 +600,7 @@ export default function JobsTab({
         if (dtp) setDocumentTypes(dtp);
       } catch {}
     })();
-  }, [showAdminExtras]);
+  }, [canManageSchedule]);
   // Live tick — re-render every minute so "X actual" elapsed time updates while the page is open.
   // (Once a job is completed, effectiveMinutes() uses completedAt and stops counting naturally.)
   const [, setNowTick] = useState(0);
@@ -593,10 +614,10 @@ export default function JobsTab({
   // the two tabs cannot drift on copy, confirms or what a reason filter
   // matches. See StreamPauseControls.
   const streamControls = useStreamPauseControls({ onChanged: () => load(false) });
-  const pauseReasons = usePauseReasons();
+  const pauseReasons = usePauseReasons(scope.can("schedule.manage"));
   // Holding a stream stops work someone else is scheduled for, and a worker
-  // has no view of that consequence — admin/super only.
-  const canManageStreams = !!(isAdmin || isSuper);
+  // has no view of that consequence — `schedule.manage`.
+  const canManageStreams = !!canManageSchedule;
   // Narrows a paused-only feed to one taxonomy reason. Meaningless while the
   // paused filter is off, so the control is disabled rather than hidden.
   const [pauseReasonFilter, setPauseReasonFilter] = useState<string>(ALL_PAUSE_REASONS);
@@ -637,16 +658,15 @@ export default function JobsTab({
     return parts.join(" ");
   }
 
-  // Pinned occurrences (worker only)
+  // Pinned occurrences — only for callers without `schedule.manage`.
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
-  const isWorkerView = purpose === "WORKER";
 
   useEffect(() => {
-    if (!isWorkerView) return;
+    if (canManageSchedule) return;
     apiGet<string[]>("/api/occurrences/pinned")
       .then((ids) => setPinnedIds(new Set(Array.isArray(ids) ? ids : [])))
       .catch(() => {});
-  }, [isWorkerView]);
+  }, [canManageSchedule]);
 
   async function togglePin(occId: string) {
     const wasPinned = pinnedIds.has(occId);
@@ -676,26 +696,26 @@ export default function JobsTab({
     }
   }
 
-  // Liked occurrences (worker only)
+  // Liked occurrences — only for callers without `schedule.manage`.
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!isWorkerView) return;
+    if (canManageSchedule) return;
     apiGet<string[]>("/api/occurrences/liked")
       .then((ids) => setLikedIds(new Set(Array.isArray(ids) ? ids : [])))
       .catch(() => {});
-  }, [isWorkerView]);
+  }, [canManageSchedule]);
 
   // Groups the signed-in worker is the claimer of — used to show a
   // "Claim for [Group]" chooser on the Claim button.
   type ClaimerGroup = { id: string; name: string; members: { userId: string; role: string }[] };
   const [groupsAsClaimer, setGroupsAsClaimer] = useState<ClaimerGroup[]>([]);
   useEffect(() => {
-    if (!isWorkerView) return;
+    if (canManageSchedule) return;
     apiGet<ClaimerGroup[]>("/api/me/groups-as-claimer")
       .then((list) => setGroupsAsClaimer(Array.isArray(list) ? list : []))
       .catch(() => {});
-  }, [isWorkerView]);
+  }, [canManageSchedule]);
   const [claimChooserOccId, setClaimChooserOccId] = useState<string | null>(null);
 
   async function toggleLike(occId: string) {
@@ -833,7 +853,7 @@ export default function JobsTab({
 
   async function submitReschedule() {
     if (!rescheduleOcc || !rescheduleDate) return;
-    if (!forAdmin && !rescheduleReason.trim()) return;
+    if (!canManageSchedule && !rescheduleReason.trim()) return;
     setRescheduleBusy(true);
     try {
       // Preserve the source occurrence's ET wall-clock time on the new
@@ -850,9 +870,9 @@ export default function JobsTab({
         const duration = new Date(rescheduleOcc.endAt).getTime() - new Date(rescheduleOcc.startAt).getTime();
         patchData.endAt = new Date(new Date(newStartIso).getTime() + duration).toISOString();
       }
-      if (forAdmin) {
-        // Admin uses the admin endpoint — no comment requirement enforced server-side
-        await apiPatch(`/api/admin/occurrences/${rescheduleOcc.id}`, patchData);
+      if (canManageSchedule) {
+        // Admin uses the management endpoint — no comment requirement enforced server-side
+        await apiPatch(`/api/occurrences/${rescheduleOcc.id}`, patchData);
         // Still post the comment since the user filled it in
         if (rescheduleReason.trim()) {
           await apiPost(`/api/occurrences/${rescheduleOcc.id}/comments`, { body: `Rescheduled: ${rescheduleReason.trim()}` });
@@ -962,6 +982,12 @@ export default function JobsTab({
   useEffect(() => {
     const canonical = normalizeReceiptNumber(q);
     if (!canonical) return;
+    // `/receipts/lookup` is `books.view` — the company's books, which this
+    // tab's own gate (`schedule.view`) does not imply and which nobody
+    // below the owner holds by default. Typing a receipt number is a
+    // search, so the refusal was invisible: the jump simply never
+    // happened. Skip the lookup instead of asking and being refused.
+    if (!scope.can("books.view")) return;
     let cancelled = false;
     (async () => {
       try {
@@ -973,7 +999,7 @@ export default function JobsTab({
               job: { id: string } | null;
             } | null;
           };
-        }>(`/api/admin/receipts/lookup?number=${encodeURIComponent(canonical)}`);
+        }>(`/api/receipts/lookup?number=${encodeURIComponent(canonical)}`);
         if (cancelled) return;
         const occId = res.receipt?.occurrence?.id;
         const startAt = res.receipt?.occurrence?.startAt;
@@ -1080,9 +1106,9 @@ export default function JobsTab({
   /**
    * Suppress / restore the "next visit not scheduled" warning.
    *
-   * ADMIN + SUPER ONLY. The server enforces it (PATCH
+   * `schedule.manage`. The server enforces it (PATCH
    * /occurrences/:id/next-visit-warning rejects a plain worker), and the
-   * button is only rendered on the admin form of this tab — the gate is
+   * button is only rendered for `schedule.manage` holders — the gate is
    * written twice on purpose, because only one of the two is enforcement.
    *
    * The flag lives on the BLOCKING occurrence, not on the ghost: a ghost
@@ -1257,11 +1283,11 @@ export default function JobsTab({
   }, []);
 
   useEffect(() => {
-    if (!showAdminExtras) return;
+    if (!canManageSchedule) return;
     try {
       for (const [key, bucket] of [
-        ["seedlings_adminJobs_showExpiringGhosts", "expiring"],
-        ["seedlings_adminJobs_showExpiredGhosts", "expired"],
+        ["seedlings_jobs_showExpiringGhosts", "expiring"],
+        ["seedlings_jobs_showExpiredGhosts", "expired"],
       ] as const) {
         if (localStorage.getItem(key)) {
           localStorage.removeItem(key);
@@ -1271,39 +1297,39 @@ export default function JobsTab({
     } catch {}
     const onExpiring = () => applyGhostFilter("expiring");
     const onExpired = () => applyGhostFilter("expired");
-    window.addEventListener("adminJobs:showExpiringGhosts", onExpiring);
-    window.addEventListener("adminJobs:showExpiredGhosts", onExpired);
+    window.addEventListener("staffJobs:showExpiringGhosts", onExpiring);
+    window.addEventListener("staffJobs:showExpiredGhosts", onExpired);
     return () => {
-      window.removeEventListener("adminJobs:showExpiringGhosts", onExpiring);
-      window.removeEventListener("adminJobs:showExpiredGhosts", onExpired);
+      window.removeEventListener("staffJobs:showExpiringGhosts", onExpiring);
+      window.removeEventListener("staffJobs:showExpiredGhosts", onExpired);
     };
-  }, [showAdminExtras, applyGhostFilter]);
+  }, [canManageSchedule, applyGhostFilter]);
 
   useEffect(() => {
-    if (!showAdminExtras) return;
+    if (!canManageSchedule) return;
     try {
-      const flag = localStorage.getItem("seedlings_adminJobs_showOverdue");
+      const flag = localStorage.getItem("seedlings_jobs_showOverdue");
       if (flag) {
-        localStorage.removeItem("seedlings_adminJobs_showOverdue");
+        localStorage.removeItem("seedlings_jobs_showOverdue");
         applyOverdue();
       }
     } catch {}
     try {
-      const aflag = localStorage.getItem("seedlings_adminJobs_showActivitiesOverdue");
+      const aflag = localStorage.getItem("seedlings_jobs_showActivitiesOverdue");
       if (aflag) {
-        localStorage.removeItem("seedlings_adminJobs_showActivitiesOverdue");
+        localStorage.removeItem("seedlings_jobs_showActivitiesOverdue");
         applyActivitiesOverdue();
       }
     } catch {}
     const onShowOverdue = () => applyOverdue();
     const onShowActivities = () => applyActivitiesOverdue();
-    window.addEventListener("adminJobs:showOverdue", onShowOverdue);
-    window.addEventListener("adminJobs:showActivitiesOverdue", onShowActivities);
+    window.addEventListener("staffJobs:showOverdue", onShowOverdue);
+    window.addEventListener("staffJobs:showActivitiesOverdue", onShowActivities);
     return () => {
-      window.removeEventListener("adminJobs:showOverdue", onShowOverdue);
-      window.removeEventListener("adminJobs:showActivitiesOverdue", onShowActivities);
+      window.removeEventListener("staffJobs:showOverdue", onShowOverdue);
+      window.removeEventListener("staffJobs:showActivitiesOverdue", onShowActivities);
     };
-  }, [showAdminExtras]);
+  }, [canManageSchedule]);
 
   // "Estimate follow-ups" header alert → filter to ESTIMATE/PROPOSAL_SUBMITTED
   // visits from 4 weeks ago through 1 week ago. Same shape as applyOverdue:
@@ -1332,21 +1358,21 @@ export default function JobsTab({
   }, []);
 
   useEffect(() => {
-    if (!showAdminExtras) return;
+    if (!canManageSchedule) return;
     try {
-      const flag = localStorage.getItem("seedlings_adminJobs_showEstimateFollowups");
+      const flag = localStorage.getItem("seedlings_jobs_showEstimateFollowups");
       if (flag) {
-        localStorage.removeItem("seedlings_adminJobs_showEstimateFollowups");
+        localStorage.removeItem("seedlings_jobs_showEstimateFollowups");
         applyEstimateFollowups();
       }
     } catch {}
     const onShow = () => applyEstimateFollowups();
-    window.addEventListener("adminJobs:showEstimateFollowups", onShow);
-    return () => window.removeEventListener("adminJobs:showEstimateFollowups", onShow);
-  }, [showAdminExtras, applyEstimateFollowups]);
+    window.addEventListener("staffJobs:showEstimateFollowups", onShow);
+    return () => window.removeEventListener("staffJobs:showEstimateFollowups", onShow);
+  }, [canManageSchedule, applyEstimateFollowups]);
 
   // "Hours awaiting approval" title-bar alert → wide date range (last 90
-  // days) + unapprovedHoursActive flag. Window is generous so admins can
+  // days) + unapprovedHoursActive flag. Window is generous so holders of `schedule.manage` can
   // catch late-arriving outliers; the flag-based filter is what actually
   // narrows the view.
   const applyUnapprovedHours = useCallback(() => {
@@ -1372,27 +1398,27 @@ export default function JobsTab({
   }, []);
 
   useEffect(() => {
-    if (!showAdminExtras) return;
+    if (!canManageSchedule) return;
     try {
-      const flag = localStorage.getItem("seedlings_adminJobs_showUnapprovedHours");
+      const flag = localStorage.getItem("seedlings_jobs_showUnapprovedHours");
       if (flag) {
-        localStorage.removeItem("seedlings_adminJobs_showUnapprovedHours");
+        localStorage.removeItem("seedlings_jobs_showUnapprovedHours");
         applyUnapprovedHours();
       }
     } catch {}
     const onShow = () => applyUnapprovedHours();
-    window.addEventListener("adminJobs:showUnapprovedHours", onShow);
-    return () => window.removeEventListener("adminJobs:showUnapprovedHours", onShow);
-  }, [showAdminExtras, applyUnapprovedHours]);
+    window.addEventListener("staffJobs:showUnapprovedHours", onShow);
+    return () => window.removeEventListener("staffJobs:showUnapprovedHours", onShow);
+  }, [canManageSchedule, applyUnapprovedHours]);
 
-  // Worker-only "peek at others" toggle. When on, the load filter is
+  // Self-scoped-only "peek at others" toggle. When on, the load filter is
   // relaxed to include jobs assigned to other workers (not just mine +
   // unassigned + announcements). Every occurrence surfaced only because
   // of this toggle gets tagged with `_isPeek = true` at load-time, and
   // every action-render branch on those cards is short-circuited so
   // peek-mode is read-only. Off by default. Not available to trainees
-  // (their scope is intentionally narrower — see `isTrainee` below).
-  // Not shown on the Admin Jobs tab (admins already see everything).
+  // (their scope is intentionally narrower — see `notFieldCleared` below).
+  // Pointless for `schedule.manage` holders, who already see everything.
   const [peekOthers, setPeekOthers] = usePersistedState<boolean>("wjobs_peekOthers", false);
 
   // Forecast lookup by ET date key. Used to prefix each dayGroup
@@ -1401,8 +1427,8 @@ export default function JobsTab({
   // no-op for date keys outside the forecast range.
   const forecastByDate = useForecastByDate();
   const weatherAlerts = useWeatherAlerts();
-  // Parcel dialog — the public county record for a property. Admin/Super
-  // only; see PropertyParcelDialog for why.
+  // Parcel dialog — the public county record for a property. See
+  // PropertyParcelDialog for the capability it requires and why.
   const [parcelFor, setParcelFor] = useState<{ propertyId: string; label: string } | null>(null);
 
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "now");
@@ -1492,7 +1518,7 @@ export default function JobsTab({
   // localStorage handoff for cross-tab navigations that need to apply a
   // filter on landing (e.g. clicking a Jobs Overview metric card on the
   // Super Operations tab). The dispatching tab writes a JSON-encoded filter
-  // payload, then dispatches navigate:adminTab with remount=true — this
+  // payload, then dispatches navigate:staffTab with remount=true — this
   // tab unmounts and remounts, and we replay the filter via the existing
   // jobs:applyFilter handler above. localStorage is necessary because the
   // event-based path would race the remount (the listener isn't yet
@@ -1520,9 +1546,9 @@ export default function JobsTab({
   const [likedOnly, setLikedOnly] = useState(false);
   const presetBeforeOverdueRef = useRef<DatePreset>(datePreset);
 
-  // Daily reset for worker tab — clear filters and set time frame to "Now" on the first render of a new day
+  // Daily reset of the self-scoped view — clear filters and set time frame to "Now" on the first render of a new day
   useEffect(() => {
-    if (forAdmin) return;
+    if (canManageSchedule) return;
     const key = `${pfx}_lastUsedDate`;
     try {
       const lastDate = localStorage.getItem(key);
@@ -1570,10 +1596,10 @@ export default function JobsTab({
 
   const quickDateItems = useMemo(
     () =>
-      forAdmin
+      canManageSchedule
         ? [...quickDateItemsBase, { label: "This year", value: "thisYear" }, { label: "All time", value: "all" }]
         : quickDateItemsBase,
-    [forAdmin]
+    [canManageSchedule]
   );
   const quickDateCollection = useMemo(
     () => createListCollection({ items: quickDateItems }),
@@ -1586,8 +1612,27 @@ export default function JobsTab({
   // Group id stashed alongside pendingClaimOccId so a "claim for group" action
   // that's interrupted by the contractor-agreement dialog resumes with the
   // group context, not as a solo claim.
+  // Derived, not a string literal: `periodKey` owns the encoding and a
+  // hand-typed copy would silently stop matching if it ever changed.
+  const ALL_TIME_KEY = periodKey(ALL_TIME_PERIOD);
+  // The INSIGHTS period control, owned by the section and rendered in the
+  // Dashboard header — same arrangement as Home's rollup.
+  const [insightsApi, setInsightsApi] = useState<{
+    timeframe: {
+      options: ReadonlyArray<{ label: string; value: string }>;
+      value: string;
+      onChange: (value: string) => void;
+    };
+    refresh: () => void;
+    loading: boolean;
+  } | null>(null);
   const [pendingClaimGroupId, setPendingClaimGroupId] = useState<string | null>(null);
-  const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
+  // Clearance used to be GUESSED FROM A PAY CLASS — a worker-type
+  // comparison standing in for a permission. `/api/workers` now reports each person's resolved
+  // `fieldCleared`, so viewing as someone renders THEIR clearance instead of
+  // whatever their worker type implied.
+  const notFieldCleared =
+    viewAsFieldCleared !== undefined ? !viewAsFieldCleared : !isFieldCleared(me);
   // ═════════════════════════════════════════════════════════════════════
   // TEAM / PEEK MODEL — see docstring block below every field.
   // ═════════════════════════════════════════════════════════════════════
@@ -1596,10 +1641,10 @@ export default function JobsTab({
   // "who is 'I' right now, and which cards have people OTHER than me
   // on them?" The set of people who count as "me" varies with scope:
   //
-  //   Worker scope, no view-as  → identity = {myId}
-  //   Admin/Super + view-as N   → identity = {...viewAsUserIds}
-  //   Admin/Super, All Workers  → no identity → team concept off
-  //   Trainee                   → team concept off
+  //   no view-as                → identity = {myId}
+  //   view-as N people          → identity = {...viewAsUserIds}
+  //   view-as everyone          → no identity → team concept off
+  //   not field-cleared         → team concept off
   //
   // teamContextEnabled: true when there IS a coherent identity. Drives
   //                     the toolbar button's enable state.
@@ -1611,16 +1656,16 @@ export default function JobsTab({
   //                     purpose of deciding which cards are shared-
   //                     team jobs.
   const teamContextEnabled =
-    !isTrainee &&
-    ((viewAsUserIds?.length ?? 0) > 0 || !showAdminExtras);
+    !notFieldCleared &&
+    ((viewAsUserIds?.length ?? 0) > 0 || !canManageSchedule);
   const peekActive = peekOthers && teamContextEnabled;
   const teamIdentityIds: Set<string> = viewAsUserIds?.length
     ? new Set(viewAsUserIds)
     : new Set([myId].filter(Boolean));
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
-  // Admin-only "Reset Job" confirm. Holds the occurrence the admin
-  // wants to reset; null when no confirm is open. Wired through
+  // "Reset Job" confirm (`schedule.manage`). Holds the occurrence to be
+  // reset; null when no confirm is open. Wired through
   // ConfirmDialog so an accidental thumb tap doesn't wipe time tracking.
   const [resetJobOcc, setResetJobOcc] = useState<WorkerOccurrence | null>(null);
   const [contactMenuOcc, setContactMenuOcc] = useState<string | null>(null);
@@ -1661,7 +1706,7 @@ export default function JobsTab({
   // carrying it explicitly means loosening one gate can't silently loosen the
   // other.
   const [addAddonCanRemove, setAddAddonCanRemove] = useState(false);
-  // Invoice preview — admin/super only, read-only, nothing stamped.
+  // Invoice preview — read-only, nothing stamped.
   const [previewOccId, setPreviewOccId] = useState<string | null>(null);
   // Re-price a finished visit — quoted three hours, took four. Admin+ only,
   // and the server refuses once a Payment row exists.
@@ -1903,7 +1948,7 @@ export default function JobsTab({
   // extra day at the boundary. bizDaysBetween + bizAddDays keep everything
   // anchored to ET regardless of where the worker's device clock is.
   function clampWorkerDates(from: string, to: string): { from: string; to: string; clamped: boolean } {
-    if (forAdmin) return { from, to, clamped: false };
+    if (canManageSchedule) return { from, to, clamped: false };
     const MAX_DAYS = 62;
     if (from && to) {
       if (bizDaysBetween(from as EtDateKey, to as EtDateKey) > MAX_DAYS) {
@@ -1934,23 +1979,23 @@ export default function JobsTab({
       if (keepOccId) qs.set("includeOccId", keepOccId);
       // Signal the Worker Jobs feed so the server applies peek
       // redaction to teammates' financials even when the caller is
-      // admin/super. Without this an admin using the Worker view
+      // Without this someone with `schedule.manage` using the Self-scoped view
       // would see every teammate's price/splits/payouts (the whole
       // point of the Team toggle is to give workers a view-only peek).
-      // Admin tab omits this param → normal admin-full-view behavior.
-      if (isWorkerView) qs.set("workerView", "1");
+      // Omitted when not in self-scoped view → the full schedule.
+      if (!canManageSchedule) qs.set("selfScoped", "1");
       // When admin is impersonating a single worker, ask the API to attach that
-      // worker's reminders/pins/likes instead of the admin's. Without this the DUE
-      // filter (which keys off attached reminders) would show the admin's reminders
+      // worker's reminders/pins/likes instead of the manager’s. Without this the DUE
+      // filter (which keys off attached reminders) would show the manager’s reminders
       // on the worker's jobs — usually nothing matches.
-      if (forAdmin && viewAsUserIds?.length === 1) {
+      if (canManageSchedule && viewAsUserIds?.length === 1) {
         qs.set("viewAsUserId", viewAsUserIds[0]);
       }
-      // Same scoping params as the feed (workerView / viewAsUserId), minus
+      // Same scoping params as the feed (selfScoped / viewAsUserId), minus
       // the date range — see `expiredGhostCount`.
       const countQs = new URLSearchParams();
-      if (isWorkerView) countQs.set("workerView", "1");
-      if (forAdmin && viewAsUserIds?.length === 1) countQs.set("viewAsUserId", viewAsUserIds[0]);
+      if (!canManageSchedule) countQs.set("selfScoped", "1");
+      if (canManageSchedule && viewAsUserIds?.length === 1) countQs.set("viewAsUserId", viewAsUserIds[0]);
       void apiGet<{ expiringSoon: number; expired: number }>(
         `/api/occurrences/ghost-expiry-counts${countQs.toString() ? `?${countQs}` : ""}`,
       )
@@ -1968,7 +2013,7 @@ export default function JobsTab({
         // ALSO include cards where none of the selected workers are
         // assigned, so the operator can see teammate work outside
         // the identity set — same "peek at teammates" model the
-        // worker view uses, just with a set-of-selected-workers as
+        // self-scoped view uses, just with a set-of-selected-workers as
         // the identity instead of {myId}.
         const idSet = new Set(viewAsUserIds);
         list = list.filter((occ) => {
@@ -1978,11 +2023,12 @@ export default function JobsTab({
           if (hitsViewAs) return true;
           return peekActive;
         });
-      } else if (!showAdminExtras && myId) {
-        if (isTrainee) {
+      } else if (!canManageSchedule && myId) {
+        if (notFieldCleared) {
           // Trainees only see jobs they are assigned to (no unassigned/
-          // claimable). Timeline events (workflow=EVENT) are admin-only —
-          // hidden even if the trainee was somehow assigned. Backend
+          // claimable). Timeline events (workflow=EVENT) need
+          // `timeline.view`, so they are hidden here even if the trainee
+          // was somehow assigned to one. Backend
           // /occurrences also enforces this; the frontend filter is a
           // belt-and-suspenders guard.
           list = list.filter((occ) => {
@@ -1991,9 +2037,9 @@ export default function JobsTab({
             return assignees.some((a) => a.userId === myId);
           });
         } else {
-          // Worker view — show only my jobs + unassigned (claimable) +
+          // Self-scoped view — show only my jobs + unassigned (claimable) +
           // announcements + highlighted occurrence. Timeline events
-          // (workflow=EVENT) are admin-only and hidden entirely.
+          // (workflow=EVENT) need `timeline.view`, so they are hidden.
           // Followups remain team-scoped: visible to assignees only.
           //
           // When `peekActive`, we ALSO keep occurrences assigned to
@@ -2002,8 +2048,9 @@ export default function JobsTab({
           // treat peek cards as strictly view-only.
           list = list.filter((occ) => {
             if (keepOccId && occ.id === keepOccId) return true;
-            // Events are admin-only Timeline items — hide from all
-            // non-admin workers regardless of assignment.
+            // Events are Timeline items (`timeline.view`); this branch
+            // is the no-`schedule.manage` path, so hide them regardless
+            // of assignment.
             if (occ.workflow === "EVENT") return false;
             // Announcements are universally visible
             if (occ.workflow === "ANNOUNCEMENT") return true;
@@ -2026,17 +2073,21 @@ export default function JobsTab({
       // Re-check seq before mutating state in case state-deriving filters above were async.
       if (seq !== loadSeqRef.current) return;
       setItems(list);
-      // Admin-only: pull Timeline activities + doc expirations and mix them
-      // into the feed. Failures are non-fatal — the main jobs view still
-      // renders if the timeline endpoint is unhappy.
+      // Pull Timeline activities + doc expirations and mix them into the
+      // feed, on `timeline.view` — the guard on the endpoint below. This
+      // was gated on `schedule.manage`, which is neither the entitlement
+      // the route checks nor one that implies it: a coordinator who runs
+      // the schedule but holds no timeline grant was issued a request the
+      // server refuses, and anyone holding `timeline.view` without
+      // `schedule.manage` silently lost the rows. Failures are non-fatal —
+      // the main jobs view still renders if the endpoint is unhappy.
       //
-      // SUPPRESS this fetch when the admin is "viewing as" another user —
-      // the whole point of that mode is to mirror what the selected worker
-      // sees, and non-admin workers never see Timeline activities or doc
-      // expirations. Without this guard, an admin viewing as a worker
-      // would still see admin-only Timeline rows mixed into the feed,
-      // contradicting the view-as semantics.
-      if (showAdminExtras && !viewAsUserIds?.length) {
+      // SUPPRESS this fetch while "viewing as" another user. The whole
+      // point of that mode is to mirror what the selected worker sees, and
+      // the rows are resolved against the CALLER's entitlements, not
+      // theirs — so without this guard they bleed into a view that is
+      // supposed to be the other person's.
+      if (canViewTimeline && !viewAsUserIds?.length) {
         try {
           type UpcomingApiRow =
             | {
@@ -2047,7 +2098,7 @@ export default function JobsTab({
                 category: string | null;
                 rrule: string | null;
                 nextDate: string;
-                adminHidden: boolean;
+                restricted: boolean;
               }
             | {
                 kind: "document_expiration";
@@ -2055,17 +2106,15 @@ export default function JobsTab({
                 title: string;
                 type: string;
                 nextDate: string;
-                adminHidden: boolean;
+                restricted: boolean;
               };
-          // Super uses /super/ — includes adminHidden Timeline activities
-          // and documents (which only super admins can create/view). Admin
-          // uses /admin/ — the same endpoint with adminHidden filtered out
-          // server-side. The title-bar alert count at pages/index.tsx
-          // already follows this same split; keep both surfaces in sync.
-          const timelineEndpoint = isSuper
-            ? "/api/super/timeline/upcoming?includeDocs=1"
-            : "/api/admin/timeline/upcoming?includeDocs=1";
-          const fr = await apiGet<UpcomingApiRow[]>(timelineEndpoint);
+          // ONE endpoint. Rows flagged
+          // `restricted` are filtered out server-side unless the caller
+          // holds `timeline.manage` (see routes/timeline.ts), so the same
+          // URL returns a different row set per caller and the client does
+          // not choose. The title-bar alert count in pages/index.tsx reads
+          // the same endpoint; keep both surfaces in sync.
+          const fr = await apiGet<UpcomingApiRow[]>("/api/timeline/upcoming?includeDocs=1");
           if (seq !== loadSeqRef.current) return;
           const rows: ForeignRow[] = (Array.isArray(fr) ? fr : []).map((r) =>
             r.kind === "event"
@@ -2077,7 +2126,7 @@ export default function JobsTab({
                   category: r.category,
                   rrule: r.rrule,
                   nextDueDate: r.nextDate,
-                  adminHidden: r.adminHidden,
+                  restricted: r.restricted,
                 }
               : {
                   kind: "doc_expiration" as const,
@@ -2085,7 +2134,7 @@ export default function JobsTab({
                   title: r.title,
                   type: r.type,
                   expiresAt: r.nextDate,
-                  adminHidden: r.adminHidden,
+                  restricted: r.restricted,
                 },
           );
           setForeignRows(rows);
@@ -2138,12 +2187,12 @@ export default function JobsTab({
     apiGet<CollectionLite[]>("/api/equipment-collections")
       .then((list) => setEquipmentCollections(Array.isArray(list) ? list : []))
       .catch(() => setEquipmentCollections([]));
-    // showAdminExtras included so switching RoleChip Admin → Worker
+    // canManageSchedule included so switching RoleChip Worker
     // (or vice versa) triggers a fresh load; the client-side scope
     // filter runs inside load() and would otherwise keep the
     // previously-scoped items in place, showing e.g. team cards to
     // a worker after they'd been visible to admin.
-  }, [dateFrom, dateTo, viewAsUserIds, isTrainee, peekActive, showAdminExtras]);
+  }, [dateFrom, dateTo, viewAsUserIds, notFieldCleared, peekActive, canManageSchedule]);
 
   // Re-fetch data after offline queue syncs
   const loadRef = useRef(load);
@@ -2167,12 +2216,12 @@ export default function JobsTab({
   // Re-fetch when another tab (e.g. admin Services edits an
   // occurrence's startedAt / completedAt / status) signals that job
   // data changed. Without this, the JobsTab card stays on its stale
-  // snapshot — e.g. still shows "Complete Job" even though an admin
+  // snapshot — e.g. still shows "Complete Job" even though someone with `schedule.manage`
   // just cleared the start time on Services.
   useEffect(() => {
     const handler = () => { void loadRef.current(false); };
     window.addEventListener("seedlings3:jobs-changed", handler);
-    // The admin Jobs feed mixes Timeline activities + doc-expiration rows
+    // A caller with `schedule.manage` Jobs feed mixes Timeline activities + doc-expiration rows
     // in via foreignRows (see load() below). When the operator adds /
     // edits / completes a Timeline activity from the Timeline tab or
     // updates a document, that surface must refresh so the new row
@@ -2226,15 +2275,15 @@ export default function JobsTab({
 
   useEffect(() => {
     try {
-      const flag = localStorage.getItem("seedlings_adminJobs_showUnclaimed");
+      const flag = localStorage.getItem("seedlings_jobs_showUnclaimed");
       if (flag) {
-        localStorage.removeItem("seedlings_adminJobs_showUnclaimed");
+        localStorage.removeItem("seedlings_jobs_showUnclaimed");
         applyUnclaimed();
       }
     } catch {}
     const onShowUnclaimed = () => applyUnclaimed();
-    window.addEventListener("adminJobs:showUnclaimed", onShowUnclaimed);
-    return () => window.removeEventListener("adminJobs:showUnclaimed", onShowUnclaimed);
+    window.addEventListener("staffJobs:showUnclaimed", onShowUnclaimed);
+    return () => window.removeEventListener("staffJobs:showUnclaimed", onShowUnclaimed);
   }, [applyUnclaimed]);
 
   // Show announcements (from header badge click)
@@ -2260,15 +2309,15 @@ export default function JobsTab({
 
   useEffect(() => {
     try {
-      const flag = localStorage.getItem("seedlings_adminJobs_showAnnouncements");
+      const flag = localStorage.getItem("seedlings_jobs_showAnnouncements");
       if (flag) {
-        localStorage.removeItem("seedlings_adminJobs_showAnnouncements");
+        localStorage.removeItem("seedlings_jobs_showAnnouncements");
         applyAnnouncements();
       }
     } catch {}
     const onShow = () => applyAnnouncements();
-    window.addEventListener("adminJobs:showAnnouncements", onShow);
-    return () => window.removeEventListener("adminJobs:showAnnouncements", onShow);
+    window.addEventListener("staffJobs:showAnnouncements", onShow);
+    return () => window.removeEventListener("staffJobs:showAnnouncements", onShow);
   }, [applyAnnouncements]);
 
   // Apply the highlight: clear filters, set a date range covering the occurrence,
@@ -2367,11 +2416,11 @@ export default function JobsTab({
         const idSet = new Set(viewAsUserIds);
         list = list.filter((occ) => {
           const assignees = occ.assignees ?? [];
-          if (isTrainee) return assignees.some((a) => idSet.has(a.userId));
+          if (notFieldCleared) return assignees.some((a) => idSet.has(a.userId));
           return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId));
         });
-      } else if (!showAdminExtras && myId) {
-        if (isTrainee) {
+      } else if (!canManageSchedule && myId) {
+        if (notFieldCleared) {
           list = list.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId));
         } else {
           list = list.filter((occ) => {
@@ -2547,14 +2596,14 @@ export default function JobsTab({
     const quick = getQuickMessage(occ, pocName);
     const canRequest = !!(quick && (pocPhone || pocEmail));
 
-    // Per-action impersonation: when the admin is taking this action on
+    // Per-action impersonation: when a caller with `schedule.manage` is taking this action on
     // Admin Jobs, name the worker on whose behalf it's happening. Falls
     // back through (a) the tab-level viewAs name (if admin is viewing-as
     // one worker), then (b) the job's claimer, then (c) the first active
     // non-observer assignee. Workers on the Worker Jobs tab confirm
     // their own jobs — no impersonation, so this is null.
     let actionViewAsName: string | null = effectiveViewAsName;
-    if (!actionViewAsName && forAdmin) {
+    if (!actionViewAsName && canManageSchedule) {
       const activeAssignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
       const claimer = activeAssignees.find((a: any) => a.assignedById === a.userId);
       const target = claimer ?? activeAssignees[0] ?? null;
@@ -2565,7 +2614,7 @@ export default function JobsTab({
     // Dialog body — always informative, regardless of whether the
     // Request Confirmation messaging branch is reachable. Previously
     // this was empty when no contact info existed, leaving a
-    // title-only dialog with no context for the admin to decide.
+    // title-only dialog with no context for a caller with `schedule.manage` to decide.
     const propertyLabel = (occ.job?.property as any)?.displayName ?? "this property";
     const clientLabel_ = (occ.job?.property as any)?.client?.displayName ?? null;
     const propertyAndClient = clientLabel_ ? `${propertyLabel} — ${clientLabel_}` : propertyLabel;
@@ -2575,7 +2624,7 @@ export default function JobsTab({
     const bodyText = `Mark the client as having confirmed the ${dateStr} appointment for ${propertyAndClient}. Confirm only if the client has actually approved.`;
 
     // Safety warning — also always shown. When the messaging branch is
-    // available we steer the admin to the "Request Confirmation" path;
+    // available we steer a caller with `schedule.manage` to the "Request Confirmation" path;
     // otherwise we surface the same advisory + how to add contact info.
     const baseWarning = "Only confirm if the client has approved the appointment. Starting a job without the client's go-ahead can cause issues.";
     const warningText = canRequest
@@ -2645,7 +2694,7 @@ export default function JobsTab({
   // toast. Used by every density (ultra, semi, expanded) so the behavior is
   // identical everywhere — including the busy-indicator handling.
   function openStartJobDialog(occ: WorkerOccurrence) {
-    // Two-stage gate. Skipped for admin views and offline (offline
+    // Two-stage gate. Skipped for management views and offline (offline
     // still queues; the server enforces when sync runs). Cancel from
     // either dialog throws a recognized error which we silently swallow.
     //
@@ -2738,7 +2787,7 @@ export default function JobsTab({
       // optimistically using `new Date()` would drift from the DB and
       // could even fail to clear the chip if a re-fetch interleaved.
       const updated = await apiPost<{ id: string; hoursApprovedAt?: string; hoursApprovedById?: string }>(
-        `/api/admin/occurrences/${occ.id}/approve-hours`,
+        `/api/occurrences/${occ.id}/approve-hours`,
         {},
       );
       setItems((prev) => prev.map((o) =>
@@ -2805,7 +2854,7 @@ export default function JobsTab({
     setBusyOccId(null);
   }
 
-  // Admin-only "Reset Job" — clears start/complete timestamps and any
+  // "Reset Job" (`schedule.manage`) — clears start/complete timestamps and any
   // accrued time tracking, reverts status to SCHEDULED, and wipes any
   // payment row that snuck in (handled by updateOccurrence's existing
   // revert branch). The scheduled date (startAt) is intentionally
@@ -2815,7 +2864,7 @@ export default function JobsTab({
   async function resetJob(occ: WorkerOccurrence) {
     setBusyOccId(occ.id);
     try {
-      await apiPatch(`/api/admin/occurrences/${occ.id}`, { startedAt: null });
+      await apiPatch(`/api/occurrences/${occ.id}`, { startedAt: null });
       await load(false);
       publishInlineMessage({ type: "SUCCESS", text: "Job reset to Scheduled." });
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
@@ -2866,17 +2915,17 @@ export default function JobsTab({
           if (occ.startAt) candidates.push(bizDateKey(occ.startAt));
           if ((occ as any).completedAt) candidates.push(bizDateKey((occ as any).completedAt));
           // An attached reminder makes the row "present" in the range
-          // — but only on the WORKER view, where the dayGroups block
+          // — but only on the SELF-SCOPED view, where the dayGroups block
           // below adds a future ghost card at the reminder date and
-          // suppresses the past-dated original. In ADMIN view there's
+          // suppresses the past-dated original. In MANAGEMENT view there's
           // no ghost machinery: the row would pass the filter via the
           // reminder date but get grouped at its natural startAt,
           // leaking observer-only / past jobs into the visible window
-          // (e.g. an admin's reminder on a completed observer job
+          // (e.g. a `schedule.manage` holder’s reminder on a completed observer job
           // from 9 days ago appearing under "Wed Jun 10" inside a
-          // "this week" filter). Admins browsing by date want jobs
+          // "this week" filter). Holders of `schedule.manage` browsing by date want jobs
           // whose actual scheduled / completed date is in range.
-          if (isWorkerView && (occ as any).reminder?.remindAt) {
+          if (!canManageSchedule && (occ as any).reminder?.remindAt) {
             candidates.push(bizDateKey((occ as any).reminder.remindAt));
           }
         }
@@ -2889,7 +2938,7 @@ export default function JobsTab({
       });
     }
     // Trainees should not see tentative jobs
-    if (isTrainee) rows = rows.filter((occ) => !occ.isTentative);
+    if (notFieldCleared) rows = rows.filter((occ) => !occ.isTentative);
     if (kind[0] !== "ALL") rows = rows.filter((occ) => occ.kind === kind[0]);
     const tf = typeFilter[0];
     // "JOBS" = real jobs only (STANDARD / ONE_OFF / ESTIMATE / untyped legacy). Used by
@@ -2944,7 +2993,7 @@ export default function JobsTab({
           if ((occ as any)._isNextOccurrenceGhost) return false;
           // SCHEDULED only, and no estimates — both come straight from the
           // server predicate behind the chip (`jobsUnclaimed` in
-          // routes/admin.ts). This block already claimed to match that
+          // routes/reports.ts). This block already claimed to match that
           // predicate, but only copied its observer rule: it checked no
           // status at all, so a COMPLETED or PENDING_PAYMENT visit that
           // happened to carry no assignee showed up as "unclaimed" work
@@ -2956,7 +3005,7 @@ export default function JobsTab({
           const claimable = w === "STANDARD" || w === "ONE_OFF" || !w;
           // "Unclaimed" = no NON-OBSERVER assignee. An observer is just
           // watching — they haven't claimed the work. Must match the chip's
-          // count source (`/admin/operations` jobsUnclaimed) which uses the
+          // count source (`/operations` jobsUnclaimed) which uses the
           // same predicate; otherwise the title-bar "N Unclaimed" badge and
           // the page list disagree on observer-only jobs (badge counts them,
           // page hides them — looks like "the chip lied" to the operator).
@@ -3101,8 +3150,8 @@ export default function JobsTab({
       );
     }
     rows.sort((a, b) => {
-      // Pinned items first (worker view only)
-      if (isWorkerView) {
+      // Pinned items first (self-scoped view only)
+      if (!canManageSchedule) {
         const aPin = pinnedIds.has(a.id) ? 0 : 1;
         const bPin = pinnedIds.has(b.id) ? 0 : 1;
         if (aPin !== bPin) return aPin - bPin;
@@ -3112,7 +3161,7 @@ export default function JobsTab({
       return da < db ? -1 : da > db ? 1 : 0;
     });
 
-    // Admin-only: inject Timeline activities + doc expirations into the feed
+    // Inject Timeline activities + doc expirations into the feed
     // as WorkerOccurrence-shaped ghosts. The renderer short-circuits on the
     // `_foreignKind` marker to render a distinct (read-only) card. Activities
     // slot at their nextDueDate; doc expirations only appear on their exact
@@ -3133,7 +3182,7 @@ export default function JobsTab({
     // and document expirations carry their own "Timeline" alert; letting
     // them through here made the Overdue list show three rows against a
     // count of one.
-    if (showAdminExtras && foreignRows.length > 0 && !unapprovedHoursActive && !overdueActive && !statusFilterIsRestricted) {
+    if (canManageSchedule && foreignRows.length > 0 && !unapprovedHoursActive && !overdueActive && !statusFilterIsRestricted) {
       const tf = typeFilter[0];
       const showActivities = tf === "ALL" || tf === "ACTIVITY";
       const showDocs = tf === "ALL" || tf === "DOC_EXPIRATION";
@@ -3171,7 +3220,7 @@ export default function JobsTab({
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, activitiesOverdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, pauseReasonFilter, forAdmin, showAdminExtras, foreignRows]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, activitiesOverdueActive, overdueExpiryHours, unapprovedHoursActive, vipOnly, likedOnly, likedIds, notFieldCleared, highlightOccId, filterJobId, pinnedIds, dateFrom, dateTo, showCanceled, showArchived, pausedRepeatingOnly, pauseReasonFilter, canManageSchedule, foreignRows]);
 
   // Which advisory is expanded. Held here, not in the badge: the chip sits in
   // a horizontal header row, so the body has to render below that row.
@@ -3214,7 +3263,7 @@ export default function JobsTab({
       return fmtDateWeekday(d, { year: bizYearOf(dateKey as EtDateKey) !== bizYearOf(todayKey) });
     };
 
-    // Separate pinned and reminder-due items into their own groups (worker view only).
+    // Separate pinned and reminder-due items into their own groups (self-scoped view only).
     // When the user is filtering by UNCLAIMED they're looking for claimable work, so
     // suppress the Reminders Due group and future-reminder ghost cards entirely —
     // otherwise unclaimed jobs that happen to have reminders attached get rendered
@@ -3229,7 +3278,7 @@ export default function JobsTab({
     // jobs as reminders, which is wrong for these views.
     const suppressReminderVisuals = statusFilter[0] === "UNCLAIMED" || typeFilter[0] === "JOBS";
 
-    if (isWorkerView) {
+    if (!canManageSchedule) {
       for (const occ of filtered) {
         const isPinned = pinnedIds_.has(occ.id);
         const isOverdueStandaloneReminder = occ.workflow === "REMINDER" && occ.status === "SCHEDULED" && occ.startAt && bizDateKey(occ.startAt) <= todayKey;
@@ -3359,17 +3408,18 @@ export default function JobsTab({
       });
     }
     return groups;
-  }, [filtered, pinnedIds, isWorkerView]);
+  }, [filtered, pinnedIds, canManageSchedule]);
 
-  if (!isAvail) return <UnavailableNotice />;
+  if (!canViewSchedule) return <UnavailableNotice />;
 
-  // Client-scope guard — Jobs is an operator surface (Worker /
-  // Admin / Super). When the RoleChip is on "Client", all three
+  // Client-scope guard — Jobs is a staff surface. When the RoleChip is
+  // on "Client", all three
   // scope flags are false; without this guard the tab would fall
-  // into the worker-default branch and render a scoped worker view
+  // into the default branch and render a scoped self-view
   // to someone acting as a client. Show a short empty state
   // instead.
-  if (!scope.isWorker && !scope.isAdmin && !scope.isSuper) {
+  // Nothing here for somebody who cannot even read the schedule.
+  if (!scope.can("schedule.view")) {
     return (
       <Box w="full" p={6} textAlign="center">
         <Text fontSize="sm" color="fg.muted">
@@ -3420,24 +3470,26 @@ export default function JobsTab({
           Renders nothing at all until opened — no wrapper, no margin — so it
           costs no vertical space on a tab nobody has asked for help on. */}
       <JobsExplainer
-        isAdminView={showAdminExtras}
-        isSuperView={isSuper}
+        canManageSchedule={canManageSchedule}
+        canViewReports={scope.can("reports.view")}
         workerType={viewAsWorkerType !== undefined ? viewAsWorkerType : me?.workerType}
+        fieldCleared={!notFieldCleared}
+        scope={scope}
       />
-      {/* ─── Admin / super overlays ───────────────────────────────
+      {/* ─── Management overlays ───────────────────────────────
           Section frames match the Equipment tab pattern: outlined
           box (or orange Card for Insights), icon + UPPERCASE title,
           chevron toggle. The Job feed below stays outside these
           frames since it's the primary content of the tab, not a
           collapsible subsection. */}
       <VStack align="stretch" gap={2} mb={2}>
-        {/* Client Requests — admin-only queue of reschedule / skip
-            requests submitted by clients. Only rendered when there
+        {/* Client Requests — the queue of reschedule / skip requests
+            submitted by clients, on `schedule.manage`. Only rendered when there
             IS a pending request; otherwise the section (which would
             just show an empty state) is hidden entirely. The count
             useEffect keeps polling behind the scenes so a new
             request pops the section in as soon as it lands. */}
-        {showAdminExtras && clientRequestPending > 0 && (
+        {canManageSchedule && clientRequestPending > 0 && (
           /* Same section frame as Insights and the Home sections: title
              bar, chevron, 4px left stripe, shared refresh + dim. It used
              to be a hand-rolled pulsing yellow box with a ▶/▼ glyph.
@@ -3463,29 +3515,74 @@ export default function JobsTab({
             <ClientRequestsSection onLoadingChange={setClientReqLoading} />
           </Dashboard>
         )}
-        {/* Insights (Super only) — Ops summary strip wrapped in the
-            same orange card as the Equipment Insights section, for a
-            consistent Super visual language across tabs. */}
-        {scope.isSuper && (
+        {/* The ops rollup. `GET /operations` needs `reports.view`; this
+            was gated on the surface, so a role that reads the
+            business without changing its settings did not get it — and a
+            Super who could not read reports would have fetched it and
+            been refused. */}
+        {/* `reports.business`, as INSIGHTS is everywhere — and now
+            business-wide in substance too: the body reads `jobsRollup`
+            from GET /operations rather than counting the filtered rows.
+            The per-list counts live above the list, ungated, where a
+            count of what you are looking at belongs. */}
+        {scope.can("reports.business") && (
           <Dashboard
             storageKey={`seedlings:${pfx}:insightsOpen`}
             title="Insights"
             icon={BarChart3}
             variant="insights"
+            onRefresh={insightsApi?.refresh}
+            refreshing={!!insightsApi?.loading}
+            timeframe={
+              insightsApi
+                ? {
+                    ...insightsApi.timeframe,
+                    // ALL TIME GOES THROUGH A CONFIRM, as it does on the
+                    // date presets below and on ServicesTab. It is the one
+                    // option with no bound: on a mature database it scans
+                    // every occurrence the business has ever had, and a
+                    // mis-click in a dropdown is a much cheaper mistake to
+                    // make than clicking a button labelled "Load All".
+                    onChange: (v: string) => {
+                      if (v !== ALL_TIME_KEY) {
+                        insightsApi.timeframe.onChange(v);
+                        return;
+                      }
+                      setConfirmAction({
+                        title: "Load All Data",
+                        message:
+                          "This will roll up every occurrence for all time. This may be slow. Are you sure?",
+                        confirmLabel: "Load All",
+                        colorPalette: "orange",
+                        onConfirm: () => insightsApi.timeframe.onChange(v),
+                      });
+                    },
+                  }
+                : undefined
+            }
           >
-            <OpsSummaryStrip rows={items} />
+            <JobsInsightsSection onReady={setInsightsApi} />
           </Dashboard>
         )}
       </VStack>
+      {/* Counts of what is on screen — no money in it, so no capability.
+          Deliberately NOT `OpsSummaryStrip`: that pairs these counts with
+          the financial block, and mounting the pair here once exposed
+          revenue to everyone who could open this tab. */}
+      {filtered.length > 0 && (
+        <Box mb={2}>
+          <OpsStatusCounts rows={filtered} />
+        </Box>
+      )}
       <HStack mb={2} gap={2} wrap="nowrap">
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)", border: "1px solid var(--chakra-colors-gray-emphasized)", borderRadius: "6px" }}>
+        <Button aria-label="Refresh jobs" size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-subtle)", border: "1px solid var(--chakra-colors-gray-emphasized)", borderRadius: "6px" }}>
           <RefreshCw size={14} />
         </Button>
         {/* Team view toggle — always rendered so its position in the
             toolbar stays stable. Disabled when admin has "All
             Workers" selected (no viewAs) since "peeking at
             teammates" isn't meaningful there. Enabled in worker
-            scope and in admin/super scope with specific workers
+            scope and in management scope with specific workers
             selected via View as. */}
         <Button
           size="sm"
@@ -3610,7 +3707,7 @@ export default function JobsTab({
               gap={0}
               minW="150px"
             >
-              {(isAdmin || isSuper) && (
+              {canManageSchedule && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -3639,7 +3736,7 @@ export default function JobsTab({
               >
                 Reminder
               </Button>
-              {(isAdmin || isSuper) && (
+              {canManageSchedule && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -3650,7 +3747,7 @@ export default function JobsTab({
                   Event
                 </Button>
               )}
-              {(isAdmin || isSuper) && (
+              {canManageSchedule && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -3661,7 +3758,7 @@ export default function JobsTab({
                   Followup
                 </Button>
               )}
-              {(isAdmin || isSuper) && (
+              {canManageSchedule && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -3962,7 +4059,7 @@ export default function JobsTab({
         >
           <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
         </Button>
-        {isWorkerView && (
+        {!canManageSchedule && (
           <Button
             size="sm"
             variant={likedOnly ? "solid" : "outline"}
@@ -3987,7 +4084,7 @@ export default function JobsTab({
             if (overdueActive) {
               setOverdueActive(false);
     setActivitiesOverdueActive(false);
-              setDatePreset(presetBeforeOverdueRef.current ?? (forAdmin ? "thisWeek" : "now"));
+              setDatePreset(presetBeforeOverdueRef.current ?? (canManageSchedule ? "thisWeek" : "now"));
             } else {
               presetBeforeOverdueRef.current = datePreset;
               setDatePreset(null);
@@ -4027,7 +4124,7 @@ export default function JobsTab({
             Archived / Paused repeating from the dropdown flips the
             same underlying flags via its onValueChange. */}
         <Box flex="1" />
-        {isWorkerView && (
+        {!canManageSchedule && (
           <Button
             size="sm"
             variant="ghost"
@@ -4315,12 +4412,12 @@ export default function JobsTab({
           })()}
           {/* Client Requests moved above the filter bar — see the
               Dashboard section render for the actual mount point. */}
-          {showAdminExtras && !viewAsUserIds?.length && (
+          {canManageSchedule && !viewAsUserIds?.length && (
             <Box px={3} py={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
               <Text fontSize="xs" color="yellow.fg">Showing all jobs for all workers, including unclaimed.</Text>
             </Box>
           )}
-          {forAdmin && viewAsUserIds && viewAsUserIds.length > 0 && (
+          {canManageSchedule && viewAsUserIds && viewAsUserIds.length > 0 && (
             <Box px={3} py={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
               <Text fontSize="xs" color="yellow.fg">
                 Filtered to jobs assigned to the selected worker{viewAsUserIds.length > 1 ? "s" : ""}. Unclaimed and unrelated jobs are hidden.
@@ -4416,7 +4513,7 @@ export default function JobsTab({
                       so they don't burn a whole row. Tightened padding + 2xs
                       font to match the count badge so the centered header
                       stays on one line. */}
-                  {isWorkerView && group.label === "Today" && group.items.some((o) => (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE") && (o.assignees ?? []).some((a) => a.userId === myId)) && (
+                  {!canManageSchedule && group.label === "Today" && group.items.some((o) => (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE") && (o.assignees ?? []).some((a) => a.userId === myId)) && (
                     <Badge
                       size="sm"
                       variant="solid"
@@ -4437,7 +4534,7 @@ export default function JobsTab({
                           // evening doesn't land tomorrow's route preview.
                           localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(bizToday()));
                         } catch {}
-                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes" } }));
+                        window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "routes" } }));
                       }}
                     >
                       Route →
@@ -4454,7 +4551,7 @@ export default function JobsTab({
 
                       Nothing ages out any more — the server's grace
                       window is gone — so this counts every outstanding
-                      stall however old, minus the ones an admin has
+                      stall however old, minus the ones someone with schedule authority has
                       suppressed. Clicking opens the matching filter over
                       an unbounded range, because a narrower one would
                       show fewer rows than the number on this chip. */}
@@ -4575,7 +4672,7 @@ export default function JobsTab({
               (ElevatedActionRow doesn't apply to them).
               ═══════════════════════════════════════════════════════ */}
           {group.items.map((occ, occIdx) => {
-            // Admin-only foreign rows (Timeline activities + doc expirations)
+            // Foreign rows (Timeline activities + doc expirations)
             // short-circuit here with a distinct, read-only render. The rest
             // of this giant callback assumes a WorkerOccurrence shape and
             // would error on the synthetic ghosts otherwise. Foreign rows
@@ -4606,7 +4703,7 @@ export default function JobsTab({
                   localStorage.setItem("seedlings_deeplink_event", p.id);
                   localStorage.setItem("seedlings_deeplink_event_ts", String(Date.now()));
                 } catch {}
-                window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "timeline" } }));
+                window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "timeline" } }));
                 setTimeout(() => {
                   window.dispatchEvent(new CustomEvent("timelineTab:applyDeepLink", { detail: { eventId: p.id } }));
                 }, 250);
@@ -4655,8 +4752,12 @@ export default function JobsTab({
                           {p.rrule && (
                             <Badge size="xs" colorPalette="gray" variant="subtle" px="1.5">recurring</Badge>
                           )}
-                          {p.adminHidden && (
-                            <Badge size="xs" colorPalette="red" variant="subtle" px="1.5">Super-only</Badge>
+                          {/* Restricted: `restricted` rows are served only
+                              to `timeline.manage` (timeline.ts passes
+                              `restrictedVisible: callerCan(req, "timeline.manage")`).
+                              The badge named a role nobody has. */}
+                          {p.restricted && (
+                            <Badge size="xs" colorPalette="red" variant="subtle" px="1.5">Restricted</Badge>
                           )}
                         </HStack>
                       </VStack>
@@ -4699,7 +4800,7 @@ export default function JobsTab({
                   localStorage.setItem("seedlings_deeplink_document", p.documentId);
                   localStorage.setItem("seedlings_deeplink_document_ts", String(Date.now()));
                 } catch {}
-                window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "documents" } }));
+                window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "documents" } }));
                 setTimeout(() => {
                   window.dispatchEvent(new CustomEvent("documentsTab:applyDeepLink", { detail: { docId: p.documentId } }));
                 }, 250);
@@ -4738,8 +4839,9 @@ export default function JobsTab({
                             {p.title}
                           </Text>
                         </HStack>
-                        {p.adminHidden && (
-                          <Badge size="xs" colorPalette="red" variant="subtle" px="1.5">Super-only</Badge>
+                        {/* Restricted — `timeline.manage` only. See above. */}
+                        {p.restricted && (
+                          <Badge size="xs" colorPalette="red" variant="subtle" px="1.5">Restricted</Badge>
                         )}
                       </VStack>
                       <Button
@@ -4798,7 +4900,7 @@ export default function JobsTab({
             const isAcceptedEstimate = isEstimateOcc && occ.status === "ACCEPTED";
             const isRejectedEstimate = isEstimateOcc && occ.status === "REJECTED";
             const isClosed = occ.status === "CLOSED" || occ.status === "ARCHIVED";
-            const isAdminOnlyOcc = !!occ.isAdminOnly;
+            const mustBeAssignedOcc = !!occ.mustBeAssigned;
             const needsConfirmation = !!(occ.jobId) && occ.status === "SCHEDULED" && !(occ as any).isClientConfirmed &&
               (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || occ.workflow === "ESTIMATE" || !occ.workflow);
             const isConfirmed = !!(occ as any).isClientConfirmed;
@@ -4813,7 +4915,7 @@ export default function JobsTab({
             const isGhost = !!occ._isReminderGhost;
             const isVipClient = !!(occ.job?.property?.client as any)?.isVip;
             const vipReason = (occ.job?.property?.client as any)?.vipReason;
-            const isPinned = isWorkerView && pinnedIds.has(occ.id);
+            const isPinned = !canManageSchedule && pinnedIds.has(occ.id);
 
             // Per-card density: explicit per-card override wins; else the
             // global cardDensity. Ghost cards key their override separately
@@ -5223,15 +5325,15 @@ export default function JobsTab({
                                 Open the last visit
                               </Button>
                             )}
-                            {/* Suppress / restore. ADMIN + SUPER ONLY, and
-                                gated on `forAdmin` rather than a bare role
+                            {/* Suppress / restore. `schedule.manage`, and
+                                gated on `canManageSchedule` rather than a bare role
                                 check so it is absent from the Worker form of
-                                this tab even for an admin who is standing in
+                                this tab even for someone with schedule authority who is standing in
                                 it — the same rule every other admin control
                                 here follows. The server gate is the one that
                                 enforces; this one is why a worker never sees
                                 a button they cannot press. */}
-                            {forAdmin && (occ as any)._blockingOccurrenceId && (
+                            {canManageSchedule && (occ as any)._blockingOccurrenceId && (
                               <Button
                                 size="xs"
                                 variant="outline"
@@ -5410,6 +5512,20 @@ export default function JobsTab({
                                 📍 {occ.job.property.street1}
                                 {occ.job.property.city && `, ${occ.job.property.city}`}
                                 {occ.job.property.state && ` ${occ.job.property.state}`}
+                                {/* WHICH TERRITORY THIS SITS IN. Beside the
+                                    address because that is the thing it
+                                    qualifies — the same street can be read
+                                    very differently depending on whose
+                                    district it counts toward, and until now
+                                    nothing on a card said. Absent rather
+                                    than "—" when the property has no area:
+                                    a blank badge would read as a real
+                                    territory called nothing. */}
+                                {(occ.job.property as any)?.area?.name && (
+                                  <Text as="span" ml="1.5" color="purple.fg" fontWeight="medium">
+                                    · {(occ.job.property as any).area.name}
+                                  </Text>
+                                )}
                               </Text>
                             )}
                             {/* Assignees — who else is on this occurrence.
@@ -5858,8 +5974,8 @@ export default function JobsTab({
   // draws a second one whose ring is an open arc with the tick breaking out of
   // the top-right, so nested inside the badge it reads as an off-centre circle
   // shoved down-left. Same trap for any other glyph that includes its own ring.
-  const quickActionButton = pauseIndicator ?? (isTrainee || isPeek ? null : (() => {
-              if (needsConfirmation && (isClaimer || forAdmin)) {
+  const quickActionButton = pauseIndicator ?? (notFieldCleared || isPeek ? null : (() => {
+              if (needsConfirmation && (isClaimer || canManageSchedule)) {
                 // ALREADY ASKED changes how the same button reads, without
                 // adding a second control to a dense card: solid orange means
                 // "nobody has chased this", outlined means "chased, still
@@ -5897,7 +6013,7 @@ export default function JobsTab({
                 );
               }
               if (isTentative) return null;
-              if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || forAdmin)) {
+              if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || canManageSchedule)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.solid" color="blue.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title={isEstimateOcc ? "Start Estimate" : "Start Job"} onClick={(e: any) => {
                     e.stopPropagation();
@@ -5905,7 +6021,7 @@ export default function JobsTab({
                   }}><Play size={12} /></Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && (isClaimer || forAdmin) && !isEstimateOcc) {
+              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && (isClaimer || canManageSchedule) && !isEstimateOcc) {
                 return (
                   <Box position="relative" flexShrink={0}>
                     <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.solid" color="blue.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Pause / Complete" onClick={(e: any) => {
@@ -5936,7 +6052,7 @@ export default function JobsTab({
                   </Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && isEstimateOcc && (isClaimer || forAdmin)) {
+              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && isEstimateOcc && (isClaimer || canManageSchedule)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="purple.solid" color="purple.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "purple.600" }} title="Complete Estimate" onClick={(e: any) => {
                     e.stopPropagation();
@@ -5958,7 +6074,7 @@ export default function JobsTab({
                   }}><Check size={13} /></Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "PROPOSAL_SUBMITTED" && isEstimateOcc && (isClaimer || forAdmin)) {
+              if (!isTaskOrReminder && occ.status === "PROPOSAL_SUBMITTED" && isEstimateOcc && (isClaimer || canManageSchedule)) {
                 return (
                   <Box position="relative" flexShrink={0}>
                     <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="green.solid" color="green.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept / Reject Estimate" onClick={(e: any) => {
@@ -6059,7 +6175,7 @@ export default function JobsTab({
                   </Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "PAUSED" && (isClaimer || forAdmin)) {
+              if (!isTaskOrReminder && occ.status === "PAUSED" && (isClaimer || canManageSchedule)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.solid" color="orange.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Resume Job" onClick={(e: any) => {
                     e.stopPropagation();
@@ -6067,7 +6183,7 @@ export default function JobsTab({
                   }}><Play size={12} /></Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "PENDING_PAYMENT" && !isEstimateOcc && (isClaimer || forAdmin)) {
+              if (!isTaskOrReminder && occ.status === "PENDING_PAYMENT" && !isEstimateOcc && (isClaimer || canManageSchedule)) {
                 // Mirror the three-state logic of the full-width button block
                 // below (open / requestInFlight / pendingPayment). Only show
                 // the shortcut icon in the "open" state — once a Payment row
@@ -6087,13 +6203,13 @@ export default function JobsTab({
                 }
                 return null;
               }
-              if (isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder) {
+              if (isUnassigned && !mustBeAssignedOcc && !isTaskOrReminder) {
                 const isContractor = me?.workerType === "CONTRACTOR";
                 // ET calendar-day diff (DST-safe). Contractor lockout
                 // rule is "jobs more than 2 ET days away".
                 const daysAhead = occ.startAt ? bizDaysBetween(bizToday(), bizDateKey(occ.startAt)) : 0;
                 const contractorBlocked = isContractor && daysAhead > 2;
-                if (contractorBlocked || isTrainee) return null;
+                if (contractorBlocked || notFieldCleared) return null;
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="yellow.400" color="yellow.fg" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "yellow.500" }} title="Claim" onClick={(e: any) => {
                     e.stopPropagation();
@@ -6145,7 +6261,7 @@ export default function JobsTab({
                     ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
                     onClick={(e: any) => e.stopPropagation()}
                   >
-                    {isWorkerView && (
+                    {!canManageSchedule && (
                       <>
                         <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void toggleLike(occ.id); }}>
                           <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
@@ -6163,15 +6279,15 @@ export default function JobsTab({
                       // requested/accepted (see occInEditableState).
                       const isActive = occInEditableState(occ);
                       const hasAnyPriv =
-                        forAdmin ||
+                        canManageSchedule ||
                         !!me?.privileges?.canPullInventory ||
                         !!me?.privileges?.canChargeBusinessExpenses;
-                      // Admin/Super always pass — they can manage expenses on any job (e.g.
-                      // adding a one-off charge on behalf of a contractor who lacks the
-                      // "Charge business expenses" privilege). Workers must be the claimer
-                      // AND have at least one expense-related privilege.
+                      // `schedule.manage` always passes — it can add expenses on any
+                      // job (e.g. a one-off charge on behalf of a contractor who lacks
+                      // "Charge business expenses"). Everyone else must be the claimer
+                      // AND hold at least one expense-related capability.
                       // Followups are coordination items, not billable jobs — no expenses.
-                      const canManage = isActive && !isFollowup && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
+                      const canManage = isActive && !isFollowup && (canManageSchedule || (isClaimer && hasAnyPriv));
                       if (!canManage) return null;
                       return (
                         <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setChargeDialogOccId(occ.id); }}>
@@ -6185,9 +6301,9 @@ export default function JobsTab({
                         and any worker (including Observers, who don't
                         have access to the footer action rows on
                         completed jobs) needs a way to add their own.
-                        Server route is workerGuard with no observer
-                        check — UI was the only gate. */}
-                    {isWorkerView && (
+                        Server route requires `schedule.contribute` with no
+                        observer check — UI was the only gate. */}
+                    {!canManageSchedule && (
                       <Button
                         size="xs"
                         variant="ghost"
@@ -6205,7 +6321,7 @@ export default function JobsTab({
                       </Button>
                     )}
                     {/* Clear reminder — only shown when one already exists. */}
-                    {isWorkerView && occ.reminder && (
+                    {!canManageSchedule && occ.reminder && (
                       <Button
                         size="xs"
                         variant="ghost"
@@ -6265,8 +6381,8 @@ export default function JobsTab({
                   // time/work = blue" semantic split — see globals.css
                   // + WorkdayStrip state-color comment.) Peek rows use
                   // the SAME full-intensity pulse as own-rows so the
-                  // Worker Jobs timeline matches the Admin Jobs
-                  // timeline visually — the earlier muted variant made
+                  // peek rows match own-rows visually — the earlier
+                  // muted variant made
                   // teammates' active jobs feel de-prioritized when
                   // the whole point of peek is "see what everyone's
                   // doing right now."
@@ -6648,6 +6764,30 @@ export default function JobsTab({
                               {isEstimateOcc && occ.title && (
                                 <Text as="span" color="fg.muted" fontWeight="normal"> · {occ.title}</Text>
                               )}
+                              {/* THE TERRITORY, on the COLLAPSED card.
+                                  The request was "next to the property
+                                  address", and the expanded card has that
+                                  (see the MapLink block below). A closed
+                                  card shows no address at all though — it
+                                  identifies the property by NAME — so the
+                                  badge goes beside the name here, which is
+                                  where somebody scanning a list of cards
+                                  is actually looking. */}
+                              {(occ.job?.property as any)?.area?.name && (
+                                <Badge
+                                  size="sm"
+                                  variant="subtle"
+                                  colorPalette="purple"
+                                  ml="2"
+                                  verticalAlign="middle"
+                                  display="inline-flex"
+                                  alignItems="center"
+                                  gap="1"
+                                >
+                                  <MapPin size={10} />
+                                  {(occ.job?.property as any).area.name}
+                                </Badge>
+                              )}
                             </>
                           )}
                         </Text>
@@ -6793,13 +6933,13 @@ export default function JobsTab({
                               jobs whose hours haven't been admin-reviewed yet.
                               Sticky across status changes (including CLOSED) so
                               it doesn't get forgotten between payroll runs. For
-                              admin/super the chip is a dropdown trigger (chevron
+                              management the chip is a dropdown trigger (chevron
                               inside) that opens a one-item menu — Review Hours —
                               which surfaces the confirm dialog with Edit/Approve
                               choices. Workers see the chip as a passive label. */}
                           {(occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF") &&
                             occ.completedAt && !occ.hoursApprovedAt && (
-                            (isAdmin || isSuper) ? (
+                            canManageSchedule ? (
                               <Box position="relative" display="inline-flex">
                                 <Box
                                   as="button"
@@ -6874,7 +7014,7 @@ export default function JobsTab({
                           })()}
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
-                          {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
+                          {mustBeAssignedOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                           {needsConfirmation && <StatusBadge status="Unconfirmed" palette="orange" variant="solid" />}
                           {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <StatusBadge status="Confirmed" palette="green" variant="subtle" />}
                           {occ.linkGroupId && (
@@ -6883,7 +7023,7 @@ export default function JobsTab({
                             </Badge>
                           )}
                           {(occ.price ?? 0) >= highValueThreshold && <Box as="span" display="inline-flex" alignItems="center" title="Only employees or insured contractors can claim this job"><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></Box>}
-                          {isWorkerView && occ.reminder && (
+                          {!canManageSchedule && occ.reminder && (
                             <Badge
                               colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"}
                               variant="subtle" fontSize="xs" borderRadius="full" px="2"
@@ -7167,7 +7307,14 @@ export default function JobsTab({
                             // it, because that note owns only a TOP gap — the
                             // one-directional rule means each block has to
                             // claim its own space rather than inherit one.
-                            <Box fontSize="sm" mt={2}>
+                            // ADDRESS AND TERRITORY ON ONE ROW. An HStack,
+                            // not a trailing span: as a span after the link
+                            // it wrapped onto a line of its own, which read
+                            // as a separate fact rather than a qualifier on
+                            // the address. The badge sits OUTSIDE the
+                            // MapLink because that opens a map of the
+                            // address, and an area is not part of one.
+                            <HStack fontSize="sm" mt={2} gap={2} align="center" wrap="wrap">
                               <MapLink address={[
                                   occ.job?.property?.street1,
                                   occ.job?.property?.city,
@@ -7175,7 +7322,16 @@ export default function JobsTab({
                                 ]
                                   .filter(Boolean)
                                   .join(", ")} />
-                            </Box>
+                              {(occ.job?.property as any)?.area?.name && (
+                                <Badge size="sm" variant="subtle" colorPalette="purple" flexShrink={0} display="inline-flex" alignItems="center" gap="1">
+                                  {/* The pin reads as "a place" before the
+                                      word does, which is the whole job of
+                                      an icon on a badge this small. */}
+                                  <MapPin size={10} />
+                                  {(occ.job?.property as any).area.name}
+                                </Badge>
+                              )}
+                            </HStack>
                             )}
                             <HStack gap={3} fontSize="xs">
                               {!isTaskOrReminder && occ.job?.property?.displayName && (
@@ -7185,7 +7341,7 @@ export default function JobsTab({
                                     openEventSearch(
                                       "jobsTabToPropertiesTabSearch",
                                       occ.job?.property?.displayName ?? "",
-                                      forAdmin,
+                                      
                                       occ.job?.property?.id,
                                     )
                                   }
@@ -7198,7 +7354,7 @@ export default function JobsTab({
                                     openEventSearch(
                                       "jobsTabToClientsTabSearch",
                                       occ.job?.property?.client?.displayName ?? "",
-                                      forAdmin,
+                                      
                                       occ.job?.property?.client?.id,
                                     )
                                   }
@@ -7265,13 +7421,13 @@ export default function JobsTab({
                               jobs whose hours haven't been admin-reviewed yet.
                               Sticky across status changes (including CLOSED) so
                               it doesn't get forgotten between payroll runs. For
-                              admin/super the chip is a dropdown trigger (chevron
+                              management the chip is a dropdown trigger (chevron
                               inside) that opens a one-item menu — Review Hours —
                               which surfaces the confirm dialog with Edit/Approve
                               choices. Workers see the chip as a passive label. */}
                           {(occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF") &&
                             occ.completedAt && !occ.hoursApprovedAt && (
-                            (isAdmin || isSuper) ? (
+                            canManageSchedule ? (
                               <Box position="relative" display="inline-flex">
                                 <Box
                                   as="button"
@@ -7331,11 +7487,11 @@ export default function JobsTab({
                           })()}
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
-                          {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
+                          {mustBeAssignedOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                           {needsConfirmation && <StatusBadge status="Unconfirmed" palette="orange" variant="solid" />}
                           {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <StatusBadge status="Confirmed" palette="green" variant="subtle" />}
                           {(occ.price ?? 0) >= highValueThreshold && <Box as="span" display="inline-flex" alignItems="center" title="Only employees or insured contractors can claim this job"><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></Box>}
-                          {isWorkerView && occ.reminder && (
+                          {!canManageSchedule && occ.reminder && (
                             <Badge
                               colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"}
                               variant="subtle" fontSize="xs" borderRadius="full" px="2"
@@ -7399,7 +7555,7 @@ export default function JobsTab({
                 )}
 
                 {/* Resolved client-request note — visible to workers
-                 *  and admins so they know the latest exchange with the
+                 *  and holders of `schedule.manage` so they know the latest exchange with the
                  *  client. Same note that the client sees on their My
                  *  Properties card. Falls off naturally on the next
                  *  recurring occurrence. */}
@@ -7433,12 +7589,12 @@ export default function JobsTab({
                       {isFollowup && ((occ as any).followupClients?.length > 0 || (occ as any).followupJobs?.length > 0) && (
                         <Box display="flex" gap="4px" flexWrap="wrap">
                           {(occ as any).followupClients?.map((fc: any) => (
-                            <Badge key={fc.client.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={forAdmin ? "pointer" : undefined} onClick={forAdmin ? (e: any) => { e.stopPropagation(); openEventSearch("jobsTabToClientsTabSearch", fc.client.displayName, forAdmin, fc.client.id); } : undefined}>
+                            <Badge key={fc.client.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={canManageSchedule ? "pointer" : undefined} onClick={canManageSchedule ? (e: any) => { e.stopPropagation(); openEventSearch("jobsTabToClientsTabSearch", fc.client.displayName, fc.client.id); } : undefined}>
                               {fc.client.displayName}
                             </Badge>
                           ))}
                           {(occ as any).followupJobs?.map((fj: any) => (
-                            <Badge key={fj.job.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={forAdmin ? "pointer" : undefined} onClick={forAdmin ? (e: any) => { e.stopPropagation(); openEventSearch("jobsTabToServicesTabSearch", fj.job.property?.displayName ?? "", true, `${fj.job.id}:`); } : undefined}>
+                            <Badge key={fj.job.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={canManageSchedule ? "pointer" : undefined} onClick={canManageSchedule ? (e: any) => { e.stopPropagation(); openEventSearch("jobsTabToServicesTabSearch", fj.job.property?.displayName ?? "", `${fj.job.id}:`); } : undefined}>
                               {fj.job.property?.displayName ?? "Job"}{fj.job.property?.client?.displayName ? ` — ${fj.job.property.client.displayName}` : ""}
                             </Badge>
                           ))}
@@ -7465,14 +7621,14 @@ export default function JobsTab({
                         </Box>
                       )}
                       {/* Admin client tags */}
-                      {forAdmin && !isTaskOrReminder && (() => {
-                        const tags = parseAdminTags((occ.job?.property?.client as any)?.adminTags);
+                      {canManageSchedule && !isTaskOrReminder && (() => {
+                        const tags = parseInternalTags((occ.job?.property?.client as any)?.internalTags);
                         if (tags.length === 0) return null;
                         return (
                           <Box display="flex" gap="4px" flexWrap="wrap">
                             {tags.map((tag: string) => (
-                              <Badge key={tag} colorPalette={adminTagColor(tag)} variant="solid" fontSize="xs" px="2" borderRadius="full">
-                                ⚠ {adminTagLabel(tag)}
+                              <Badge key={tag} colorPalette={internalTagColor(tag)} variant="solid" fontSize="xs" px="2" borderRadius="full">
+                                ⚠ {internalTagLabel(tag)}
                               </Badge>
                             ))}
                           </Box>
@@ -7497,7 +7653,7 @@ export default function JobsTab({
                         </Text>
                       ) : occ.status !== "ARCHIVED" && !(isEvent || isFollowup || isAnnouncement) ? (
                         <Text fontSize="xs" fontWeight="semibold" color="orange.fg">
-                          {isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
+                          {isTentative ? "Tentative — awaiting confirmation" : mustBeAssignedOcc ? "Unassigned — must be assigned" : "Unclaimed"}
                         </Text>
                       ) : null}
                       {/* Price / payout / time */}
@@ -7596,7 +7752,7 @@ export default function JobsTab({
                           //
                           // Two cases:
                           //   1. JOB IS ASSIGNED → project from the assignee(s)'
-                          //      worker types. An admin viewing a contractor's
+                          //      worker types. Someone with `schedule.manage` viewing a contractor's
                           //      job sees the contractor's projection, not the
                           //      admin's own. For multi-worker crews, sum
                           //      across all active assignees.
@@ -7651,7 +7807,7 @@ export default function JobsTab({
                           // at all when they have none, so the card never
                           // tells one worker what the crew was tipped.
                           const mine = myId ? (tipSplits.find((sp) => sp.userId === myId)?.tipAmount ?? 0) : 0;
-                          const showMine = !showAdminExtras;
+                          const showMine = !canManageSchedule;
                           if (showMine && !(mine > 0)) return null;
                           return (
                             <Badge
@@ -7676,7 +7832,7 @@ export default function JobsTab({
                           const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
                           const medianPersonMin = (occ as any).medianDurationMinutes as number | undefined;
                           const median = medianPersonMin != null ? Math.round(medianPersonMin / workerCount) : undefined;
-                          const canEdit = (isClaimer || isActiveAssignee || forAdmin) && !!occ.completedAt;
+                          const canEdit = (isClaimer || isActiveAssignee || canManageSchedule) && !!occ.completedAt;
                           const isPaused = occ.status === "PAUSED";
                           const parts: string[] = [];
                           if (actual != null) parts.push(`${formatDuration(actual)} actual${workerCount > 1 ? ` (${workerCount} workers)` : ""}`);
@@ -7737,7 +7893,7 @@ export default function JobsTab({
                               setViewerIndex(idx);
                               try {
                                 const allPhotos = await apiGet<{ id: string; url: string; contentType?: string | null }[]>(
-                                  forAdmin ? `/api/admin/occurrences/${occ.id}/photos` : `/api/occurrences/${occ.id}/photos`
+                                  `/api/occurrences/${occ.id}/photos`
                                 );
                                 if (Array.isArray(allPhotos) && allPhotos.length > (occ.photos ?? []).length) {
                                   setViewerPhotos(allPhotos);
@@ -7755,12 +7911,12 @@ export default function JobsTab({
                     {/* NOTES FOR CUSTOMER — expanded density only.
                         Shown to anyone who can see the card so the crew can
                         read what was promised, but only the claimer, an
-                        active assignee or an admin can change it (the API
+                        active assignee or someone with schedule authority can change it (the API
                         enforces the same set). A visible empty state on those
                         cards, because a note nobody knows exists never gets
                         written. Not on tasks/reminders/announcements: they
                         generate no invoice. */}
-                    {!isTaskOrReminder && !isAnnouncement && !isFollowup && (occ.customerVisibleNotes || isClaimer || isActiveAssignee || forAdmin) && (
+                    {!isTaskOrReminder && !isAnnouncement && !isFollowup && (occ.customerVisibleNotes || isClaimer || isActiveAssignee || canManageSchedule) && (
                       <Box
                         w="full"
                         p={2.5}
@@ -7773,7 +7929,7 @@ export default function JobsTab({
                           <Text fontSize="2xs" textTransform="uppercase" letterSpacing="wide" color={occ.customerVisibleNotes ? "blue.fg" : "fg.muted"}>
                             Notes for customer
                           </Text>
-                          {(isClaimer || isActiveAssignee || forAdmin) && !isOffline && (
+                          {(isClaimer || isActiveAssignee || canManageSchedule) && !isOffline && (
                             <Button
                               size="xs"
                               variant="ghost"
@@ -7879,11 +8035,11 @@ export default function JobsTab({
                             >
                               <span
                                 style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!canManageSchedule); }}
                               >
                                 {a.user?.displayName ?? a.user?.email ?? a.userId}
                               </span>
-                              {a.user?.workerType ? ` · ${a.user.workerType === "CONTRACTOR" ? "1099" : a.user.workerType === "TRAINEE" ? "Trainee" : "W-2"}` : ""}
+                              {a.user?.workerType ? ` · ${payClassLabel(a.user.workerType)}` : ""}
                               {isMe ? " (you)" : ""}
                               {isClaimer ? " · Claimer - Lead Worker" : a.role === "observer" ? " · Observer" : " · Worker"}
                             </Text>
@@ -7895,8 +8051,8 @@ export default function JobsTab({
                       <Text fontSize="xs" color="orange.fg" fontWeight="medium">
                         {isTentative
                           ? "Unclaimed — tentative, awaiting admin confirmation"
-                          : isAdminOnlyOcc
-                          ? "Unclaimed — administered, must be assigned by an admin"
+                          : mustBeAssignedOcc
+                          ? "Unclaimed — must be assigned, not claimed"
                           : "Unclaimed — available to claim"}
                       </Text>
                     )}
@@ -7966,16 +8122,16 @@ export default function JobsTab({
                               )}
                             </VStack>
                           ); })()}
-                          {/* JOB PROFIT — admin/super only.
+                          {/* JOB PROFIT — `schedule.manage`.
                               Revenue − crew − what the materials cost. The
                               ordinary accounting line, which nothing on this
                               card showed: every other figure here reports the
                               client's money or the crew's, and the material
                               markup ($25 billed on $20 of mulch) landed in
                               neither. Gated on the SELECTED scope, never
-                              `forAdmin ||` — a Super on the Worker chip must
+                              `canManageSchedule ||` — someone with settings authority on the Worker chip must
                               not see the business's take. */}
-                          {(isAdmin || isSuper) && (() => {
+                          {canManageSchedule && (() => {
                             // CONFIRMED cash only. An unapproved payment's
                             // splits are not final, so treating the row as
                             // settled would report a profit off numbers that
@@ -8101,7 +8257,7 @@ export default function JobsTab({
                             // Payment row yet). For assigned jobs we project
                             // each assignee's payout using THEIR worker type
                             // — admin viewing a contractor's job sees the
-                            // contractor's projection, not the admin's. For
+                            // contractor's projection, not the manager’s. For
                             // unclaimed jobs we fall back to the viewer's
                             // projection ("if I claim, my payout").
                             const basePrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
@@ -8198,7 +8354,7 @@ export default function JobsTab({
                               const share = perWorkerShare(occ as any);
                               const myPayout = projectViewerPayout(occ as any, me, rates);
                               const myDeduction = Math.round((share - myPayout) * 100) / 100;
-                              const viewerLabel = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE" ? "margin" : "commission";
+                              const viewerLabel = isW2(me?.workerType) ? "margin" : "commission";
                               return (
                                 <Box fontSize="xs" color="fg.muted">
                                   <HStack gap={2}>
@@ -8223,7 +8379,7 @@ export default function JobsTab({
                             const sharePerWorker = net / activeAssignees.length;
                             const rows = activeAssignees.map((a) => {
                               const wt = a.user?.workerType ?? null;
-                              const isEmpClass = wt === "EMPLOYEE" || wt === "TRAINEE";
+                              const isEmpClass = isW2(wt);
                               const ratePct = isEmpClass ? marginPercent : commissionPercent;
                               const deduction = Math.round(sharePerWorker * (ratePct / 100) * 100) / 100;
                               const payout = Math.round(Math.max(0, sharePerWorker - deduction) * 100) / 100;
@@ -8338,7 +8494,7 @@ export default function JobsTab({
                             <Text fontWeight="medium" mb={0.5}>Clients:</Text>
                             <Box display="flex" gap="4px" flexWrap="wrap">
                               {(occ as any).followupClients.map((fc: any) => (
-                                <Badge key={fc.client.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={forAdmin ? "pointer" : undefined} _hover={forAdmin ? { opacity: 0.8 } : undefined} onClick={forAdmin ? () => openEventSearch("jobsTabToClientsTabSearch", fc.client.displayName, forAdmin, fc.client.id) : undefined}>
+                                <Badge key={fc.client.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={canManageSchedule ? "pointer" : undefined} _hover={canManageSchedule ? { opacity: 0.8 } : undefined} onClick={canManageSchedule ? () => openEventSearch("jobsTabToClientsTabSearch", fc.client.displayName, fc.client.id) : undefined}>
                                   {fc.client.displayName}
                                 </Badge>
                               ))}
@@ -8350,7 +8506,7 @@ export default function JobsTab({
                             <Text fontWeight="medium" mb={0.5}>Job Services:</Text>
                             <Box display="flex" gap="4px" flexWrap="wrap">
                               {(occ as any).followupJobs.map((fj: any) => (
-                                <Badge key={fj.job.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={forAdmin ? "pointer" : undefined} _hover={forAdmin ? { opacity: 0.8 } : undefined} onClick={forAdmin ? () => openEventSearch("jobsTabToServicesTabSearch", fj.job.property?.displayName ?? "", true, `${fj.job.id}:`) : undefined}>
+                                <Badge key={fj.job.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={canManageSchedule ? "pointer" : undefined} _hover={canManageSchedule ? { opacity: 0.8 } : undefined} onClick={canManageSchedule ? () => openEventSearch("jobsTabToServicesTabSearch", fj.job.property?.displayName ?? "", `${fj.job.id}:`) : undefined}>
                                   {fj.job.property?.displayName ?? "Job"}{fj.job.property?.client?.displayName ? ` — ${fj.job.property.client.displayName}` : ""}
                                 </Badge>
                               ))}
@@ -8360,14 +8516,14 @@ export default function JobsTab({
                       </Box>
                     )}
                     {/* Admin client tags (expanded) */}
-                    {forAdmin && !isTaskOrReminder && (() => {
-                      const tags = parseAdminTags((occ.job?.property?.client as any)?.adminTags);
+                    {canManageSchedule && !isTaskOrReminder && (() => {
+                      const tags = parseInternalTags((occ.job?.property?.client as any)?.internalTags);
                       if (tags.length === 0) return null;
                       return (
                         <Box display="flex" gap="4px" flexWrap="wrap">
                           {tags.map((tag: string) => (
-                            <Badge key={tag} colorPalette={adminTagColor(tag)} variant="solid" fontSize="xs" px="2" borderRadius="full">
-                              ⚠ {adminTagLabel(tag)}
+                            <Badge key={tag} colorPalette={internalTagColor(tag)} variant="solid" fontSize="xs" px="2" borderRadius="full">
+                              ⚠ {internalTagLabel(tag)}
                             </Badge>
                           ))}
                         </Box>
@@ -8494,7 +8650,7 @@ export default function JobsTab({
                         <Text fontSize="xs" fontWeight="medium" color="red.fg">Rejected</Text>
                       </Box>
                     )}
-                    {forAdmin && occ.generatedEstimateBreakdown && (
+                    {canManageSchedule && occ.generatedEstimateBreakdown && (
                       <Box p={2} bg="gray.faint" rounded="sm" mt={1} borderWidth="1px" borderColor="gray.emphasized">
                         <HStack gap={1} mb={1}>
                           <Text fontSize="xs" fontWeight="medium" color="gray.fg">Cost Breakdown</Text>
@@ -8503,7 +8659,7 @@ export default function JobsTab({
                         <TruncatedText color="gray.fg" whiteSpace="pre-wrap">{occ.generatedEstimateBreakdown}</TruncatedText>
                       </Box>
                     )}
-                    {forAdmin && occ.generatedEstimate && (
+                    {canManageSchedule && occ.generatedEstimate && (
                       <Box p={2} bg="blue.faint" rounded="sm" mt={1}>
                         <HStack justify="space-between" mb={1}>
                           <HStack gap={1}>
@@ -8576,10 +8732,10 @@ export default function JobsTab({
                       const tipFor = (sp: any) => {
                         const t = sp.tipAmount ?? 0;
                         if (!(t > 0)) return 0;
-                        return showAdminExtras || sp.userId === myId ? t : 0;
+                        return canManageSchedule || sp.userId === myId ? t : 0;
                       };
-                      const feeableSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
-                      const employeeSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
+                      const feeableSplitTotal = (pay.splits ?? []).filter((sp: any) => isFeeable(sp.user?.workerType)).reduce((s: number, sp: any) => s + sp.amount, 0);
+                      const employeeSplitTotal = (pay.splits ?? []).filter((sp: any) => isW2(sp.user?.workerType)).reduce((s: number, sp: any) => s + sp.amount, 0);
                       return (
                         <Box mt={1} p={2} bg="green.faint" rounded="sm">
                           <Text fontSize="xs" fontWeight="medium" color="green.fg">
@@ -8620,7 +8776,7 @@ export default function JobsTab({
                                   {overage > 0 && <Text>Overpayment (not designated as a tip): ${overage.toFixed(2)}</Text>}
                                 </Box>
                               )}
-                              {showAdminExtras && (
+                              {canManageSchedule && (
                                 <Box fontSize="xs" color="fg.muted" mt={0.5} borderTopWidth="1px" borderColor="green.emphasized" pt={0.5}>
                                   <Text>
                                     ${splitTotal.toFixed(2)} job pay
@@ -8778,7 +8934,7 @@ export default function JobsTab({
                                   e.stopPropagation();
                                   setReserveAs();
                                   window.sessionStorage.setItem("equipmentKindFilter", s.equipmentKind);
-                                  openEventSearch("jobsToEquipmentKindFilter", " ", forAdmin, s.equipmentKind);
+                                  openEventSearch("jobsToEquipmentKindFilter", " ", s.equipmentKind);
                                 }}
                               >
                                 {s.label} →
@@ -8802,7 +8958,7 @@ export default function JobsTab({
                                     // Send the worker to the Equipment tab where the collections strip
                                     // is rendered with a Reserve button. Highlights via session flag.
                                     try { window.sessionStorage.setItem("highlightCollectionId", c.id); } catch {}
-                                    window.dispatchEvent(new CustomEvent(forAdmin ? "navigate:adminTab" : "navigate:workerTab", { detail: { tab: "equipment" } }));
+                                    window.dispatchEvent(new CustomEvent(canManageSchedule ? "navigate:staffTab" : "navigate:staffTab", { detail: { tab: "equipment" } }));
                                   }}
                                 >
                                   {c.name} ({available}/{total}) →
@@ -8831,10 +8987,10 @@ export default function JobsTab({
                                     setReserveAs();
                                     if (isCol && gp.equipmentCollectionId) {
                                       try { window.sessionStorage.setItem("highlightCollectionId", gp.equipmentCollectionId); } catch {}
-                                      window.dispatchEvent(new CustomEvent(forAdmin ? "navigate:adminTab" : "navigate:workerTab", { detail: { tab: "equipment" } }));
+                                      window.dispatchEvent(new CustomEvent(canManageSchedule ? "navigate:staffTab" : "navigate:staffTab", { detail: { tab: "equipment" } }));
                                     } else if (gp.equipmentId) {
                                       try { window.sessionStorage.setItem("equipmentHighlightId", gp.equipmentId); } catch {}
-                                      window.dispatchEvent(new CustomEvent(forAdmin ? "navigate:adminTab" : "navigate:workerTab", { detail: { tab: "equipment" } }));
+                                      window.dispatchEvent(new CustomEvent(canManageSchedule ? "navigate:staffTab" : "navigate:staffTab", { detail: { tab: "equipment" } }));
                                     }
                                   }}
                                   title={`Preferred by the group${isCol ? " — kit" : ""}`}
@@ -8850,13 +9006,17 @@ export default function JobsTab({
                     {!isTaskOrReminder && ((occ._count?.photos ?? 0) > 0 || isActiveAssignee) && (
                       <OccurrencePhotos
                         occurrenceId={occ.id}
-                        isAdmin={forAdmin}
+                        canManageSchedule={canManageSchedule}
                         canUpload={isActiveAssignee}
                         photoCount={occ._count?.photos ?? 0}
-                        // Super-only, matching the route guard. Holding a photo
-                        // back from outward-facing surfaces is the same tier of
-                        // decision as pairing a screen.
-                        canSetPublicVisibility={isSuper}
+                        // `displays.manage` — the guard on
+                        // `POST /photos/:id/visibility`. This comment claimed
+                        // it matched the route guard while passing
+                        // `schedule.manage`, so anyone who runs the schedule
+                        // saw a toggle the server refuses. Holding a photo back
+                        // from outward-facing surfaces is the same decision as
+                        // pairing a screen, which is why it is that entitlement.
+                        canSetPublicVisibility={scope.can("displays.manage")}
                       />
                     )}
 
@@ -8957,7 +9117,7 @@ export default function JobsTab({
                                         Edit
                                       </Button>
                                     )}
-                                    {(c.author.id === myId || isClaimer || (forAdmin && (isAdmin || isSuper))) && (
+                                    {(c.author.id === myId || isClaimer || canManageSchedule) && (
                                       <Button size="xs" variant="ghost" colorPalette="red" disabled={isOffline || commentBusy} onClick={(e: any) => { e.stopPropagation(); void deleteComment(c.id, occ.id); }}>
                                         Delete
                                       </Button>
@@ -8989,7 +9149,7 @@ export default function JobsTab({
                 </Card.Body>
                 )}
 
-                {/* Action footer — admin/super always see it (so tentative
+                {/* Action footer — management always see it (so tentative
                     jobs can be confirmed, rescheduled, team-changed before
                     client confirmation). Workers/observers see it only on
                     non-tentative jobs since the start/complete affordances
@@ -9003,7 +9163,7 @@ export default function JobsTab({
                     the two spellings of "paused" here are different enums:
                     PAUSED is the worker's timer stopped mid-visit,
                     STREAM_PAUSED is the stream on hold. */}
-                {!isCardCompact && !isTrainee && !isPeek && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && (!isTentative || (forAdmin && (isAdmin || isSuper))) && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || (occ.status as string) === "STREAM_PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
+                {!isCardCompact && !notFieldCleared && !isPeek && (isUnassigned || isActiveAssignee || canManageSchedule) && (!isTentative || canManageSchedule) && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || (occ.status as string) === "STREAM_PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="2" px="3" pt="0">
                     {/* HStack (not VStack) so Manage in Services lands on
                         the same row as the per-status primary action
@@ -9011,19 +9171,19 @@ export default function JobsTab({
                         etc.). wrap="wrap" lets buttons flow onto a second
                         line on narrow screens. */}
                     <HStack align="start" gap={2} mb="2" wrap="wrap">
-                    {/* Admin-only Services shortcut — sits at the start of
-                        the action row so it reads as "manage this job"
-                        alongside the per-occurrence Claim/Start/etc.
+                    {/* Services shortcut (`schedule.manage`) — sits at the
+                        start of the action row so it reads as "manage this
+                        job" alongside the per-occurrence Claim/Start/etc.
                         actions. */}
-                    {(isAdmin || isSuper) && !isTaskOrReminder && !occ.jobId && isEstimateOcc && (
+                    {canManageSchedule && !isTaskOrReminder && !occ.jobId && isEstimateOcc && (
                       <Text fontSize="xs" color="orange.fg">Stand-alone estimate — not yet linked to a Job Service</Text>
                     )}
-                    {/* Approve payroll hours — admin/super only, surfaces when
+                    {/* Approve payroll hours — `time.approve`, surfaces when
                         an outlier completion left hoursApprovedAt = null. Opens
                         a confirm dialog with an "Edit Time" secondary
-                        action so the admin can adjust before approving. */}
+                        action so a caller with schedule authority can adjust before approving. */}
                     {/* Confirm client — must happen before Start */}
-                    {needsConfirmation && (isClaimer || forAdmin) && (
+                    {needsConfirmation && (isClaimer || canManageSchedule) && (
                       <Button
                         size="sm"
                         variant="solid"
@@ -9037,7 +9197,7 @@ export default function JobsTab({
                     {/* Primary action — Start / Complete / Accept Payment.
                         Server enforces claimer-only (jobs.ts updateOccurrenceStatus),
                         so we mirror that here instead of showing buttons that 403. */}
-                    {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !needsConfirmation && (
+                    {(isClaimer || canManageSchedule) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !needsConfirmation && (
                       <Button
                         size="sm"
                         variant="solid"
@@ -9048,12 +9208,12 @@ export default function JobsTab({
                         {isEstimateOcc ? "Start Estimate" : "Start Job"}
                       </Button>
                     )}
-                    {/* One-time next-visit date override — admin-only,
+                    {/* One-time next-visit date override — `schedule.manage`,
                         repeating jobs only, client-confirmed but no
                         payment yet. When set, a chip shows the shift;
                         otherwise a small link. Consumed at payment-
                         approval time by computeNextOccurrenceStart. */}
-                    {forAdmin && isConfirmed && !isTaskOrReminder &&
+                    {canManageSchedule && isConfirmed && !isTaskOrReminder &&
                       (occ.frequencyDays ?? (occ.job as any)?.frequencyDays) &&
                       !(occ.payment && (occ.payment as any).confirmed) && (
                       <NextStartOverrideAffordance
@@ -9068,7 +9228,7 @@ export default function JobsTab({
                         }}
                       />
                     )}
-                    {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
+                    {(isClaimer || canManageSchedule) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                       <HStack gap={2} wrap="wrap">
                         <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
                           Complete Job
@@ -9078,7 +9238,7 @@ export default function JobsTab({
                         </Button>
                       </HStack>
                     )}
-                    {(isClaimer || forAdmin) && (occ.status as string) === "PAUSED" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
+                    {(isClaimer || canManageSchedule) && (occ.status as string) === "PAUSED" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                       <HStack gap={2} wrap="wrap">
                         <Button size="sm" variant="solid" colorPalette="orange" loading={busyOccId === occ.id} onClick={() => void resumeJob(occ)}>
                           Resume
@@ -9088,7 +9248,7 @@ export default function JobsTab({
                         </Button>
                       </HStack>
                     )}
-                    {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                    {(isClaimer || canManageSchedule) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                       <Button
                         size="sm"
                         variant="solid"
@@ -9113,7 +9273,7 @@ export default function JobsTab({
                         Complete Estimate
                       </Button>
                     )}
-                    {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (<>
+                    {(isClaimer || isActiveAssignee || canManageSchedule) && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (<>
                       {occ.workflow === "STANDARD" && !occ.isOneOff && !occ.frequencyDays && !(occ.job as any)?.frequencyDays && (
                         <Box p={2} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" borderRadius="md">
                           <Text fontSize="xs" color="yellow.fg">
@@ -9195,6 +9355,19 @@ export default function JobsTab({
                             </HStack>
                           );
                         }
+                        // `comms-handoff` mints a payment link and returns
+                        // the client's phone and email, so the route scopes
+                        // it to people ON the visit or holding
+                        // `money.record` / `schedule.manage`. Ask the same
+                        // question here: the enclosing block admits
+                        // `canManageSchedule`, which is a LAYOUT flag and not the
+                        // authority the route checks.
+                        const mayHandOff =
+                          isClaimer ||
+                          isActiveAssignee ||
+                          scope.can("money.record") ||
+                          scope.can("schedule.manage");
+                        if (!mayHandOff) return null;
                         return (
                           <HStack gap={2} wrap="wrap">
                             <PaymentCommsButtons
@@ -9206,7 +9379,7 @@ export default function JobsTab({
                         );
                       })()}
                     </>)}
-                    {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                    {(isClaimer || isActiveAssignee || canManageSchedule) && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                       // w="full" forces this HStack onto its own row inside
                       // the wrap="wrap" parent — otherwise the Accept/Reject
                       // pair packs next to the "Stand-alone estimate" warning
@@ -9325,7 +9498,7 @@ export default function JobsTab({
                         Complete
                       </Button>
                     )}
-                    {isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder && (() => {
+                    {isUnassigned && !mustBeAssignedOcc && !isTaskOrReminder && (() => {
                       const isContractor = me?.workerType === "CONTRACTOR";
                       // ET calendar-day diff (DST-safe).
                       const daysAhead = occ.startAt ? bizDaysBetween(bizToday(), bizDateKey(occ.startAt)) : 0;
@@ -9473,7 +9646,7 @@ export default function JobsTab({
                         </Button>
                       </>)}
                                             {/* Followup complete — active assignee or admin */}
-                      {isFollowup && occ.status === "SCHEDULED" && (isActiveAssignee || isAdmin || isSuper) && (
+                      {isFollowup && occ.status === "SCHEDULED" && (isActiveAssignee || canManageSchedule) && (
                         <Button
                           size="sm"
                           variant="solid"
@@ -9502,7 +9675,7 @@ export default function JobsTab({
                         </Button>
                       )}
                       {/* Followup edit — active assignee or admin */}
-                      {isFollowup && occ.status === "SCHEDULED" && (isActiveAssignee || isAdmin || isSuper) && (
+                      {isFollowup && occ.status === "SCHEDULED" && (isActiveAssignee || canManageSchedule) && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -9516,7 +9689,7 @@ export default function JobsTab({
                         </Button>
                       )}
                       {/* Followup delete — claimer or admin */}
-                      {isFollowup && occ.status === "SCHEDULED" && (isClaimer || isAdmin || isSuper) && (
+                      {isFollowup && occ.status === "SCHEDULED" && (isClaimer || canManageSchedule) && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -9544,7 +9717,7 @@ export default function JobsTab({
                         </Button>
                       )}
                                             {/* Light estimate edit/delete */}
-                      {isLightEstimate && (isActiveAssignee || isAdmin || isSuper) && (
+                      {isLightEstimate && (isActiveAssignee || canManageSchedule) && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -9558,7 +9731,7 @@ export default function JobsTab({
                           Edit
                         </Button>
                       )}
-                      {isLightEstimate && (isClaimer || isAdmin || isSuper) && (
+                      {isLightEstimate && (isClaimer || canManageSchedule) && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -9586,17 +9759,17 @@ export default function JobsTab({
                           Delete
                         </Button>
                       )}
-                      {/* Invoice preview — moved OFF the admin row. A worker
+                      {/* Invoice preview — moved OFF the elevated row. A worker
                           can already SEND the payment request, so not being
                           able to read the invoice first was the odd part.
                           Same gate as the API: claimer, active assignee, or
-                          admin. The dialog decides what to SHOW — the crew-pay
-                          split stays admin-only.
+                          `schedule.manage`. The dialog decides what to SHOW —
+                          the crew-pay split needs `money.view`.
 
                           No isActive gate: the point is to look before
                           sending, and on a settled job it still answers
                           "what does this invoice say now". */}
-                      {(isClaimer || isActiveAssignee || forAdmin) && !isFollowup && !isTaskOrReminder && (
+                      {(isClaimer || isActiveAssignee || canManageSchedule) && !isFollowup && !isTaskOrReminder && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -9608,8 +9781,8 @@ export default function JobsTab({
                       )}
                       {/* Reschedule — workers/claimer only when not tentative
                           (no point rescheduling a job whose client hasn't
-                          confirmed); admin/super can reschedule regardless. */}
-                      {(isClaimer || isActiveAssignee || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && (!isTentative || (forAdmin && (isAdmin || isSuper))) && !isOffline && (
+                          confirmed); management can reschedule regardless. */}
+                      {(isClaimer || isActiveAssignee || canManageSchedule) && !isTaskOrReminder && occ.status === "SCHEDULED" && (!isTentative || canManageSchedule) && !isOffline && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -9640,9 +9813,9 @@ export default function JobsTab({
                         />
                       )}
                                             {/* Manage Team — two paths:
-                          (1) Pre-start: claimer OR admin/super, before the
+                          (1) Pre-start: claimer OR management, before the
                               job has started. Original behavior.
-                          (2) Post-completion in PENDING_PAYMENT: admin/super
+                          (2) Post-completion in PENDING_PAYMENT: management
                               only. Used to correct the as-built team when
                               a listed worker didn't actually work (e.g.
                               sick day). Backend blocks if any Payment row
@@ -9653,8 +9826,8 @@ export default function JobsTab({
                               "Initiate Payment" regenerates them against
                               the corrected team. */}
                       {!isAnnouncement && (
-                        ((isClaimer || (forAdmin && (isAdmin || isSuper))) && !occ.startedAt)
-                        || (forAdmin && (isAdmin || isSuper) && occ.status === "PENDING_PAYMENT" && !occ.payment)
+                        ((isClaimer || canManageSchedule) && !occ.startedAt)
+                        || (canManageSchedule && occ.status === "PENDING_PAYMENT" && !occ.payment)
                       ) && (
                         <StatusButton
                           id="occ-manage-team"
@@ -9671,7 +9844,7 @@ export default function JobsTab({
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {!isTaskOrReminder && (isClaimer || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && (
+                      {!isTaskOrReminder && (isClaimer || isActiveAssignee || canManageSchedule) && (
                         <StatusButton
                           id="occ-pinned-note"
                           itemId={occ.id}
@@ -9688,11 +9861,11 @@ export default function JobsTab({
                         />
                       )}
                       {/* Add / Manage expenses — claimer (any privilege) or
-                          admin/super. Dialog itself gates Custom vs Inventory
+                          management. Dialog itself gates Custom vs Inventory
                           toggles based on the resolved privileges from /me.
                           Only surfaces while the occurrence is in an active
-                          state; admins do retroactive edits via Services. */}
-                      {/* Edit Services (add-ons) — claimer / admin / super,
+                          state; holders of schedule authority do retroactive edits via Services. */}
+                      {/* Edit Services (add-ons) — claimer or `schedule.manage`,
                           only on real jobs that are active. Tasks, reminders
                           and events don't carry add-ons. Mirrors the gating
                           used on Edit Charges so workers see both side-by-side.
@@ -9703,7 +9876,7 @@ export default function JobsTab({
                         const canAdd =
                           isActive
                           && !isTaskOrReminder
-                          && (forAdmin || isAdmin || isSuper || isClaimer);
+                          && (canManageSchedule || isClaimer);
                         if (!canAdd) return null;
                         return (
                           <Button
@@ -9713,7 +9886,7 @@ export default function JobsTab({
                             onClick={(e) => {
                               e.stopPropagation();
                               setAddAddonCanRemove(
-                                isActive && (forAdmin || isAdmin || isSuper || isClaimer),
+                                isActive && (canManageSchedule || isClaimer),
                               );
                               setAddAddonOcc(occ);
                             }}
@@ -9728,15 +9901,15 @@ export default function JobsTab({
                           changes what the client is billed. Gated on the same
                           editable-state helper, so it disappears once the job
                           is closed. */}
-                      {/* `|| forAdmin` is load-bearing, not tidiness. Unclaim was
+                      {/* `|| canManageSchedule` is load-bearing, not tidiness. Unclaim was
                           gated on isClaimer ALONE while every sibling action here
-                          admits forAdmin — so a visit that lost its claimer could
+                          admits canManageSchedule — so a visit that lost its claimer could
                           not be unclaimed by anyone, at any role, even though the
-                          server's unclaimOccurrence has an admin bypass. Start was
+                          server's unclaimOccurrence has someone with schedule authority bypass. Start was
                           at least reachable by switching to Admin; this was a dead
                           end in both views. Gated in
                           claimer-invariant-build-gate.test.ts. */}
-                      {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && (
+                      {(isClaimer || canManageSchedule) && !isTaskOrReminder && occ.status === "SCHEDULED" && (
                         <StatusButton
                           id="occ-unclaim"
                           itemId={occ.id}
@@ -9756,7 +9929,8 @@ export default function JobsTab({
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {(isWorkerView || forAdmin) && !occ.reminder && (
+                      {/* Everyone: set a reminder on a visit that has none. */}
+                      {!occ.reminder && (
                         <Button
                           size="xs"
                           variant="outline"
@@ -9770,7 +9944,8 @@ export default function JobsTab({
                           <Bell size={12} /> Set Reminder
                         </Button>
                       )}
-                      {(isWorkerView || forAdmin) && occ.reminder && (
+                      {/* Everyone: edit the reminder already on this visit. */}
+                      {occ.reminder && (
                         <Button
                           size="xs"
                           variant="outline"
@@ -9782,7 +9957,7 @@ export default function JobsTab({
                           <BellOff size={12} /> Clear Reminder
                         </Button>
                       )}
-                      {(isClaimer || forAdmin || isAdmin || isSuper) && occ.startedAt && !isTaskOrReminder && (
+                      {(isClaimer || canManageSchedule) && occ.startedAt && !isTaskOrReminder && (
                         <Button
                           size="xs"
                           variant="outline"
@@ -9797,8 +9972,8 @@ export default function JobsTab({
                 )}
 
                 {/* Secondary footer: task/reminder reopen + reminder buttons when the regular footer doesn't show */}
-                {(isWorkerView || forAdmin || ((isAdmin || isSuper) && isTaskOrReminder)) && !isCardCompact && !isPeek && !(
-                  !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative &&
+                {!isCardCompact && !isPeek && !(
+                  !notFieldCleared && (isUnassigned || isActiveAssignee || canManageSchedule) && !isTentative &&
                   (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED")
                 ) && (
                   <Card.Footer py="2" px="3" pt="0">
@@ -9897,12 +10072,13 @@ export default function JobsTab({
                     same density cycle (ultra = hidden, semi/expanded
                     = visible) so ultra cards stay compact and the
                     row only appears once you've expanded the card. */}
-                {/* Elevated rows. A button lives on the LOWEST role row
-                    that applies to it: Edit Services stays in the everyday row
-                    because a claimer can use it, but Edit Charges and Adjust
-                    Price are admin-only and belong on the Admin row beside
-                    Cancel. (Invoice preview moved to the everyday row — the
-                    crew can preview now; only the crew-pay split is admin.)
+                {/* Elevated rows. A button lives on the row matching the
+                    LEAST authority that can use it: Edit Services stays in
+                    the everyday row because a claimer can use it, but Edit
+                    Charges and Adjust Price need `schedule.manage` and
+                    belong on the elevated row beside Cancel. (Invoice
+                    preview moved to the everyday row — the crew can preview
+                    now; only the crew-pay split needs `money.view`.)
 
                     Guarded by `!isCardCompact` so their visibility is
                     unchanged — they were expanded-only before this moved. */}
@@ -9911,11 +10087,11 @@ export default function JobsTab({
                   scope={scope}
                   cardMode={cardMode}
                   onAfter={load}
-                  adminExtras={
-                    !isCardCompact && (isAdmin || isSuper) ? (
+                  elevatedExtras={
+                    !isCardCompact && canManageSchedule ? (
                       <>
                         {/* Jump to this job in Services. The one primary
-                            action on the Admin row, so it stays SOLID BLUE as
+                            action on the row, so it stays SOLID BLUE as
                             it has always been — the rest of the row is
                             outlined. Matching it to the row's purple made the
                             main way into a job read like a secondary link. */}
@@ -9929,7 +10105,7 @@ export default function JobsTab({
                               openEventSearch(
                                 "jobsTabToServicesTabSearch",
                                 occ.job?.property?.displayName ?? "",
-                                true,
+                                
                                 `${occ.job?.id}:${occ.id}`,
                               );
                             }}
@@ -9950,7 +10126,7 @@ export default function JobsTab({
                             Review Hours
                           </Button>
                         )}
-                        {/* Stale-time cleanup — when an admin previously
+                        {/* Stale-time cleanup — when someone with `schedule.manage` previously
                             flipped status back without going through Reset
                             Job, startedAt/completedAt can linger on a
                             SCHEDULED card. (The in-progress Reset Job lives
@@ -9958,7 +10134,7 @@ export default function JobsTab({
                             of that flow.) */}
                         {/* Reset Job — clears time tracking and reverts the
                             occurrence to SCHEDULED. Three situations, all
-                            admin-only, so one button covers them: mid-run
+                            `schedule.manage`, so one button covers them: mid-run
                             (IN_PROGRESS / PAUSED); accidentally completed
                             (PENDING_PAYMENT with no Payment row yet — a paid
                             job goes through Revert Payment instead); and
@@ -9979,8 +10155,8 @@ export default function JobsTab({
                             Reset Job
                           </Button>
                         )}
-  {/* Event complete/edit/delete buttons — admin only */}
-                        {isEvent && occ.status === "SCHEDULED" && (isAdmin || isSuper) && (<>
+  {/* Event complete/edit/delete buttons — `schedule.manage` */}
+                        {isEvent && occ.status === "SCHEDULED" && canManageSchedule && (<>
                           <Button
                             size="sm"
                             variant="solid"
@@ -9995,7 +10171,7 @@ export default function JobsTab({
                               onConfirm: async () => {
                                 setBusyOccId(occ.id);
                                 try {
-                                  await apiPost(`/api/admin/events/${occ.id}/complete`);
+                                  await apiPost(`/api/events/${occ.id}/complete`);
                                   publishInlineMessage({ type: "SUCCESS", text: "Event completed." });
                                   await load(false);
                                 } catch (err) {
@@ -10031,7 +10207,7 @@ export default function JobsTab({
                                 colorPalette: "red",
                                 onConfirm: async () => {
                                   try {
-                                    await apiDelete(`/api/admin/events/${occ.id}`);
+                                    await apiDelete(`/api/events/${occ.id}`);
                                     publishInlineMessage({ type: "SUCCESS", text: "Event deleted." });
                                     await load(false);
                                   } catch (err) {
@@ -10044,8 +10220,8 @@ export default function JobsTab({
                             Delete
                           </Button>
                         </>)}
-  {/* Announcement complete/edit/delete buttons — admin only */}
-                        {isAnnouncement && forAdmin && (isAdmin || isSuper) && (<>
+  {/* Announcement complete/edit/delete buttons — `marketing.manage` */}
+                        {isAnnouncement && canManageSchedule && (<>
                           <Button
                             size="sm"
                             variant="outline"
@@ -10070,7 +10246,7 @@ export default function JobsTab({
                                 colorPalette: "red",
                                 onConfirm: async () => {
                                   try {
-                                    await apiDelete(`/api/admin/announcements/${occ.id}`);
+                                    await apiDelete(`/api/announcements/${occ.id}`);
                                     publishInlineMessage({ type: "SUCCESS", text: "Announcement deleted." });
                                     await load(false);
                                   } catch (err) {
@@ -10089,7 +10265,7 @@ export default function JobsTab({
 
                             WHAT IT DID
                             Pressed on an ESTIMATE occurrence, it called
-                            POST /api/admin/occurrences/:id/generate-estimate,
+                            POST /api/occurrences/:id/generate-estimate,
                             which asks the Claude API to draft two documents in
                             one response: a client-facing estimate message, and
                             an internal cost breakdown for the business. Both
@@ -10119,7 +10295,7 @@ export default function JobsTab({
                               destroyed work the operator can still refer to,
                               so nothing was migrated away. Nothing writes to
                               them any more.
-                            • The truncation build gate's entry for admin.ts.
+                            • The truncation build gate's entry for the route layer.
                               The route still calls a model, so the
                               stop_reason === "max_tokens" check still has to
                               hold. Do not remove that gate entry while the
@@ -10135,9 +10311,9 @@ export default function JobsTab({
                             probably too low for what it is asked to write.
 
                             Related: the forecast assessor
-                            (POST /super/forecasts/:id/assess) was reviewed at
+                            (POST /forecasts/:id/assess) was reviewed at
                             the same time and KEPT as-is — prose for a human,
-                            behind a Super-only button, no deterministic
+                            behind a `forecasts.manage` button, no deterministic
                             alternative.
 
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
@@ -10150,7 +10326,7 @@ export default function JobsTab({
                             onClick={async () => {
                               try {
                                 publishInlineMessage({ type: "WARNING", text: "Generating AI estimate — please review before sending to the client." });
-                                const res = await apiPost<{ estimate: string; breakdown?: string }>(`/api/admin/occurrences/${occ.id}/generate-estimate`);
+                                const res = await apiPost<{ estimate: string; breakdown?: string }>(`/api/occurrences/${occ.id}/generate-estimate`);
                                 publishInlineMessage({ type: "SUCCESS", text: "AI estimate generated. Review carefully before sharing with the client." });
                                 // Update the occurrence in local state
                                 setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, generatedEstimate: res.estimate, generatedEstimateBreakdown: res.breakdown ?? null } : o));
@@ -10233,7 +10409,7 @@ export default function JobsTab({
           }))}
           assignedGroup={(manageOccurrence as any).assignedGroup ?? null}
           onChanged={() => void load(false)}
-          isAdmin={forAdmin && (isAdmin || isSuper)}
+          canManageSchedule={canManageSchedule}
           isClaimer={!!(me?.id && (manageOccurrence.assignees ?? []).some((a: any) => a.userId === me.id && a.assignedById === me.id && a.role !== "observer"))}
         />
       )}
@@ -10495,7 +10671,7 @@ export default function JobsTab({
         amountPlaceholder={confirmAction?.amountPlaceholder}
         amountDefaultValue={confirmAction?.amountDefaultValue}
         pricingReferenceTags={confirmAction?.pricingReferenceTags}
-        pricingEndpoint={forAdmin ? "/api/admin/pricing" : "/api/pricing"}
+        pricingEndpoint={canManageSchedule ? "/api/pricing" : "/api/pricing"}
         cancelLabel={confirmAction?.cancelLabel}
         onCancelAction={confirmAction?.onCancelAction}
         warning={confirmAction?.warning}
@@ -10736,7 +10912,7 @@ export default function JobsTab({
                 <ImpersonationWarning viewAsName={effectiveViewAsName} />
                 <VStack align="stretch" gap={3}>
                   <Text fontSize="sm" color="fg.muted">
-                    {forAdmin
+                    {canManageSchedule
                       ? "Move this job to a new date."
                       : "Move this job to a new date (within 2 days of today). A comment explaining the reason is required."
                     }
@@ -10769,7 +10945,7 @@ export default function JobsTab({
                     </HStack>
                   </Box>
                   <Box>
-                    <Text fontSize="sm" fontWeight="medium" mb={1}>Reason {forAdmin ? "(optional)" : "(required)"}</Text>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>Reason {canManageSchedule ? "(optional)" : "(required)"}</Text>
                     <input
                       type="text"
                       placeholder="e.g., Rain forecast, client requested change"
@@ -10789,7 +10965,7 @@ export default function JobsTab({
                 <Button variant="ghost" onClick={() => setRescheduleOcc(null)}>Cancel</Button>
                 <Button
                   colorPalette="blue"
-                  disabled={!rescheduleDate || (!forAdmin && !rescheduleReason.trim()) || rescheduleBusy || rescheduleDate === (rescheduleOcc?.startAt ? bizDateKey(rescheduleOcc.startAt) : "")}
+                  disabled={!rescheduleDate || (!canManageSchedule && !rescheduleReason.trim()) || rescheduleBusy || rescheduleDate === (rescheduleOcc?.startAt ? bizDateKey(rescheduleOcc.startAt) : "")}
                   loading={rescheduleBusy}
                   onClick={submitReschedule}
                 >
@@ -10930,11 +11106,11 @@ export default function JobsTab({
           return outstandingInvoiceAmount(occ as any, occ ? totalPrice(occ) : null);
         })()}
         occurrenceId={chargeDialogOccId ?? ""}
-        isAdmin={forAdmin}
-        // ROLE, not view. `forAdmin` is false on the Worker chip, which is
-        // where an admin who claimed their own job enters charges — the
+        canManageSchedule={canManageSchedule}
+        // ROLE, not view. `canManageSchedule` is false on the Worker chip, which is
+        // where someone with `schedule.manage` who claimed their own job enters charges — the
         // picker was hidden on the one surface that needed it.
-        canLinkLedger={hasAdminRole || hasSuperRole}
+        canLinkLedger={scope.can("books.manage")}
         disableInventory={(() => {
           // Tasks, reminders, events, followups, announcements: no inventory.
           const occ = items.find((o) => o.id === chargeDialogOccId);
@@ -10942,7 +11118,7 @@ export default function JobsTab({
           return wf === "TASK" || wf === "REMINDER" || wf === "EVENT" || wf === "FOLLOWUP" || wf === "ANNOUNCEMENT";
         })()}
         privileges={
-          forAdmin
+          canManageSchedule
             ? { canPullInventory: true, canChargeBusinessExpenses: true }
             : (me?.privileges ?? { canPullInventory: false, canChargeBusinessExpenses: false })
         }
@@ -10980,8 +11156,8 @@ export default function JobsTab({
           // Admin OR super — the kill-switch only hides this from field
           // workers; operators keep it because the request still has to
           // clear the payment-approval queue.
-          isOperator={isAdmin || isSuper}
-          allowAllMethods={forAdmin}
+          isOperator={canManageSchedule}
+          allowAllMethods={canManageSchedule}
           viewAsName={effectiveViewAsName}
           assignees={(acceptPaymentOcc.assignees ?? []).filter((a) => a.role !== "observer").map((a) => ({
             userId: a.userId,
@@ -11073,7 +11249,7 @@ export default function JobsTab({
                 // (uses the same source-of-truth counts the WorkdayStrip
                 // renders from) and queue the End-Workday nudge if the
                 // caller has finished everything AND is still on the
-                // clock. Impersonated admins are skipped — we only want
+                // clock. Impersonated holders of `schedule.manage` are skipped — we only want
                 // to nudge the worker themselves. Failures are silent —
                 // it's a hint, not a hard requirement.
                 //
@@ -11089,7 +11265,7 @@ export default function JobsTab({
                 // the two setStates onto the same async tick and users
                 // saw the End Workday dialog without a preceding photo
                 // prompt on the last job.
-                if (!forAdmin) {
+                if (!canManageSchedule) {
                   try {
                     const wd = await apiGet<{
                       today?: { state?: string };
@@ -11143,8 +11319,8 @@ export default function JobsTab({
                   <OccurrencePhotos
                     occurrenceId={photoPromptOccId}
                     canUpload
-                    isAdmin={forAdmin && (isAdmin || isSuper)}
-                    canSetPublicVisibility={isSuper}
+                    canManageSchedule={canManageSchedule}
+                    canSetPublicVisibility={canManageSchedule}
                   />
                 )}
               </Dialog.Body>
@@ -11227,7 +11403,7 @@ export default function JobsTab({
         occurrenceId={addAddonOcc?.id ?? null}
         onClose={() => { setAddAddonOcc(null); setAddAddonCanRemove(false); }}
         serviceTypes={serviceTypes}
-        forAdmin={forAdmin}
+        canManageSchedule={canManageSchedule}
         viewAsName={effectiveViewAsName}
         addons={(addAddonOcc?.addons ?? []) as any}
         // Same rule the card's ✕ used before removal moved in here: claimer,
@@ -11263,7 +11439,7 @@ export default function JobsTab({
       <InvoicePreviewDialog
         occurrenceId={previewOccId}
         onClose={() => setPreviewOccId(null)}
-        canSeeCrewPay={isAdmin || isSuper}
+        canSeeCrewPay={scope.can("money.view")}
       />
 
 
@@ -11466,7 +11642,7 @@ export default function JobsTab({
                       setPriceEditBusy(true);
                       try {
                         const next = parseFloat(priceEditValue);
-                        await apiPatch(`/api/admin/occurrences/${priceEditOcc.id}/price`, {
+                        await apiPatch(`/api/occurrences/${priceEditOcc.id}/price`, {
                           price: next,
                           reason: priceEditReason.trim() || undefined,
                           laborDetail: priceEditDetail.trim() || null,
@@ -11640,7 +11816,7 @@ export default function JobsTab({
           }}
           mode="CREATE"
           jobId={promptOccJobId}
-          isAdmin={forAdmin}
+          canManageSchedule={canManageSchedule}
           defaultPrice={promptOccDefaults.price}
           defaultEstimatedMinutes={promptOccDefaults.estimatedMinutes}
           defaultNotes={promptOccDefaults.notes}
@@ -11648,7 +11824,7 @@ export default function JobsTab({
           defaultJobType={promptOccDefaults.jobType}
           title="Create First Occurrence"
           submitLabel="Create"
-          createEndpoint={forAdmin ? `/api/admin/jobs/${promptOccJobId}/occurrences` : undefined}
+          createEndpoint={canManageSchedule ? `/api/jobs/${promptOccJobId}/occurrences` : undefined}
           onSaved={() => {
             setPromptOccJobId(null);
             publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
@@ -11700,7 +11876,7 @@ export default function JobsTab({
                       You can manage and revoke feeds anytime from your{" "}
                       <Text as="span" color="blue.fg" cursor="pointer" textDecoration="underline" onClick={() => {
                         setCalFeedStep("closed");
-                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "profile" } }));
+                        window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "profile" } }));
                       }}>Profile</Text>.
                     </Text>
                   </VStack>
@@ -11728,7 +11904,7 @@ export default function JobsTab({
                       Paste this URL into your calendar app under "Subscribe" or "Add by URL". You can manage and revoke feeds from your{" "}
                       <Text as="span" color="blue.fg" cursor="pointer" textDecoration="underline" onClick={() => {
                         setCalFeedStep("closed");
-                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "profile" } }));
+                        window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "profile" } }));
                       }}>Profile</Text>.
                     </Text>
                   </VStack>

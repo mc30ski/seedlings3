@@ -7,6 +7,7 @@ import { AUDIT } from "../lib/auditActions";
 import { sendSMS, sendEmail } from "../lib/notifications";
 import { persistCompletionSplits } from "./payments";
 import { ServiceError } from "../lib/errors";
+import type { CallerCan } from "../lib/callerCan";
 import {
   invoiceTotal, invoiceLines, crewPool, humanizeTag,
   PRICED_OCCURRENCE_SELECT, type InvoiceLine,
@@ -17,6 +18,47 @@ const DEFAULT_EXPIRY_HOURS = 72;
 // A sent-but-unpaid request older than this many days is flagged "stale".
 const DEFAULT_STALE_DAYS = 4;
 const DEFAULT_COMMS_MODE: PaymentCommsMode = "CLAIMER";
+
+/**
+ * THE REQUEST-PAYMENT KILL SWITCH, enforced on the server.
+ *
+ * `REQUEST_PAYMENT_FROM_CLIENT_ENABLED` used to be checked ONLY in the
+ * browser: `AcceptPaymentDialog` read `/api/settings` and hid the control.
+ * Nothing on the server looked at it, so the switch hid a button rather than
+ * stopping anything — anyone calling the endpoint directly, and the automatic
+ * send on job completion, both went out regardless. Turning it off because
+ * something was wrong would not have stopped the thing that was wrong.
+ *
+ * The bypass is `schedule.manage`, matching the dialog's `isOperator` prop:
+ * a requested payment still lands in the approval queue, so the safety is
+ * the approval step, not hiding the button.
+ *
+ * Default when the row is absent: DISABLED. A missing kill switch reads as
+ * off, never as on.
+ */
+export async function requestPaymentAllowed(callerCan: CallerCan): Promise<boolean> {
+  if (callerCan("schedule.manage")) return true;
+  const row = await prisma.setting.findUnique({
+    where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
+    select: { value: true },
+  });
+  return row?.value === "true";
+}
+
+/**
+ * Same question, as a refusal. For the EXPLICIT request-payment actions —
+ * the automatic send on completion calls `requestPaymentAllowed` instead and
+ * simply skips, because a disabled kill switch must not make a visit
+ * impossible to finish.
+ */
+export async function assertRequestPaymentAllowed(callerCan: CallerCan): Promise<void> {
+  if (await requestPaymentAllowed(callerCan)) return;
+  throw new ServiceError(
+    "REQUEST_PAYMENT_DISABLED",
+    "Requesting payment from the client is turned off for this business.",
+    403,
+  );
+}
 
 function newToken(): string {
   return randomBytes(16).toString("hex");
@@ -126,7 +168,7 @@ async function getContactsForOccurrence(occurrenceId: string) {
 /**
  * Everything the client-facing invoice needs off a JobOccurrence.
  *
- * ONE list, shared by the real invoice (resolveToken) and the admin preview.
+ * ONE list, shared by the real invoice (resolveToken) and the preview.
  * Selecting too little is how an invoice silently loses a line, and a preview
  * that selects a different set is a preview that lies.
  */
@@ -196,7 +238,7 @@ function jobLabelFor(
 /**
  * The invoice a client would see for this occurrence, as of right now.
  *
- * THE ONLY BUILDER. `resolveToken` renders it on the pay page; the admin
+ * THE ONLY BUILDER. `resolveToken` renders it on the pay page; a caller with `money.view`
  * preview renders the same object on the job card. A second implementation is
  * how a preview starts showing a number the client never gets.
  *
@@ -216,7 +258,7 @@ export async function buildInvoice(
   propertyLabel: string;
   propertyAddress: string | null;
   serviceDate: Date | null;
-  /** Free text the crew or an admin wrote for this visit. Null when blank —
+  /** Free text the crew or someone with `money.view` wrote for this visit. Null when blank —
    *  the surfaces render nothing rather than an empty heading. */
   customerVisibleNotes: string | null;
 }> {
@@ -360,6 +402,12 @@ function buildEmailBodyHtml(firstName: string, propLabel: string, dateStr: strin
 }
 
 export const paymentRequests = {
+  // The kill switch, exposed on the service object so route handlers reach
+  // it the same way they reach everything else here. ONE implementation —
+  // these are the module-level functions above, not copies.
+  requestPaymentAllowed,
+  assertRequestPaymentAllowed,
+
   /**
    * Resolve the effective comms mode for a given claimer (or null when no
    * claimer). The user's per-profile override wins; otherwise the org-wide
@@ -417,7 +465,13 @@ export const paymentRequests = {
       where: { id: occurrenceId },
       select: { paymentRequestToken: true, paymentRequestTokenCreatedAt: true },
     });
-    if (!existing) throw new Error("Occurrence not found");
+    // A bare Error here became a 500 on every caller of this function,
+    // including POST /occurrences/:id/send-payment-request-email — so asking
+    // to email a payment request for a visit that had been deleted looked
+    // like the server was broken rather than like the visit was gone.
+    if (!existing) {
+      throw new ServiceError("NOT_FOUND", "Occurrence not found", 404);
+    }
 
     // Auto-regenerate when the existing token has aged past the configured
     // expiry. Without this, a re-pay cycle that drags past 72h (or whatever
@@ -854,7 +908,7 @@ export const paymentRequests = {
    * operator needs to read it. Deliberately carries nothing about what the
    * crew is paid.
    *
-   * Split out of `previewInvoice` so the worker-facing preview and the admin
+   * Split out of `previewInvoice` so the worker-facing preview and a caller with `money.view`
    * one are the SAME object — the comment on buildInvoice above says it
    * plainly: a second implementation is how a preview starts showing a
    * number the client never gets.
@@ -900,7 +954,7 @@ export const paymentRequests = {
     return {
       ...shared,
       // OPERATOR-ONLY, and the reason the worker preview is a different
-      // method: this is what the CREW is paid, which a worker view must not
+      // method: this is what the CREW is paid, which a self-scoped view must not
       // carry. Read from the same shared helper the payout engine agrees
       // with, so the warning quotes a number the crew will actually be paid.
       crewPool: crewPool(_occ),
@@ -999,7 +1053,14 @@ export const paymentRequests = {
    * pay link has lapsed (the client can no longer pay even if they try).
    * With `claimerUserId`, scoped to one worker's own claimed jobs.
    */
-  async listOutstanding(opts?: { claimerUserId?: string; cutoff?: Date | null }) {
+  async listOutstanding(opts?: {
+    claimerUserId?: string;
+    cutoff?: Date | null;
+    /** From `areaWhere(principal, "money.view")`. This queries
+     *  JobOccurrence directly, which carries areaId itself, so the
+     *  fragment is top-level rather than nested. Empty = unchanged. */
+    areaWhere?: Record<string, unknown>;
+  }) {
     const expiryHours = Number(
       (await getSetting("PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS")) ?? DEFAULT_EXPIRY_HOURS,
     );
@@ -1012,6 +1073,7 @@ export const paymentRequests = {
     const cutoff = opts?.cutoff ?? null;
     const occs = await prisma.jobOccurrence.findMany({
       where: {
+        ...(opts?.areaWhere ?? {}),
         status: "PENDING_PAYMENT",
         paymentRequestSentAt: cutoff
           ? { not: null, gte: cutoff }

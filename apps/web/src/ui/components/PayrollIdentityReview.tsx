@@ -1,7 +1,7 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PayrollIdentityReview — Super-only queue for names the import couldn't
+// PayrollIdentityReview — the `payroll.manage` queue for names the import couldn't
 // attribute to an app user.
 //
 // Canonical spec: docs/features/payroll.md.

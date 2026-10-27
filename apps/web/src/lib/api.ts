@@ -31,18 +31,21 @@ async function authHeaders(h: Headers) {
   }
 }
 
-// Super-only "View as another role" header. Read on every API call so a
-// toggle from the View-as menu takes effect immediately for subsequent
-// requests. The backend silently ignores the header unless the underlying
-// user is actually SUPER, so a non-Super browser sending a forged value is
-// a no-op — but we still only emit it when we have a value stored locally.
-const IMPERSONATE_STORAGE_KEY = "seedlings_impersonateAs";
+// The two "view as" headers, read on every API call so a change from the
+// picker takes effect immediately for subsequent requests.
+const PERSPECTIVE_STORAGE_KEY = "seedlings_perspectiveRoleId";
 const CLIENT_IMPERSONATE_STORAGE_KEY = "seedlings_impersonateClientContact";
+const AREA_LENS_STORAGE_KEY = "seedlings_areaLensId";
 function attachImpersonateHeader(h: Headers) {
   if (!IS_BROWSER) return;
   try {
-    const val = localStorage.getItem(IMPERSONATE_STORAGE_KEY);
-    if (val) h.set("X-Impersonate-As", val);
+    // A perspective is a CustomRole id naming a narrower perspective. The server
+    // honours it only when that id is in the caller's own resolved
+    // `perspectives` list, so a forged value is a no-op rather than an
+    // escalation. Was `X-Impersonate-As` carrying a role literal, which
+    // nothing has read since the Role enum was deleted.
+    const val = localStorage.getItem(PERSPECTIVE_STORAGE_KEY);
+    if (val) h.set("X-Perspective", val);
     // Client "View as" is a separate impersonation flavor — different
     // header, different storage key. Both may be set independently; the
     // backend applies them independently too. See plugins/clientImpersonation.ts.
@@ -57,19 +60,26 @@ function attachImpersonateHeader(h: Headers) {
         // Malformed JSON — ignore.
       }
     }
+    // The AREA LENS — "show me only Durham". Carries an Area id. Orthogonal
+    // to both headers above and freely combined with them: the server
+    // intersects it with the areas this caller is granted, so a forged value
+    // shows them LESS, never more. Unlike those two it narrows WHERE rather
+    // than WHAT MAY BE DONE, and it can never produce a 403.
+    const lens = localStorage.getItem(AREA_LENS_STORAGE_KEY);
+    if (lens) h.set("X-Area-Lens", lens);
   } catch {
     // localStorage can throw in private mode / disabled storage; just skip.
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Super-only "Reveal Pre-Cutoff" header — transient session-only override of
+// The "Reveal Pre-Cutoff" header (`settings.manage`) — a transient, session-only override of
 // the Business Start Date filter. Intentionally NOT persisted in localStorage:
 // a page reload always reverts to the filtered view so the operator can't
 // forget the toggle is on. See apps/api/src/lib/businessStartCutoff.ts.
 //
 // The server gates on the caller's REAL role (post-impersonation Super) so a
-// non-Super browser sending a forged value is a no-op. The module-level
+// a browser without the capability sending a forged value is a no-op. The module-level
 // boolean is set by setRevealPreCutoff() from the React Context provider.
 // ─────────────────────────────────────────────────────────────────────────────
 let revealPreCutoff = false;
@@ -92,8 +102,8 @@ export function subscribeRevealPreCutoff(fn: (v: boolean) => void): () => void {
 }
 
 function attachRevealPreCutoffHeader(h: Headers) {
-  // Only emit when the toggle is on. Browsers running a non-Super session
-  // can still set this true; the server ignores it for non-Super callers.
+  // Only emit when the toggle is on. Browsers running a a session without the capability
+  // can still set this true; the server ignores it for callers without it.
   if (revealPreCutoff) h.set("X-Reveal-Pre-Cutoff", "true");
 }
 
@@ -208,6 +218,23 @@ export async function request<T>(
     if (details !== undefined) err.details = details;
     if (body !== undefined) err.body = body;
 
+    // A capability refusal the user could REACH is a bug on this side: if
+    // the UI gated correctly, the control was never offered. Shout once,
+    // here, where every request passes — wiring this at the 414 individual
+    // call sites would mean the ones that forgot are the ones that need it.
+    // Development only; the user's own message is built by
+    // `getErrorMessage` from the entitlement's copy.
+    if (IS_BROWSER && code === "NOT_AUTHORIZED" && process.env.NODE_ENV !== "production") {
+      const missing =
+        (details as { entitlement?: string } | undefined)?.entitlement ??
+        "an unnamed capability";
+      // eslint-disable-next-line no-console
+      console.error(
+        `[permissions] ${path} was refused for lack of "${missing}". The UI ` +
+          `offered an action the route denies — its gate and the route guard disagree.`,
+      );
+    }
+
     // Compliance-policy gate — the server throws POLICIES_REQUIRED with
     // { pendingPolicyIds: string[] } in details when the worker tries any
     // gated action (workday start, job claim, vehicle reserve) without
@@ -228,7 +255,7 @@ export async function request<T>(
     // View-as caveat: when the URL targets another user via
     // `?viewAsUserId=<id>`, the pending policies belong to THAT worker,
     // not the calling admin. Auto-opening the sign wizard would fetch
-    // the admin's own policies (they've already signed everything),
+    // the CALLER's own policies (they've already signed everything),
     // filter to zero matches, and hang the caller forever waiting for a
     // `policies:wizard-closed` event that would never fire. Skip the
     // interception and let the caller surface an inline error naming
@@ -236,7 +263,7 @@ export async function request<T>(
     const isViewAsCall = /[?&]viewAsUserId=/.test(path);
     if (IS_BROWSER && code === "POLICIES_REQUIRED" && isViewAsCall) {
       err.message =
-        "This worker has unsigned compliance policies. They must sign in and complete them, OR grant them an exception from Super → Directory → Compliance → (open the policy) → Grant exception.";
+        "This worker has unsigned compliance policies. They must sign in and complete them, OR grant them an exception from Directory → Compliance → (open the policy) → Grant exception.";
       throw err;
     }
     if (IS_BROWSER && code === "POLICIES_REQUIRED") {

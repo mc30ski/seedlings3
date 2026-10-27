@@ -1,3 +1,4 @@
+import { isFeeable, isW2 } from "@repo/money";
 import { prisma } from "../db/prisma";
 import { invoiceTotal } from "../lib/jobPricing";
 import { etFormatDate } from "../lib/dates";
@@ -9,7 +10,6 @@ import {
 import {
   isFixedAsset,
   loadFixedAssetMinCost,
-  isEmployeeClass,
   expenseAnchorDateWhere,
   effectiveExpenseDate,
 } from "./exports";
@@ -34,7 +34,7 @@ const ACCOUNT_EMPLOYER_PAYROLL_TAXES = "Payroll:Employer payroll taxes (est.)";
  * Compute the W-2 wage base for a period using the CASH-basis anchor:
  * jobs whose `completedAt` falls in [start, end], per-worker net =
  * `promisedPayouts` snapshot (falling back to a runtime `computeBreakdown`
- * for legacy occurrences). Sums employee + trainee splits ONLY.
+ * for legacy occurrences). Sums EMPLOYEE splits ONLY.
  *
  * This mirrors the exact math the workdays CSV export uses (which is
  * the Gusto data source), so the P&L's cash-basis wages line matches
@@ -77,11 +77,11 @@ async function loadCashBasisWageEvents(
   const events: Array<{ occurrenceId: string; userId: string; net: number; completedAt: Date }> = [];
   for (const occ of occs) {
     if (!occ.completedAt) continue;
-    // Employee/trainee assignees only — this line synthesizes ONLY the
+    // W-2 assignees only — this line synthesizes ONLY the
     // W-2 wage base. Contract labor is handled separately via the
     // accrual path (which is the correct model for 1099 contractors —
     // they're paid when the client's payment clears).
-    const w2Assignees = occ.assignees.filter((a) => isEmployeeClass(a.user.workerType));
+    const w2Assignees = occ.assignees.filter((a) => isW2(a.user.workerType));
     if (w2Assignees.length === 0) continue;
 
     // Snapshot path — locked at completion time. Preserves the exact
@@ -573,7 +573,7 @@ export async function buildPnLReport(
   let wagesAccruedTotal = 0;
   for (const p of contractorPayments) {
     for (const sp of p.splits) {
-      if (isEmployeeClass(sp.user.workerType)) {
+      if (isW2(sp.user.workerType)) {
         // W-2 wages base — sp.amount is already netAmount + topUpAmount
         // (the worker's paycheck gross from the payroll-tax-base
         // perspective), which is what payroll taxes apply to.
@@ -1044,7 +1044,13 @@ export async function pnlReportDetails(
     const rows: PnLDetailRow[] = [];
     for (const p of contractorPayments) {
       for (const sp of p.splits) {
-        if (isEmployeeClass(sp.user.workerType)) continue;
+        // worker-class-allow: a SKIP, and the positive one. Only an actual
+        // contractor is contract labour; `continue` on employees alone
+        // meant everyone else — including an unpaid helper — was listed as
+        // a contractor in a tax-facing report. Negating `isFeeable` here
+        // excludes every other class rather than relabelling it, which is
+        // the opposite of the shape G30 bans.
+        if (!isFeeable(sp.user.workerType)) continue;
         rows.push({
           date: p.confirmedAt ? etFormatDate(p.confirmedAt) : "",
           primary: sp.user.displayName ?? sp.user.email ?? "(unnamed contractor)",
@@ -1218,7 +1224,9 @@ export async function pnlReportDetails(
         : undefined;
       const paymentDateStr = p.confirmedAt ? etFormatDate(p.confirmedAt) : undefined;
       for (const sp of p.splits) {
-        if (!isEmployeeClass(sp.user.workerType)) continue;
+        // worker-class-allow: a guard that KEEPS only W-2, not a claim that
+        // everyone else is a contractor. The complement is never used.
+        if (!isW2(sp.user.workerType)) continue;
         const workerName = sp.user.displayName ?? sp.user.email ?? "(unknown worker)";
         const property = p.occurrence?.job?.property?.displayName;
         const client = p.occurrence?.job?.property?.client?.displayName;
@@ -1287,7 +1295,7 @@ export async function pnlReportDetails(
       });
       for (const p of payments) {
         for (const sp of p.splits) {
-          if (isEmployeeClass(sp.user.workerType)) wages += sp.amount ?? 0;
+          if (isW2(sp.user.workerType)) wages += sp.amount ?? 0;
         }
       }
     }

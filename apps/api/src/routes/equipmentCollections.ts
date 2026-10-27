@@ -1,10 +1,11 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { Role as RoleVal } from "@prisma/client";
+import { callerCan } from "../lib/callerCan";
 import { prisma } from "../db/prisma";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
+import { makeGuards } from "../lib/routeGuards";
 
-/** Actor for collection mutations. `adminGuard` (requireRole →
+/** Actor for collection mutations. The guard (requireApproved →
  *  requireApproved) attaches the resolved User row to req.user, so the id is
  *  always present by the time a handler body runs. */
 function actorId(req: any): string | null {
@@ -22,20 +23,16 @@ function actorId(req: any): string | null {
  */
 
 export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
-  const adminGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireRole(req, reply, RoleVal.ADMIN),
-  };
-  const workerGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireRole(req, reply, RoleVal.WORKER),
-  };
-
+  const { requires, approvedUser } = makeGuards(app);
+  const req_equipmentManage = requires("equipment.manage");
+  const req_equipmentView = requires("equipment.view");
+    const req_scheduleManage = requires("schedule.manage");
+  const req_scheduleView = requires("schedule.view");
   // ── Worker (and admin) read access ───────────────────────────────
   // Returns all collections with their members. Each item carries `heldByMe`
   // — true when the requesting worker currently has an open checkout on that
   // piece — so the worker Collections tab can flag which kits they're using.
-  app.get("/equipment-collections", workerGuard, async (req) => {
+  app.get("/equipment-collections", req_equipmentView, async (req) => {
     const collections = await prisma.equipmentCollection.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       include: {
@@ -55,6 +52,13 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
             },
           },
         },
+        // Admin-surface extra from the deleted `/equipment-collections`
+        // twin: how many jobs recommend this collection. Same entitlement on
+        // both twins, so the count was never actually protected — it is now
+        // tied to `equipment.manage`.
+        ...(callerCan(req as any, "equipment.manage")
+          ? { _count: { select: { jobRecommendations: true } } }
+          : {}),
       },
     });
 
@@ -88,33 +92,8 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
 
   // ── Admin CRUD ────────────────────────────────────────────────────
 
-  app.get("/admin/equipment-collections", adminGuard, async () => {
-    const collections = await prisma.equipmentCollection.findMany({
-      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      include: {
-        items: {
-          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-          include: {
-            equipment: {
-              select: {
-                id: true,
-                shortDesc: true,
-                type: true,
-                brand: true,
-                model: true,
-                status: true,
-                retiredAt: true,
-              },
-            },
-          },
-        },
-        _count: { select: { jobRecommendations: true } },
-      },
-    });
-    return collections;
-  });
 
-  app.post("/admin/equipment-collections", adminGuard, async (req: any, reply) => {
+  app.post("/equipment-collections", req_equipmentManage, async (req: any, reply) => {
     const b = req.body || {};
     const name = String(b.name || "").trim();
     if (!name) return reply.code(400).send({ error: "name is required" });
@@ -137,7 +116,7 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
         },
       });
       // Consequence: publishes a new kit that workers can one-tap check out
-      // and that admins can attach to jobs as recommended equipment.
+      // and that holders of `equipment.manage` can attach to jobs as recommended equipment.
       await writeAudit(tx, AUDIT.EQUIPMENT_COLLECTION.CREATED, actorId(req), {
         collectionId: row.id,
         name: row.name,
@@ -151,7 +130,7 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
     return created;
   });
 
-  app.patch("/admin/equipment-collections/:id", adminGuard, async (req: any, reply) => {
+  app.patch("/equipment-collections/:id", req_equipmentManage, async (req: any, reply) => {
     const id = String((req.params as any)?.id || "");
     const b = req.body || {};
     const data: any = {};
@@ -228,7 +207,7 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
     }
   });
 
-  app.delete("/admin/equipment-collections/:id", adminGuard, async (req: any, reply) => {
+  app.delete("/equipment-collections/:id", req_equipmentManage, async (req: any, reply) => {
     const id = String((req.params as any)?.id || "");
     try {
       await prisma.$transaction(async (tx) => {
@@ -261,7 +240,7 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
   // ── Job → Recommended Collections ─────────────────────────────────
   // Replace the recommended-collections list for a given job. Used from the
   // Job edit dialog. Empty array clears recommendations.
-  app.put("/admin/jobs/:id/recommended-collections", adminGuard, async (req: any, reply) => {
+  app.put("/jobs/:id/recommended-collections", req_scheduleManage, async (req: any, reply) => {
     const jobId = String((req.params as any)?.id || "");
     const b = req.body || {};
     const collectionIds: string[] = Array.isArray(b.collectionIds)
@@ -302,7 +281,14 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get("/admin/jobs/:id/recommended-collections", adminGuard, async (req: any) => {
+  app.get("/jobs/:id/recommended-collections", req_scheduleView, async (req: any) => {
+    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    //   territorially; reaching a specific record does not, because
+    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   so people can cover another district — and a worker covering a visit
+    //   needs the record behind it. You also cannot reach this without
+    //   already holding the id, and every list that hands out ids IS
+    //   filtered.
     const jobId = String((req.params as any)?.id || "");
     return prisma.jobRecommendedCollection.findMany({
       where: { jobId },

@@ -1,4 +1,5 @@
 import { prisma } from "../db/prisma";
+import { withArea } from "../lib/areaScope";
 import {
   Prisma,
   ClientStatus,
@@ -28,7 +29,7 @@ function normalizePhone(raw?: string | null): string | null {
 /**
  * Primary-contact invariant guard. Blocks archive/delete when the target
  * is the client's only ACTIVE primary contact — invoice routing depends on a
- * primary existing, so the admin must promote another contact first.
+ * primary existing, so a caller with `clients.manage` must promote another contact first.
  */
 async function assertNotSoleActivePrimary(
   contactId: string,
@@ -109,14 +110,63 @@ export const clients: ServicesClients = {
     q?: string;
     status?: ClientStatus | "ALL";
     limit?: number;
+    /** Territory filter from `areaWhere(principal, "clients.view")`. A
+     *  Client has no `areaId` of its own — it reaches territory through its
+     *  properties — so the caller passes the raw fragment and this function
+     *  wraps it in the relation hop. */
+    areaWhere?: Record<string, unknown>;
+    /**
+     * Narrow to the clients this user is actually on the work for.
+     *
+     * Set by the route for a caller who is NOT field-cleared and cannot
+     * manage clients — the trainee case. ClientsTab already drew exactly
+     * this set, but it did so by fetching every client and filtering in
+     * the browser, so the whole customer book sat in the network response
+     * of somebody the UI was busy telling "you only see the clients you
+     * are assigned to". The list is the thing that hands out ids, and
+     * `/clients/:id` leans on that in its own `area-scope-allow` note —
+     * "every list that hands out ids IS filtered" — which was not yet
+     * true for this caller.
+     *
+     * Reachability is the same hop the browser walked: client → property
+     * → job → occurrence → assignee.
+     */
+    assignedToUserId?: string;
   }) {
     const q = (params?.q ?? "").trim();
     const status =
       params?.status && params.status !== "ALL" ? params.status : undefined;
     const limit = Math.min(Math.max(params?.limit ?? 100, 1), 500);
 
-    const where: Prisma.ClientWhereInput = {};
+    let where: Prisma.ClientWhereInput = {};
     if (status) where.status = status;
+
+    // TERRITORY, VIA PROPERTIES.
+    //
+    // A client is visible when ANY of their properties sits in a subtree the
+    // caller may see. `some` is the right quantifier: a client with work in
+    // both Durham and Chapel Hill is a real client of the Durham lead, and
+    // hiding them would make the client list disagree with the job list.
+    // Scoping the PROPERTIES shown for that client is a separate filter,
+    // applied on its own read.
+    if (params?.areaWhere && Object.keys(params.areaWhere).length > 0) {
+      where = withArea(where, { properties: { some: params.areaWhere } });
+    }
+    if (params?.assignedToUserId) {
+      where = withArea(where, {
+        properties: {
+          some: {
+            jobs: {
+              some: {
+                occurrences: {
+                  some: { assignees: { some: { userId: params.assignedToUserId } } },
+                },
+              },
+            },
+          },
+        },
+      });
+    }
     if (q) {
       where.OR = [
         { displayName: { contains: q, mode: "insensitive" } },
@@ -166,6 +216,16 @@ export const clients: ServicesClients = {
 
         // lightweight properties preview (cap the list)
         properties: {
+          // SCOPE THE PREVIEW TOO, not just the client row.
+          //
+          // The `some` above decides WHICH CLIENTS are visible — a client
+          // with work in two districts is a real client of both leads. It
+          // says nothing about which of their properties this reader may
+          // see, and without this `where` the preview hands a Durham lead
+          // the Chapel Hill addresses of a shared client. The area probe
+          // caught exactly that: the client row was correctly scoped and the
+          // rows nested inside it were not.
+          where: params?.areaWhere ?? {},
           select: {
             id: true,
             kind: true,
@@ -186,7 +246,7 @@ export const clients: ServicesClients = {
 
     // Per-client count of Jobs in PAUSED status. Powers the count on the
     // "Job services" button + the "paused repeating only" filter on
-    // Admin → Directory → Clients. Every held repeating visit counts however
+    // Directory → Clients. Every held repeating visit counts however
     // it got there — the client card answers "is anything stopped for this
     // client?", not a breakdown by reason.
     //
@@ -290,7 +350,7 @@ export const clients: ServicesClients = {
       };
       if (payload.isVip !== undefined) data.isVip = !!payload.isVip;
       if (payload.vipReason !== undefined) data.vipReason = payload.isVip ? (payload.vipReason || null) : null;
-      if (payload.adminTags !== undefined) data.adminTags = Array.isArray(payload.adminTags) ? JSON.stringify(payload.adminTags) : null;
+      if (payload.internalTags !== undefined) data.internalTags = Array.isArray(payload.internalTags) ? JSON.stringify(payload.internalTags) : null;
       const record = await tx.client.update({
         where: { id },
         data: data,
@@ -314,7 +374,7 @@ export const clients: ServicesClients = {
   // Archive the Client AND cascade to every non-archived Property + every
   // non-archived Job under those Properties. Populates the previously-
   // unused `Client.archivedAt` timestamp so downstream queries (e.g. the
-  // duplicate-clients audit at admin.ts) stop treating archived rows as
+  // duplicate-clients audit in this file) stop treating archived rows as
   // active. Cascade is transactional — either the whole tree archives
   // or nothing does. Every audited row shares a `cascadeGroupId` so
   // "show me every row affected by this cascade" is a single query.
@@ -523,13 +583,13 @@ export const clients: ServicesClients = {
 
       // Propagate clerkUserId from any existing ClientContact rows
       // that share this person's email or normalized phone. This is
-      // the multi-client identity glue: when the admin adds an
+      // the multi-client identity glue: when someone adds an
       // existing person as a contact on a new Client, the new row
       // gets bound to the same Clerk identity the person already
       // has, so a single sign-in surfaces every client they belong
-      // to. The admin-side dialog runs a separate pre-flight check
+      // to. A caller with `clients.manage`-side dialog runs a separate pre-flight check
       // and shows the operator a confirmation — if they get here,
-      // they've explicitly opted into this. See /admin/contacts/lookup.
+      // they've explicitly opted into this. See /client-contacts/check.
       let inheritedClerkUserId: string | null = null;
       if (cp.email || cp.normalizedPhone) {
         const identityMatch = await tx.clientContact.findFirst({
@@ -590,7 +650,7 @@ export const clients: ServicesClients = {
       });
 
       // Primary-contact invariant: refuse to demote the sole primary, and
-      // refuse to archive/pause the sole primary. The admin must promote a
+      // refuse to archive/pause the sole primary. A caller with `clients.manage` must promote a
       // different contact first.
       const isBecomingNonPrimary = before.isPrimary && !cp.isPrimary;
       const isLeavingActive = before.status === "ACTIVE" && cp.status !== "ACTIVE";

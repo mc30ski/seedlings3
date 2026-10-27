@@ -60,7 +60,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 //   • window focus + visibility change (no polling — on-focus only)
 //   • after every successful mutation
 //
-// Dialogs all share `ImpersonationWarningBlock` so an admin viewing-as a
+// Dialogs all share `ImpersonationWarningBlock` so the timesheet viewing-as a
 // worker sees a callout before any action lands. The page-level
 // ImpersonationBanner is separate and covers the rest of the UI; this
 // inline block is for the moment-of-action context.
@@ -86,17 +86,17 @@ type DialogMode =
  * Props:
  *   viewAsUserId       — when set, the strip renders the workday for the
  *                        named worker instead of the caller's own data
- *                        (Admin / Super "viewing-as" on the Worker Home tab).
+ *                        (the "view as" picker on the Home tab).
  *   viewAsDisplayName  — shown in the in-dialog warning so the actor sees
  *                        whose record they're about to mutate.
  *   canImpersonate     — true when the caller is Super. Server-side gate
  *                        is the source of truth (mutations 403 otherwise);
  *                        this prop hides the action buttons preemptively
- *                        so a non-Super admin sees a clean read-only view.
+ *                        so a caller without it sees a clean read-only view.
  */
 // ─────────────────────────────────────────────────────────────────────────
 // Cross-tab optimistic sync (offline).
-// WorkdayStrip mounts on every Worker → Work tab (Home / Reminders / Jobs
+// WorkdayStrip mounts on every Work tab (Home / Reminders / Jobs
 // / Routes). When the worker mutates their workday offline, the active
 // strip applies the change to its local React state — but switching to a
 // sibling tab remounts that tab's strip and re-fetches from the SW cache,
@@ -285,7 +285,7 @@ export default function WorkdayStrip({
 
   // Seed initial payload from sessionStorage when present (self-service
   // only — view-as never reads cross-tab optimistic state). Survives
-  // remounts triggered by Worker→Work tab switches so an offline
+  // remounts triggered by Work tab switches so an offline
   // mutation made on Home doesn't flash back to NOT_STARTED when the
   // user navigates to Reminders/Jobs/Routes.
   const [payload, setPayload] = useState<WorkdayTodayPayload | null>(() => {
@@ -449,7 +449,7 @@ export default function WorkdayStrip({
   ) {
     await enqueueAction(type as QueuedActionType, workdayEntityId, label, payloadBody);
     // Apply locally + mirror to sessionStorage + broadcast same-tab
-    // event so any sibling WorkdayStrip (other Worker→Work tab) picks
+    // event so any sibling WorkdayStrip (other Work tab) picks
     // up the change. Without this, navigating away and back showed the
     // stale SW-cached state.
     if (!payload) return;
@@ -832,7 +832,7 @@ function WorkdayCard({
     </Box>
   );
   // Read-only banner — shown when the caller is viewing-as a worker
-  // (Admin only; Super gets canAct = true). The card itself still
+  // (`time.view`; `time.manage` gets canAct = true). The card itself still
   // renders in full so admin can see the worker's current state for
   // review, but every action button is suppressed.
   const readOnlyBanner = !canAct && viewAsName ? (
@@ -845,7 +845,7 @@ function WorkdayCard({
       borderRadius="md"
     >
       <Text fontSize="xs" color="gray.fg">
-        <b>Read-only view.</b> Only Super can act on {viewAsName}'s workday on this tab.
+        <b>Read-only view.</b> Only `time.manage` can act on {viewAsName}'s workday on this tab.
       </Text>
     </Box>
   ) : null;
@@ -985,7 +985,7 @@ function WorkdayCard({
                 that opens a start/stop picker so a worker can toggle
                 mileage tracking without expanding. Self-hides when the
                 worker has no assigned vehicles + no open sessions.
-                Suppressed while an admin is viewing another worker
+                Suppressed while someone with timesheet authority is viewing another worker
                 (viewAsName set) since the /me/vehicles endpoint returns
                 the current viewer's vehicles, not the viewed worker's.
 
@@ -1423,7 +1423,7 @@ function EndWorkdayDialog({
   activeJobs: JobBlockingSummary[];
   activeCheckouts: EquipmentCheckoutSummary[];
   openMileageEntries: OpenMileageSummary[];
-  /** True when Admin/Super is viewing-as another worker. Mileage stop
+  /** True when the caller is viewing-as another person. Mileage stop
    *  is worker-side (`/me/mileage/...`), so we can't close the
    *  worker's sessions on their behalf from here — we show a warning
    *  instead. */
@@ -1648,7 +1648,7 @@ function EndWorkdayDialog({
             vehicle before the workday can end. Each row corresponds
             to a MileageEntry; submit closes them in parallel via the
             existing per-entry stop endpoint. When the actor is
-            viewing-as another worker (admin/super), we can only warn
+            viewing-as another worker (management), we can only warn
             — the stop endpoint is worker-side (`/me/mileage/...`)
             and doesn't accept impersonation. */}
         {openMileageEntries.length > 0 && isViewingAs && (
@@ -2324,8 +2324,8 @@ function ReopenWorkdayDialog({
           now will be recorded as a pause so it doesn't count toward your hours.
         </Text>
         <Text fontSize="xs" color="fg.muted">
-          Once an admin has approved this workday, or the same-day edit window has
-          closed, you'll have to ask an admin to re-open it.
+          Once someone with timesheet authority has approved this workday, or the same-day edit window has
+          closed, you'll have to ask someone with timesheet authority to re-open it.
         </Text>
       </VStack>
     </DialogShell>

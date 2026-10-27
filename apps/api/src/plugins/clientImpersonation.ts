@@ -3,22 +3,36 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { prisma } from "../db/prisma";
 import {
   CLIENT_IMPERSONATE_HEADER,
+  PERSPECTIVE_HEADER,
   parseClientImpersonationHeader,
+  resolvePerspective,
 } from "../lib/impersonation";
+import { capabilitiesForUsers } from "../lib/userCapabilities";
+import { availablePerspectives } from "../lib/perspectives";
+import { isEntitlement, type Entitlement } from "@repo/permissions";
 
 /**
- * Super-only client "View as" plugin.
+ * docs/features/client-view-as.md: the actor is "a real Super user with a
+ * valid Clerk session. Never anyone" else. NOT `identity.link`, which is
+ * data entry the baseline Admin role holds — linking a login to a customer
+ * record is not the
+ * same authority as reading that customer's entire portal as them.
+ */
+const CLIENT_VIEW_AS: Entitlement = "clients.view-as";
+
+/**
+ * The client "View as" plugin — `clients.view-as`.
  *
  * Runs an onRequest hook that:
  *  1. Parses the `x-impersonate-client-contact` header (a ClientContact.id).
- *  2. Verifies the CALLER is really a SUPER (DB check on their roles).
+ *  2. Verifies the CALLER is really someone with `clients.view-as` (DB check on their roles).
  *  3. Looks up the target ClientContact and its clerkUserId.
  *  4. Sets `req.effectiveClerkUserId` to the target's clerkUserId so
  *     downstream client-facing routes fetch the client's real data.
  *  5. Refuses any mutation method (non-GET) while impersonation is active
  *     — read-only enforcement. Response: 403 with code IMPERSONATION_READONLY.
  *
- * Silently ignores the header when the caller is not SUPER — never leaks
+ * Silently ignores the header without `clients.view-as` — never leaks
  * whether the feature exists via a 4xx.
  *
  * Route-level integration: client-facing route handlers must prefer
@@ -34,15 +48,76 @@ export default fp(async (app: FastifyInstance) => {
     const clerkUserId = req.auth?.clerkUserId;
     if (!clerkUserId) return; // Not authenticated — auth layer handles this.
 
-    // The caller must actually be a SUPER for the header to do anything.
-    // Silent no-op otherwise so we never leak the feature via a 4xx.
+    // THE GATE, AND WHY IT IS HERE RATHER THAN DOWNSTREAM.
+    //
+    // I moved this check out once, reasoning that the hook only RECORDS the
+    // request and `services.users.me()` makes the real decision. That was
+    // wrong, and an e2e security spec caught it: an Employee forging the
+    // header got a client's data back from `/client/me`.
+    //
+    // The mistake was verifying the wrong symbol. I grepped for
+    // `impersonatedContact` — one consumer — and missed that this hook also
+    // sets `effectiveClerkUserId`, which `clientGuard` reads and then uses
+    // to PATCH `req.auth.clerkUserId`. Every `/client/*` route then serves
+    // the target's data transparently, never touching `users.me()` at all.
+    // Three fields leave here; only one of them was audited.
+    //
+    // So the decision belongs in the hook, which means resolving the
+    // caller's capabilities before any principal exists. The cost is
+    // acceptable: everything above returns early unless the impersonation
+    // header is actually present, so this runs on impersonation requests
+    // only, not on every request.
+    //
+    // PERSPECTIVE IS APPLIED, which is what the old `userCan` call got
+    // wrong. A fresh read by id returns someone's real grants and ignores
+    // the perspective they are looking through, so someone with `clients.view-as` viewing as a Trainee
+    // kept the power to open a client session. `availablePerspectives`
+    // guarantees a perspective is a SUBSET of what the person holds, so
+    // "allowed" is: they hold it, and the active perspective still includes it.
     const caller = await prisma.user.findUnique({
       where: { clerkUserId },
-      select: { id: true, roles: { select: { role: true } } },
+      select: { id: true, workerType: true },
     });
     if (!caller) return;
-    const isSuper = caller.roles.some((r) => r.role === "SUPER");
-    if (!isSuper) return;
+    // Pay class is the first gate — being in the system is not being
+    // cleared to act in it (G31).
+    if (caller.workerType === null) return;
+
+    // caller-read-allow: an onRequest hook runs before every route
+    // preHandler, so `req.principal` does not exist yet and there is no
+    // narrowed set to read. The perspective is therefore applied by hand
+    // immediately below, which is the property the ban on fresh caller
+    // reads exists to protect.
+    const held = (await capabilitiesForUsers(prisma, [caller.id])).get(caller.id) ?? new Set();
+    if (!held.has(CLIENT_VIEW_AS)) return;
+
+    const roles = await prisma.customRole.findMany({
+      select: {
+        id: true, name: true, key: true, inheritsFromId: true,
+        isPerspective: true, perspectiveOrder: true, perspectiveIcon: true,
+        entitlements: { select: { entitlement: true } },
+      },
+    });
+    const byId = new Map(
+      roles.map((r) => [r.id, {
+        id: r.id, name: r.name, key: r.key, inheritsFromId: r.inheritsFromId,
+        isPerspective: r.isPerspective, perspectiveOrder: r.perspectiveOrder,
+        perspectiveIcon: r.perspectiveIcon,
+        entitlements: r.entitlements.map((e) => e.entitlement).filter(isEntitlement),
+      }]),
+    );
+    const heldRoleIds = (
+      await prisma.userCustomRole.findMany({
+        where: { userId: caller.id, suspendedAt: null, customRole: { suspendedAt: null } },
+        select: { customRoleId: true },
+      })
+    ).map((g) => g.customRoleId);
+    const perspective = resolvePerspective(
+      availablePerspectives(heldRoleIds, byId as never),
+      req.headers[PERSPECTIVE_HEADER],
+    );
+    // Looking through a narrower perspective means not holding it right now.
+    if (perspective && !perspective.entitlements.includes(CLIENT_VIEW_AS)) return;
 
     // Look up the target contact. Must exist AND have a Clerk account —
     // otherwise there's nothing to impersonate.
@@ -102,7 +177,7 @@ export default fp(async (app: FastifyInstance) => {
 
 /**
  * Route-side helper: returns the effective Clerk user ID for the current
- * request — impersonated if a Super view-as session is active, otherwise
+ * request — impersonated if someone with `clients.view-as` view-as session is active, otherwise
  * the caller's own. Use this in place of `req.auth.clerkUserId` in every
  * client-facing route so the impersonation is transparent to route logic.
  */
@@ -111,7 +186,7 @@ export function effectiveClerkUserId(req: FastifyRequest): string | undefined {
   return eff ?? req.auth?.clerkUserId;
 }
 
-/** True when the request is a Super-driven client impersonation. */
+/** True when the request is someone with `clients.view-as`-driven client impersonation. */
 export function isClientImpersonating(req: FastifyRequest): boolean {
   return (req as any).isClientImpersonating === true;
 }

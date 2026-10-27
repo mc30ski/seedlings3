@@ -10,7 +10,7 @@
 //   • Worker compensation snapshots: completionSplits / promisedPayouts
 //     (these are payouts to individual workers and contain the same info
 //     as PaymentSplit).
-//   • Admin-only client context: vipReason, adminTags.
+//   • Internal client context: vipReason, internalTags.
 //
 // The Prisma `include` blocks on `getOccurrencesByIds` and
 // `listMyOccurrences` always pull these fields because regular workers
@@ -42,7 +42,7 @@ export function isObserverOnlyAssignee(
 /**
  * Mutate `occ` in place, stripping every observer-sensitive field. The
  * caller has already determined this user IS observer-only on this
- * occurrence and is NOT an admin. Returns the same reference for
+ * occurrence and is NOT someone with `schedule.manage`. Returns the same reference for
  * chaining.
  *
  * Why mutate instead of clone: these objects come straight from Prisma
@@ -87,11 +87,11 @@ export function redactOccurrenceForObserver(occ: any): any {
     }));
   }
 
-  // Admin-only client context.
+  // Internal client context.
   const client = occ.job?.property?.client;
   if (client) {
     if ("vipReason" in client) client.vipReason = null;
-    if ("adminTags" in client) client.adminTags = [];
+    if ("internalTags" in client) client.internalTags = [];
   }
 
   // Payment-related occurrence-level fields that surface in the JobsTab
@@ -110,15 +110,15 @@ export function redactOccurrenceForObserver(occ: any): any {
 
 /**
  * Convenience wrapper: for an array of occurrences, redact every one
- * where the caller is observer-only and the caller is NOT admin. Admins
+ * where the caller is observer-only and the caller is NOT admin. Holders of `schedule.manage`
  * always see everything regardless of their per-occurrence role.
  */
 export function redactObserverFieldsForCaller(
   occurrences: any[],
   callerUserId: string,
-  callerIsAdmin: boolean,
+  callerCanManageSchedule: boolean,
 ): any[] {
-  if (callerIsAdmin) return occurrences;
+  if (callerCanManageSchedule) return occurrences;
   for (const occ of occurrences) {
     if (isObserverOnlyAssignee(occ, callerUserId)) {
       redactOccurrenceForObserver(occ);
@@ -129,7 +129,7 @@ export function redactObserverFieldsForCaller(
 
 // ─── Trainee redaction ────────────────────────────────────────────────
 //
-// A Trainee (User.workerType = "TRAINEE") is a paid worker, but the
+// Someone not cleared for field work is a paid worker, but the
 // least-trusted classification. They earn (made-whole on underpay,
 // same as Employees), but they cannot collect payments, claim jobs,
 // or take stakeholder-level actions. The privacy line for Trainees:
@@ -151,7 +151,7 @@ export function redactObserverFieldsForCaller(
 
 /** Strip "other workers' compensation" fields from a single occurrence
  *  for a Trainee caller. Mutates in place. The caller has already
- *  verified the caller is a Trainee and is NOT an admin.
+ *  verified the caller is a Trainee and is NOT someone with `schedule.manage`.
  */
 export function redactOccurrenceForTrainee(occ: any, callerUserId: string): any {
   // Filter payment.splits to only the caller's own entry.
@@ -183,21 +183,31 @@ export function redactOccurrenceForTrainee(occ: any, callerUserId: string): any 
   return occ;
 }
 
-/** For an array of occurrences, apply Trainee redaction when the caller
- *  has workerType = "TRAINEE" and is not an admin. Observers are handled
- *  by `redactObserverFieldsForCaller` separately — order: observer
- *  redaction first (heavier), then trainee redaction on what remains.
+/** For an array of occurrences, redact the fields someone NOT CLEARED for
+ *  field work must not see. Observers are handled by
+ *  `redactObserverFieldsForCaller` separately — order: observer redaction
+ *  first (heavier), then this on what remains.
  *
- *  Admins always see everything regardless of workerType.
+ *  Holders of `schedule.manage` always see everything.
+ *
+ *  KEYED ON CLEARANCE, NOT WORKER TYPE. This used to take the caller's
+ *  workerType and return early unless it matched one particular value. When
+ *  that worker type was removed the comparison could never be true again,
+ *  so the function
+ *  became a silent no-op — it still ran, still looked right in the diff, and
+ *  redacted nothing. A stale string comparison disabling a redaction is
+ *  exactly the shape of the worker sensitive-data bugs this file exists to
+ *  prevent, which is why the parameter is now a boolean the caller must
+ *  resolve deliberately.
  */
-export function redactTraineeFieldsForCaller(
+export function redactUnclearedFieldsForCaller(
   occurrences: any[],
   callerUserId: string,
-  callerWorkerType: string | null | undefined,
-  callerIsAdmin: boolean,
+  callerFieldCleared: boolean,
+  callerCanManageSchedule: boolean,
 ): any[] {
-  if (callerIsAdmin) return occurrences;
-  if (callerWorkerType !== "TRAINEE") return occurrences;
+  if (callerCanManageSchedule) return occurrences;
+  if (callerFieldCleared) return occurrences;
   for (const occ of occurrences) {
     // Don't double-redact observer rows (already stripped to a heavier
     // shape). The `_observerRedacted` hint set in
@@ -218,7 +228,7 @@ export function redactTraineeFieldsForCaller(
 // the caller has some assignment relationship to the occurrence.
 //
 // This helper closes the gap: for any occurrence that HAS assignees
-// and the caller is NOT one of them (and not an admin), strip the
+// and the caller is NOT one of them (and not someone with `schedule.manage`), strip the
 // same financial fields observer redaction strips. Unassigned /
 // claimable jobs pass through unredacted because the worker
 // legitimately needs to see the price to decide whether to claim.
@@ -244,11 +254,11 @@ export function isPeekingOccurrence(
  * to strip are the same — the difference is just which occurrences
  * qualify.
  *
- * Admin bypass matches observer/trainee: admins always see full
- * financial data. The Admin Jobs tab and the Worker Jobs tab share
- * this endpoint (/occurrences), and admins acting on the Admin tab
- * (or even the Worker tab) get the unredacted view — the "worker-
- * only peek" restriction is enforced client-side by the Worker tab
+ * Admin bypass matches observer/trainee: holders of `schedule.manage` always see full
+ * financial data. A caller with `schedule.manage` Jobs tab and the Worker Jobs tab share
+ * this endpoint (/occurrences), and callers holding `schedule.manage`
+ * (or even the self-scoped view) get the unredacted payload — the "worker-
+ * only peek" restriction is enforced client-side by the self-scoped view
  * rendering.
  *
  * Chain order matters: observer redaction first (only affects occs
@@ -260,9 +270,9 @@ export function isPeekingOccurrence(
 export function redactPeekFieldsForCaller(
   occurrences: any[],
   callerUserId: string,
-  callerIsAdmin: boolean,
+  callerCanManageSchedule: boolean,
 ): any[] {
-  if (callerIsAdmin) return occurrences;
+  if (callerCanManageSchedule) return occurrences;
   for (const occ of occurrences) {
     if (occ._observerRedacted) continue;
     if (isPeekingOccurrence(occ, callerUserId)) {

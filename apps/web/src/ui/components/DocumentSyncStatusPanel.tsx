@@ -1,4 +1,4 @@
-// Sync Status panel for the Documents tab — Super-only.
+// Sync Status panel for the Documents tab — `documents.manage`.
 //
 // Shows: enabled/disabled state, health rollup, queue depth, last
 // successful sync timestamp, recent failures. Provides:
@@ -37,7 +37,7 @@ type PendingTask = {
   documentType: string | null;
   documentArchived: boolean;
   documentDescription: string | null;
-  documentAdminHidden: boolean | null;
+  documentRestricted: boolean | null;
   documentExpiresAt: string | null;
   documentCurrentVersionId: string | null;
   documentVersionCount: number | null;
@@ -106,7 +106,7 @@ function TaskDetail({ task }: { task: PendingTask | FailedTask }) {
   switch (task.taskType) {
     case "SYNC_DOCUMENT_METADATA": {
       if (task.documentArchived) parts.push("archived");
-      if (task.documentAdminHidden) parts.push("admin-hidden");
+      if (task.documentRestricted) parts.push("admin-hidden");
       if (task.documentExpiresAt) parts.push(`expires ${fmtDate(task.documentExpiresAt)}`);
       if (task.documentVersionCount != null) {
         parts.push(`${task.documentVersionCount} version${task.documentVersionCount === 1 ? "" : "s"}`);
@@ -170,7 +170,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const s = await apiGet<SyncStatus>("/api/super/documents/sync/status");
+      const s = await apiGet<SyncStatus>("/api/documents/sync/status");
       setStatus(s);
     } catch (err) {
       publishInlineMessage({
@@ -201,7 +201,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
   const loadBacklog = useCallback(async () => {
     setBacklogLoading(true);
     try {
-      const rows = await apiGet<PendingTask[]>("/api/super/documents/sync/pending");
+      const rows = await apiGet<PendingTask[]>("/api/documents/sync/pending");
       setBacklog(rows);
     } catch (err) {
       publishInlineMessage({
@@ -216,7 +216,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
   const loadFailed = useCallback(async () => {
     setFailedLoading(true);
     try {
-      const rows = await apiGet<FailedTask[]>("/api/super/documents/sync/failed");
+      const rows = await apiGet<FailedTask[]>("/api/documents/sync/failed");
       setFailedList(rows);
     } catch (err) {
       publishInlineMessage({
@@ -247,7 +247,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
   async function retryTask(taskId: string) {
     setTaskBusyId(taskId);
     try {
-      await apiPost(`/api/super/documents/sync/tasks/${taskId}/retry`, {});
+      await apiPost(`/api/documents/sync/tasks/${taskId}/retry`, {});
       publishInlineMessage({
         type: "SUCCESS",
         text: "Task queued for immediate retry — hit Force sync to run it now.",
@@ -268,7 +268,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
   async function dismissTask(taskId: string) {
     setTaskBusyId(taskId);
     try {
-      await apiPost(`/api/super/documents/sync/tasks/${taskId}/dismiss`, {});
+      await apiPost(`/api/documents/sync/tasks/${taskId}/dismiss`, {});
       publishInlineMessage({
         type: "SUCCESS",
         text: "Task dismissed (moved to Failed). It won't be retried unless you click Retry on it.",
@@ -345,7 +345,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
     setBusy("toggle");
     try {
       const next = status.enabled ? "false" : "true";
-      await apiPatch("/api/admin/settings/DOCUMENT_SYNC_ENABLED", { value: next });
+      await apiPatch("/api/settings/DOCUMENT_SYNC_ENABLED", { value: next });
       publishInlineMessage({
         type: "SUCCESS",
         text: `Drive sync ${next === "true" ? "enabled" : "disabled"}.`,
@@ -370,7 +370,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
         failed: number;
         skipped: number;
         errors: Array<{ taskId: string; taskType: string; error: string }>;
-      }>("/api/super/documents/sync/run", { maxTasks: 100 });
+      }>("/api/documents/sync/run", { maxTasks: 100 });
       const parts = [
         `${result.succeeded} succeeded`,
         result.skipped ? `${result.skipped} skipped` : null,
@@ -410,7 +410,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
       // immediately drain the queue. From the operator's POV it's a
       // single "Sync everything" action.
       const backfill = await apiPost<{ enqueued: number; docCount: number }>(
-        "/api/super/documents/sync/backfill",
+        "/api/documents/sync/backfill",
         {},
       );
       const sync = await apiPost<{
@@ -418,7 +418,7 @@ export default function DocumentSyncStatusPanel({ refreshNonce = 0 }: Props) {
         succeeded: number;
         failed: number;
         skipped: number;
-      }>("/api/super/documents/sync/run", { maxTasks: 500 });
+      }>("/api/documents/sync/run", { maxTasks: 500 });
       const parts = [
         `${sync.succeeded} succeeded`,
         sync.skipped ? `${sync.skipped} skipped` : null,

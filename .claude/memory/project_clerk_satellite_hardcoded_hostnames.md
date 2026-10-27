@@ -26,7 +26,7 @@ export const SATELLITE_HOSTNAMES = new Set(
 );
 ```
 
-Vercel `seedlings3-web` project → Environment Variables → add both. Redeploy. No code change to add a satellite going forward. Consistent with how `WEB_ORIGIN`, `API_BASE_URL`, `CLERK_PUBLISHABLE_KEY` are already configured.
+Vercel `seedlings3-web` project → Environment Variables → add both. Redeploy. No code change to add a satellite going forward. Consistent with how `WEB_ORIGIN`, `API_BASE_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` are already configured.
 
 **Do NOT** move to a DB Setting — the security + first-render constraints make that a bad fit. See [[feedback-multi-domain-design-first]] for the process lesson.
 

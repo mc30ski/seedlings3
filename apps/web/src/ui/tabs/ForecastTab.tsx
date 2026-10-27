@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Forecast — Super → Money → Forecast
+// Forecast — Money → Forecast
 //
 // A pay-structure simulator. Pick a window of real jobs, move the levers, and
 // see what the books and every worker's hourly rate would have looked like.
@@ -101,7 +101,7 @@ const DEFAULT_PRESET = PRESETS.find((p) => p.key === "90d")!;
 const WORKER_TYPES = [
   { value: "EMPLOYEE", label: "Employee (W-2)" },
   { value: "CONTRACTOR", label: "Contractor (1099)" },
-  { value: "TRAINEE", label: "Trainee (W-2)" },
+  { value: "UNPAID", label: "Unpaid helper (no payroll)" },
 ];
 const CAPACITY_MODES = [
   { value: "SUBSTITUTION", label: "Takes over existing hours" },
@@ -124,7 +124,7 @@ function GroupHeading({ children, mt = 0 }: { children: React.ReactNode; mt?: nu
       borderTopRightRadius="md" borderBottomRightRadius="md"
       px={3} py={2}
     >
-      {/* Super-only, and the one tab that changes nothing. Saying so up front
+      {/* `forecasts.view`, and the one tab that changes nothing. Saying so up front
           is the point — a screen full of levers over real money reads as
           dangerous until you know it writes nothing. */}
       

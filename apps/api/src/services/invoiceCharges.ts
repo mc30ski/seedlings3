@@ -4,7 +4,7 @@
 // TWO BOOKS, and this file writes exactly one of them.
 //
 //   THE LEDGER (BusinessExpense) — real money off a bank/card statement. It
-//   IS the Schedule C deduction. Written ONLY by /admin/business-expenses/*.
+//   IS the Schedule C deduction. Written ONLY by /business-expenses/*.
 //
 //   THIS (InvoiceCharge) — what the client is billed, on top of labor. It
 //   creates NO deduction, ever.
@@ -27,7 +27,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
-import { resolvePrivileges } from "../lib/privileges";
+import type { CallerCan } from "../lib/callerCan";
 import type {
   ServicesInvoiceCharges,
   InvoiceChargeInput,
@@ -40,9 +40,20 @@ import { AUDIT } from "../lib/auditActions";
 // BusinessExpense. Collecting them now would gather a Schedule C category
 // that reaches nothing.
 
-async function isAdminUser(userId: string): Promise<boolean> {
-  const user = await prisma.user.findUnique({ where: { id: userId }, include: { roles: true } });
-  return !!user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+/**
+ * May this person charge materials on ANYBODY's visit?
+ *
+ * `schedule.manage` is what that authority was
+ * standing in for: you run the schedule, so any visit on it is yours to
+ * bill against.
+ *
+ * NOT `materials.charge`. That one is Trainee-tier and every worker holds
+ * it — for their OWN visit, where the ownership check is what bounds them.
+ * Using it here would have let a trainee add a line to any customer's bill,
+ * which is the opposite of what these four entry points are for.
+ */
+function mayChargeAnyVisit(callerCan: CallerCan): boolean {
+  return callerCan("schedule.manage");
 }
 
 const chargeInclude = Prisma.validator<Prisma.InvoiceChargeInclude>()({
@@ -56,75 +67,18 @@ const chargeInclude = Prisma.validator<Prisma.InvoiceChargeInclude>()({
   },
 });
 
-/** ADMIN-ONLY, on every path. A job line raises what the CLIENT is billed, so
- *  it is not a worker's call to make. The message says WHY — a bare "forbidden"
- *  reads as a bug. */
-const ADMIN_ONLY = (verb: string) =>
+/** `materials.charge`, on every path. A job line raises what the CLIENT is
+ *  billed, so it is not every worker's call to make. The message says WHY —
+ *  a bare "forbidden" reads as a bug. */
+const NEEDS_CHARGE_AUTHORITY = (verb: string) =>
   new ServiceError(
     "FORBIDDEN",
-    `Only an admin can ${verb} an invoice charge — it changes what the client is billed.`,
+    `You need charge authority to ${verb} an invoice charge — it changes what the client is billed.`,
     403,
   );
 
 export const invoiceCharges: ServicesInvoiceCharges = {
-  async addInvoiceCharge(currentUserId, occurrenceId, input) {
-    const { cost, description } = input;
-
-    // `NaN <= 0` is FALSE, so NaN walked past this guard and every other one
-    // like it, reaching Prisma as a 500 instead of a 400 the operator can act
-    // on. Infinity did the same.
-    if (!Number.isFinite(cost) || cost <= 0) {
-      throw new ServiceError("INVALID_AMOUNT", "The charge must be greater than zero.", 400);
-    }
-    if (!description || !description.trim()) {
-      throw new ServiceError("INVALID_INPUT", "A line name is required.", 400);
-    }
-
-    const occ = await prisma.jobOccurrence.findUnique({
-      where: { id: occurrenceId },
-      include: { assignees: true },
-    });
-    if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
-
-    const me = await prisma.user.findUnique({
-      where: { id: currentUserId },
-      include: { roles: true },
-    });
-    if (!me) throw new ServiceError("NOT_FOUND", "User not found.", 404);
-    if (!resolvePrivileges(me).isAdminOrSuper) throw ADMIN_ONLY("add");
-
-    const trimmedDescription = description.trim();
-
-    return prisma.$transaction(async (tx) => {
-      // NO BusinessExpense. See the header.
-      const charge = await tx.invoiceCharge.create({
-        data: {
-          occurrenceId,
-          createdById: currentUserId,
-          cost,
-          actualCost: input.actualCost ?? null,
-          detail: input.detail?.trim() || null,
-          description: trimmedDescription,
-        },
-        include: chargeInclude,
-      });
-      // Raises what the client owes. It does NOT change any worker's payout —
-      // the crew splits labor and services only.
-      await writeAudit(tx, AUDIT.EXPENSE.CREATED, currentUserId, {
-        invoiceChargeId: charge.id,
-        occurrenceId,
-        jobId: occ.jobId ?? null,
-        cost,
-        actualCost: input.actualCost ?? null,
-        detail: charge.detail,
-        description: trimmedDescription,
-        via: "admin",
-      });
-      return charge;
-    });
-  },
-
-  async updateInvoiceCharge(currentUserId, invoiceChargeId, input) {
+  async updateInvoiceCharge(currentUserId, callerCan, invoiceChargeId, input) {
     const charge = await prisma.invoiceCharge.findUnique({
       where: { id: invoiceChargeId },
       include: {
@@ -136,7 +90,7 @@ export const invoiceCharges: ServicesInvoiceCharges = {
     });
     if (!charge) throw new ServiceError("NOT_FOUND", "Invoice charge not found.", 404);
 
-    if (!(await isAdminUser(currentUserId))) throw ADMIN_ONLY("edit");
+    if (!mayChargeAnyVisit(callerCan)) throw NEEDS_CHARGE_AUTHORITY("edit");
 
     return prisma.$transaction(async (tx) => {
       const data: any = {};
@@ -230,7 +184,7 @@ export const invoiceCharges: ServicesInvoiceCharges = {
     });
   },
 
-  async deleteInvoiceCharge(currentUserId, invoiceChargeId) {
+  async deleteInvoiceCharge(currentUserId, callerCan, invoiceChargeId) {
     const charge = await prisma.invoiceCharge.findUnique({
       where: { id: invoiceChargeId },
       include: {
@@ -241,7 +195,7 @@ export const invoiceCharges: ServicesInvoiceCharges = {
     });
     if (!charge) throw new ServiceError("NOT_FOUND", "Invoice charge not found.", 404);
 
-    if (!(await isAdminUser(currentUserId))) throw ADMIN_ONLY("remove");
+    if (!mayChargeAnyVisit(callerCan)) throw NEEDS_CHARGE_AUTHORITY("remove");
 
     await prisma.$transaction(async (tx) => {
       // If backed by a SupplyHold, release it first (and restore onHand if it
@@ -289,17 +243,25 @@ export const invoiceCharges: ServicesInvoiceCharges = {
     return { deleted: true as const };
   },
 
-  // ── Admin twins ────────────────────────────────────────────────────────────
+  // THERE WERE TWINS HERE, AND THEY WERE NOT TWINS.
   //
-  // Reached by /admin/occurrences/:id/invoice-charges. These are SEPARATE
-  // implementations, and in the first attempt at this change they were missed
-  // entirely — they kept creating BusinessExpense rows with Schedule C
-  // categories for weeks after the model said they couldn't.
+  // `addInvoiceCharge` and `deleteInvoiceCharge` were each declared TWICE in
+  // this one object literal — a duplicate key, so the later declaration
+  // silently replaced the earlier and only one of each ever ran. The surviving
+  // `delete` was a stub meaning to delegate to its twin, but with the twin
+  // overwritten it called ITSELF: `DELETE /invoice-charges/:id` recursed until
+  // the stack blew. The surviving `add` was fine, and is the one below.
   //
-  // Every rule the functions above obey, these obey.
+  // Resolved 2026-10-18 by keeping the implementation that was actually
+  // running in each case — the `add` here, the `delete` above — and deleting
+  // the shadowed copies. Both are now declared once.
+  //
+  // NO BusinessExpense rows from either path: an invoice charge is what the
+  // CLIENT is billed, never a company deduction. See docs/FINANCIAL_SYSTEM.md.
 
-  async adminAddInvoiceCharge(
-    currentUserId: string,
+  async addInvoiceCharge(
+    currentUserId,
+    callerCan,
     occurrenceId: string,
     input: InvoiceChargeInput,
   ) {
@@ -317,7 +279,7 @@ export const invoiceCharges: ServicesInvoiceCharges = {
     const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId } });
     if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
 
-    if (!(await isAdminUser(currentUserId))) throw ADMIN_ONLY("add");
+    if (!mayChargeAnyVisit(callerCan)) throw NEEDS_CHARGE_AUTHORITY("add");
 
     const trimmedDescription = description.trim();
 
@@ -346,13 +308,6 @@ export const invoiceCharges: ServicesInvoiceCharges = {
       });
       return charge;
     });
-  },
-
-  async adminDeleteInvoiceCharge(currentUserId, invoiceChargeId) {
-    // Delegates rather than duplicating. The twins drifted once already; the
-    // permission check and the supply-hold release are identical, so there is
-    // nothing here worth a second copy.
-    return invoiceCharges.deleteInvoiceCharge(currentUserId, invoiceChargeId);
   },
 
   async listInvoiceChargesByOccurrence(occurrenceId) {

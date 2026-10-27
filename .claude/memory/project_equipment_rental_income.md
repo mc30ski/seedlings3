@@ -71,7 +71,7 @@ So `Net to Business = (commission + margin + overage − shortfall) + equipment 
 - [[project-crews-roadmap]] — group rentals split via writeCheckoutSplits.
 
 **Anti-patterns:**
-- ✗ Subtracting equipment from "Net to Business" in the Admin summary (the original bug)
+- ✗ Subtracting equipment from "Net to Business" in a caller with `equipment.manage` summary (the original bug)
 - ✗ Treating equipment income as a Schedule C deduction (Line 14)
 - ✗ Adding equipment to qbExpensesCsv — it's income, not an expense
 - ✗ Counting employee equipment use as income (it's free; only contractors are billed)

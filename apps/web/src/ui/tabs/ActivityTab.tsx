@@ -1,3 +1,4 @@
+import type { Scope } from "@/src/lib/scope";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
@@ -24,7 +25,17 @@ import {
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 
 //TODO:
-export type TabRolePropType = { role: "worker" | "admin" };
+/**
+ * What the caller may do. This was `{ role: "worker" | "admin" }`, and the
+ * component opened with `if (role !== "admin") return <UnavailableNotice/>`
+ * — a hardcoded role gate. index.tsx passed the literal `role="admin"`, so
+ * the check could never fail and was doing nothing except keeping a deleted
+ * role alive in the signature.
+ *
+ * The tab's own row in TAB_REQUIREMENTS is `audit.view`, which is also the
+ * guard on the routes it reads. Absent scope fails closed.
+ */
+export type TabRolePropType = { scope?: Scope };
 
 type ActivityEvent = {
   id: string;
@@ -75,7 +86,7 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
                   openEventSearch(
                     "activityTavToEquipmentTabQRCodeSearch",
                     details.qrSlug,
-                    true,
+                    
                   )
                 }
                 color="blue.fg"
@@ -93,8 +104,8 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
   );
 }
 
-export default function ActivityTab({ role = "worker" }: TabRolePropType) {
-  if (role !== "admin") return <UnavailableNotice />;
+export default function ActivityTab({ scope }: TabRolePropType) {
+  if (!scope?.can("audit.view")) return <UnavailableNotice />;
 
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
@@ -104,7 +115,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiGet<ActivityUser[]>(`/api/admin/activity`);
+      const data = await apiGet<ActivityUser[]>(`/api/activity`);
       setRows(data);
       setExpanded([]);
     } catch (err) {
@@ -163,7 +174,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
         <ExplainerText>
           <Em>Read-only.</Em> Nothing here changes anything; it is a report. A person&rsquo;s full
           raw history is broader access than this shell grants and lives on the Users tab, for a
-          super admin.
+          whoever looks after the audit log.
         </ExplainerText>
       </TabExplainer>
       <Heading size="md" mb="3">

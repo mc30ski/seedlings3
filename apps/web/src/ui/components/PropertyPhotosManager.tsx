@@ -19,6 +19,12 @@ type PropertyPhoto = {
 
 type Props = {
   propertyId: string;
+  /**
+   * Hides every mutating control. Read it from "clients.contribute" — that
+   * is what guards the property-photo writes server-side, so anything else
+   * produces a button that 403s or one that is missing for somebody
+   * entitled to it.
+   */
   readOnly?: boolean;
 };
 
@@ -33,7 +39,7 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
 
   async function load() {
     try {
-      const endpoint = readOnly ? `/api/properties/${propertyId}/photos` : `/api/admin/properties/${propertyId}/photos`;
+      const endpoint = `/api/properties/${propertyId}/photos`;
       const list = await apiGet<PropertyPhoto[]>(endpoint);
       setPhotos(Array.isArray(list) ? list : []);
     } catch {
@@ -53,14 +59,14 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
     const compressed = await compressOnly(file);
     const contentType = "image/jpeg";
     const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-      `/api/admin/properties/${propertyId}/photos/upload-url`,
+      `/api/properties/${propertyId}/photos/upload-url`,
       { fileName: file.name, contentType },
     );
     const uploadRes = await fetch(uploadUrl, { method: "PUT", body: compressed, headers: { "Content-Type": contentType } });
     if (!uploadRes.ok) {
       throw new Error(`R2 upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
     }
-    await apiPost(`/api/admin/properties/${propertyId}/photos/confirm`, {
+    await apiPost(`/api/properties/${propertyId}/photos/confirm`, {
       key, fileName: file.name, contentType,
     });
   }, [propertyId]);
@@ -101,7 +107,7 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
 
   async function handleDelete(photoId: string) {
     try {
-      await apiDelete(`/api/admin/properties/${propertyId}/photos/${photoId}`);
+      await apiDelete(`/api/properties/${propertyId}/photos/${photoId}`);
       setPhotos((prev) => prev.filter((p) => p.id !== photoId));
       publishInlineMessage({ type: "SUCCESS", text: "Photo deleted." });
     } catch (err) {
@@ -111,7 +117,7 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
 
   async function saveDescription(photoId: string) {
     try {
-      await apiPatch(`/api/admin/properties/${propertyId}/photos/${photoId}`, { description: editDesc });
+      await apiPatch(`/api/properties/${propertyId}/photos/${photoId}`, { description: editDesc });
       setPhotos((prev) => prev.map((p) => p.id === photoId ? { ...p, description: editDesc.trim() || null } : p));
       setEditingId(null);
       publishInlineMessage({ type: "SUCCESS", text: "Description saved." });

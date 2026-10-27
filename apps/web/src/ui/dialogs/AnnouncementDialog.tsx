@@ -77,10 +77,10 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
       };
 
       if (isEdit) {
-        await apiPatch(`/api/admin/announcements/${editAnnouncement!.id}`, body);
+        await apiPatch(`/api/announcements/${editAnnouncement!.id}`, body);
         publishInlineMessage({ type: "SUCCESS", text: "Announcement updated." });
       } else {
-        await apiPost("/api/admin/announcements", body);
+        await apiPost("/api/announcements", body);
         publishInlineMessage({ type: "SUCCESS", text: "Announcement created." });
       }
       reset();
@@ -112,7 +112,7 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
               <VStack align="stretch" gap={3}>
                 <Box px={3} py={2} bg="purple.muted" borderWidth="1px" borderColor="purple.strong" borderRadius="md">
                   <Text fontSize="xs" color="purple.fg" fontWeight="medium">
-                    Everyone — visible to all workers and admins
+                    Everyone — visible to all workers and holders of schedule authority
                   </Text>
                 </Box>
                 <Box>

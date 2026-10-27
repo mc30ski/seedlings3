@@ -7,10 +7,9 @@ import auth from "./plugins/auth";
 import rbac from "./plugins/rbac";
 import clientImpersonation from "./plugins/clientImpersonation";
 import errorMapper from "./plugins/errorMapper";
-import adminRoutes from "./routes/admin";
 import systemRoutes from "./routes/system";
 import meRoutes from "./routes/me";
-import workerRoutes from "./routes/worker";
+import permissionRoutes from "./routes/permissions";
 import publicRoutes from "./routes/public";
 import clientRoutes from "./routes/client";
 import previewRoutes from "./routes/preview";
@@ -22,6 +21,25 @@ import vanityPagesRoutes from "./routes/vanityPages";
 import payrollRoutes from "./routes/payroll";
 import forecastRoutes from "./routes/forecast";
 import guideRoutes from "./routes/guides";
+import occurrenceRoutes from "./routes/occurrences";
+import jobRoutes from "./routes/jobs";
+import customerRoutes from "./routes/customers";
+import moneyRoutes from "./routes/money";
+import peopleRoutes from "./routes/people";
+import equipmentRoutes from "./routes/equipment";
+import supplyRoutes from "./routes/supplies";
+import settingRoutes from "./routes/settings";
+import policyRoutes from "./routes/policies";
+import documentRoutes from "./routes/documents";
+import booksRoutes from "./routes/books";
+import crewRoutes from "./routes/crews";
+import timelineRoutes from "./routes/timeline";
+import vehicleRoutes from "./routes/vehicles";
+import timeRoutes from "./routes/time";
+import displayRoutes from "./routes/displays";
+import reportRoutes from "./routes/reports";
+import weatherRoutes from "./routes/weather";
+import calendarFeedRoutes from "./routes/calendarFeeds";
 
 // ---------- CORS Helpers
 
@@ -211,7 +229,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(rbac);
       // Register client-impersonation AFTER rbac so it can read the
       // already-attached req.auth.clerkUserId. Its onRequest hook only
-      // fires when the special header is present + caller is SUPER;
+      // fires when the special header is present + the caller may view-as;
       // otherwise it's a no-op.
       await api.register(clientImpersonation);
       await api.register(publicRoutes);
@@ -219,7 +237,6 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(previewRoutes);
       await api.register(systemRoutes);
       await api.register(meRoutes);
-      await api.register(adminRoutes);
       await api.register(notifyRoutes);
       await api.register(payrollRoutes);
       await api.register(forecastRoutes);
@@ -227,7 +244,26 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(equipmentCollectionsRoutes);
       await api.register(promotionsRoutes);
       await api.register(vanityPagesRoutes);
-      await app.register(workerRoutes);
+      await api.register(permissionRoutes);
+      await api.register(occurrenceRoutes);
+      await api.register(jobRoutes);
+      await api.register(customerRoutes);
+      await api.register(moneyRoutes);
+      await api.register(peopleRoutes);
+      await api.register(equipmentRoutes);
+      await api.register(supplyRoutes);
+      await api.register(settingRoutes);
+      await api.register(policyRoutes);
+      await api.register(documentRoutes);
+      await api.register(booksRoutes);
+      await api.register(crewRoutes);
+      await api.register(timelineRoutes);
+      await api.register(vehicleRoutes);
+      await api.register(timeRoutes);
+      await api.register(displayRoutes);
+      await api.register(reportRoutes);
+      await api.register(weatherRoutes);
+      await api.register(calendarFeedRoutes);
     },
     { prefix: "/api" }
   );

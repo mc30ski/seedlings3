@@ -1,12 +1,14 @@
 "use client";
+import type { WorkerType } from "@repo/money";
+import type { Scope } from "@/src/lib/scope";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JobsTab.parts — compartmentalized pieces added on top of the
-// baseline JobsTab layout for the blended-role tab.
+// baseline JobsTab layout for the one-tab tab.
 //
 // Nothing here changes the worker-scope layout that JobsTab
 // inherits from JobsTab.tsx. Each part renders only when the caller
-// asks for it (scope.isAdmin / scope.isSuper) so the worker view is
+// asks for the capability each action needs, so the lean view is
 // untouched.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -20,6 +22,8 @@ import {
   ScrollText, ShieldQuestion, Star, TrendingUp, UserCheck, Users, UserX,
 } from "lucide-react";
 import MiniStatCard, { type MiniStatColor } from "@/src/ui/components/MiniStatCard";
+import { FULL_PERIODS, periodKey, periodToRange } from "@/src/ui/components/WorkerHourlyPayCard";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
@@ -33,7 +37,7 @@ export { Dashboard } from "@/src/ui/components/Dashboard";
 export { CompactBanner } from "@/src/ui/components/CompactBanner";
 
 // ─── Operations summary (super scope) ────────────────────────────────────
-// Collapsed row keeps the primary status counts inline so a Super can
+// Collapsed row keeps the primary status counts inline so someone with `settings.manage` can
 // scan the health of the visible range at a glance. Expanding surfaces
 // broader job metrics grouped into logical sections (statuses,
 // workflows, financials, attention, scale). All numbers are derived
@@ -42,9 +46,117 @@ export { CompactBanner } from "@/src/ui/components/CompactBanner";
 // Bare summary + details — the caller supplies the section frame
 // (Insights orange card on JobsTab). Renders the compact chip row
 // at top and the expanded MiniStatCard grid below in a single flow.
-export function OpsSummaryStrip({ rows }: { rows: WorkerOccurrence[] }) {
+/**
+ * The Jobs tab's INSIGHTS body — the BUSINESS-WIDE job rollup.
+ *
+ * WHY IT RENDERS `OpsExpandedDetails` RATHER THAN ITS OWN TILES. That
+ * component already draws exactly this: by status, by workflow,
+ * financials, attention, scale. The only thing wrong with the old card
+ * was WHERE THE NUMBERS CAME FROM — `computeOpsMetrics(filtered)`, the
+ * rows left after your filters, so the "insight" moved when you changed a
+ * filter and two people looking at the same company saw different totals.
+ *
+ * So the presentation is untouched and the source is swapped: the server
+ * computes the identical shape over every occurrence in the period
+ * (`jobsRollup` on GET /operations), area-scoped and cutoff-aware like
+ * the rest of that endpoint. One rollup, one set of numbers, and the
+ * per-list counts keep their own place above the list.
+ */
+export function JobsInsightsSection({
+  onReady,
+}: {
+  /** Hands the period control up to the Dashboard header, the same way
+   *  Home's rollup does, so the picker sits in the section's own chrome
+   *  rather than floating above its body. */
+  onReady?: (api: {
+    timeframe: {
+      options: ReadonlyArray<{ label: string; value: string }>;
+      value: string;
+      onChange: (value: string) => void;
+    };
+    /** Re-run the rollup. Rendered as the header refresh control. */
+    refresh: () => void;
+    loading: boolean;
+  }) => void;
+}) {
+  const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
+  // NO AREA PICKER HERE. This card briefly carried its own, which worked
+  // and was the only one in the app — so narrowing by district was a thing
+  // you could do on exactly one panel. The lens moved to the header
+  // (AreaLensChip) and rides on the principal, so these numbers narrow with
+  // every other view at once and this card needs no parameter of its own.
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  // WITHOUT THIS THE CARD SHOWED TODAY AND SAID NOTHING ABOUT IT.
+  // `/operations` defaults to `etToday()` when no from/to is passed, so
+  // the first cut of this card reported one day's numbers under a note
+  // promising "the whole company over the selected period" — with no
+  // control to select one.
+  const [periodK, setPeriodK] = usePersistedState<string>(
+    "jobsTab_insightsPeriod",
+    periodKey(FULL_PERIODS[0]),
+  );
+  const period = useMemo(
+    () => FULL_PERIODS.find((p) => periodKey(p) === periodK) ?? FULL_PERIODS[0],
+    [periodK],
+  );
+
+  useEffect(() => {
+    onReady?.({
+      timeframe: {
+        options: FULL_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
+        value: periodK,
+        onChange: setPeriodK,
+      },
+      refresh: () => setTick((t) => t + 1),
+      loading,
+    });
+  }, [onReady, periodK, setPeriodK, loading]);
+
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = periodToRange(period);
+        const qs = new URLSearchParams({ from: r.from, to: r.to });
+        const res = await apiGet<{ jobsRollup: OpsMetrics }>(`/api/operations?${qs}`);
+        if (!cancelled) {
+          setMetrics(res.jobsRollup);
+          setFailed(false);
+        }
+      } catch {
+        // Informational card: a failed rollup must not take the Jobs list
+        // down with it, and a silent empty grid would read as "no work".
+        if (!cancelled) setFailed(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [period, tick]);
+
+  if (loading && !metrics) return <Spinner size="sm" />;
+  if (failed || !metrics) {
+    return <Text fontSize="xs" color="fg.muted">Couldn't load the rollup.</Text>;
+  }
+  return <OpsExpandedDetails metrics={metrics} />;
+}
+
+/**
+ * Status counts of the rows CURRENTLY ON SCREEN. Safe to show ungated.
+ *
+ * Split out of the old combined strip, which paired this badge row with
+ * `OpsExpandedDetails` — and that block carries FINANCIALS (revenue,
+ * total booked, average job price). Mounting the pair outside the
+ * reporting gate put money figures in front of anyone who could open the
+ * Jobs tab. This half has no money in it: it counts the rows the reader
+ * is already looking at, which is why it needs no capability.
+ */
+export function OpsStatusCounts({ rows }: { rows: WorkerOccurrence[] }) {
   const metrics = useMemo(() => computeOpsMetrics(rows), [rows]);
-  const summaryItems: Array<{ label: string; count: number; palette: BannerPalette }> = [
+  const items: Array<{ label: string; count: number; palette: BannerPalette }> = [
     { label: "In progress", count: metrics.byStatus.IN_PROGRESS, palette: "green" },
     { label: "Paused", count: metrics.byStatus.PAUSED, palette: "yellow" },
     { label: "Pending payment", count: metrics.byStatus.PENDING_PAYMENT, palette: "orange" },
@@ -52,38 +164,16 @@ export function OpsSummaryStrip({ rows }: { rows: WorkerOccurrence[] }) {
     { label: "Closed", count: metrics.byStatus.CLOSED, palette: "gray" },
   ];
   return (
-    <VStack align="stretch" gap={3}>
-      <HStack gap={2} wrap="wrap">
-        {summaryItems.map((it) => (
-          <HStack key={it.label} gap={1} flexShrink={0}>
-            <Badge size="sm" variant="subtle" colorPalette={it.palette}>{it.count}</Badge>
-            <Text fontSize="xs" color="gray.fg">{it.label}</Text>
-          </HStack>
-        ))}
-      </HStack>
-      <OpsExpandedDetails metrics={metrics} />
-    </VStack>
+    <HStack gap={2} wrap="wrap">
+      {items.map((it) => (
+        <HStack key={it.label} gap={1} flexShrink={0}>
+          <Badge size="sm" variant="subtle" colorPalette={it.palette}>{it.count}</Badge>
+          <Text fontSize="xs" color="gray.fg">{it.label}</Text>
+        </HStack>
+      ))}
+    </HStack>
   );
 }
-
-type OpsMetrics = {
-  byStatus: Record<string, number>;
-  byWorkflow: Record<string, number>;
-  unassigned: number;
-  unconfirmed: number;
-  tentative: number;
-  vipCount: number;
-  repeatingCount: number;
-  followupCount: number;
-  estimateCount: number;
-  announcementCount: number;
-  revenueClosed: number;
-  revenuePending: number;
-  revenueBooked: number;
-  avgPrice: number;
-  uniqueClients: number;
-  uniqueAssignees: number;
-};
 
 function computeOpsMetrics(rows: WorkerOccurrence[]): OpsMetrics {
   const byStatus: Record<string, number> = {
@@ -114,7 +204,7 @@ function computeOpsMetrics(rows: WorkerOccurrence[]): OpsMetrics {
   for (const occ of rows) {
     // Skip rows that aren't real job occurrences so they can't distort any
     // metric below: foreign rows are Timeline activities / document
-    // expirations injected for admins, and ghosts are synthesized
+    // expirations injected for holders of `schedule.manage`, and ghosts are synthesized
     // placeholder cards with no database row behind them.
     if ((occ as any)._foreignKind) continue;
     if ((occ as any)._isNextOccurrenceGhost || (occ as any)._isReminderGhost || (occ as any)._isPinnedGhost) {
@@ -167,6 +257,31 @@ function computeOpsMetrics(rows: WorkerOccurrence[]): OpsMetrics {
     uniqueAssignees: assigneeIds.size,
   };
 }
+
+/**
+ * The shape of the Jobs rollup. EXPORTED because the server now computes
+ * it too: `jobsRollup` on GET /operations returns exactly this, so the
+ * business-wide card and the list-scoped counts share one definition and
+ * cannot drift apart silently.
+ */
+export type OpsMetrics = {
+  byStatus: Record<string, number>;
+  byWorkflow: Record<string, number>;
+  unassigned: number;
+  unconfirmed: number;
+  tentative: number;
+  vipCount: number;
+  repeatingCount: number;
+  followupCount: number;
+  estimateCount: number;
+  announcementCount: number;
+  revenueClosed: number;
+  revenuePending: number;
+  revenueBooked: number;
+  avgPrice: number;
+  uniqueClients: number;
+  uniqueAssignees: number;
+};
 
 function OpsExpandedDetails({ metrics }: { metrics: OpsMetrics }) {
   const fmtMoney = (n: number) =>
@@ -404,15 +519,15 @@ function Section({
   );
 }
 
-// ─── Elevated action row (admin / super) ──────────────────────────────────
+// ─── Elevated action row (`schedule.manage`) ──────────────────────────────────
 // Appended to the bottom of each card by JobsTab. Renders nothing
 // when both scopes are off, and each button self-hides if the
 // current occurrence status doesn't make it meaningful.
 //
 // Server enforcement:
-//   • PATCH /admin/occurrences/:id (status change) — adminGuard
-//   • POST /admin/occurrences/:id/archive           — adminGuard
-//   • POST /admin/occurrences/:id/force-next        — adminGuard
+//   • PATCH /occurrences/:id (status change) — schedule.manage
+//   • POST /occurrences/:id/archive                 — schedule.manage
+//   • POST /occurrences/:occurrenceId/force-next    — schedule.manage
 // The "Super" label here is UI-only for elevation cues; the routes are
 // admin-guarded because super implies admin in the app's role model.
 export function ElevatedActionRow({
@@ -420,17 +535,17 @@ export function ElevatedActionRow({
   scope,
   onAfter,
   cardMode,
-  adminExtras,
+  elevatedExtras,
 }: {
   occ: WorkerOccurrence;
-  scope: { isAdmin: boolean; isSuper: boolean };
+  scope: Scope;
   onAfter: () => void;
-  /** Admin-only buttons that belong on the ADMIN row rather than the
+  /** `schedule.manage` buttons that belong on the elevated row rather than the
    *  everyday one. A button lives on the LOWEST role row that applies to
-   *  it — an action only an admin can take reads wrong sitting next to
+   *  it — an action only someone with `schedule.manage` can take reads wrong sitting next to
    *  Manage Team, which any assignee can use. Passed in rather than built
    *  here because these open dialogs the card owns. */
-  adminExtras?: React.ReactNode;
+  elevatedExtras?: React.ReactNode;
   /** Optional density passthrough — when the enclosing card is in
    *  "ultra" mode, we hide the elevated row so ultra cards stay a
    *  clean single-line scan. Tapping the card cycles to semi and
@@ -456,7 +571,7 @@ export function ElevatedActionRow({
   const propLabel = occ.job?.property?.displayName ?? occ.title ?? "job";
 
   // Every action is guarded by BOTH scope AND the server-side rules:
-  // the ADMIN_TRANSITIONS matrix decides which workflow/status
+  // the MANAGER_TRANSITIONS matrix decides which workflow/status
   // combos the server will accept, and additional semantic gates
   // narrow further (e.g. "Reopen" only reads right on terminal
   // states, "Force next" only makes sense on repeating jobs stuck
@@ -469,7 +584,7 @@ export function ElevatedActionRow({
   // Cancel — server matrix decides. Excludes FOLLOWUP / EVENT /
   // ANNOUNCEMENT (no matrix entries) and REMINDER (no CANCELED
   // transition allowed).
-  const canAdminCancel = scope.isAdmin && canAdminTransition(workflow, status, "CANCELED");
+  const canCancelAsManager = scope.can("schedule.manage") && canChangeStatus(workflow, status, "CANCELED");
 
   // Reopen — combines "the matrix permits going back to SCHEDULED"
   // with the semantic gate "the row is in a terminal-ish state that
@@ -481,16 +596,17 @@ export function ElevatedActionRow({
     status === "CLOSED" ||
     status === "COMPLETED" ||
     status === "PENDING_PAYMENT";
+  // `POST /occurrences/:id/reopen` is `schedule.manage`.
   const canReopen =
-    scope.isSuper &&
+    scope.can("schedule.manage") &&
     isTerminalish &&
-    canAdminTransition(workflow, status, "SCHEDULED");
+    canChangeStatus(workflow, status, "SCHEDULED");
 
   // Force next — only meaningful on a REPEATING STANDARD/ONE_OFF job
   // stuck in PENDING_PAYMENT. Non-repeating rows have no "next" to
   // create; TASK/REMINDER/ESTIMATE/etc. don't roll forward.
   const canForceNext =
-    scope.isSuper &&
+    scope.can("schedule.manage") &&
     status === "PENDING_PAYMENT" &&
     hasJob &&
     isRepeating &&
@@ -499,14 +615,14 @@ export function ElevatedActionRow({
   // Archive — server matrix decides. Almost always requires the row
   // to be CLOSED (STANDARD/ONE_OFF), CLOSED/CANCELED (TASK), or
   // CLOSED (ESTIMATE).
-  const canArchive = scope.isSuper && canAdminTransition(workflow, status, "ARCHIVED");
+  const canArchive = scope.can("schedule.manage") && canChangeStatus(workflow, status, "ARCHIVED");
 
   // The row must appear when it carries EXTRAS even if Cancel isn't
   // available for this status — otherwise those buttons vanish entirely
   // on, say, an already-cancelled job.
-  const showAdminRow = canAdminCancel || !!adminExtras;
-  const showSuperRow = canReopen || canForceNext || canArchive;
-  if (!showAdminRow && !showSuperRow) return null;
+  const showElevatedRow = canCancelAsManager || !!elevatedExtras;
+  const showTopRow = canReopen || canForceNext || canArchive;
+  if (!showElevatedRow && !showTopRow) return null;
   // Follow the card's density cycle — elevated actions are secondary
   // content, so they only surface at the fully-expanded density.
   // Ultra + semi hide them.
@@ -535,37 +651,37 @@ export function ElevatedActionRow({
     void run(p.kind, p.confirmLabel, p.exec);
   };
 
-  const adminCancel = () => setPending({
+  const cancelAsManager = () => setPending({
     kind: "cancel",
     title: "Cancel occurrence?",
     message: `Cancel this occurrence at ${propLabel}? It will move to CANCELED and drop off the active timeline.`,
     confirmLabel: "Cancel occurrence",
     confirmColorPalette: "red",
-    exec: () => apiPatch(`/api/admin/occurrences/${occ.id}`, { status: "CANCELED" }),
+    exec: () => apiPatch(`/api/occurrences/${occ.id}`, { status: "CANCELED" }),
   });
-  const superReopen = () => setPending({
+  const reopen = () => setPending({
     kind: "reopen",
     title: "Reopen occurrence?",
     message: `Reopen this occurrence at ${propLabel}? It will move back to SCHEDULED.`,
     confirmLabel: "Reopen",
     confirmColorPalette: "orange",
-    exec: () => apiPatch(`/api/admin/occurrences/${occ.id}`, { status: "SCHEDULED" }),
+    exec: () => apiPatch(`/api/occurrences/${occ.id}`, { status: "SCHEDULED" }),
   });
-  const superForceNext = () => setPending({
+  const forceNext = () => setPending({
     kind: "force-next",
     title: "Force next occurrence?",
     message: "Force-create the next occurrence in this series. Skips the normal payment-clearance rule.",
     confirmLabel: "Force next",
     confirmColorPalette: "orange",
-    exec: () => apiPost(`/api/admin/occurrences/${occ.id}/force-next`, {}),
+    exec: () => apiPost(`/api/occurrences/${occ.id}/force-next`, {}),
   });
-  const superArchive = () => setPending({
+  const archive = () => setPending({
     kind: "archive",
     title: "Archive occurrence?",
     message: `Archive this occurrence at ${propLabel}? It will be hidden from most views.`,
     confirmLabel: "Archive",
     confirmColorPalette: "red",
-    exec: () => apiPost(`/api/admin/occurrences/${occ.id}/archive`, {}),
+    exec: () => apiPost(`/api/occurrences/${occ.id}/archive`, {}),
   });
 
   // Nested inside Card.Root as a subtle footer. Neutral background
@@ -574,7 +690,7 @@ export function ElevatedActionRow({
   // separate colored strip.
   return (
     <VStack align="stretch" gap={0}>
-      {showAdminRow && (
+      {showElevatedRow && (
         <HStack
           gap={2}
           px={3}
@@ -589,16 +705,16 @@ export function ElevatedActionRow({
               now that they carry primary actions (Manage in Services, Add
               Charge, …) a smaller size reads as a lesser row. */}
           <Badge size="xs" variant="subtle" colorPalette="purple">Admin</Badge>
-          {adminExtras}
-          {canAdminCancel && (
-            <Button size="sm" variant="outline" colorPalette="red" onClick={adminCancel} disabled={!!busy}>
+          {elevatedExtras}
+          {canCancelAsManager && (
+            <Button size="sm" variant="outline" colorPalette="red" onClick={cancelAsManager} disabled={!!busy}>
               {busy === "cancel" ? <Spinner size="sm" /> : <Ban size={14} />}
               <Text ml={1}>Cancel</Text>
             </Button>
           )}
         </HStack>
       )}
-      {showSuperRow && (
+      {showTopRow && (
         <HStack
           gap={2}
           px={3}
@@ -612,19 +728,19 @@ export function ElevatedActionRow({
             <HStack gap={0.5}><Zap size={9} /><Text>Super</Text></HStack>
           </Badge>
           {canReopen && (
-            <Button size="sm" variant="outline" colorPalette="orange" onClick={superReopen} disabled={!!busy}>
+            <Button size="sm" variant="outline" colorPalette="orange" onClick={reopen} disabled={!!busy}>
               {busy === "reopen" ? <Spinner size="sm" /> : <RotateCcw size={14} />}
               <Text ml={1}>Reopen</Text>
             </Button>
           )}
           {canForceNext && (
-            <Button size="sm" variant="outline" colorPalette="orange" onClick={superForceNext} disabled={!!busy}>
+            <Button size="sm" variant="outline" colorPalette="orange" onClick={forceNext} disabled={!!busy}>
               {busy === "force-next" ? <Spinner size="sm" /> : <FastForward size={14} />}
               <Text ml={1}>Force next</Text>
             </Button>
           )}
           {canArchive && (
-            <Button size="sm" variant="outline" colorPalette="red" onClick={superArchive} disabled={!!busy}>
+            <Button size="sm" variant="outline" colorPalette="red" onClick={archive} disabled={!!busy}>
               {busy === "archive" ? <Spinner size="sm" /> : <Archive size={14} />}
               <Text ml={1}>Archive</Text>
             </Button>
@@ -645,14 +761,14 @@ export function ElevatedActionRow({
 }
 
 // ─── Admin-transition matrix (client mirror) ────────────────────────────
-// Mirrors ADMIN_TRANSITIONS in apps/api/src/services/jobs.ts. Kept in
+// Mirrors MANAGER_TRANSITIONS in apps/api/src/services/jobs.ts. Kept in
 // sync manually — if the server's matrix changes, update this too so
 // buttons don't render for actions the server will reject.
 //
 // FOLLOWUP / EVENT / ANNOUNCEMENT workflows deliberately have no
 // entries here: the server permits no transitions on those rows, so
-// no admin/super button should ever surface for them.
-const ADMIN_TRANSITIONS: Record<string, Partial<Record<string, string[]>>> = {
+// no management button should ever surface for them.
+const MANAGER_TRANSITIONS: Record<string, Partial<Record<string, string[]>>> = {
   STANDARD: {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
     IN_PROGRESS: ["PAUSED", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
@@ -685,9 +801,9 @@ const ADMIN_TRANSITIONS: Record<string, Partial<Record<string, string[]>>> = {
     CLOSED: ["SCHEDULED"],
   },
 };
-function canAdminTransition(workflow: string | undefined, from: string, to: string): boolean {
+function canChangeStatus(workflow: string | undefined, from: string, to: string): boolean {
   const wf = workflow ?? "STANDARD";
-  return ADMIN_TRANSITIONS[wf]?.[from]?.includes(to) ?? false;
+  return MANAGER_TRANSITIONS[wf]?.[from]?.includes(to) ?? false;
 }
 
 // ─── Skeleton row (shared) ────────────────────────────────────────────────
@@ -760,7 +876,7 @@ export function CompliancePromptBanner({
     // policies:signed
     // / policies:changed events fire from the CALLER's sign wizard,
     // not the impersonated worker's. Skip the refetch in view-as
-    // mode so a Super signing their own item doesn't cause the
+    // mode so someone with `settings.manage` signing their own item doesn't cause the
     // impersonated worker's banner to blink.
     if (isViewingAs) return;
     const onChanged = () => void load();
@@ -793,9 +909,9 @@ export function CompliancePromptBanner({
   // View-as: the operator can't sign or self-serve for someone else —
   // send them to the Compliance tab where they CAN act (grant an
   // exception, chase the signature). Matches the shipped
-  const openSuperCompliance = () => {
+  const openComplianceReview = () => {
     window.dispatchEvent(
-      new CustomEvent("navigate:superTab", { detail: { tab: "compliance" } }),
+      new CustomEvent("navigate:staffTab", { detail: { tab: "compliance" } }),
     );
   };
 
@@ -846,7 +962,7 @@ export function CompliancePromptBanner({
         "data-recommended-count": recommended.length,
       }}
       actions={
-        // View-as: Sign is nonsensical (a Super can't sign for
+        // View-as: Sign is nonsensical (someone with `settings.manage` can't sign for
         // another worker — the server rejects). Show View only,
         // matching the documented compliance-banner contract.
         isViewingAs
@@ -854,7 +970,7 @@ export function CompliancePromptBanner({
               {
                 label: "Manage in Compliance",
                 icon: <FileText size={14} />,
-                onClick: openSuperCompliance,
+                onClick: openComplianceReview,
               },
             ]
           : [
@@ -899,22 +1015,24 @@ export function CompliancePromptBanner({
 
 // ─── Admin "View as" selector ────────────────────────────────────────────
 // Ported from JobsTab so JobsTab can offer the same view-as
-// affordance when scope.isAdmin — without needing an outer wrapper
+// affordance when the viewer may manage the schedule — no wrapper
 // component. Fetches /api/workers once, renders an input that opens a
 // checkbox-style dropdown; selection state is owned by the caller so
 // JobsTab can shadow its own viewAs* props with the picked values.
-export type AdminWorker = {
+export type ViewAsWorker = {
   id: string;
   displayName?: string | null;
   email?: string | null;
-  workerType?: string | null;
+  workerType?: WorkerType | null;
+  /** Resolved by the server — see the note on `isFieldCleared` in lib/scope. */
+  fieldCleared?: boolean;
 };
-export function AdminViewAsSelector({
+export function ViewAsSelector({
   workers,
   selected,
   onChange,
 }: {
-  workers: AdminWorker[];
+  workers: ViewAsWorker[];
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
@@ -1039,11 +1157,11 @@ export function AdminViewAsSelector({
     </>
   );
 }
-export function AdminViewAsBadges({
+export function ViewAsBadges({
   workers,
   selected,
 }: {
-  workers: AdminWorker[];
+  workers: ViewAsWorker[];
   selected: string[];
 }) {
   const map: Record<string, string> = {};

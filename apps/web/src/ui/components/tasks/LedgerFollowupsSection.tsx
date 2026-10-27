@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Box, Button, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
 import { CheckCircle2 } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import type { Scope } from "@/src/lib/scope";
 import { fmtDate } from "@/src/lib/dates";
 import {
   publishInlineMessage,
@@ -41,7 +42,11 @@ function entityPalette(type: LedgerFollowup["entityType"]): string {
   }
 }
 
-export default function LedgerFollowupsSection() {
+export default function LedgerFollowupsSection({ scope }: { scope?: Scope } = {}) {
+  // Resolving a follow-up posts to /ledger-followups/:id/resolve, guarded
+  // on "books.manage". Its one mount gates on the same thing today; asking
+  // here is what keeps that true from a second one.
+  const canResolve = scope ? scope.can("books.manage") : true;
   const [items, setItems] = useState<LedgerFollowup[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -49,7 +54,7 @@ export default function LedgerFollowupsSection() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await apiGet<{ rows: LedgerFollowup[] }>("/api/super/ledger-followups");
+      const r = await apiGet<{ rows: LedgerFollowup[] }>("/api/ledger-followups");
       setItems(Array.isArray(r?.rows) ? r.rows : []);
     } catch (err) {
       publishInlineMessage({
@@ -71,7 +76,7 @@ export default function LedgerFollowupsSection() {
   async function resolve(row: LedgerFollowup) {
     setBusyId(row.id);
     try {
-      await apiPost(`/api/super/ledger-followups/${row.id}/resolve`, {});
+      await apiPost(`/api/ledger-followups/${row.id}/resolve`, {});
       window.dispatchEvent(new Event("seedlings3:ledger-followups-changed"));
       publishInlineMessage({ type: "SUCCESS", text: "Follow-up resolved." });
       await load();
@@ -118,6 +123,7 @@ export default function LedgerFollowupsSection() {
                 Flagged by {f.createdBy?.displayName ?? f.createdBy?.email ?? "—"} · {fmtDate(f.createdAt)}
               </Text>
             </VStack>
+            {canResolve && (
             <Button
               size="xs"
               colorPalette="green"
@@ -126,6 +132,7 @@ export default function LedgerFollowupsSection() {
             >
               <CheckCircle2 size={12} /> Resolve
             </Button>
+            )}
           </HStack>
         </Box>
       ))}

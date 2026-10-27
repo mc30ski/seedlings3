@@ -1,24 +1,30 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PayrollTab — Money → Payroll, blended across Worker / Admin / Super.
+// PayrollTab — Money → Payroll. One tab; the three visibility tiers below
+// are decided server-side.
 //
 // Canonical spec: docs/features/payroll.md.
 //
-// WHAT EACH ROLE SEES (decided server-side; this file only renders what it
-// is given — see apps/api/src/services/payroll.ts):
-//   Worker : own rows, full breakdown including every tax line
-//   Admin  : any worker, hours / gross / net ONLY
-//   Super  : any worker, full breakdown, plus unmatched rows and mutations
+// WHAT EACH TIER SEES (decided server-side; this file only renders what it
+// is given — see the `PayrollViewer` union in
+// apps/api/src/services/payroll.ts):
+//   self     — ownership, not a capability : own rows, full breakdown
+//              including every tax line
+//   operator — `payroll.view`              : anyone's rows, hours / gross /
+//              net ONLY
+//   manager  — `payroll.manage`            : anyone's rows, full breakdown,
+//              plus unmatched rows and mutations
 //
 // This component NEVER hides a field it received. If a tax figure is absent
-// from an admin's payload that is the server withholding it, and the empty
+// from the operator payload that is the server withholding it, and the empty
 // space is the correct rendering. Do not "helpfully" fetch more.
 //
 // Payroll is what Gusto PAID. It is not the app's estimate — the
 // "My earnings" card is a different number and says so.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { isFeeable } from "@repo/money";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Badge,
@@ -40,11 +46,11 @@ import { FiUpload, FiChevronRight, FiAlertTriangle, FiArchive, FiInfo } from "re
 import { AlertTriangle, Banknote } from "lucide-react";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
-import { determineRoles } from "@/src/lib/roles";
+import { scopeFromMe } from "@/src/lib/roles";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import { fmtDateKey } from "@/src/lib/dates";
-import type { Me, Role } from "@/src/lib/types";
+import type { Me } from "@/src/lib/types";
 import {
   fetchMyPayrollPeriods,
   fetchMyPayrollPeriod,
@@ -71,34 +77,38 @@ import PayrollUploadDialog from "@/src/ui/dialogs/PayrollUploadDialog";
 import PayrollIdentityReview from "@/src/ui/components/PayrollIdentityReview";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import OwnerEquityPanel, { useOwnerEquity } from "@/src/ui/components/OwnerEquityPanel";
+import type { Scope } from "@/src/lib/scope";
 
 type Props = {
   me: Me | null;
-  purpose?: Role;
-  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
-  /** Admin/Super: narrow the operator view to one worker. */
+  scope?: Scope;
+  /** Narrows the `operator`/`manager` view to one person. Ignored for the
+   *  `self` tier, which only ever has its own rows. */
   viewAsUserId?: string | null;
   viewAsDisplayName?: string | null;
 };
 
 export default function PayrollTab({
   me,
-  purpose = "WORKER",
   scope,
   viewAsUserId,
   viewAsDisplayName,
 }: Props) {
-  const { isSuper: hasSuperRole } = determineRoles(me, purpose);
 
   const effScope = scope ?? {
-    isWorker: purpose === "WORKER",
-    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
-    isSuper: purpose === "SUPER",
+    // Derived from CAPABILITIES, not from the shell that mounted
+    // this tab. These three read `purpose` and so answered
+    // "what may I do" with "where did you come from".
+    ...scopeFromMe(me),
+    
   };
-  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
-  // NOT `|| forAdmin` — a super-role user viewing the ADMIN tab must not
-  // get Super controls. See reference_tab_blend_pattern.
-  const showSuperExtras = effScope.isSuper && hasSuperRole;
+  // What this actually gates, per the route map.
+  const canViewPayroll = effScope.can("payroll.view");
+  // The entitlement on its own. It must not be ORed with a wider answer:
+  // `payroll.view` opens the tab, `payroll.manage` is upload / identity
+  // matching / archive, and they are separately grantable — a bookkeeper
+  // reads payroll without running it.
+  const canManagePayroll = effScope.can("payroll.manage");
 
   const [periods, setPeriods] = useState<PayrollPeriodSummary[]>([]);
   // `loaded` (not `loading`) gates the full-tab spinner. A refresh must not
@@ -117,7 +127,7 @@ export default function PayrollTab({
   const [identityApi, setIdentityApi] = useState<
     { refresh: () => void; loading: boolean; count: number } | null
   >(null);
-  // Worker-side counterpart to the Super's identity queue: tells a worker
+  // Self-side counterpart to the `payroll.manage` identity queue: tells someone
   // that a period may be theirs and is waiting to be matched. Without it a
   // name change makes a pay period vanish silently.
   const [pending, setPending] = useState<{ affected: boolean; payDay: string | null }>({
@@ -132,19 +142,39 @@ export default function PayrollTab({
   // contributions. Rather than leave them staring at an empty tab, show
   // their equity movement above it, on the tab's own timeframe. The rest
   // of the tab (the TEAM's payroll, upload, matching) is untouched: a
-  // Super still needs all of it.
+  // The `payroll.manage` tier still needs all of it.
   const isOwner = !!me?.isOwner;
   const [range, setRange] = usePersistedState<PayrollRangeKey>(
-    showAdminExtras ? "payrollTab_rangeAdmin" : "payrollTab_range",
+    canViewPayroll ? "payrollTab_rangeManage" : "payrollTab_range",
     "all",
   );
 
   const ownerRange: PayrollRangeKey = range === "latest" ? "ytd" : range;
-  const ownerEquity = useOwnerEquity(ownerRange, isOwner);
+  /**
+   * BEING THE OWNER IS NOT THE SAME QUESTION AS BEING ABLE TO READ THE
+   * BOOKS RIGHT NOW.
+   *
+   * The equity rows come from `GET /business-expenses`, which is guarded
+   * on `books.view`. This passed `isOwner` — an identity — as the hook's
+   * `enabled` flag, so an owner looking through a perspective that does
+   * not carry `books.view` fired the request anyway, took a 403, and got
+   * a red "Couldn't load owner equity. You don't have permission…" for a
+   * view they had deliberately chosen.
+   *
+   * Worse than the toast: the card still rendered, showing CONTRIBUTED
+   * $0.00 / DRAWN $0.00 and "No contributions or draws recorded all
+   * time." Those zeroes are not the owner's figures — they are the shape
+   * of a refused request, printed as fact.
+   *
+   * The sibling card on Home (`PayrollHomeSection`) already asks this
+   * question via its `canSeeEquity` prop; this caller was missed.
+   */
+  const canSeeEquity = isOwner && effScope.can("books.view");
+  const ownerEquity = useOwnerEquity(ownerRange, canSeeEquity);
 
   const load = useCallback(async () => {
     try {
-      if (showAdminExtras) {
+      if (canViewPayroll) {
         setPeriods(await fetchPayrollPeriods());
       } else {
         const [rows, notice] = await Promise.all([
@@ -163,7 +193,7 @@ export default function PayrollTab({
     } finally {
       setLoaded(true);
     }
-  }, [showAdminExtras]);
+  }, [canViewPayroll]);
 
   useEffect(() => {
     void load();
@@ -181,7 +211,7 @@ export default function PayrollTab({
       setDetailLoading(true);
       try {
         setDetail(
-          showAdminExtras
+          canViewPayroll
             ? await fetchPayrollEntries(id, viewAsUserId ?? null)
             : await fetchMyPayrollPeriod(id),
         );
@@ -195,7 +225,7 @@ export default function PayrollTab({
         setDetailLoading(false);
       }
     },
-    [openId, showAdminExtras, viewAsUserId],
+    [openId, canViewPayroll, viewAsUserId],
   );
 
   const shown = useMemo(() => filterPeriodsByRange(periods, range), [periods, range]);
@@ -203,29 +233,28 @@ export default function PayrollTab({
   // timeframe cost / earn" without opening every period.
   const teamTotals = useMemo(() => sumTeam(shown), [shown]);
   const rangeTotals = useMemo(
-    () => (showAdminExtras ? teamTotals : sumMine(shown)),
-    [shown, showAdminExtras, teamTotals],
+    () => (canViewPayroll ? teamTotals : sumMine(shown)),
+    [shown, canViewPayroll, teamTotals],
   );
 
   /**
-   * Employer cost is a SUPER-TAB figure. Both halves are load-bearing:
+   * Employer cost is someone with `payroll.manage`-TAB figure. Both halves are load-bearing:
    *
-   * - `showSuperExtras` — the SURFACE. `operatorViewer` on the server
-   *   resolves by ROLE, so Michael (SUPER + ADMIN + WORKER) gets a super
-   *   payload on every tab; the server cannot know which tab he is on.
-   *   Presence alone therefore leaked employer cost onto the ADMIN tab.
-   *   This is the same shape as the standing rule that `showSuperExtras`
-   *   must not fall back to `forAdmin ||` — see reference-tab-blend-pattern.
-   * - the presence check — the DATA. A genuine admin-only account gets a
-   *   payload with no `employerCost` at all, and rendering "$0.00" for
-   *   them would read as "payroll cost the business nothing" rather than
-   *   "you cannot see this".
+   * - `canManagePayroll` — the QUESTION. `operatorViewer` on the server
+   *   resolves the payload from `payroll.manage` alone, so anyone holding
+   *   it receives the manager payload on every screen; the server cannot
+   *   know which screen is being rendered. Presence alone therefore leaked
+   *   employer cost onto a screen that was not meant to carry it.
+   * - the presence check — the DATA. An account without `payroll.manage`
+   *   gets a payload with no `employerCost` at all, and rendering "$0.00"
+   *   for them would read as "payroll cost the business nothing" rather
+   *   than "you cannot see this".
    *
    * Neither one substitutes for the other.
    */
   const hasEmployerCost = useMemo(
-    () => showSuperExtras && shown.some((p) => p.teamTotals?.employerCost != null),
-    [shown, showSuperExtras],
+    () => canManagePayroll && shown.some((p) => p.teamTotals?.employerCost != null),
+    [shown, canManagePayroll],
   );
 
   const totalUnmatched = useMemo(
@@ -246,7 +275,7 @@ export default function PayrollTab({
   // paint. Closed, it renders nothing, so the loading view is unchanged.
   const tabHelp = (
       <TabExplainer
-        explainerId={`seedlings:payrollTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : `worker:${me?.workerType === "CONTRACTOR" ? "contractor" : "employee"}`}`}
+        explainerId={`seedlings:payrollTab:guideOpen:${canManagePayroll ? "super" : canViewPayroll ? "admin" : `worker:${isFeeable(me?.workerType) ? "contractor" : "employee"}`}`}
       >
         <ExplainerText>
           Pay imported from Gusto — <Em>what actually reached someone</Em>, period by period.
@@ -258,38 +287,39 @@ export default function PayrollTab({
           money that moved, after tax and after any pay period that split a week. They will
           not agree, and forcing them to would break one of them.
         </ExplainerText>
-        {!showAdminExtras && (
-          me?.workerType === "CONTRACTOR" ? (
+        {!canViewPayroll && (
+          isFeeable(me?.workerType) ? (
             <ExplainerText>
               You are paid as a contractor, so <Em>nothing is withheld</Em>: what you see is
               the full amount and the tax on it is yours to handle. If a period is missing, it
-              is usually a name that has not been matched to your account yet — ask an admin.
+              is usually a name that has not been matched to your account yet — ask whoever
+              imports payroll.
             </ExplainerText>
           ) : (
             <ExplainerText>
               You see hours, gross, what was withheld, and net. If a period is missing, it is
-              usually a name that has not been matched to your account yet — ask an admin.
+              usually a name that has not been matched to your account yet — ask whoever
+              imports payroll.
             </ExplainerText>
           )
         )}
-        {showAdminExtras && (
-          <RoleSection role="Admin">
+        {canViewPayroll && (
+          <CapabilitySection capability="payroll.view" scope={scope}>
             <ExplainerText>
               You see the whole team, but only <Em>hours, gross, net and check amount</Em> per
-              person. Tax withholding and employer cost are deliberately withheld from admins,
-              per person and in the team totals. Importing a period, matching a name and
-              archiving are <Em>super-only</Em>.
+              person. Tax withholding and employer cost are withheld at this level,
+              deliberately — per person and in the team totals.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
-        {showSuperExtras && (
-          <RoleSection role="Super">
+        {canManagePayroll && (
+          <CapabilitySection capability="payroll.manage" scope={scope}>
             <ExplainerText>
               You see every field, including tax and employer cost. Upload each
               period&rsquo;s CSV, match any name the importer could not place to a person, and
               archive periods you are done with.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
       </TabExplainer>
   );
@@ -309,7 +339,7 @@ export default function PayrollTab({
     <VStack align="stretch" gap={3}>
       {/* WRITTEN FROM THE ROUTE GUARDS AND THE FIELD PROJECTION:
             • worker  → /me/payroll*        own rows only
-            • admin   → /payroll/periods*   ADMIN_VISIBLE_FIELDS is exactly
+            • admin   → /payroll/periods*   OPERATOR_VISIBLE_FIELDS is exactly
                         regularHours, grossEarnings, netPay, checkAmount —
                         no tax field, and no team-total employer cost
             • super   → import / identities / archive / export
@@ -326,12 +356,18 @@ export default function PayrollTab({
             </Text>
           </HStack>
           <Text fontSize="xs" color="fg.muted">
-            {showAdminExtras
+            {canViewPayroll
               ? "What Gusto paid, per pay period."
               : isOwner
                 // The owner is never in a payroll run, so "what you were
                 // actually paid" is not just unhelpful, it's untrue.
-                ? "You're the LLC Owner — your equity is above; payroll below is the team's."
+                //
+                // "above" is conditional for the same reason as the empty
+                // state below: the equity card needs `books.view`, so a
+                // perspective without it leaves nothing above to point at.
+                ? canSeeEquity
+                  ? "You're the LLC Owner — your equity is above; payroll below is the team's."
+                  : "You're the LLC Owner — payroll below is the team's."
                 // The Gusto attribution below carries the provenance now, so
                 // repeating it here was redundant.
                 : "What you were actually paid."}
@@ -349,9 +385,9 @@ export default function PayrollTab({
           {/* Provenance for the payroll figures. Hidden when the owner is
               looking at a tab that holds no payroll of theirs — Gusto is
               not the source of record for owner draws, and claiming it is
-              would be wrong. Admins still see it: they ARE looking at
+              would be wrong. Holders of payroll access still see it: they ARE looking at
               Gusto data. */}
-          {(showAdminExtras || !isOwner) && (
+          {(canViewPayroll || !isOwner) && (
           <HStack gap={1.5} mt={1} align="center">
             <Box
               px={1.5}
@@ -372,7 +408,7 @@ export default function PayrollTab({
           </HStack>
           )}
         </VStack>
-        {showSuperExtras && (
+        {canManagePayroll && (
           <Button size="sm" colorPalette="green" onClick={() => setUploadOpen(true)}>
             <FiUpload /> Upload payroll
           </Button>
@@ -390,7 +426,7 @@ export default function PayrollTab({
           neither side of that comparison — no payroll, and their Home card
           shows equity — so the note would be explaining a mismatch that
           cannot occur. */}
-      {!showAdminExtras && !isOwner && (
+      {!canViewPayroll && !isOwner && (
         <Box
           p={3}
           bg="blue.faint"
@@ -415,9 +451,9 @@ export default function PayrollTab({
         </Box>
       )}
 
-      {/* Worker-facing pending-match notice. The Super sees the same
+      {/* Worker-facing pending-match notice. A caller with `payroll.manage` sees the same
           situation as a review queue below; this is the worker's half. */}
-      {!showAdminExtras && pending.affected && (
+      {!canViewPayroll && pending.affected && (
         <Box p={2} bg="orange.faint" borderWidth="1px" borderColor="orange.emphasized" rounded="md">
           <Text fontSize="xs" color="orange.fg">
             A pay period{pending.payDay ? ` from ${fmtDateKey(pending.payDay)}` : ""} hasn&apos;t
@@ -427,8 +463,8 @@ export default function PayrollTab({
         </Box>
       )}
 
-      {/* ── Owner equity (LLC owner only) ──────────────────────────────── */}
-      {isOwner && (
+      {/* ── Owner equity (LLC owner, when they can read the books) ───── */}
+      {canSeeEquity && (
         <Box mb={3}>
           <Dashboard
             storageKey="seedlings:payrollTab:ownerEquityOpen"
@@ -444,7 +480,7 @@ export default function PayrollTab({
       )}
 
       {/* ── Identity review (Super) ────────────────────────────────────── */}
-      {showSuperExtras && totalUnmatched > 0 && (
+      {canManagePayroll && totalUnmatched > 0 && (
         <Box mb={3}>
           <Dashboard
             storageKey="seedlings:payrollTab:identityReviewOpen"
@@ -513,7 +549,7 @@ export default function PayrollTab({
             <HStack gap={3} flexShrink={0}>
               <VStack align="start" gap={0}>
                 <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
-                  {showAdminExtras ? "Team net" : "Net"}
+                  {canViewPayroll ? "Team net" : "Net"}
                 </Text>
                 <Text fontSize="sm" fontWeight="bold" color="green.fg" fontVariantNumeric="tabular-nums">
                   {fmtPayrollMoney(rangeTotals.netPay)}
@@ -579,17 +615,23 @@ export default function PayrollTab({
         <Card.Root variant="outline">
           <Card.Body p={6} textAlign="center">
             <Text fontSize="sm" fontWeight="medium">
-              {showAdminExtras
+              {canViewPayroll
                 ? "No payroll imported yet"
                 : isOwner
                   ? "You're not on payroll — you're the LLC Owner"
                   : "No payroll records for you yet"}
             </Text>
             <Text fontSize="xs" color="fg.muted" mt={1}>
-              {showAdminExtras
+              {canViewPayroll
                 ? "Upload a Gusto Payroll Journal export to get started."
                 : isOwner
-                  ? "Owner draws and capital contributions are recorded on the Ledger, and summarised above. They are equity, not wages, so they never appear in a payroll run."
+                  // "summarised above" is only true when the summary is
+                  // actually there. Under a perspective without
+                  // `books.view` the card is hidden, so pointing at it
+                  // would send the reader looking for something absent.
+                  ? canSeeEquity
+                    ? "Owner draws and capital contributions are recorded on the Ledger, and summarised above. They are equity, not wages, so they never appear in a payroll run."
+                    : "Owner draws and capital contributions are recorded on the Ledger. They are equity, not wages, so they never appear in a payroll run."
                   : // Same reasoning as PayrollHomeSection: an unmatched row
                     // is indistinguishable from "nothing imported" at this
                     // end, so don't claim a cause. Naming how matching works
@@ -650,7 +692,7 @@ export default function PayrollTab({
                             </Badge>
                           ) : null;
                         })()}
-                        {showSuperExtras && (p.unmatchedCount ?? 0) > 0 && (
+                        {canManagePayroll && (p.unmatchedCount ?? 0) > 0 && (
                           <Badge size="sm" colorPalette="orange" variant="solid">
                             {p.unmatchedCount} unmatched
                           </Badge>
@@ -731,7 +773,7 @@ export default function PayrollTab({
                               Purple keeps it visibly a different KIND of
                               number from the two above, which are both
                               money paid TO people. */}
-                          {showSuperExtras && p.teamTotals?.employerCost != null && (
+                          {canManagePayroll && p.teamTotals?.employerCost != null && (
                             <HStack gap={1.5} align="baseline">
                               <Text fontSize="2xs" color="fg.muted">
                                 EMPLOYER COST
@@ -766,12 +808,12 @@ export default function PayrollTab({
                       ) : (
                         <PeriodDetail
                           detail={detail}
-                          showAdminExtras={showAdminExtras}
-                          showSuperExtras={showSuperExtras}
+                          canViewPayroll={canViewPayroll}
+                          canManagePayroll={canManagePayroll}
                           viewAsDisplayName={viewAsDisplayName ?? null}
                         />
                       )}
-                      {showSuperExtras && (
+                      {canManagePayroll && (
                         <HStack justify="flex-end" mt={3}>
                           <Button
                             size="xs"
@@ -792,7 +834,7 @@ export default function PayrollTab({
         </VStack>
       )}
 
-      {showSuperExtras && (
+      {canManagePayroll && (
         <PayrollUploadDialog
           open={uploadOpen}
           onClose={() => setUploadOpen(false)}
@@ -853,13 +895,13 @@ export default function PayrollTab({
 
 function PeriodDetail({
   detail,
-  showAdminExtras,
-  showSuperExtras,
+  canViewPayroll,
+  canManagePayroll,
   viewAsDisplayName,
 }: {
   detail: PayrollPeriodDetail | null;
-  showAdminExtras: boolean;
-  showSuperExtras: boolean;
+  canViewPayroll: boolean;
+  canManagePayroll: boolean;
   viewAsDisplayName: string | null;
 }) {
   if (!detail) return null;
@@ -876,9 +918,9 @@ function PeriodDetail({
   // Gusto's own "Payroll Totals" row, not a client-side sum — this is the
   // figure an operator reconciles against. Role AND presence gated for the
   // same reason as every other employer-cost surface: the server resolves
-  // the viewer by ROLE, so a SUPER-role user gets it on every tab and only
-  // `showSuperExtras` knows which tab is actually being rendered.
-  const et = showSuperExtras ? detail.employerTotals : undefined;
+  // the viewer by ROLE, so someone with `payroll.manage`-role user gets it on every tab and only
+  // `canManagePayroll` knows which tab is actually being rendered.
+  const et = canManagePayroll ? detail.employerTotals : undefined;
 
   return (
     <VStack align="stretch" gap={3}>
@@ -919,8 +961,8 @@ function PeriodDetail({
         <EntryRow
           key={e.id}
           entry={e}
-          showAdminExtras={showAdminExtras}
-          showSuperExtras={showSuperExtras}
+          canViewPayroll={canViewPayroll}
+          canManagePayroll={canManagePayroll}
         />
       ))}
     </VStack>
@@ -929,15 +971,15 @@ function PeriodDetail({
 
 function EntryRow({
   entry,
-  showAdminExtras,
-  showSuperExtras,
+  canViewPayroll,
+  canManagePayroll,
 }: {
   entry: PayrollEntryView;
-  showAdminExtras: boolean;
-  showSuperExtras: boolean;
+  canViewPayroll: boolean;
+  canManagePayroll: boolean;
 }) {
   const v = entry.values;
-  // Present only when the server sent them. An admin payload genuinely has
+  // Present only when the server sent them. the payload genuinely has
   // no tax fields — the absence IS the access control, so this is a
   // presence check, not a role check.
   const hasTaxDetail = "federalIncomeTax" in v || "employeeTaxes" in v;
@@ -994,7 +1036,7 @@ function EntryRow({
             <Figure label="Total withheld" value={fmtPayrollMoney(v.employeeTaxes)} />
           </SimpleGrid>
 
-          {!showAdminExtras && (v.reimbursements != null || v.donations != null) && (
+          {!canViewPayroll && (v.reimbursements != null || v.donations != null) && (
             <SimpleGrid columns={{ base: 2, md: 3 }} gap={2} mt={2}>
               <Figure label="Reimbursements" value={fmtPayrollMoney(v.reimbursements)} />
               <Figure label="Donations" value={fmtPayrollMoney(v.donations)} />
@@ -1005,7 +1047,7 @@ function EntryRow({
 
       {/* ── Employer side ────────────────────────────────────────────────
           What this person cost the business on top of what they were paid.
-          SUPER ONLY, and role-gated rather than presence-gated: a WORKER's
+          `payroll.manage` only, and capability-gated rather than presence-gated: a self
           own payload legitimately carries these fields (the spec gives them
           their full row), but the employer's tax burden is not pay-stub
           data and Gusto does not show it to employees either.
@@ -1013,7 +1055,7 @@ function EntryRow({
           These are ACTUALS from the Gusto export. They are deliberately not
           connected to the P&L's "Employer payroll taxes (est.)" line, which
           stays an estimate — see docs/features/payroll.md. */}
-      {showSuperExtras && hasEmployerDetail && (
+      {canManagePayroll && hasEmployerDetail && (
         <>
           <Separator my={3} />
           <Text fontSize="2xs" fontWeight="bold" color="purple.fg" mb={1} letterSpacing="wide">

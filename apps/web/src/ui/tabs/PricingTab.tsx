@@ -16,7 +16,7 @@ import {
   Wrap,
 } from "@chakra-ui/react";
 import { DollarSign, Pencil, Plus, Trash2 } from "lucide-react";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { fmtDate } from "@/src/lib/dates";
 import {
@@ -25,6 +25,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { DEFAULT_SERVICE_TYPES, jobTagLabel, pricingJobTags } from "@/src/ui/components/JobTagPicker";
+import type { Scope } from "@/src/lib/scope";
 
 export type PricingEntry = {
   id: string;
@@ -48,42 +49,37 @@ export type PricingEntry = {
 };
 
 type Props = {
-  isSuper?: boolean;
-  /** Forces read-only regardless of role. Admin + Worker views set this. */
+  /** Forces read-only regardless of capability. */
   readOnly?: boolean;
-  /** Additive scope — capabilities ADD as you climb the ladder.
-   *  scope.isWorker → read-only view of the pricing guide.
-   *  scope.isAdmin  → read-only view (same data).
-   *  scope.isSuper  → adds add/edit/delete affordances.
-   *  Falls back to a scope derived from the legacy `isSuper` + `readOnly`
-   *  props when not passed, so mounts still on the old shape keep working. */
-  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  /** What the caller may do, as capabilities.
+   *  `pricing.view`   → the pricing guide, read-only.
+   *  `pricing.manage` → add / edit / delete.
+   *  Absent fails closed — it grants nothing. */
+  scope?: Scope;
 };
 
-export default function PricingTab({ isSuper, readOnly, scope }: Props) {
+export default function PricingTab({ readOnly, scope }: Props) {
+  // `canManagePricing` as a PROP is gone. The parent told the tab which role it
+  // was rendering for, so the same component produced two builds
+  // depending on where it was mounted. It reads the capability from
+  // `scope` now, which is the perspective-narrowed set.
   const [entries, setEntries] = useState<PricingEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Effective scope: prefer the additive prop; fall back to a scope
-  // derived from the legacy props. `isSuper` = the super, writable
-  // variant; `readOnly` on its own = admin (or worker) read-only view.
-  const effScope = scope ?? {
-    isWorker: !isSuper && !!readOnly,
-    isAdmin: !isSuper && !!readOnly,
-    isSuper: !!isSuper && !readOnly,
-  };
-  // Capabilities render additively AND are strictly governed by the
-  // scope prop. No `me` prop on this tab — trust the scope for the
-  // super check (the shell only sets scope.isSuper on the super tab).
-  const showWorkerExtras = effScope.isWorker;
-  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
-  const showSuperExtras = effScope.isSuper;
+  // FAIL CLOSED. The fallback used to synthesise a scope from a role flag
+  // and `readOnly` — props the parent set from which shell it was in.
+  const effScope: Scope = scope ?? { can: () => false };
+  // No `me` prop on this tab, so every answer comes from `scope`, which is
+  // the perspective-narrowed set.
+  const canViewPricing = effScope.can("pricing.view");
+  // What this actually gates, per the route map.
+  const canManagePricing = effScope.can("pricing.manage");
 
-  // Effective editability: Super only.
-  const canEdit = showSuperExtras;
-  // Workers/admins hit the worker-guard endpoint; super reads /admin/pricing
-  // which carries the updatedBy join. Mutations always go to /admin/pricing.
-  const readEndpoint = showSuperExtras ? "/api/admin/pricing" : "/api/pricing";
+  // Effective editability: `pricing.manage`.
+  const canEdit = canManagePricing;
+  // Workers/holders of `schedule.manage` hit the worker-guard endpoint; super reads /pricing
+  // which carries the updatedBy join. Mutations always go to /pricing.
+  const readEndpoint = canManagePricing ? "/api/pricing" : "/api/pricing";
 
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -159,10 +155,10 @@ export default function PricingTab({ isSuper, readOnly, scope }: Props) {
         jobTags: formJobTags,
       };
       if (editKey) {
-        await apiPatch(`/api/admin/pricing/${editKey}`, payload);
+        await apiPatch(`/api/pricing/${editKey}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Pricing updated." });
       } else {
-        await apiPost("/api/admin/pricing", payload);
+        await apiPost("/api/pricing", payload);
         publishInlineMessage({ type: "SUCCESS", text: "Pricing entry created." });
       }
       setDialogOpen(false);
@@ -175,7 +171,7 @@ export default function PricingTab({ isSuper, readOnly, scope }: Props) {
 
   async function handleDelete(key: string) {
     try {
-      await apiDelete(`/api/admin/pricing/${key}`);
+      await apiDelete(`/api/pricing/${key}`);
       publishInlineMessage({ type: "SUCCESS", text: "Pricing entry deleted." });
       await load();
     } catch (err) {
@@ -208,17 +204,16 @@ export default function PricingTab({ isSuper, readOnly, scope }: Props) {
           <ExplainerText>
             When you complete an estimate, the dialog shows the entries matching that
             job&rsquo;s tags and offers their total as the amount &mdash; so an entry that
-            drifts from what you really charge quietly pulls quotes along with it. Changing
-            an entry is <Em>super-only</Em>; if a price here looks wrong it is worth
-            flagging.
+            drifts from what you really charge quietly pulls quotes along with it. If a
+            price here looks wrong it is worth flagging.
           </ExplainerText>
           {canEdit && (
-            <RoleSection role="Super">
+            <CapabilitySection capability="pricing.manage" scope={scope}>
               <ExplainerText>
                 You can add, edit and remove entries. Nothing recalculates behind you &mdash;
                 a change applies to the next quote, not to work already priced.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
         </TabExplainer>
   );
@@ -229,9 +224,10 @@ export default function PricingTab({ isSuper, readOnly, scope }: Props) {
 
   return (
     <Box w="full" pb={8}>
-      {/* GET /admin/pricing is adminGuard; POST/PATCH/DELETE are superGuard.
-          So "you can edit this" is true for a super admin ONLY — an admin
-          reading that would go looking for buttons that are not rendered. */}
+      {/* GET /pricing requires `pricing.view`; POST/PATCH/DELETE require
+          `pricing.manage`. So "you can edit this" is true only for someone
+          holding the second — a reader with only the first would go looking
+          for buttons that are not rendered. */}
       {/* Own bottom margin: this tab's root Box has no `gap`, so without it
           the explainer butts straight into the Add Pricing Entry button. */}
   {tabHelp}

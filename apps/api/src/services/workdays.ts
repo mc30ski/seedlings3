@@ -98,11 +98,11 @@ function dayEndEt(workdayDate: string): Date {
   return etEndOfDay(workdayDate as EtDateKey);
 }
 
-// ── Approval cutoff (worker/admin boundary) ─────────────────────────────
+// ── Approval cutoff (self vs `time.manage` boundary) ─────────────────────────────
 // The setting `WORKDAY_APPROVAL_CUTOFF_HOUR_ET` (default 4) marks the
 // HOUR ET the next morning at which:
 //   • the worker's edit window closes
-//   • the admin/super approval window opens
+//   • a `time.manage` holder approval window opens
 //
 // At DST boundaries this MUST route through bizInstantFromEtParts (or
 // the equivalent ET-aware helper) — raw `setHours(4)` on the Date would
@@ -129,7 +129,7 @@ async function approvalOpensAt(workdayDate: string): Promise<Date> {
   return etInstantFromParts(nextDay, `${String(cutoffHour).padStart(2, "0")}:00`);
 }
 
-/** Whether the admin/super approval window is open for this workday. */
+/** Whether a `time.manage` holder approval window is open for this workday. */
 async function isApprovalWindowOpen(workdayDate: string): Promise<boolean> {
   const opensAt = await approvalOpensAt(workdayDate);
   return Date.now() >= opensAt.getTime();
@@ -385,7 +385,7 @@ export async function startWorkday(
   // its gatesServices must have a current signature (or exception) for
   // this worker. Throws POLICIES_REQUIRED with pendingPolicyIds so the
   // frontend can open the sign wizard and retry. Actor-vs-subject: gate
-  // fires against the worker whose workday this is, even when an admin
+  // fires against the worker whose workday this is, even when someone with `time.manage`
   // is starting on their behalf via impersonation.
   const { policies } = await import("./policies");
   await policies.assertPoliciesSigned(userId, "WORKDAY_START");
@@ -459,11 +459,11 @@ export async function pauseWorkday(
  * clears `endedAt` (back to IN_PROGRESS) and adds the gap between the old
  * endedAt and now to `totalPausedMs` so the accounting honestly reflects
  * the time the worker was off the clock. Audited as `reopen` so the
- * pattern can be spotted by admins (e.g. a worker who repeatedly ends
+ * pattern can be spotted by holders of `time.manage` (e.g. a worker who repeatedly ends
  * and reopens may need coaching on Pause vs End).
  *
  * Refused once the same-day edit window has closed — past the approval
- * cutoff the worker can't self-correct anymore; an admin must adjust.
+ * cutoff the worker can't self-correct anymore; someone with `time.manage` must adjust.
  * Refused if the workday has been approved (approved records are
  * final). A row that was never ended falls through as a no-op summary
  * so the caller can invoke this idempotently from a UI that's not sure
@@ -494,7 +494,7 @@ export async function reopenWorkday(
   if (await isApprovalWindowOpen(row.workdayDate)) {
     throw new ServiceError(
       "OUT_OF_WINDOW",
-      "Edit window has passed — ask an admin to reopen this workday.",
+      "Edit window has passed — ask someone with timesheet authority to reopen this workday.",
       409,
     );
   }
@@ -575,7 +575,7 @@ export async function resumeWorkday(
  * already COMPLETED — finished days are real records; the worker has
  * the Edit dialog for time corrections instead.
  *
- * The audit detail preserves what the deleted row looked like so admins
+ * The audit detail preserves what the deleted row looked like so holders of `time.manage`
  * can spot patterns (e.g. a worker who cancels and restarts repeatedly).
  */
 export async function cancelWorkday(
@@ -727,16 +727,23 @@ type EditInput = {
 };
 
 /**
- * Worker post-end correction. The edit window is open while we're still
- * inside the cutoff buffer (WORKDAY_APPROVAL_CUTOFF_HOUR_ET — default 4
- * AM ET the next morning). Once the buffer passes, the admin/super
- * approval lane takes over and the worker can't silently retroactively
- * change their record.
+ * SELF-SERVICE post-end correction — `PATCH /me/workday/:id`. Checks the
+ * row belongs to `userId` and that the edit window is still open: open
+ * while we're inside the cutoff buffer (WORKDAY_APPROVAL_CUTOFF_HOUR_ET,
+ * default 4 AM ET the next morning). Once the buffer passes, the
+ * `time.manage` review lane takes over and nobody can silently change
+ * their own record retroactively.
  *
- * Separate audit row from the original COMPLETED event so an admin can
- * see exactly what changed when they're reviewing.
+ * Separate audit row from the original COMPLETED event so a reviewer can
+ * see exactly what changed.
+ *
+ * WAS ALSO CALLED `editWorkdayTimes`, exactly like the reviewer function
+ * below. Two exported functions, one name — the later one wins, so this
+ * body never ran and `/me/workday/:id` called the reviewer version with
+ * the wrong arguments (a user id arrived as `workdayId`). Renamed
+ * 2026-10-18 so the collision cannot come back.
  */
-export async function editWorkdayTimes(
+export async function editOwnWorkdayTimes(
   userId: string,
   workdayId: string,
   input: EditInput,
@@ -749,12 +756,12 @@ export async function editWorkdayTimes(
     throw new ServiceError("INVALID_STATE", "Workday must be ended before editing times.", 409);
   }
   // Edit window closes at the approval cutoff (default 4 AM next morning
-  // ET, configurable via setting). Symmetric with the admin approval
+  // ET, configurable via setting). Symmetric with the approval
   // window opening — see approvalOpensAt.
   if (await isApprovalWindowOpen(row.workdayDate)) {
     throw new ServiceError(
       "OUT_OF_WINDOW",
-      "Edit window has passed — ask an admin to adjust this workday.",
+      "Edit window has passed — ask someone with timesheet authority to adjust this workday.",
       409,
     );
   }
@@ -804,20 +811,20 @@ export async function editWorkdayTimes(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Super-side workday administration — approval queue, edits, bulk
+// `time.manage` workday administration — approval queue, edits, bulk
 // approve, unapprove.
 //
-// All functions in this block are gated at the route layer by superGuard
-// (or whatever permission you configure). They never touch worker-side
+// All functions in this block are gated at the route layer by `time.manage`.
+// They never touch worker-side
 // validation (`isApprovalWindowOpen`) because that's a worker-edit-window
-// concept — Super can edit any prior-day row at any time.
+// concept — a `time.manage` holder can edit any prior-day row at any time.
 //
-// Today's workdays are intentionally accessible (Super can browse to see
+// Today's workdays are intentionally accessible (a `time.manage` holder can browse to see
 // who's clocked in), but the routes refuse to mutate them — the 4 AM rule
-// applies to admin actions too. Enforced via `assertAdminActionAllowed`.
+// applies to admin actions too. Enforced via `assertManageActionAllowed`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function assertAdminActionAllowed(workdayDate: string, isOpenWindow: boolean): void {
+function assertManageActionAllowed(workdayDate: string, isOpenWindow: boolean): void {
   if (!isOpenWindow) {
     throw new ServiceError(
       "ADMIN_WINDOW_CLOSED",
@@ -828,7 +835,7 @@ function assertAdminActionAllowed(workdayDate: string, isOpenWindow: boolean): v
   void workdayDate; // referenced for future per-day overrides
 }
 
-export type SuperWorkdayRow = WorkdaySummary & {
+export type WorkdayReviewRow = WorkdaySummary & {
   user: {
     id: string;
     displayName: string | null;
@@ -841,9 +848,9 @@ export type SuperWorkdayRow = WorkdaySummary & {
   // True when the worker never ended this row (open prior). The unified
   // Review dialog uses this to surface the "set an end time" banner.
   isOpen: boolean;
-  // True when the admin/super approval window is open for this row's
+  // True when a `time.manage` holder approval window is open for this row's
   // workdayDate. When false the UI disables Review / Approve / Unapprove.
-  adminWindowOpen: boolean;
+  reviewWindowOpen: boolean;
   // Projected earnings for this worker on this specific workday date.
   // Same "snapshot → projection → cash fallback" math the operations
   // dashboard uses, scoped to occurrences with completedAt inside the
@@ -855,7 +862,7 @@ export type SuperWorkdayRow = WorkdaySummary & {
   hourlyRateOnDate: number | null;
 };
 
-function deriveUiState(row: WorkerWorkday): SuperWorkdayRow["uiState"] {
+function deriveUiState(row: WorkerWorkday): WorkdayReviewRow["uiState"] {
   if (row.endedAt && row.approvedAt) return "APPROVED";
   if (row.endedAt) return "COMPLETED";
   if (row.pausedAt) return "PAUSED";
@@ -863,19 +870,19 @@ function deriveUiState(row: WorkerWorkday): SuperWorkdayRow["uiState"] {
 }
 
 /**
- * One day's worth of workday rows, grouped for the Super tab. Returns
+ * One day's worth of workday rows, grouped for the Workdays tab. Returns
  * EVERY user who has ever had a workday (per the loose "DIDN'T WORK"
  * rule) — those without a row on the selected day surface as DIDN'T WORK.
  *
  * Sort within each group: by user display name, then email.
  */
-export async function superListWorkdaysForDate(workdayDate: string): Promise<{
+export async function listWorkdaysForDate(workdayDate: string): Promise<{
   workdayDate: string;
-  adminWindowOpen: boolean;
-  rows: SuperWorkdayRow[];
+  reviewWindowOpen: boolean;
+  rows: WorkdayReviewRow[];
   didntWork: { userId: string; displayName: string | null; email: string | null; workerType: string | null }[];
 }> {
-  const adminWindowOpen = await isApprovalWindowOpen(workdayDate);
+  const reviewWindowOpen = await isApprovalWindowOpen(workdayDate);
 
   // Pull workdays for the day + the approver join + the worker join, all
   // in one round-trip. Approver join is `approvedById` → User; orderly
@@ -914,7 +921,7 @@ export async function superListWorkdaysForDate(workdayDate: string): Promise<{
   );
 
   // Per-worker earnings for THIS specific workday date. Same math the
-  // /admin/workers/earnings-today endpoint runs, but scoped to
+  // /workers/earnings-today endpoint runs, but scoped to
   // `workdayDate`'s ET window so approved-workday cards can display
   // the operator-facing $/hr the worker earned on that particular day.
   //
@@ -1007,7 +1014,7 @@ export async function superListWorkdaysForDate(workdayDate: string): Promise<{
     return Math.max(0, wallClock - r.totalPausedMs);
   };
 
-  const superRows: SuperWorkdayRow[] = rows.map((r) => {
+  const reviewRows: WorkdayReviewRow[] = rows.map((r) => {
     const netEarnedOnDate = Math.round((netByUser.get(r.userId) ?? 0) * 100) / 100;
     const ms = activeMsFor(r);
     const hours = ms / 3_600_000;
@@ -1019,19 +1026,19 @@ export async function superListWorkdaysForDate(workdayDate: string): Promise<{
       approvedBy: r.approvedBy,
       uiState: deriveUiState(r),
       isOpen: r.endedAt == null,
-      adminWindowOpen,
+      reviewWindowOpen,
       netEarnedOnDate,
       hourlyRateOnDate,
     };
   });
-  superRows.sort((a, b) =>
+  reviewRows.sort((a, b) =>
     (a.user.displayName ?? a.user.email ?? "").localeCompare(b.user.displayName ?? b.user.email ?? ""),
   );
 
   return {
     workdayDate,
-    adminWindowOpen,
-    rows: superRows,
+    reviewWindowOpen,
+    rows: reviewRows,
     didntWork: didntWorkUsers.map((u) => ({
       userId: u.id,
       displayName: u.displayName,
@@ -1042,26 +1049,26 @@ export async function superListWorkdaysForDate(workdayDate: string): Promise<{
 }
 
 /**
- * Validation common to every Super-side edit. Returns the row when ok,
+ * Validation common to every `time.manage` edit. Returns the row when ok,
  * throws otherwise. `requireOpenWindow` defaults to true; pass false from
  * read-only paths (none currently — included for future flexibility).
  */
-async function loadSuperWorkday(
+async function loadWorkdayForReview(
   workdayId: string,
   opts: { requireOpenWindow?: boolean } = {},
 ): Promise<WorkerWorkday> {
   const row = await prisma.workerWorkday.findUnique({ where: { id: workdayId } });
   if (!row) throw new ServiceError("NOT_FOUND", "Workday not found.", 404);
   const open = await isApprovalWindowOpen(row.workdayDate);
-  if (opts.requireOpenWindow !== false) assertAdminActionAllowed(row.workdayDate, open);
+  if (opts.requireOpenWindow !== false) assertManageActionAllowed(row.workdayDate, open);
   return row;
 }
 
-type SuperEditInput = {
+type ManagerEditInput = {
   startedAt?: string | null;
   endedAt?: string | null;
   totalPausedMs?: number | null;
-  // Super-only opt-in bypass for the 4 AM ET cutoff. Required by the
+  // A `time.manage` opt-in bypass for the 4 AM ET cutoff. Required by the
   // Workdays tab when an operator approves a same-day workday before the
   // approval window opens (e.g. workers finished early and the operator
   // wants to clear the queue before tomorrow). The route layer surfaces
@@ -1081,12 +1088,12 @@ type SuperEditInput = {
  *   • endedAt > startedAt (and ≤ now + skew)
  *   • totalPausedMs ∈ [0, endedAt − startedAt]
  */
-export async function superEditWorkdayTimes(
+export async function editWorkdayTimesForReview(
   workdayId: string,
-  input: SuperEditInput,
+  input: ManagerEditInput,
   audit: AuditContext,
-): Promise<SuperWorkdayRow> {
-  const row = await loadSuperWorkday(workdayId, { requireOpenWindow: !input.allowSameDay });
+): Promise<WorkdayReviewRow> {
+  const row = await loadWorkdayForReview(workdayId, { requireOpenWindow: !input.allowSameDay });
   const now = new Date();
   const startedAt = input.startedAt ? new Date(input.startedAt) : row.startedAt;
   // endedAt: if input supplied use it; else keep existing if any; else null
@@ -1102,7 +1109,7 @@ export async function superEditWorkdayTimes(
     if (endedAt.getTime() <= startedAt.getTime()) {
       throw new ServiceError("OUT_OF_RANGE", "End time must be after start time.", 400);
     }
-    // Super can record an end time up to the end of the workdayDate (covers
+    // a `time.manage` holder can record an end time up to the end of the workdayDate (covers
     // late-night work) — `dayEndEt` floors at next midnight ET. Clock skew
     // tolerance handles the live "now" case.
     const ceiling = Math.max(now.getTime() + CLOCK_SKEW_MS, dayEndEt(row.workdayDate).getTime());
@@ -1171,9 +1178,9 @@ export async function superEditWorkdayTimes(
     approvedBy: updated.approvedBy,
     uiState: deriveUiState(updated),
     isOpen: updated.endedAt == null,
-    adminWindowOpen: true,
+    reviewWindowOpen: true,
     // Earnings-for-this-date is stubbed on single-row mutation returns —
-    // the client refreshes /super/workdays/by-date after every write, so
+    // the client refreshes /workdays/by-date after every write, so
     // the real numbers land within one render. Avoids paying for the
     // per-day occurrence query on every edit / approve / unapprove call.
     netEarnedOnDate: 0,
@@ -1189,21 +1196,21 @@ export async function superEditWorkdayTimes(
  * Approve a workday. Optionally edits the times in the same call (the
  * Review dialog's "edit + approve" path). Refuses if the row is still
  * open (endedAt = null) — approver must close it first via
- * superEditWorkdayTimes with an endedAt value (or via the same dialog
+ * editWorkdayTimesForReview with an endedAt value (or via the same dialog
  * filling in End).
  */
-export async function superApproveWorkday(
+export async function approveWorkday(
   workdayId: string,
-  input: SuperEditInput,
+  input: ManagerEditInput,
   audit: AuditContext,
-): Promise<SuperWorkdayRow> {
-  // If the caller passed any edits, run those through superEditWorkdayTimes
+): Promise<WorkdayReviewRow> {
+  // If the caller passed any edits, run those through editWorkdayTimesForReview
   // first so the validation lives in one place.
   if (input.startedAt != null || input.endedAt != null || input.totalPausedMs != null) {
-    await superEditWorkdayTimes(workdayId, input, audit);
+    await editWorkdayTimesForReview(workdayId, input, audit);
   }
 
-  const row = await loadSuperWorkday(workdayId, { requireOpenWindow: !input.allowSameDay });
+  const row = await loadWorkdayForReview(workdayId, { requireOpenWindow: !input.allowSameDay });
   if (!row.endedAt) {
     throw new ServiceError(
       "NOT_CLOSED",
@@ -1226,7 +1233,7 @@ export async function superApproveWorkday(
       approvedBy: fresh!.approvedBy,
       uiState: deriveUiState(fresh!),
       isOpen: false,
-      adminWindowOpen: true,
+      reviewWindowOpen: true,
       netEarnedOnDate: 0,
       hourlyRateOnDate: null,
     };
@@ -1259,7 +1266,7 @@ export async function superApproveWorkday(
     approvedBy: updated.approvedBy,
     uiState: deriveUiState(updated),
     isOpen: false,
-    adminWindowOpen: true,
+    reviewWindowOpen: true,
     netEarnedOnDate: 0,
     hourlyRateOnDate: null,
   };
@@ -1269,11 +1276,11 @@ export async function superApproveWorkday(
  * Reverse a prior approval. Clears `approvedAt` + `approvedById`. Row
  * drops back into PENDING APPROVAL. Audited.
  */
-export async function superUnapproveWorkday(
+export async function unapproveWorkday(
   workdayId: string,
   audit: AuditContext,
-): Promise<SuperWorkdayRow> {
-  const row = await loadSuperWorkday(workdayId);
+): Promise<WorkdayReviewRow> {
+  const row = await loadWorkdayForReview(workdayId);
   if (!row.approvedAt) {
     throw new ServiceError("INVALID_STATE", "Workday is not approved.", 409);
   }
@@ -1303,7 +1310,7 @@ export async function superUnapproveWorkday(
     approvedBy: updated.approvedBy,
     uiState: deriveUiState(updated),
     isOpen: false,
-    adminWindowOpen: true,
+    reviewWindowOpen: true,
     netEarnedOnDate: 0,
     hourlyRateOnDate: null,
   };
@@ -1311,23 +1318,23 @@ export async function superUnapproveWorkday(
 
 /**
  * Backfill a workday for a worker who forgot to start one. Used by the
- * Super → Workdays tab's "Didn't work" section: when the operator
+ * Workdays tab's "Didn't work" section: when the operator
  * notices a worker missed their clock-in, they can retroactively
  * create the row with start / end / paused-minutes.
  *
  * Constraints:
  *   • `workdayDate` must be today or earlier — can't create future rows
  *   • Refuses if a row already exists for (userId, workdayDate) — use
- *     superEditWorkdayTimes for those
+ *     editWorkdayTimesForReview for those
  *   • Same time-window validation as the worker End path
  *   • Records the backfill in the audit log with `action: "super-create"`
  *     so the trail makes it obvious this wasn't a worker-initiated row
  *
- * NOT subject to the approval-window cutoff — Super needs to be able
+ * NOT subject to the approval-window cutoff — a `time.manage` holder needs to be able
  * to fix gaps even on the same day. The created row lands in PENDING
- * APPROVAL until Super approves it.
+ * APPROVAL until it is approved.
  */
-export async function superCreateWorkday(
+export async function createWorkdayFor(
   userId: string,
   workdayDate: string,
   input: {
@@ -1336,7 +1343,7 @@ export async function superCreateWorkday(
     totalPausedMs?: number | null;
   },
   audit: AuditContext,
-): Promise<SuperWorkdayRow> {
+): Promise<WorkdayReviewRow> {
   // Future-date guard. workdayDate is ET YYYY-MM-DD; lexicographic
   // comparison against todayEt() is correct for that format.
   if (workdayDate > todayEt()) {
@@ -1436,7 +1443,7 @@ export async function superCreateWorkday(
     approvedBy: created.approvedBy,
     uiState: deriveUiState(created),
     isOpen: created.endedAt == null,
-    adminWindowOpen: windowOpen,
+    reviewWindowOpen: windowOpen,
     netEarnedOnDate: 0,
     hourlyRateOnDate: null,
   };
@@ -1453,7 +1460,7 @@ export async function superCreateWorkday(
  *   • Admin window closed → counted under `failed`
  *   • Otherwise → approved with the row's current times (no edits)
  */
-export async function superBulkApprove(
+export async function bulkApprove(
   workdayIds: string[],
   audit: AuditContext,
   opts: { allowSameDay?: boolean } = {},
@@ -1509,7 +1516,7 @@ export async function superBulkApprove(
 }
 
 /**
- * Pending-approvals summary for the Super alert badge + the in-tab chip
+ * Pending-approvals summary for the alert badge + the in-tab chip
  * row. Counts COMPLETED workdays whose `workdayDate < today (ET)` and
  * whose `approvedAt` is null. Today's rows are intentionally excluded —
  * they're either still in the worker's edit window OR the cutoff hasn't
@@ -1519,10 +1526,10 @@ export async function superBulkApprove(
  * chip row can render in chronological order.
  *
  * NEEDS_ENDING rows (workdayDate in the past, endedAt null) are NOT
- * counted — they aren't approvable yet (Super has to force-end them
+ * counted — they aren't approvable yet (`time.manage` has to force-end them
  * first). Different bucket, different action.
  */
-export async function superPendingApprovalsSummary(): Promise<{
+export async function pendingApprovalsSummary(): Promise<{
   totalPending: number;
   byDate: { workdayDate: string; count: number }[];
 }> {

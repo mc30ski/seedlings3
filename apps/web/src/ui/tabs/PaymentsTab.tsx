@@ -1,4 +1,5 @@
 "use client";
+import { isFeeable, isW2, type WorkerType } from "@repo/money";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -23,10 +24,10 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import { fmtDate, fmtDateKey, fmtDateTime, bizDateKey, bizToday, bizAddDays, bizAddYears, type EtDateKey } from "@/src/lib/dates";
 import { prettyStatus, clientLabel } from "@/src/lib/labels";
-import { determineRoles } from "@/src/lib/roles";
+import { scopeFromMe } from "@/src/lib/roles";
 import { composePaymentMessage } from "@/src/lib/paymentMessages";
 import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { useEquipmentBillingEnabled } from "@/src/lib/useEquipmentBillingEnabled";
@@ -41,16 +42,17 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import StatusButton from "@/src/ui/components/StatusButton";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { TextLink } from "@/src/ui/helpers/Link";
-import { openEventSearch, bumpAdminPayments } from "@/src/lib/bus";
+import { openEventSearch, bumpPayments } from "@/src/lib/bus";
 import PendingApprovalsSection from "@/src/ui/components/PendingApprovalsSection";
 import OutstandingRequestsSection from "@/src/ui/components/OutstandingRequestsSection";
 import { Dashboard } from "@/src/ui/components/Dashboard";
+import type { Scope } from "@/src/lib/scope";
+import { payClassLabel } from "../../lib/paymentMath";
 
 // Date helpers come from @/src/lib/dates (bizToday, bizAddDays). NEVER
 // reinvent — see lib/dates.ts.
@@ -69,7 +71,7 @@ const typeFilterItems = [
 
 // Per-page sizes for the Payments-tab pagination footer. Stored as strings
 // because Chakra's Select uses string values; converted back to number when
-// piped to `setPageSize`. Shared between WorkerPayments and AdminPayments.
+// piped to `setPageSize`. Shared between WorkerPayments and PaymentsOversight.
 const pageSizeItems = [
   { label: "10", value: "10" },
   { label: "25", value: "25" },
@@ -82,18 +84,37 @@ const pageSizeCollection = createListCollection({ items: pageSizeItems });
 
 function WorkerPayments({
   me,
-  forAdmin,
   viewAs,
+  canSeeOthers = false,
 }: {
   me: TabPropsType["me"];
-  forAdmin: boolean;
-  /** Super-only "view as worker" override. When present, the API fetches
-   *  that worker's data instead of the caller's, and `me` reads for
+  /** The "view as worker" override, offered on `money.approve`. When
+   *  present, the API fetches that worker's data instead of the caller's,
+   *  and `me` reads for
    *  card-rendering purposes use this object's workerType/name instead.
    *  Each viewed worker gets its own persisted filter slot via
    *  `viewAs.id` so multiple workers can be inspected side-by-side
    *  without their search/date state colliding. */
   viewAs?: { id: string; displayName?: string | null; workerType?: any } | null;
+  /**
+   * May this caller see the OTHER people on a shared payment?
+   *
+   * False in the self view. The crew-split list below names every worker
+   * on the job with their percentage and their dollar amount — falling
+   * back to their EMAIL when there is no display name — and the two rate
+   * lines quote the company's contractor commission and employee margin.
+   * The self view must not carry any of that: it is somebody else's pay,
+   * and the person reading it holds no capability over the money.
+   *
+   * It was unreachable rather than safe. The self branch that renders
+   * this component sat behind a `money.view` check that no field worker
+   * passes, so the leak was dormant; opening the tab to the people it was
+   * built for is what would have shipped it.
+   *
+   * True for the oversight caller inspecting a worker, who holds
+   * `money.approve` and is looking at the split on purpose.
+   */
+  canSeeOthers?: boolean;
 }) {
   // Effective identity used for card-rendering decisions (workerType
   // gates on "is this an employee class" for the pending-badge logic).
@@ -131,7 +152,7 @@ function WorkerPayments({
   const [compact, setCompact] = usePersistedState(`pay_w${ns}_compact`, false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   // Pagination — Jobs and Equipment paginate INDEPENDENTLY. Same pattern
-  // as AdminPayments; see that block for rationale.
+  // as PaymentsOversight; see that block for rationale.
   const [pageSize, setPageSize] = usePersistedState<number>(`pay_w${ns}_pageSize`, 10);
   const [jobsPage, setJobsPage] = useState(1);
   const [equipPage, setEquipPage] = useState(1);
@@ -169,8 +190,8 @@ function WorkerPayments({
   }, []);
 
   // Recompute dates from preset on each mount (so "last month" stays current).
-  // Worker view excludes "All time" — workers are capped to a rolling 1-year
-  // lookback. The admin/super version (AdminPayments) keeps "All time".
+  // Self-scoped view excludes "All time" — workers are capped to a rolling 1-year
+  // lookback. The oversight view (PaymentsOversight) keeps "All time".
   const quickDateItems = useMemo(() => [
     { label: "Today", value: "today" },
     { label: "Yesterday", value: "yesterday" },
@@ -225,7 +246,7 @@ function WorkerPayments({
       const qs = new URLSearchParams();
       if (dateFrom) qs.set("from", dateFrom);
       if (dateTo) qs.set("to", dateTo);
-      // Server honors `asUserId` only when the caller is SUPER. Non-Super
+      // Server honors `asUserId` only for an oversight caller. Everyone else
       // callers see this param silently ignored, so it's safe to always
       // append when viewAs is set.
       if (viewAs?.id) qs.set("asUserId", viewAs.id);
@@ -233,9 +254,14 @@ function WorkerPayments({
         apiGet<{ items: WorkerPaymentItem[]; totalAmount: number }>(
           `/api/payments/mine${qs.toString() ? `?${qs}` : ""}`
         ),
+        // `equipment.view`, which `/payments/mine` does not need — so it
+        // catches on its OWN. Inside the Promise.all a 403 here rejected
+        // the pair and the whole screen read "failed to load" for somebody
+        // whose payments had loaded fine. Equipment charges are a side
+        // panel; absent is a correct rendering of "none visible to you".
         apiGet<EquipmentCharge[]>(
           `/api/payments/equipment-charges${qs.toString() ? `?${qs}` : ""}`
-        ),
+        ).catch(() => [] as EquipmentCharge[]),
       ]);
       setItems(res.items ?? []);
       setTotalAmount(res.totalAmount ?? 0);
@@ -252,7 +278,7 @@ function WorkerPayments({
 
   useEffect(() => {
     void load();
-    // Re-fetch when the viewed-as worker changes too (Super view-as flow).
+    // Re-fetch when the viewed-as person changes too (the view-as flow).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFrom, dateTo, viewAs?.id]);
 
@@ -294,7 +320,7 @@ function WorkerPayments({
   }, [equipCharges, q]);
 
   // Per-section pagination — Jobs and Equipment slice independently. See
-  // the same block in AdminPayments for the full rationale.
+  // the same block in PaymentsOversight for the full rationale.
   const jobsTotalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
   const jobsSafePage = Math.min(jobsPage, jobsTotalPages);
   const jobsPageStart = (jobsSafePage - 1) * pageSize;
@@ -403,7 +429,7 @@ function WorkerPayments({
         />
       </HStack>
       {/* Timeframe row — custom dates + preset badge inline, matching the
-          AdminPayments layout. Worker variant: min-floored to 1 year, no
+          PaymentsOversight layout. Worker variant: min-floored to 1 year, no
           "All time" preset (see quickDateItems above). */}
       <HStack mb={2} gap={2} align="center" wrap="wrap">
         <DateInput min={minWorkerDate} value={dateFrom} onChange={(val) => { const clamped = val && val < minWorkerDate ? minWorkerDate : val; setDateFrom(clamped); setDatePreset(null); if (dateTo && clamped && clamped > dateTo) setDateTo(clamped); }} />
@@ -577,7 +603,7 @@ function WorkerPayments({
                           trainees get the muted "Pending" — for them the
                           amount won't change at approval. */}
                       {item.payment.confirmed === false && (
-                        (effectiveMe?.workerType === "EMPLOYEE" || effectiveMe?.workerType === "TRAINEE") ? (
+                        (isW2(effectiveMe?.workerType)) ? (
                           <Badge size="sm" colorPalette="orange" variant="subtle">Pending</Badge>
                         ) : (
                           <Badge size="sm" colorPalette="orange" variant="solid">Pending — may change</Badge>
@@ -606,19 +632,19 @@ function WorkerPayments({
                       {prop?.displayName && (
                         <TextLink
                           text="Property"
-                          onClick={() => openEventSearch("paymentsTabToPropertiesTabSearch", prop.displayName, forAdmin, prop.id)}
+                          onClick={() => openEventSearch("paymentsTabToPropertiesTabSearch", prop.displayName, prop.id)}
                         />
                       )}
                       {client?.displayName && (
                         <TextLink
                           text="Client"
-                          onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, forAdmin, client.id)}
+                          onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, client.id)}
                         />
                       )}
                       {prop?.displayName && (
                         <TextLink
                           text="Job"
-                          onClick={() => openEventSearch("paymentsTabToJobsTabSearch", prop.displayName, forAdmin, item.occurrence?.id, item.occurrence?.startAt ?? null)}
+                          onClick={() => openEventSearch("paymentsTabToJobsTabSearch", prop.displayName, item.occurrence?.id ?? null)}
                         />
                       )}
                     </HStack>
@@ -636,7 +662,7 @@ function WorkerPayments({
                         Paid on {fmtDate(item.payment.createdAt)}
                       </Text>
                     )}
-                    {item.payment.splits.length > 1 && (() => {
+                    {canSeeOthers && item.payment.splits.length > 1 && (() => {
                       // Per-worker percent split is derived from grossAmount
                       // shares — sums to ~100 of the actual collected amount.
                       // For legacy rows that don't have grossAmount, the
@@ -678,7 +704,16 @@ function WorkerPayments({
                     const fee = item.payment.platformFeeAmount ?? 0;
                     const margin = item.payment.businessMarginAmount ?? 0;
                     const isPending = item.payment.confirmed === false;
-                    const isEmployeeClass = effectiveMe?.workerType === "EMPLOYEE" || effectiveMe?.workerType === "TRAINEE";
+                    // ASK FOR THE CLASS YOU MEAN. The two contractor
+                    // notices below used to read `!isEmployeeClass`, which
+                    // is true for CONTRACTOR *and* for an UNPAID helper
+                    // *and* for anyone with no pay class — so it says
+                    // "contractor" and means "not an employee". They ask
+                    // `isFeeable` now. G33 keeps unpaid and untyped people
+                    // out of paid seats, so nothing renders for them today;
+                    // that is an invariant enforced in another module, not
+                    // a property of this line.
+                    const isEmployeeClass = isW2(effectiveMe?.workerType);
                     return (
                       <VStack align={{ base: "start", sm: "end" }} gap={0}>
                         {/* Same split-by-worker-type treatment as the compact
@@ -688,7 +723,7 @@ function WorkerPayments({
                             since their number won't change. */}
                         {isPending && (
                           isEmployeeClass ? (
-                            <Badge size="sm" colorPalette="orange" variant="subtle" title="Recorded but not yet approved by admin. You'll receive this amount via payroll regardless.">
+                            <Badge size="sm" colorPalette="orange" variant="subtle" title="Recorded but not yet approved. You'll receive this amount via payroll regardless.">
                               Pending approval
                             </Badge>
                           ) : (
@@ -712,12 +747,12 @@ function WorkerPayments({
                             understands why their take is lower than
                             expected on this row. Employees skip this —
                             they're made whole, so the gap is always 0. */}
-                        {!isEmployeeClass && item.myPromisedNet != null && item.myPromisedNet > item.myAmount && (
+                        {isFeeable(effectiveMe?.workerType) && item.myPromisedNet != null && item.myPromisedNet > item.myAmount && (
                           <Text fontSize="2xs" color="orange.fg" textAlign={{ base: "left", sm: "right" }} maxW={{ base: "100%", sm: "220px" }}>
                             Pro-rata reduction: −${(item.myPromisedNet - item.myAmount).toFixed(2)} due to client underpay
                           </Text>
                         )}
-                        {isPending && !isEmployeeClass && (
+                        {isPending && isFeeable(effectiveMe?.workerType) && (
                           <Text fontSize="2xs" color="orange.fg" textAlign={{ base: "left", sm: "right" }} maxW={{ base: "100%", sm: "200px" }}>
                             If admin adjusts the payment or writes it off, this amount may shrink.
                           </Text>
@@ -737,12 +772,29 @@ function WorkerPayments({
                             ${expTotal.toFixed(2)} charges on job
                           </Text>
                         )}
-                        {fee > 0 && (
+                        {/* ONE RATE, AND IT IS YOURS.
+                            `platformFeeAmount` / `businessMarginAmount` are
+                            payment-level, so rendering both showed an
+                            employee the contractor commission and a
+                            contractor the employee margin — someone else's
+                            terms either way. In the self view each person
+                            sees only the deduction that applies to their own
+                            pay class, which is what makes "(after
+                            deductions)" above answer "why is my share this
+                            number". The oversight caller still sees both,
+                            because they are reading the whole split.
+
+                            Both ask for the class they mean. Asking by
+                            elimination instead would read as "therefore a
+                            contractor" while also catching an UNPAID helper
+                            and anyone with no pay class, who should be
+                            shown neither rate. */}
+                        {fee > 0 && (canSeeOthers || isFeeable(effectiveMe?.workerType)) && (
                           <Text fontSize="2xs" color="fg.muted">
                             {item.payment.platformFeePercent}% commission on contractor's share
                           </Text>
                         )}
-                        {margin > 0 && (
+                        {margin > 0 && (canSeeOthers || isEmployeeClass) && (
                           <Text fontSize="2xs" color="fg.muted">
                             {item.payment.businessMarginPercent}% margin on employee's share
                           </Text>
@@ -757,7 +809,7 @@ function WorkerPayments({
           );
         })}
       </VStack>}
-      {/* Jobs pagination footer (worker view). */}
+      {/* Jobs pagination footer (self-scoped view). */}
       {showJobs && filteredItems.length > 0 && renderPaginationFooter({
         totalCount: filteredItems.length,
         totalPages: jobsTotalPages,
@@ -856,7 +908,7 @@ function WorkerPayments({
           </VStack>
         </>
       )}
-      {/* Equipment pagination footer (worker view). */}
+      {/* Equipment pagination footer (self-scoped view). */}
       {showEquip && filteredCharges.length > 0 && renderPaginationFooter({
         totalCount: filteredCharges.length,
         totalPages: equipTotalPages,
@@ -872,7 +924,7 @@ function WorkerPayments({
 
 // ─── Admin Payments ──────────────────────────────────────────────────
 
-function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: boolean }) {
+function PaymentsOversight({ canApproveMoney, scope }: { canApproveMoney: boolean; scope?: Scope }) {
   // The queue sections render CONTENT ONLY now; they report refresh /
   // busy / count up so the Dashboard frame here can supply the shared
   // title bar, count badge, refresh control and dim.
@@ -926,7 +978,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_a_datePreset", "lastMonth");
-  // Inline — see explanation on the worker variant above.
+  // Inline — see the explanation on the self-view above.
   const presetDates = computeDatesFromPreset("lastMonth");
   const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", presetDates.from);
   const [dateTo, setDateTo] = usePersistedState("pay_a_dateTo", presetDates.to);
@@ -992,7 +1044,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [personDropOpen]);
-  // Sub-tab on the admin Payments view (see WorkerPayments comment).
+  // Sub-tab on the Payments view (see WorkerPayments comment).
   const [typeFilterRaw, setTypeFilter] = usePersistedState<string[]>("pay_a_type", ["JOBS"]);
   const typeFilter = typeFilterRaw[0] === "ALL" ? ["JOBS"] : typeFilterRaw;
   const [compact, setCompact] = usePersistedState("pay_a_compact", false);
@@ -1023,7 +1075,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   const [editBusy, setEditBusy] = useState(false);
   const [editConfirm, setEditConfirm] = useState(false);
 
-  // Revert state — Super-only undo of an already-approved payment.
+  // Revert state — undoing an already-approved payment, which like every
+  // other payment mutation requires `money.approve`.
   const [revertingPayment, setRevertingPayment] = useState<PaymentListItem | null>(null);
 
   // Delete expense state
@@ -1032,13 +1085,20 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
-  // Fetch all workers for the person search
+  // The person search, which needs `people.view` — NOT the capability that
+  // opens this tab. A bookkeeper holds `money.view` and not `people.view`,
+  // so this fired a guaranteed 403 on every visit and the catch swallowed
+  // it: the search silently had nobody in it. Ask for the capability the
+  // endpoint is guarded on.
+  const canSeePeople = !!scope?.can?.("people.view");
+  const canSeeEquipment = !!scope?.can?.("equipment.view");
   const [allWorkers, setAllWorkers] = useState<Array<{ id: string; displayName?: string | null; email?: string | null }>>([]);
   useEffect(() => {
+    if (!canSeePeople) return;
     apiGet<any[]>("/api/workers")
       .then((list) => setAllWorkers(Array.isArray(list) ? list : []))
       .catch(() => {});
-  }, []);
+  }, [canSeePeople]);
 
   const personItems = useMemo(() => {
     return allWorkers.map((w) => ({
@@ -1074,10 +1134,16 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           totalTipToBusiness?: number;
           totalShortfall?: number;
           totalRevenue?: number;
-        }>(`/api/admin/payments${qs.toString() ? `?${qs}` : ""}`),
-        apiGet<EquipmentCharge[]>(
-          `/api/admin/payments/equipment-charges${eqs.toString() ? `?${eqs}` : ""}`
-        ),
+        }>(`/api/payments${qs.toString() ? `?${qs}` : ""}`),
+        // `equipment.view`, which is NOT what opens this tab. Same shape as
+        // the person search above: a bookkeeper holds `money.view` alone,
+        // took a 403 here on every load, and saw an equipment column that
+        // was silently always empty. Resolve to [] rather than asking.
+        canSeeEquipment
+          ? apiGet<EquipmentCharge[]>(
+              `/api/payments/equipment-charges${eqs.toString() ? `?${eqs}` : ""}`
+            )
+          : Promise.resolve([] as EquipmentCharge[]),
       ]);
       setItems(res.items ?? []);
       setPersonTotals(res.personTotals ?? []);
@@ -1105,8 +1171,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
   // immediately without a hard refresh.
   useEffect(() => {
     const onChanged = () => void load();
-    window.addEventListener("seedlings:admin-payments-changed", onChanged);
-    return () => window.removeEventListener("seedlings:admin-payments-changed", onChanged);
+    window.addEventListener("seedlings:payments-changed", onChanged);
+    return () => window.removeEventListener("seedlings:payments-changed", onChanged);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFrom, dateTo, methodFilter]);
 
@@ -1137,7 +1203,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           p.method || "",
           p.note || "",
           ...p.splits.map((sp) => sp.user?.displayName || sp.user?.email || ""),
-          // Receipt-number match — same rationale as the worker view
+          // Receipt-number match — same rationale as the self-scoped view
           // above. Includes both the canonical "SL-XXXX" form and the
           // bare 8-char tail so pasted codes match regardless of prefix.
           (p as any).receiptNumber || "",
@@ -1309,7 +1375,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
       let workerPayouts: number;
       const isPendingNoSplits = (p.splits ?? []).length === 0 && p.confirmed === false;
       const promised = isPendingNoSplits
-        ? ((p.occurrence?.promisedPayouts ?? null) as Array<{ userId: string; net: number; fee: number; splitPercent: number; ratePercent: number; workerType: string | null }> | null)
+        ? ((p.occurrence?.promisedPayouts ?? null) as Array<{ userId: string; net: number; fee: number; splitPercent: number; ratePercent: number; workerType: WorkerType | null }> | null)
         : null;
       grandTotal += p.amountPaid ?? 0;
       totalInvoiceCharges += chargesSum;
@@ -1333,8 +1399,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           const actualFee = actualGross * (r.ratePercent / 100);
           const actualNet = Math.max(0, actualGross - actualFee);
           const wt = r.workerType ?? null;
-          const isEmployeeClass = wt === "EMPLOYEE" || wt === "TRAINEE";
-          // Employee/trainee → made whole (paid promised net regardless).
+          const isEmployeeClass = isW2(wt);
+          // EMPLOYEE (W-2) → made whole (paid promised net regardless).
           // Contractor / null → pro-rata loss on underpay, capped at promised.
           const paid = isEmployeeClass ? r.net : Math.min(actualNet, r.net);
           projectedWorkerPayouts += Math.max(0, paid);
@@ -1384,8 +1450,14 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         for (const r of promised) {
           if (selectedPersons && !selectedPersons.has(r.userId)) continue;
           const wt = r.workerType ?? assigneesByUser.get(r.userId)?.user?.workerType ?? null;
-          const isEmployeeClass = wt === "EMPLOYEE" || wt === "TRAINEE";
-          if (!isEmployeeClass) continue; // contractor pending → don't bucket
+          const isEmployeeClass = isW2(wt);
+          // worker-class-allow: a SKIP, not a classification. Only
+          // employees are bucketed here; contractor, unpaid and untyped
+          // are all simply excluded, and none of them is then treated as
+          // anything. The comment used to say "contractor pending", which
+          // named one of the three and is how this reads as the banned
+          // shape at a glance.
+          if (!isEmployeeClass) continue;
           const assignee = assigneesByUser.get(r.userId);
           const existing = personMap.get(r.userId);
           if (existing) existing.total += r.net;
@@ -1545,7 +1617,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         amount: parseFloat(editSplits[sp.userId] || "0"),
       }));
       const originalPaidAt = editPayment.createdAt ? bizDateKey(editPayment.createdAt) : "";
-      await apiPatch(`/api/admin/payments/${editPayment.id}`, {
+      await apiPatch(`/api/payments/${editPayment.id}`, {
         amountPaid: amt,
         method: editMethod[0],
         note: editNote.trim() || null,
@@ -1560,7 +1632,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
       // lockstep with the PaymentsTab list — edits can shift a row
       // between confirmed/unconfirmed buckets server-side, so the
       // badge needs to recount alongside.
-      bumpAdminPayments();
+      bumpPayments();
       setEditPayment(null);
       void load();
     } catch (err) {
@@ -1572,7 +1644,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 
   async function doRevert(p: PaymentListItem, reason: string) {
     try {
-      await apiPost(`/api/admin/payments/${p.id}/revert`, { reason: reason.trim() || null });
+      await apiPost(`/api/payments/${p.id}/revert`, { reason: reason.trim() || null });
       // Revert always returns the occurrence to PENDING_PAYMENT and
       // ghost-cancels the auto-created next occurrence (see
       // services/jobs.ts updateOccurrence). Keep the extra context
@@ -1585,7 +1657,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
       // Revert un-confirms a payment, which puts the occurrence back
       // into the "Awaiting client payment" bucket — both the alerts
       // badge counter and any in-tab list need to recount.
-      bumpAdminPayments();
+      bumpPayments();
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Revert failed.", err) });
@@ -1594,7 +1666,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 
   return (
     <Box w="full">
-      {isSuper && (
+      {canApproveMoney && (
         <Box mb={3}>
           <Dashboard
             storageKey="seedlings:paymentsTab:pendingApprovalsOpen"
@@ -1622,7 +1694,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
           </Dashboard>
         </Box>
       )}
-      {isSuper && (
+      {canApproveMoney && (
         <Box mb={3}>
           <Dashboard
             storageKey="seedlings:paymentsTab:awaitingPaymentOpen"
@@ -2054,7 +2126,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
         const equipmentIsBusinessIncome = !workerScoped;
         const workerSidedeductions = workerScoped ? visibleCharges + totalEquipCost : 0;
         const workerScopedNet = visibleTotal - workerSidedeductions;
-        // Final Net to Business for the admin view: job-side retention
+        // Final Net to Business for the oversight view: job-side retention
         // (Commission + Margin + Overage − Shortfall — covered by the
         // identity check in displayedTotals) PLUS equipment rental income.
         const netToBusinessFinal = displayedTotals.totalRevenue + (equipmentIsBusinessIncome ? totalEquipCost : 0);
@@ -2132,8 +2204,9 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               <Text fontSize="lg" fontWeight="bold" color="orange.fg" textAlign="right">−${totalEquipCost.toFixed(2)}</Text>
             </>
           )}
-          {/* Admin-only equipment-only view (typeFilter = Equipment, no
-              worker filter) — equipment IS the income, show the total. */}
+          {/* The equipment-only view (typeFilter = Equipment, no worker
+              filter), reachable with `money.view` — equipment IS the
+              income here, so show the total. */}
           {!showJobs && totalEquipCost > 0 && equipmentIsBusinessIncome && (
             <>
               <Text fontSize="lg" fontWeight="bold" color="green.fg">Equipment Rental Income</Text>
@@ -2355,7 +2428,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
               // against ONE card's headline. Slicing the page text on the
               // "TOTAL TO WORKERS" marker instead silently mixes cards
               // together, because cards without a headline don't reset the
-              // slice. See tests/e2e/specs/money-card-math-admin.spec.ts.
+              // slice. See tests/e2e/specs/money-card-math-owner.spec.ts.
               data-testid="payment-card"
               variant="outline"
               css={compact ? { cursor: "pointer" } : undefined}
@@ -2380,7 +2453,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
                       )}
                       {(p as any).skippedAt && (
-                        <Badge size="sm" colorPalette="gray" variant="solid" title="Super-voided — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
+                        <Badge size="sm" colorPalette="gray" variant="solid" title="Voided — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
                           Voided
                         </Badge>
                       )}
@@ -2408,19 +2481,19 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       {prop?.displayName && (
                         <TextLink
                           text="Property"
-                          onClick={() => openEventSearch("paymentsTabToPropertiesTabSearch", prop.displayName, forAdmin, prop.id)}
+                          onClick={() => openEventSearch("paymentsTabToPropertiesTabSearch", prop.displayName, prop.id)}
                         />
                       )}
                       {client?.displayName && (
                         <TextLink
                           text="Client"
-                          onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, forAdmin, client.id)}
+                          onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, client.id)}
                         />
                       )}
                       {prop?.displayName && (
                         <TextLink
                           text="Job"
-                          onClick={() => openEventSearch("paymentsTabToJobsTabSearch", prop.displayName, forAdmin, p.occurrence?.id, p.occurrence?.startAt ?? null)}
+                          onClick={() => openEventSearch("paymentsTabToJobsTabSearch", prop.displayName, p.occurrence?.id ?? null)}
                         />
                       )}
                     </HStack>
@@ -2465,7 +2538,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       type DerivedRow = {
                         userId: string;
                         name: string;
-                        workerType: string | null | undefined;
+                        workerType: WorkerType | null | undefined;
                         share: number | null;     // gross share of pool
                         rate: number | null;       // fee %
                         deduction: number | null;  // fee dollars
@@ -2489,7 +2562,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       };
                       const realSplits = p.splits ?? [];
                       const promisedRows = (p.occurrence?.promisedPayouts ?? null) as Array<{
-                        userId: string; workerType: string | null;
+                        userId: string; workerType: WorkerType | null;
                         splitPercent: number; gross: number; ratePercent: number;
                         fee: number; net: number;
                       }> | null;
@@ -2564,7 +2637,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         derived = promisedRows.map((r) => {
                           const assignee = assigneesByUser.get(r.userId);
                           const wt = r.workerType ?? assignee?.user?.workerType ?? null;
-                          const isEmployeeClass = wt === "EMPLOYEE" || wt === "TRAINEE";
+                          const isEmployeeClass = isW2(wt);
                           return {
                             userId: r.userId,
                             name: assignee?.user?.displayName ?? assignee?.user?.email ?? r.userId,
@@ -2585,7 +2658,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                             tip: 0,
                             isOwner: false,
                             sharePctLabel: Math.round(r.splitPercent),
-                            contingent: !isEmployeeClass,
+                            contingent: isFeeable(wt),
                           };
                         });
                       }
@@ -2595,7 +2668,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         <VStack align="start" gap={1} mt={0.5}>
                           {derived.map((row) => {
                             const isSelected = selectedSet?.has(row.userId) ?? false;
-                            const isEmployeeClass = row.workerType === "EMPLOYEE" || row.workerType === "TRAINEE";
+                            const isEmployeeClass = isW2(row.workerType);
                             const deductionLabel = isEmployeeClass ? "margin" : "commission";
                             // Pending + contingent contractor: show the
                             // promised amount as "promised" rather than the
@@ -2711,7 +2784,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                     const skipped = !!(p as any).skippedAt;
                     const isPending = p.confirmed === false && !writtenOff && !skipped;
                     const promisedRows = (p.occurrence?.promisedPayouts ?? null) as Array<{
-                      userId: string; workerType: string | null; net: number;
+                      userId: string; workerType: WorkerType | null; net: number;
                     }> | null;
                     type EffectiveRow = { userId: string; displayName: string | null; payout: number; tip: number; contingent: boolean };
                     let effectiveRows: EffectiveRow[];
@@ -2730,14 +2803,14 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       effectiveRows = promisedRows.map((r) => {
                         const a = assigneesByUser.get(r.userId);
                         const wt = r.workerType ?? a?.user?.workerType ?? null;
-                        const isEmployeeClass = wt === "EMPLOYEE" || wt === "TRAINEE";
+                        const isEmployeeClass = isW2(wt);
                         return {
                           userId: r.userId,
                           displayName: a?.user?.displayName ?? a?.user?.email ?? null,
                           payout: isEmployeeClass ? r.net : 0,
                           // No tip yet — it's designated at approval.
                           tip: 0,
-                          contingent: !isEmployeeClass,
+                          contingent: isFeeable(wt),
                         };
                       });
                     } else {
@@ -2837,7 +2910,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                               <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
                             )}
                             {skipped && (
-                              <Badge size="sm" colorPalette="gray" variant="solid" title="Super-voided — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
+                              <Badge size="sm" colorPalette="gray" variant="solid" title="Voided — treated as if the service never happened. Excluded from every income/payroll/1099 aggregate.">
                                 Voided
                               </Badge>
                             )}
@@ -2984,7 +3057,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                 </Stack>
                 )}
               </Card.Body>
-              {!isCardCompact && isSuper && (
+              {!isCardCompact && canApproveMoney && (
               <Card.Footer>
                 <HStack gap={2} wrap="wrap">
                   <StatusButton
@@ -3063,7 +3136,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         {noCharge ? (
                           <Badge colorPalette="green" variant="subtle" fontSize="xs">No charge</Badge>
                         ) : (
-                          // Admin/Super view: rentals are INCOME to the
+                          // Oversight view: rentals are INCOME to the
                           // business (contractor pays the LLC to use
                           // company equipment). See memory/project_equipment_rental_income.md.
                           // Rendered green + positive sign to match the
@@ -3088,8 +3161,8 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         <Text color="fg.muted">
                           {c.user.displayName ?? c.user.email ?? c.user.id}
                         </Text>
-                        <Badge size="xs" colorPalette={(c.user as any).workerType === "EMPLOYEE" || (c.user as any).workerType === "TRAINEE" ? "blue" : "orange"} variant="subtle">
-                          {(c.user as any).workerType === "EMPLOYEE" ? "W-2" : (c.user as any).workerType === "TRAINEE" ? "Trainee" : (c.user as any).workerType === "CONTRACTOR" ? "1099" : "Unclassified"}
+                        <Badge size="xs" colorPalette={isW2((c.user as { workerType?: WorkerType | null }).workerType) ? "blue" : "orange"} variant="subtle">
+                          {payClassLabel((c.user as { workerType?: WorkerType | null }).workerType)}
                         </Badge>
                       </HStack>
                       {(() => {
@@ -3109,7 +3182,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                           </Text>
                         );
                       })()}
-                      {/* Per-day breakdown — same as worker view. Surfaces
+                      {/* Per-day breakdown — same as the self-scoped view. Surfaces
                           the "0 jobs → $0" math when per-job billing kicks
                           in. Only rendered when stored (recent checkouts). */}
                       {c.rentalBreakdown && c.rentalBreakdown.length > 0 && (
@@ -3135,7 +3208,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         No charge
                       </Badge>
                     ) : (
-                      // Admin/Super view: equipment rentals are INCOME
+                      // Oversight view: equipment rentals are INCOME
                       // (see compact view above and
                       // memory/project_equipment_rental_income.md).
                       <Text fontWeight="bold" color="green.fg" fontSize="lg" flexShrink={0} textAlign={{ base: "left", sm: "right" }}>
@@ -3325,7 +3398,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       if (!deleteChargeId) return;
                       setDeleteChargeBusy(true);
                       try {
-                        await apiDelete(`/api/admin/invoice-charges/${deleteChargeId}`);
+                        await apiDelete(`/api/invoice-charges/${deleteChargeId}`);
                         publishInlineMessage({ type: "SUCCESS", text: "Invoice charge deleted." });
                         setDeleteChargeId(null);
                         void load();
@@ -3373,81 +3446,100 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 // ─── Main Export ──────────────────────────────────────────────────────
 
 type PaymentsTabProps = TabPropsType & {
-  /** Additive scope — capabilities ADD as you climb the ladder.
-   *  scope.isWorker → own-payout view (Jobs + Equipment lists for `me`).
-   *  scope.isAdmin  → adds the admin worklist + all-workers totals.
-   *  scope.isSuper  → adds Pending Approvals, Outstanding Requests,
-   *                   edit/revert affordances, and the view-as picker.
-   *  Falls back to a scope derived from the legacy `purpose` prop when
-   *  not passed, so mounts still on the old shape keep working. */
-  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  /** What the caller may do, as capabilities. Three screens, chosen by
+   *  entitlement rather than by which shell mounted the tab:
+   *  (neither)        → the own-payout view: Jobs + Equipment for `me`.
+   *                     Issues no mutations at all.
+   *  `money.view`     → the oversight worklist and all-worker totals.
+   *  `money.approve`  → Pending Approvals, Outstanding Requests, the
+   *                     edit/revert affordances, and the view-as picker.
+   *                     EVERY payment mutation needs this one.
+   *  Absent fails closed — it grants nothing. */
+  scope?: Scope;
 };
 
-export default function PaymentsTab({ me, purpose = "WORKER", scope }: PaymentsTabProps) {
-  const { isAvail, forAdmin, isSuper: hasSuperRole } = determineRoles(me, purpose);
+export default function PaymentsTab({ me, scope }: PaymentsTabProps) {
 
   // Effective scope: prefer the additive prop; fall back to a scope
   // derived from `purpose` for any callsite still on the old shape.
   const effScope = scope ?? {
-    isWorker: purpose === "WORKER",
-    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
-    isSuper: purpose === "SUPER",
+    // Derived from CAPABILITIES, not from the shell that mounted
+    // this tab. These three read `purpose` and so answered
+    // "what may I do" with "where did you come from".
+    ...scopeFromMe(me),
+    
   };
   // Capabilities render additively AND are strictly governed by the
   // scope prop — not by the underlying role. Super scope inherits Admin
-  // capabilities so a super sees admin controls too.
-  const showWorkerExtras = effScope.isWorker;
-  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
-  const showSuperExtras = effScope.isSuper && hasSuperRole;
+  // capabilities so someone with `money.approve` sees the management controls too.
+  const canViewMoney = effScope.can("money.view");
+  // What this gates, per the route map.
+  const canApproveMoney = effScope.can("money.approve");
 
-  if (!isAvail && !showSuperExtras) return <UnavailableNotice />;
+  // NO EARLY REFUSAL. Holding neither capability is the third SCREEN, not
+  // a locked door: `WorkerPayments` below shows the caller their own
+  // payments from `/payments/mine`, an ownership route. This return made
+  // that branch — and the `view="own"` explainer written for it —
+  // unreachable, so a worker asking "what was I paid for that visit"
+  // got a notice telling them the tab was not for them.
 
-  // Super-only "view as worker" wrapper. Adds a multi-select picker at
-  // the top of the tab that, when one worker is selected, swaps the
-  // entire view to that worker's WorkerPayments rendering (with the
-  // server fetching their data via ?asUserId). With multiple workers
-  // selected, we stack one WorkerPayments per selected worker so the
-  // Super can compare worker-eye views side-by-side. With none, the
-  // normal admin worklist renders.
-  // Wrapped so every role gets the explainer above whichever view it lands
-  // on. The three views are entirely different screens, so the copy is too.
+  // The "view as worker" wrapper, on `money.approve`. Adds a multi-select
+  // picker at the top of the tab that, when one worker is selected, swaps
+  // the whole view to that worker's WorkerPayments rendering (the server
+  // fetches their data via ?asUserId). With several selected, one
+  // WorkerPayments stacks per worker so their views can be compared side
+  // by side. With none, the oversight worklist renders.
+  //
+  // The explainer sits above whichever of the three screens is chosen, and
+  // its copy varies with the same two capabilities — they are entirely
+  // different screens, so the orientation has to be too.
   return (
     <VStack align="stretch" gap={3}>
       <PaymentsExplainer
-        role={showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}
+        view={canApproveMoney ? "approvals" : canViewMoney ? "oversight" : "own"}
         workerType={me?.workerType ?? null}
+        scope={scope}
       />
-      {showSuperExtras ? (
-        <SuperPaymentsTabWithViewAs me={me} forAdmin={forAdmin} />
-      ) : showAdminExtras ? (
-        <AdminPayments forAdmin isSuper={showSuperExtras} />
+      {canApproveMoney ? (
+        <PaymentsWithViewAs me={me} scope={scope} />
+      ) : canViewMoney ? (
+        <PaymentsOversight canApproveMoney={canApproveMoney} scope={scope} />
       ) : (
-        <WorkerPayments me={me} forAdmin={forAdmin} />
+        <WorkerPayments me={me} />
       )}
     </VStack>
   );
 }
 
 function PaymentsExplainer({
-  role,
+  view,
   workerType,
+  scope,
 }: {
-  role: "worker" | "admin" | "super";
-  workerType: string | null;
+  /** Which of the three SCREENS this is, which is a layout question. The
+   *  sections below ask capabilities, not this. Named for what each screen
+   *  IS — it was `"worker" | "admin" | "super"`, which named three deleted
+   *  roles for a choice already being made from `money.view`/`money.approve`. */
+  view: "own" | "oversight" | "approvals";
+  workerType: WorkerType | null;
+  /** Capability answers for the sections. Absent fails closed. */
+  scope?: Scope;
 }) {
   // WRITTEN FROM THE ROUTE GUARDS, not from an idea of what each role does.
   //   • Every payment mutation — approve, reject, write-off, skip, revert,
-  //     adjust — is superGuard. An ADMIN has exactly two endpoints here,
-  //     both GET: /admin/payments and /admin/payments/equipment-charges.
+  //     adjust — requires `money.approve`. Without it there are exactly two
+  //     endpoints here, both GET: /payments and /payments/equipment-charges.
   //   • WorkerPayments issues no mutations at all.
   //   • A payment is RECORDED from the job card (AcceptPaymentDialog →
   //     POST /occurrences/:id/accept-payment), never from this tab.
-  // The first version of this copy said admins approve and workers record
+  // The first version of this copy said holders of `money.view` approve and workers record
   // here. Both were wrong, and both were guesses.
-  const isContractor = workerType === "CONTRACTOR";
+  // `isFeeable`, not `=== "CONTRACTOR"`: a raw string comparison is a
+  // second copy of the class rule that cannot follow the enum if it moves.
+  const isContractor = isFeeable(workerType);
   return (
     <TabExplainer
-      explainerId={`seedlings:paymentsTab:guideOpen:${role}${role === "worker" ? `:${isContractor ? "contractor" : "employee"}` : ""}`}
+      explainerId={`seedlings:paymentsTab:guideOpen:${view}${view === "own" ? `:${isContractor ? "contractor" : "employee"}` : ""}`}
     >
       <ExplainerText>
         Every job worked and what it was worth, with where each one has got to — waiting on
@@ -3469,24 +3561,23 @@ function PaymentsExplainer({
         </ExplainerText>
       )}
       <ExplainerText>
-        <Em>Unless it is called a tip.</Em> When a client overpays, a super can designate some
-        of that extra as a tip and set who it goes to. A tip reaches a worker on top of their
+        <Em>Unless it is called a tip.</Em> When a client overpays, whoever approves the
+        payment can designate some of that extra as a tip and set who it goes to. A tip reaches a worker on top of their
         pay <Em>without any fee or margin taken off it</Em>. Anything overpaid and not
-        designated stays with the business. Approving, adjusting, writing off and reverting
-        are all <Em>super-only</Em>.
+        designated stays with the business.
       </ExplainerText>
-      {role === "admin" && (
-        <RoleSection role="Admin">
+      {/* No `role ===` wrapper: the section renders on the capability, which
+          is the same thing the route checks. Keeping a surface condition on
+          top would mean two gates that can disagree. */}
+      <CapabilitySection capability="money.view" scope={scope}>
           <ExplainerText>
             You see every payment across the team, and the equipment charged against them —
             for <Em>visibility</Em>. The approval queue is not shown to you. Use this to answer
             &ldquo;has this been paid, and what did it come to&rdquo;; if a payment looks
-            wrong, it needs a super.
+            wrong, it needs someone who can approve payments.
           </ExplainerText>
-        </RoleSection>
-      )}
-      {role === "super" && (
-        <RoleSection role="Super">
+      </CapabilitySection>
+      <CapabilitySection capability="money.approve" scope={scope}>
           <ExplainerText>
             <Em>Pending approval</Em> lists what workers have recorded and is waiting on you.
             Approving is what <Em>moves the money</Em> — it writes each worker&rsquo;s split
@@ -3503,15 +3594,14 @@ function PaymentsExplainer({
             <Em>View as</Em> a worker renders this tab exactly as they see it — the quickest
             answer to &ldquo;why does my pay look wrong&rdquo;.
           </ExplainerText>
-        </RoleSection>
-      )}
+      </CapabilitySection>
     </TabExplainer>
   );
 }
 
 type ViewAsWorker = { id: string; displayName: string | null; workerType: any };
 
-function SuperPaymentsTabWithViewAs({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: boolean }) {
+function PaymentsWithViewAs({ me, scope }: { me: TabPropsType["me"]; scope?: Scope }) {
   // Mirrors the HomeTab "View as" picker — same Input + dropdown +
   // badge-row treatment, same colors, same persistedState lifecycle.
   // 0 selected = normal admin worklist; 1 = that worker's WorkerPayments
@@ -3522,11 +3612,20 @@ function SuperPaymentsTabWithViewAs({ me, forAdmin }: { me: TabPropsType["me"]; 
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
 
+  // `people.view` — the capability `/workers` is guarded on, not the one
+  // that opens this tab. Without it the picker was always empty and the
+  // refusal was swallowed, so "View as a worker" looked like it had no
+  // workers rather than like it was refused.
+  const canSeePeople = !!scope?.can?.("people.view");
   useEffect(() => {
+    if (!canSeePeople) {
+      setWorkers([]);
+      return;
+    }
     apiGet<Array<{ id: string; displayName: string | null; email?: string | null; workerType?: any }>>("/api/workers")
       .then((list) => setWorkers(Array.isArray(list) ? list.map((u) => ({ id: u.id, displayName: u.displayName, workerType: u.workerType })) : []))
       .catch(() => setWorkers([]));
-  }, []);
+  }, [canSeePeople]);
 
   useEffect(() => {
     if (!dropOpen) return;
@@ -3672,13 +3771,13 @@ function SuperPaymentsTabWithViewAs({ me, forAdmin }: { me: TabPropsType["me"]; 
       )}
 
       {selectedWorkerObjs.length === 0 ? (
-        <AdminPayments forAdmin isSuper />
+        <PaymentsOversight canApproveMoney scope={scope} />
       ) : selectedWorkerObjs.length === 1 ? (
         <WorkerPayments
           key={`single-${selectedWorkerObjs[0].id}`}
           me={me}
-          forAdmin={forAdmin}
           viewAs={selectedWorkerObjs[0]}
+          canSeeOthers
         />
       ) : (
         <VStack align="stretch" gap={4}>
@@ -3690,8 +3789,8 @@ function SuperPaymentsTabWithViewAs({ me, forAdmin }: { me: TabPropsType["me"]; 
               <WorkerPayments
                 key={`stack-${w.id}`}
                 me={me}
-                forAdmin={forAdmin}
                 viewAs={w}
+                canSeeOthers
               />
             </Box>
           ))}

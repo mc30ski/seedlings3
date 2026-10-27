@@ -2,7 +2,7 @@
 
 // Accounting tab (filename + component still "BusinessExpenses" for history —
 // the model is named BusinessExpense in Prisma and the API route prefix is
-// /api/admin/business-expenses; renaming any of those would be a wide blast
+// /api/business-expenses; renaming any of those would be a wide blast
 // radius for no functional gain, so the rename is label-only).
 //
 // Entry types (BusinessExpense.type discriminator, see schema.prisma):
@@ -61,6 +61,7 @@ import {
 } from "@chakra-ui/react";
 import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, CornerUpLeft, Eye, Flag, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import type { Scope } from "@/src/lib/scope";
 import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { bizToday, bizAddDays, bizStartOfMonth, bizStartOfYear, fmtDate, fmtDateOpts } from "@/src/lib/dates";
 import {
@@ -132,7 +133,7 @@ type BusinessExpense = {
   reconciledBy?: { id: string; displayName?: string | null; email?: string | null } | null;
   /** Set on the LATEST row of a recurring series when the operator
    *  explicitly ends it. Historical rows in the same series stay
-   *  null. See services/admin.ts end-recurrence-series. */
+   *  null. See routes/books.ts end-recurrence-series. */
   recurrenceEndedAt?: string | null;
   recurrenceEndedBy?: { id: string; displayName?: string | null; email?: string | null } | null;
 };
@@ -274,7 +275,7 @@ function rangeForExpensePreset(p: ExpensePreset): { from: string; to: string } {
   }
 }
 
-export default function BusinessExpensesTab() {
+export default function BusinessExpensesTab({ scope }: { scope?: Scope }) {
   const { categories, selectableCategories, lineFor } = useExpenseCategories();
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -314,7 +315,7 @@ export default function BusinessExpensesTab() {
   const isEquityFilter =
     filterType === "CAPITAL_CONTRIBUTION" || filterType === "OWNER_DRAW";
   const showSummaryFigures = !!summary && !isEquityFilter;
-  // Followups-only filter — Super-only affordance. Server passes flagOnly=true,
+  // Followups-only filter — `books.manage`. Server passes flagOnly=true,
   // which restricts the BE list to rows with an open LedgerFollowup.
   const [filterFollowupsOnly, setFilterFollowupsOnly] = useState(false);
   // Reconciliation filter — "" = all, "reconciled" | "unreconciled" =
@@ -437,7 +438,7 @@ export default function BusinessExpensesTab() {
   const [confirmAlreadyRecorded, setConfirmAlreadyRecorded] =
     useState<DueSoonSuggestion | null>(null);
 
-  // ── Ledger followups (Super-only flag/resolve UI) ────────────────────
+  // ── Ledger followups (`books.manage` flag/resolve UI) ────────────────────
   // Map keyed by `${entityType}:${entityId}` → open followup row, used to
   // render the flag affordance per-row. Refetched alongside the BE list.
   type FollowupRow = {
@@ -462,11 +463,11 @@ export default function BusinessExpensesTab() {
   async function loadFollowupMap() {
     try {
       const r = await apiGet<{ map: Record<string, FollowupRow> }>(
-        "/api/super/ledger-followups/map",
+        "/api/ledger-followups/map",
       );
       setFollowupMap(r.map ?? {});
     } catch {
-      // 403 for non-supers → leave map empty so the flag icons just don't render.
+      // 403 for non-holders of `settings.manage` → leave map empty so the flag icons just don't render.
       setFollowupMap({});
     }
   }
@@ -492,7 +493,7 @@ export default function BusinessExpensesTab() {
     if (!followupDialog || followupDialog.mode !== "flag") return;
     setFollowupSaving(true);
     try {
-      await apiPost("/api/super/ledger-followups", {
+      await apiPost("/api/ledger-followups", {
         entityType: "businessExpense",
         entityId: followupDialog.row.id,
         note: followupNoteDraft.trim() || null,
@@ -511,7 +512,7 @@ export default function BusinessExpensesTab() {
     if (!followupDialog || followupDialog.mode !== "edit") return;
     setFollowupSaving(true);
     try {
-      await apiPatch(`/api/super/ledger-followups/${followupDialog.existing.id}`, {
+      await apiPatch(`/api/ledger-followups/${followupDialog.existing.id}`, {
         note: followupNoteDraft.trim() || null,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Followup updated." });
@@ -533,7 +534,7 @@ export default function BusinessExpensesTab() {
       // happened" context on the audit row.
       const draft = followupNoteDraft.trim();
       const resolution = draft && draft !== (followupDialog.existing.note ?? "") ? draft : null;
-      await apiPost(`/api/super/ledger-followups/${followupDialog.existing.id}/resolve`, {
+      await apiPost(`/api/ledger-followups/${followupDialog.existing.id}/resolve`, {
         resolutionNote: resolution,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Followup resolved." });
@@ -566,18 +567,18 @@ export default function BusinessExpensesTab() {
       params.set("limit", String(pageSize));
       params.set("offset", String((page - 1) * pageSize));
       const qs = params.toString();
-      const resp = await apiGet<{ rows: BusinessExpense[]; total: number }>(`/api/admin/business-expenses${qs ? `?${qs}` : ""}`);
+      const resp = await apiGet<{ rows: BusinessExpense[]; total: number }>(`/api/business-expenses${qs ? `?${qs}` : ""}`);
       setExpenses(Array.isArray(resp?.rows) ? resp.rows : []);
       setTotal(typeof resp?.total === "number" ? resp.total : 0);
       const sumQs = new URLSearchParams();
       if (filterFrom) sumQs.set("from", filterFrom);
       if (filterTo) sumQs.set("to", filterTo);
-      const s = await apiGet<Summary>(`/api/admin/business-expenses/summary${sumQs.toString() ? `?${sumQs.toString()}` : ""}`);
+      const s = await apiGet<Summary>(`/api/business-expenses/summary${sumQs.toString() ? `?${sumQs.toString()}` : ""}`);
       setSummary(s);
       // Due-to-record suggestions (also global; recurrence is a property of
       // the series, not the current filter view).
       try {
-        const ds = await apiGet<DueSoonSuggestion[]>("/api/admin/business-expenses/due-soon");
+        const ds = await apiGet<DueSoonSuggestion[]>("/api/business-expenses/due-soon");
         setDueSoon(Array.isArray(ds) ? ds : []);
       } catch { /* non-fatal */ }
     } catch (err) {
@@ -589,9 +590,17 @@ export default function BusinessExpensesTab() {
 
   useEffect(() => {
     void load();
-    apiGet<EquipmentLite[]>("/api/equipment/all")
-      .then((list) => setEquipmentList(Array.isArray(list) ? list : []))
-      .catch(() => setEquipmentList([]));
+    // The equipment picker is a CONVENIENCE on this tab — it links a
+    // purchase to the machine it was for. `/api/equipment/all` needs
+    // `equipment.view`, which somebody who only keeps the books does not
+    // hold, so asking unconditionally meant a 403 every time they opened
+    // the Ledger. Without the list the picker simply offers nothing, which
+    // is the correct experience for them.
+    if (scope?.can("equipment.view")) {
+      apiGet<EquipmentLite[]>("/api/equipment/all")
+        .then((list) => setEquipmentList(Array.isArray(list) ? list : []))
+        .catch(() => setEquipmentList([]));
+    }
     apiGet<Array<{ key: string; value: string }>>("/api/settings")
       .then((rows) => {
         if (!Array.isArray(rows)) return;
@@ -639,7 +648,7 @@ export default function BusinessExpensesTab() {
   }, [q, filterFrom, filterTo, filterCategory, filterType, filterFollowupsOnly, filterReconciled, filterPaymentFrom, page, pageSize]);
 
   // Load the followup map once on mount and refresh on the cross-tab
-  // bus event. Quiet 403 (non-supers won't see the affordance anyway).
+  // bus event. Quiet 403 (non-holders of `settings.manage` won't see the affordance anyway).
   useEffect(() => {
     void loadFollowupMap();
     const onChanged = () => void loadFollowupMap();
@@ -681,7 +690,7 @@ export default function BusinessExpensesTab() {
   }
 
   // Supplies → Ledger handoff. The "Ledger: …" breadcrumb on a supply
-  // purchase stashes the expense id and dispatches navigate:superTab; consume
+  // purchase stashes the expense id and dispatches navigate:staffTab; consume
   // it here and open that entry.
   //
   // FETCHED BY ID, not found in `expenses`. The list is filtered to a
@@ -696,7 +705,7 @@ export default function BusinessExpensesTab() {
     let cancelled = false;
     (async () => {
       try {
-        const row = await apiGet<BusinessExpense>(`/api/admin/business-expenses/${pending}`);
+        const row = await apiGet<BusinessExpense>(`/api/business-expenses/${pending}`);
         if (!cancelled && row) openView(row);
       } catch (err) {
         if (!cancelled) {
@@ -800,7 +809,7 @@ export default function BusinessExpensesTab() {
     setDueSoon((rows) => rows.filter((r) => r.latestId !== s.latestId));
     try {
       await apiPost(
-        `/api/admin/business-expenses/${s.latestId}/end-recurrence-series`,
+        `/api/business-expenses/${s.latestId}/end-recurrence-series`,
         { ended: true },
       );
       window.dispatchEvent(new CustomEvent("seedlings:due-to-record-changed"));
@@ -831,7 +840,7 @@ export default function BusinessExpensesTab() {
   async function doRestartSeries(row: BusinessExpense) {
     try {
       await apiPost(
-        `/api/admin/business-expenses/${row.id}/end-recurrence-series`,
+        `/api/business-expenses/${row.id}/end-recurrence-series`,
         { ended: false },
       );
       window.dispatchEvent(new CustomEvent("seedlings:due-to-record-changed"));
@@ -862,7 +871,7 @@ export default function BusinessExpensesTab() {
     setDueSoon((rows) => rows.filter((r) => r.latestId !== s.latestId));
     try {
       await apiPost(
-        `/api/admin/business-expenses/${s.latestId}/skip-recurrence`,
+        `/api/business-expenses/${s.latestId}/skip-recurrence`,
         { skipDate: s.nextExpectedDate },
       );
       // Bump the alert count in the title bar + Tasks page shortcut.
@@ -892,7 +901,7 @@ export default function BusinessExpensesTab() {
     setDueSoon((rows) => rows.filter((r) => r.latestId !== s.latestId));
     try {
       await apiPost(
-        `/api/admin/business-expenses/${s.latestId}/skip-recurrence`,
+        `/api/business-expenses/${s.latestId}/skip-recurrence`,
         { skipDate: s.nextExpectedDate },
       );
       window.dispatchEvent(new CustomEvent("seedlings:due-to-record-changed"));
@@ -953,7 +962,7 @@ export default function BusinessExpensesTab() {
       };
       if (editing) {
         const updated = await apiPatch<{ nextExpectedDate?: string | null }>(
-          `/api/admin/business-expenses/${editing.id}`,
+          `/api/business-expenses/${editing.id}`,
           payload,
         );
         const updatedNextTail = updated?.nextExpectedDate
@@ -995,7 +1004,7 @@ export default function BusinessExpensesTab() {
                 latestDate: string;
                 recurrence: string;
               }>;
-            }>(`/api/admin/business-expenses/match-recurring?${params.toString()}`);
+            }>(`/api/business-expenses/match-recurring?${params.toString()}`);
             if (candidates.length > 0) {
               setContinuationCandidates(candidates);
               setSaving(false);
@@ -1012,7 +1021,7 @@ export default function BusinessExpensesTab() {
           }
         }
         const created = await apiPost<{ id: string; nextExpectedDate?: string | null }>(
-          "/api/admin/business-expenses",
+          "/api/business-expenses",
           payload,
         );
         // For recurring rows the API echoes back the next expected date;
@@ -1031,7 +1040,7 @@ export default function BusinessExpensesTab() {
             const body: Blob = isPdf ? file : await compressOnly(file);
             const contentType = isPdf ? "application/pdf" : "image/jpeg";
             const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-              `/api/admin/business-expenses/${created.id}/receipt/upload-url`,
+              `/api/business-expenses/${created.id}/receipt/upload-url`,
               { fileName: file.name, contentType },
             );
             const uploadRes = await fetch(uploadUrl, {
@@ -1042,7 +1051,7 @@ export default function BusinessExpensesTab() {
             if (!uploadRes.ok) {
               throw new Error(`Upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
             }
-            await apiPost(`/api/admin/business-expenses/${created.id}/receipt`, {
+            await apiPost(`/api/business-expenses/${created.id}/receipt`, {
               key,
               fileName: file.name,
               contentType,
@@ -1079,7 +1088,7 @@ export default function BusinessExpensesTab() {
 
   async function doDelete(id: string) {
     try {
-      await apiDelete(`/api/admin/business-expenses/${id}`);
+      await apiDelete(`/api/business-expenses/${id}`);
       publishInlineMessage({ type: "SUCCESS", text: "Expense deleted." });
       // Deleting a "latest" row makes an older row the group's latest
       // → could re-open a series as due-to-record. Recount.
@@ -1162,7 +1171,7 @@ export default function BusinessExpensesTab() {
     setReconcileSaving(row.id);
     try {
       const updated = await apiPost<BusinessExpense>(
-        `/api/admin/business-expenses/${row.id}/reconcile`,
+        `/api/business-expenses/${row.id}/reconcile`,
         { reconciled: nextValue },
       );
       setExpenses((prev) =>
@@ -1517,7 +1526,7 @@ export default function BusinessExpensesTab() {
           </HStack>
           {/* Followups-only toggle — amber pill that narrows the list to
               BusinessExpense rows with an open LedgerFollowup. Quiet for
-              non-supers since the flagged set is empty for them. */}
+              non-holders of settings authority since the flagged set is empty for them. */}
           <HStack mt={2} gap={2} justify="space-between" wrap="wrap">
             <HStack gap={2} wrap="wrap">
               <Button
@@ -1647,7 +1656,7 @@ export default function BusinessExpensesTab() {
                       onClick={async () => {
                         try {
                           const { url } = await apiGet<{ url: string }>(
-                            `/api/admin/business-expenses/${e.id}/receipt-url`,
+                            `/api/business-expenses/${e.id}/receipt-url`,
                           );
                           window.open(url, "_blank", "noopener,noreferrer");
                         } catch (err) {
@@ -1818,7 +1827,7 @@ export default function BusinessExpensesTab() {
                           px="2"
                           cursor="pointer"
                           _hover={{ bg: "teal.subtle" }}
-                          title="View this occurrence on the Admin Jobs tab"
+                          title="View this occurrence on the Jobs tab"
                           onClick={() => {
                             try {
                               localStorage.setItem(
@@ -1827,7 +1836,7 @@ export default function BusinessExpensesTab() {
                               );
                             } catch {}
                             window.dispatchEvent(
-                              new CustomEvent("navigate:adminTab", {
+                              new CustomEvent("navigate:staffTab", {
                                 detail: { tab: "jobs", remount: true },
                               }),
                             );
@@ -1849,7 +1858,7 @@ export default function BusinessExpensesTab() {
                           _hover={{ bg: "blue.subtle" }}
                           title="View this supply on the Supplies tab"
                           onClick={() => {
-                            // Hand off to the Super → Supplies tab. Same pattern as
+                            // Hand off to the Supplies tab. Same pattern as
                             // the Job badge above; the receiving tab loads on mount.
                             try {
                               localStorage.setItem(
@@ -1858,7 +1867,7 @@ export default function BusinessExpensesTab() {
                               );
                             } catch {}
                             window.dispatchEvent(
-                              new CustomEvent("navigate:superTab", {
+                              new CustomEvent("navigate:staffTab", {
                                 detail: { tab: "supplies" },
                               }),
                             );
@@ -1892,7 +1901,7 @@ export default function BusinessExpensesTab() {
                               );
                             } catch {}
                             window.dispatchEvent(
-                              new CustomEvent("navigate:adminTab", {
+                              new CustomEvent("navigate:staffTab", {
                                 detail: { tab: "equipment" },
                               }),
                             );

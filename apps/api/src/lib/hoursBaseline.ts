@@ -60,7 +60,7 @@ export type HoursBaseline = {
 /**
  * Is this duration usable as evidence of how long the job normally takes?
  *
- * Rejects the impossible (a negative span, from an admin editing timestamps
+ * Rejects the impossible (a negative span, from someone with `schedule.manage` editing timestamps
  * into the wrong order) and the implausible (a clock left running).
  */
 export function isUsableEvidence(personMinutes: number): boolean {

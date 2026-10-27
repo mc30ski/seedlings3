@@ -28,20 +28,34 @@ import { enqueueAction } from "@/src/lib/offlineQueue";
 
 type Props = {
   occurrenceId: string;
-  /** Super-only: allow holding a photo back from outward-facing surfaces
+  /** `displays.manage`: allow holding a photo back from outward-facing surfaces
    *  (wall displays, the public activity feed). The client's own portal and
-   *  invoice are unaffected — see JobOccurrencePhoto.hiddenFromPublicAt. */
+   *  invoice are unaffected — see JobOccurrencePhoto.hiddenFromPublicAt.
+   *  `POST /photos/:id/visibility` is guarded on "displays.manage". */
   canSetPublicVisibility?: boolean;
-  /** Use admin endpoints for viewing/deleting */
-  isAdmin?: boolean;
-  /** Allow uploads (workers on their own occurrences) */
+  /**
+   * Read the broader endpoints for viewing and deleting, rather than the
+   * ones scoped to your own occurrence.
+   *
+   * NAMED FOR A CAPABILITY, NOT A ROLE. Its doc said "use admin endpoints",
+   * which is the deleted model: there is no admin, there is
+   * "schedule.manage", and a custom role holding it is as entitled as any
+   * other. The name was already right; the sentence under it was not.
+   */
+  canManageSchedule?: boolean;
+  /**
+   * Allow uploads. `POST /occurrences/:id/photos/confirm` is guarded on
+   * "schedule.contribute", so that is what a caller reads this from — not
+   * "is this person a worker", which was the old phrasing and has no
+   * answer for a custom role.
+   */
   canUpload?: boolean;
   /** Number of photos (from _count) to show in the header */
   photoCount?: number;
 };
 
 
-export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, photoCount, canSetPublicVisibility }: Props) {
+export default function OccurrencePhotos({ occurrenceId, canManageSchedule, canUpload, photoCount, canSetPublicVisibility }: Props) {
   const { isOffline } = useOffline();
   const [photos, setPhotos] = useState<OccurrencePhoto[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -50,7 +64,7 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
   const [viewPhoto, setViewPhoto] = useState<OccurrencePhoto | null>(null);
   const [expanded, setExpanded] = useState(false);
 
-  const basePath = isAdmin ? `/api/admin/occurrences/${occurrenceId}/photos` : `/api/occurrences/${occurrenceId}/photos`;
+  const basePath = `/api/occurrences/${occurrenceId}/photos`;
 
   async function loadPhotos(force = false) {
     if (!force && loaded) return;
@@ -184,7 +198,7 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
     // trip before the label changes reads as the button not working.
     setPhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, hiddenFromDisplay: next } : p)));
     try {
-      await apiPost(`/api/super/photos/${photo.id}/visibility`, { hidden: next });
+      await apiPost(`/api/photos/${photo.id}/visibility`, { hidden: next });
       publishInlineMessage({
         type: "SUCCESS",
         text: next
@@ -199,8 +213,8 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
 
   async function handleDelete(photo: OccurrencePhoto) {
     try {
-      if (isAdmin) {
-        await apiDelete(`/api/admin/photos/${photo.id}`);
+      if (canManageSchedule) {
+        await apiDelete(`/api/photos/${photo.id}`);
       } else {
         await apiDelete(`/api/occurrences/${occurrenceId}/photos/${photo.id}`);
       }

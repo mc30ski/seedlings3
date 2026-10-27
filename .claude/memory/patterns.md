@@ -1,6 +1,6 @@
 ---
 name: patterns-legacy-reference
-description: "Legacy long-form reference for tab/route/service code patterns. Predates the 2026-08-21 tab-blend refactor — prefer [[reference-tab-blend-pattern]] and [[reference-tab-ordering]] for current tab conventions."
+description: "Legacy long-form reference for API route/service scaffolding. Its tab template was deleted 2026-10-17 — for tabs read [[reference-tab-blend-pattern]] and [[reference-tab-ordering]] instead."
 metadata:
   node_type: memory
   type: reference
@@ -16,135 +16,42 @@ Since the 2026-08-21 tab-blend refactor ([[project-tab-refactor-2026-08-21]]),
 role-aware tabs use the additive-scope prop pattern documented in
 [[reference-tab-blend-pattern]] and the canonical top-tab / sub-tab
 ordering in [[reference-tab-ordering]]. Prefer those over this file for
-new tab work. The Route/Service patterns below still apply.
+new tab work.
+
+**Historical note (2026-10-13):** the API Route pattern below was REWRITTEN.
+The role-guard version it used to show cannot compile — `requireRole` and the
+`Role` enum are deleted. The Service pattern still applies.
 
 ## Web Tab Pattern (apps/web/src/ui/tabs/)
 
+> **THE TAB TEMPLATE THAT WAS HERE IS DELETED.** It showed a `purpose`
+> prop, the `Role` enum, a surface-flag factory and a per-role endpoint
+> split — all gone. The route and service scaffolding
+> further down is still accurate. For tabs, read
+> [[reference-tab-blend-pattern]].
+
 ### Props
-- Legacy tabs use `TabPropsType` = `{ me: Me | null; purpose: Role }` (Role = "WORKER"|"ADMIN"|"SUPER"). **Blended tabs now also accept a `scope: { isWorker, isAdmin, isSuper }` prop — see [[reference-tab-blend-pattern]].**
-- Older stubs (Users, Activity, AuditLog) used `{ role: "worker" | "admin" }` — this was normalized during the 2026-08-21 blend refactor.
+- Tabs take `TabPropsType` + `scope?: Scope`, where `Scope` is `{ can }`.
+  There is no `purpose` and no `Role`: both are deleted. A tab asks
+  `scope.can("x.manage")` for the capability the control's own route is
+  guarded on.
 
 ### Standard Tab Structure
-```tsx
-"use client";
-// imports: Chakra (Box, Button, Card, HStack, VStack, Spacer, Text, Select, createListCollection)
-// local: apiGet, apiPost, apiDelete, determineRoles, prettyStatus, XStatusColor
-// types: TabPropsType, X_STATUS, X_KIND, type X
-// components: publishInlineMessage, getErrorMessage, UnavailableNotice, LoadingCenter,
-//             SearchWithClear, StatusBadge, StatusButton, DeleteDialog, XDialog
 
-const kindStates = ["ALL", ...X_KIND] as const;
-const statusStates = ["ALL", ...X_STATUS] as const;
+**Deleted 2026-10-17.** A ~115-line template lived here showing a tab built
+from a `purpose` prop and a surface-flag factory, with one endpoint per
+role. Every mechanism in it is gone, and a template
+is the worst place to leave dead shapes — it exists to be copied.
 
-export default function XTab({ me, purpose = "WORKER" }: TabPropsType) {
-  const { isSuper, isAvail, forAdmin } = determineRoles(me, purpose);
+For tabs, read [[reference-tab-blend-pattern]]: one tab per feature,
+`scope.can(entitlement)` for what is on it, `TAB_REQUIREMENTS` for whether
+it appears at all.
 
-  // Filter state
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState<string>("ALL");
-  const [kind, setKind] = useState<string[]>(["ALL"]);
-
-  // Data state
-  const [items, setItems] = useState<X[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  // Dialog state
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState<X | null>(null);
-  const [toDelete, setToDelete] = useState<ToDeleteProps | null>(null);
-
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
-
-  // Dropdown collection for kind filter
-  const kindItems = useMemo(() => kindStates.map(s => ({ label: prettyStatus(s), value: s })), []);
-  const kindCollection = useMemo(() => createListCollection({ items: kindItems }), [kindItems]);
-
-  async function load(displayLoading = true) {
-    setLoading(displayLoading);
-    try {
-      const base = forAdmin ? "/api/admin/x" : "/api/x";
-      const list: X[] = await apiGet(base);
-      setItems(list.sort((a, b) => a.displayName.localeCompare(b.displayName)));
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load.", err) });
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { void load(); }, [forAdmin]);
-
-  const filtered = useMemo(() => {
-    let rows = items;
-    if (kind[0] !== "ALL") rows = rows.filter(i => i.kind === kind[0]);
-    if (status !== "ALL") rows = rows.filter(i => i.status === status);
-    const qlc = q.trim().toLowerCase();
-    if (qlc) rows = rows.filter(r => [r.displayName, ...otherFields].some(f => f.toLowerCase().includes(qlc)));
-    return rows;
-  }, [items, q, kind, status]);
-
-  if (!isAvail) return <UnavailableNotice />;
-  if (loading) return <LoadingCenter />;
-
-  return (
-    <Box w="full">
-      {/* Filter bar */}
-      <HStack mb={3} gap={3}>
-        <SearchWithClear ref={inputRef} value={q} onChange={setQ} inputId="x-search" placeholder="Search…" />
-        <Select.Root ...>...</Select.Root>
-        <Spacer />
-        {forAdmin && <Button onClick={openCreate}>New</Button>}
-      </HStack>
-      {/* Status toggle buttons */}
-      <HStack mb={3} gap={2} wrap="wrap">
-        {statusStates.map(s => (
-          <Button key={s} size="sm" variant={status === s ? "solid" : "outline"} onClick={() => setStatus(s)}>
-            {prettyStatus(s)}
-          </Button>
-        ))}
-      </HStack>
-      {/* List */}
-      <VStack align="stretch" gap={3}>
-        {!loading && filtered.length === 0 && <Box p="8" color="fg.muted">No items match.</Box>}
-        {filtered.map(item => (
-          <Card.Root key={item.id} variant="outline">
-            <Card.Header pb="2">
-              <HStack gap={3} justify="space-between" align="center">
-                <HStack gap={3} flex="1" minW={0}>
-                  <Text fontWeight="semibold">{item.displayName}</Text>
-                  <StatusBadge status={item.status} palette={xStatusColor(item.status)} variant="subtle" />
-                </HStack>
-                <StatusBadge status={item.kind} palette="gray" variant="outline" />
-              </HStack>
-            </Card.Header>
-            <Card.Body pt="0">...</Card.Body>
-            {forAdmin && (
-              <Card.Footer>
-                <HStack gap={2} wrap="wrap" mb="2">
-                  <StatusButton id="x-edit" itemId={item.id} label="Edit" onClick={...} variant="outline"
-                    disabled={loading} busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
-                  {/* Conditional action buttons based on status */}
-                </HStack>
-              </Card.Footer>
-            )}
-          </Card.Root>
-        ))}
-      </VStack>
-      {/* Dialogs at bottom */}
-      {forAdmin && <XDialog open={dialogOpen} onOpenChange={setDialogOpen} mode={editing ? "UPDATE" : "CREATE"}
-        role={forAdmin ? "ADMIN" : "WORKER"} initial={editing ?? undefined} onSaved={() => void load()} />}
-      {forAdmin && <DeleteDialog toDelete={toDelete} cancel={() => setToDelete(null)}
-        complete={async () => { if (!toDelete) return; await hardDelete(toDelete.id, toDelete.extra ?? ""); setToDelete(null); }} />}
-    </Box>
-  );
-}
-```
+The route and service scaffolding below is still accurate.
 
 ### Action Helpers
-- `doAction(item, "Name", "domain", "action", "nameField", () => load(false))` — POST `/api/admin/{domain}/{id}/{action}`
-- `doDelete(id, "Name", "domain", displayName, () => load(false))` — DELETE `/api/admin/{domain}/{id}`
+- `doAction(item, "Name", "domain", "action", "nameField", () => load(false))` — POST `/api/{domain}/{id}/{action}`
+- `doDelete(id, "Name", "domain", displayName, () => load(false))` — DELETE `/api/{domain}/{id}`
 - Direct `apiPost`/`apiDelete` for nested resources (e.g., contacts on a client)
 
 ### Types Pattern (apps/web/src/lib/types.ts)
@@ -162,36 +69,68 @@ export type X = {
 };
 ```
 
-## API Route Pattern (apps/api/src/routes/admin.ts)
+## API Route Pattern (apps/api/src/routes/<resource>.ts)
+
+**The old pattern in this slot was deleted, not deprecated.** It taught
+a role-named guard built from `requireRole`, mounted on a role-named path.
+`requireRole`, `RoleVal` and the `Role` enum no longer exist, the per-role
+route files are gone, and **no route path or guard may carry a role name** —
+G24b and the permissions gate fail the build on either. See
+[[reference-capabilities-model]].
+
+Routes live in a file named for the RESOURCE. Guards are built once per file
+from `makeGuards(app)` and named for the entitlement they require:
 
 ```ts
-const adminGuard = { preHandler: (req, reply) => app.requireRole(req, reply, RoleVal.ADMIN) };
+import { makeGuards } from "../lib/routeGuards";
+import { currentUserId } from "./_shared";
 
-// GET list
-app.get("/admin/x", adminGuard, async (req: any) => {
-  const { q, status, limit } = (req.query || {}) as { q?: string; status?: string; limit?: string };
-  return services.x.list({ q, status: status as any, limit: limit ? Number(limit) : undefined });
-});
+export default async function vehicleRoutes(app: FastifyInstance) {
+  const { requires, approvedUser } = makeGuards(app);
+  const req_equipmentView   = requires("equipment.view");
+  const req_equipmentManage = requires("equipment.manage");
 
-// GET single
-app.get("/admin/x/:id", adminGuard, async (req: any) => services.x.get(String(req.params.id)));
+  // Read
+  app.get("/vehicles", req_equipmentView, async (req: any) =>
+    services.vehicles.list({ includeArchived: req.query?.includeArchived === "true" }));
 
-// POST create
-app.post("/admin/x", adminGuard, async (req: any) =>
-  services.x.create(await currentUserId(req), req.body));
+  app.get("/vehicles/:id", req_equipmentView, async (req: any) =>
+    services.vehicles.get(String(req.params.id)));
 
-// PATCH update
-app.patch("/admin/x/:id", adminGuard, async (req: any) =>
-  services.x.update(await currentUserId(req), String(req.params.id), req.body));
+  // Write — same resource, a different entitlement
+  app.post("/vehicles", req_equipmentManage, async (req: any) =>
+    services.vehicles.create(await currentUserId(req), req.body ?? {}));
 
-// POST action (status transitions)
-app.post("/admin/x/:id/action", adminGuard, async (req: any) =>
-  services.x.action(await currentUserId(req), String(req.params.id)));
+  app.patch("/vehicles/:id", req_equipmentManage, async (req: any) =>
+    services.vehicles.update(await currentUserId(req), String(req.params.id), req.body));
 
-// DELETE
-app.delete("/admin/x/:id", adminGuard, async (req: any) =>
-  services.x.hardDelete(await currentUserId(req), String(req.params.id)));
+  app.delete("/vehicles/:id", req_equipmentManage, async (req: any) =>
+    services.vehicles.hardDelete(await currentUserId(req), String(req.params.id)));
+
+  // "My own X" — approved caller, then scope the query to them yourself.
+  // `approvedUser` is NOT an entitlement: a check everyone passes is not a
+  // check. G24c treats it on a non-ownership route as privilege escalation.
+  app.get("/me/vehicle-log", approvedUser, async (req: any) =>
+    services.vehicles.logFor(await currentUserId(req)));
+}
 ```
+
+Rules that are mechanically enforced:
+
+- **One endpoint per thing.** There is no per-role endpoint pair to write;
+  an endpoint reads the caller's entitlements and responds accordingly.
+- **Inside a handler**, ask `callerCan(req, "x.y")` — it reads `req.principal`
+  and so honours the active perspective. For somebody else,
+  `userCan(db, id, cap)`. **Never** re-read the caller from the DB; that
+  restores their real powers through a lens and has shipped 3×. A service that
+  needs the question takes a `CallerCan` parameter (`callerCanFn(req)`).
+- **Register the route in the map.** `docs/features/permissions-ROUTE-MAP.md`
+  is generated from the guards and G5 fails the build if the two disagree.
+- **Every mutation writes an AuditEvent in the same edit** —
+  [[feedback-audit-every-mutation]].
+- Fastify treats `/x/:id` and `/x/:occurrenceId` as the SAME route. Differing
+  param names in one path family is a duplicate-route boot failure, not a
+  naming choice.
 
 ## API Service Pattern (apps/api/src/services/x.ts)
 

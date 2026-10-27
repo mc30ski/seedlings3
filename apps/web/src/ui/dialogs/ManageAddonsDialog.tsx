@@ -56,9 +56,11 @@ type Props = {
   onClose: () => void;
   /** Service-type config from settings (drives the tag chip list + labels). */
   serviceTypes: ServiceTypeConfig[];
-  /** Admin view → uses /api/admin/occurrences/:id/addons; worker view →
+  /** Management view → uses /api/occurrences/:id/addons; self-scoped view →
    *  /api/occurrences/:id/addons (claimer-or-admin guard on the server). */
-  forAdmin?: boolean;
+  /** Renamed from `canManageSchedule`: it gates writes, which need
+   *  `schedule.manage`. */
+  canManageSchedule?: boolean;
   /** The services already on this visit. The caller has them loaded, so the
    *  dialog takes them rather than adding a round-trip; local state tracks
    *  add/remove from there. */
@@ -75,7 +77,7 @@ type Props = {
    *  outstanding. Adding a service changes what they owe, so the operator is
    *  warned to re-send. Null when nothing is in flight. */
   sentInvoiceAmount?: number | null;
-  /** Impersonated worker's display name, when an admin is viewing-as. */
+  /** Impersonated worker's display name, when someone with `schedule.manage` is viewing-as. */
   viewAsName?: string | null;
 };
 
@@ -229,7 +231,7 @@ function AddonFields({
 }
 
 export default function AddAddonDialog({
-  occurrenceId, onClose, serviceTypes, forAdmin, onAdded, onRemoved,
+  occurrenceId, onClose, serviceTypes, canManageSchedule, onAdded, onRemoved,
   addons = null, canRemove = false,
   sentInvoiceAmount = null, viewAsName = null,
 }: Props) {
@@ -264,7 +266,9 @@ export default function AddAddonDialog({
   const [guideOpen, setGuideOpen] = useState(false);
 
   const jobTagLabel = (t: string) => _jobTagLabel(t, serviceTypes);
-  const pricingEndpoint = forAdmin ? "/api/admin/pricing" : "/api/pricing";
+  // One endpoint — this was a ternary with two identical arms, left
+  // over from when admin and worker had separate pricing routes.
+  const pricingEndpoint = "/api/pricing";
 
   useEffect(() => {
     if (!occurrenceId) return;
@@ -303,7 +307,7 @@ export default function AddAddonDialog({
     setRemoveBusy(true);
     try {
       await apiDelete(
-        `/api/${forAdmin ? "admin/" : ""}occurrences/${occurrenceId}/addons/${addon.id}`,
+        `/api/occurrences/${occurrenceId}/addons/${addon.id}`,
       );
       setList((prev) => prev.filter((a) => a.id !== addon.id));
       publishInlineMessage({ type: "SUCCESS", text: "Service removed." });
@@ -334,7 +338,7 @@ export default function AddAddonDialog({
     setBusy(true);
     try {
       const saved = await apiPatch<ManagedAddon>(
-        `/api/${forAdmin ? "admin/" : ""}occurrences/${occurrenceId}/addons/${editingId}`,
+        `/api/occurrences/${occurrenceId}/addons/${editingId}`,
         {
           tag: editTag || null,
           customLabel: editCustomLabel.trim() || null,
@@ -361,7 +365,7 @@ export default function AddAddonDialog({
     setBusy(true);
     try {
       const created = await apiPost<{ id: string; tag?: string | null; customLabel?: string | null; price: number }>(
-        `/api/${forAdmin ? "admin/" : ""}occurrences/${occurrenceId}/addons`,
+        `/api/occurrences/${occurrenceId}/addons`,
         {
           tag: tag || undefined,
           customLabel: customLabel.trim() || undefined,

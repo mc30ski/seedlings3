@@ -376,7 +376,7 @@ export default function ClientFeedTab() {
 
 // Thin wrappers over the shared SafePhoto component so call sites stay
 // the same while gaining "broken photo → hide square" behavior. R2
-// objects do get cleaned up over time (e.g. when admins prune old jobs)
+// objects do get cleaned up over time (e.g. when holders of `clients.manage` prune old jobs)
 // and the previous shimmer would otherwise run forever for missing
 // images.
 function LazyImage({ src, alt, onClick }: { src: string; alt: string; onClick?: () => void }) {

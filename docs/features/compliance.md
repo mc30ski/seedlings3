@@ -1,11 +1,11 @@
 # Compliance — Feature Reference
 
-> **Purpose.** Give every worker (employee, contractor, trainee) a paper
+> **Purpose.** Give every worker (employee, contractor, unpaid) a paper
 > trail proving they've read, signed, and — where applicable — uploaded
 > the documents the business requires (handbook, vehicle policy, insurance
 > proof, driver's license, etc.). The system enforces at three levels
 > (BLOCK / WARN / INFO), supports version control with 2-eyes publish, and
-> gives admins an exception mechanism for edge cases.
+> gives holders of `compliance.manage` an exception mechanism for edge cases.
 >
 > This document is the **canonical spec** for how compliance is supposed
 > to work. If code and doc disagree, one of them is wrong — fix both, in
@@ -20,8 +20,8 @@ PolicyDocument                 One row per policy (e.g., "Handbook v3")
   ├── versions[]:              Full version history (Draft → Published)
   ├── targetWorkerTypes:       Which worker types must sign
   ├── enforcement:             BLOCK | WARN | INFO
-  ├── workerAction:            SIGN | SIGN_AND_UPLOAD | ACKNOWLEDGE | NONE
-  ├── resignTrigger:           ONE_TIME | DAYS_SINCE_SIGN | ANNIVERSARY
+  ├── workerAction:            SIGN | ACKNOWLEDGE | NONE
+  ├── resignTrigger:           ONE_TIME | DAYS_SINCE_SIGN | ANNIVERSARY | ANNUAL_ON_DATE
   ├── requiresWorkerUpload:    Does the worker upload a file?
   └── archivedAt:              Soft-delete timestamp
 
@@ -47,7 +47,7 @@ PolicyException                Time-bounded excuse from a specific policy
   ├── userId + policyDocumentId
   ├── grantedById + reason
   ├── expiresAt:               Hard cutoff
-  └── revokedAt + revokedById: Admin can rescind early
+  └── revokedAt + revokedById: `compliance.manage` can rescind early
 
 PolicyReadingProgress          Per-page dwell tracking for PDFs
   └── pageNumber + firstViewedAt + totalDwellMs
@@ -70,11 +70,11 @@ equipment.requiredPolicyIds, workday-start guard, etc.).
 | Action | What the worker does | Backend side effect |
 |--------|----------------------|---------------------|
 | SIGN | Types their name exactly | `PolicySignature` created with `typedNameRaw + Normalized` |
-| SIGN_AND_UPLOAD | Types name + uploads a file | Same, plus `uploadR2Key + uploadDigest + uploadStatus=PENDING_REVIEW` |
+| SIGN + `requiresWorkerUpload` | Types name AND uploads a file | Same, plus `uploadR2Key + uploadDigest + uploadStatus=PENDING_REVIEW`. **There is no `SIGN_AND_UPLOAD` action** — uploading is an independent boolean on the policy, so any action can require it. |
 | ACKNOWLEDGE | Clicks "I acknowledge" (no typing) | `PolicySignature` with `workerActionAtSign=ACKNOWLEDGE`, `typedNameRaw=null` |
 | NONE | Worker never sees it | Admin uploads on behalf; `PolicySignature` with `signedByUserId=admin`, `onBehalfOfUserId=worker` |
 
-**Name-match validation** — for SIGN/SIGN_AND_UPLOAD, the client and
+**Name-match validation** — for SIGN, the client and
 server both normalize the typed name (NFD → strip diacritics + smart
 quotes → lowercase → collapse whitespace) and compare against the
 worker's displayName. Server-side is authoritative; client-side is UX
@@ -106,7 +106,7 @@ The compliance state surfaces to workers in four places:
    - Positioned below `HomeBanners` (admin announcements) + the push-notification enablement card.
    - Hidden while impersonating (`disabled={isViewingOther}`).
    - Refetches on `policies:signed` and `policies:changed` events.
-   - **Never renders in Admin team modes.** On Admin → Work → Home the
+   - **Never renders in Admin team modes.** On Work → Home the
      view-as picker has three states: 0 workers selected (All Workers
      aggregate), N selected (subset), and exactly 1 selected (view-as).
      `MyDashboard` — and therefore this banner — mounts only in the
@@ -163,8 +163,8 @@ in-sync across independent components. All are `window`-level.
 | `policies:required` | CompliancePromptBanner "Sign now", gated actions | PolicyGateInterceptor | Open the sign wizard for pending policies |
 | `policies:signed` | PolicySignWizard after each successful sign | CompliancePromptBanner, index.tsx counts | Refresh — a signature was just written |
 | `policies:wizard-closed` | PolicyGateInterceptor on any wizard close (Cancel or after completion), with `detail: { completed: boolean }` | `lib/api.ts` POLICIES_REQUIRED branch | Signal for api.ts auto-retry: if `completed=true`, retry the original request that triggered the wizard; if `completed=false`, throw. |
-| `policies:changed` | Admin operations (grant exception, publish v2, etc.) | CompliancePromptBanner, index.tsx counts | Refresh — server-side state changed |
-| `navigate:profile` | CompliancePromptBanner "View profile" | index.tsx | Switch top tab → worker/Profile. Pushes onto nav history so the back button returns to Home. |
+| `policies:changed` | `compliance.manage` operations (grant exception, publish v2, etc.) | CompliancePromptBanner, index.tsx counts | Refresh — server-side state changed |
+| `navigate:profile` | CompliancePromptBanner "View profile" | index.tsx | Switch to the staff shell's Profile tab. Pushes onto nav history so the back button returns to Home. |
 
 ## Auto-retry on gated requests
 
@@ -186,7 +186,7 @@ resolved promise or the original error.
 
 ## Exception mechanism
 
-Admins can grant a `PolicyException` for a specific worker + policy with
+Holders of `compliance.manage` can grant a `PolicyException` for a specific worker + policy with
 an `expiresAt` and `reason`. While active (`expiresAt > now AND revokedAt IS NULL`):
 
 - The policy does **not** appear in `required[]` for that worker
@@ -251,8 +251,8 @@ combinations.
 - `compliance-wizard.spec.ts` — Cancel button + `policies:wizard-closed` event dispatch (both `completed: true` and `completed: false` paths)
 - `compliance-autoretry.spec.ts` — end-to-end auto-retry: tap Start workday → gate fires → sign wizard → sign → workday actually starts. Load-bearing test for the `api.ts` retry mechanism.
 - `compliance-nav.spec.ts` — View Profile navigation + back-button return
-- `compliance-admin-matrix.spec.ts` — Sign Matrix worker-type chips + unclassified-workers warning (runs under the `super` Playwright project)
-- `compliance-admin-actions.spec.ts` — archive dialog closes drawer, unclassified warning surfaces with scratch user, upload file-type picker saves correct MIME string. Runs under the `super` Playwright project.
+- `compliance-owner-matrix.spec.ts` — Sign Matrix worker-type chips + unclassified-workers warning (runs under the `super` Playwright project)
+- `compliance-owner-actions.spec.ts` — archive dialog closes drawer, unclassified warning surfaces with scratch user, upload file-type picker saves correct MIME string. Runs under the `super` Playwright project.
 
 Run with:
 
@@ -266,24 +266,30 @@ so no passwords are stored anywhere. Storage state cached to
 
 ## Known limitations / non-goals
 
-- **Wizard doesn't re-fetch on open** — if an admin deletes/archives a
+- **Wizard doesn't re-fetch on open** — if someone with `compliance.manage` deletes/archives a
   policy while a worker's wizard is open, the wizard shows the stale
   snapshot. Not currently blocking; users hitting this can close and
   reopen.
-- **Signature revocation is admin-only** — workers can't revoke a
+- **Signature revocation needs `compliance.manage`** — nobody else can revoke a
   self-signature. Intentional — audit integrity.
-- **No push notification for neglected compliance** — the Home banner +
-  alerts dropdown + tasks page are the only reminders. Push was proposed
-  but not built.
+- **No AUTOMATIC push for neglected compliance** — there is no cron that
+  chases a late signer. The passive reminders are the Home banner, the
+  alerts dropdown and the tasks page. Two push paths DO exist, both
+  deliberate acts rather than a schedule:
+  - `POST /policies/nudge` (`compliance.manage`) → `nudgeWorker`, a manual
+    one-person reminder. Silent no-op when the target has no push
+    subscription; 400 when they have nothing pending.
+  - `Policy.notifyOnPublish` (`PolicyNotifyChannel.PUSH_ONLY` by default, or
+    `ALL_CHANNELS`) fires once when a version is published.
 
 ## Recent changes worth knowing about
 
-- **Team-mode banner removed** (2026-08-24) — Admin → Work → Home in
+- **Team-mode banner removed** (2026-08-24) — Work → Home in
   aggregate ("All Workers") or subset mode no longer renders a
   self-scoped `CompliancePromptBanner`. It had been kept alive there
-  precisely so an admin parked in Team overview would still see their own
+  precisely so someone with `compliance.manage` parked in Team overview would still see their own
   BLOCK-level items; that reasoning was overridden by a product decision.
-  The Admin surface is for a team overview, or for one selected worker
+  the surface is for a team overview, or for one selected worker
   whose view you inspect and act on behalf of — the operator's own items
   belong in MY WORKDAY (Work role, or Admin role with yourself selected).
   A first-person banner above a team roster read as if it described the

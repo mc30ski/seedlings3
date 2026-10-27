@@ -7,7 +7,7 @@ metadata:
 
 # Local `.env` is TEST Clerk — even when the DB is production
 
-`apps/api/.env` has `CLERK_SECRET_KEY="sk_test_…"` and `apps/web/.env` has
+`apps/api/.env` has `CLERK_SECRET_KEY="sk_test_…"` and `apps/web/.env.local` has
 `pk_test_…`. The **production** Clerk keys exist only in Vercel's
 environment variables.
 

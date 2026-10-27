@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { planClaimerRepair, type ClaimerAssigneeRow } from "./claimerInvariant";
+import {
+  planClaimerRepair,
+  planObserverOnlyDemotions,
+  canHoldPaidSeat,
+  type ClaimerAssigneeRow,
+} from "./claimerInvariant";
 
 const T0 = new Date("2026-09-01T12:00:00Z");
 const at = (mins: number) => new Date(T0.getTime() + mins * 60_000);
@@ -115,5 +120,96 @@ describe("planClaimerRepair", () => {
     ]);
     expect(a.claimerUserId).toBe("ua");
     expect(b.claimerUserId).toBe("ua");
+  });
+});
+
+describe("planObserverOnlyDemotions — only a paid person takes a paid seat", () => {
+  it("leaves a crew of paid people alone", () => {
+    expect(
+      planObserverOnlyDemotions([
+        row({ id: "r1", userId: "emp", workerType: "EMPLOYEE" }),
+        row({ id: "r2", userId: "con", workerType: "CONTRACTOR" }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("demotes an UNPAID person out of a paid seat", () => {
+    // The case this exists for: an unpaid family member added to a visit.
+    // Priced, computeBreakdown would refuse the whole completion.
+    expect(
+      planObserverOnlyDemotions([
+        row({ id: "r1", userId: "emp", workerType: "EMPLOYEE" }),
+        row({ id: "r2", userId: "wife", workerType: "UNPAID" }),
+      ]),
+    ).toEqual([{ id: "r2", userId: "wife", workerType: "UNPAID" }]);
+  });
+
+  it("demotes someone whose worker type was never set", () => {
+    // Nobody can be paid before it is decided how they are paid.
+    expect(
+      planObserverOnlyDemotions([row({ id: "r1", userId: "new", workerType: null })]),
+    ).toEqual([{ id: "r1", userId: "new", workerType: null }]);
+  });
+
+  it("leaves an UNPAID person who is already an observer alone", () => {
+    // That is the seat they are supposed to hold — no churn.
+    expect(
+      planObserverOnlyDemotions([
+        row({ id: "r1", userId: "wife", role: "observer", assignedById: null, workerType: "UNPAID" }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("does NOT demote when workerType was not loaded", () => {
+    // The dangerous direction. Reading an absent join as "not on payroll"
+    // would demote an entire team the moment someone forgot a `select`, and
+    // the claimer repair would then hand the visit to nobody. A missed
+    // demotion is recoverable; a silent mass-demotion is not.
+    const rows = [row({ id: "r1", userId: "emp" }), row({ id: "r2", userId: "con" })];
+    expect(rows.every((r) => r.workerType === undefined)).toBe(true);
+    expect(planObserverOnlyDemotions(rows)).toEqual([]);
+  });
+
+  it("hands the claim to a paid worker when the claimer is demoted", () => {
+    // The two invariants interacting, which is why they live together and
+    // why the demotion runs first: an UNPAID claimer leaves the visit with
+    // workers and no claimer — the exact unstartable state.
+    const rows: ClaimerAssigneeRow[] = [
+      row({ id: "r1", userId: "wife", assignedById: "wife", assignedAt: at(0), workerType: "UNPAID" }),
+      row({ id: "r2", userId: "emp", assignedById: "wife", assignedAt: at(5), workerType: "EMPLOYEE" }),
+    ];
+    const demotions = planObserverOnlyDemotions(rows);
+    expect(demotions.map((d) => d.userId)).toEqual(["wife"]);
+
+    // Apply them the way enforceAssigneeInvariants does, then repair.
+    const demoted = new Set(demotions.map((d) => d.id));
+    const after = rows.map((r) =>
+      demoted.has(r.id) ? { ...r, role: "observer", assignedById: null } : r,
+    );
+    const plan = planClaimerRepair(after);
+    expect(plan.claimerUserId).toBe("emp");
+    expect(plan.updates).toEqual([{ id: "r2", userId: "emp", assignedById: "emp" }]);
+  });
+
+  it("leaves an occurrence unclaimed when every paid seat was demoted", () => {
+    const rows: ClaimerAssigneeRow[] = [
+      row({ id: "r1", userId: "wife", assignedById: "wife", workerType: "UNPAID" }),
+    ];
+    const demoted = new Set(planObserverOnlyDemotions(rows).map((d) => d.id));
+    const after = rows.map((r) =>
+      demoted.has(r.id) ? { ...r, role: "observer", assignedById: null } : r,
+    );
+    // Unclaimed is a legal state — an open visit on the board, not a bug.
+    expect(planClaimerRepair(after)).toEqual({ claimerUserId: null, updates: [] });
+  });
+});
+
+describe("canHoldPaidSeat", () => {
+  it("is true for the two paid classes and false for everything else", () => {
+    expect(canHoldPaidSeat("EMPLOYEE")).toBe(true);
+    expect(canHoldPaidSeat("CONTRACTOR")).toBe(true);
+    expect(canHoldPaidSeat("UNPAID")).toBe(false);
+    expect(canHoldPaidSeat(null)).toBe(false);
+    expect(canHoldPaidSeat(undefined)).toBe(false);
   });
 });

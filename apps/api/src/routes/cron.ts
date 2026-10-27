@@ -1,15 +1,83 @@
 import { FastifyInstance } from "fastify";
+import { capabilitiesForUsers } from "../lib/userCapabilities";
 import { prisma } from "../db/prisma";
 import { notifyWorker } from "../lib/notifications";
 import { etMidnight, etToday, etTomorrow, etAddDays } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
 import { pruneCache } from "../lib/cache";
+import { timingSafeEqual } from "crypto";
 
 /**
  * Cron job routes — called by Vercel Cron.
- * These endpoints are NOT behind auth guards but are protected by
- * a CRON_SECRET header that Vercel sets automatically.
+ *
+ * These endpoints carry NO route guard: there is no principal to check,
+ * because the caller is Vercel's scheduler, not a person. Authorization is a
+ * shared secret in the Authorization header, which Vercel sends on every
+ * scheduled invocation of a path listed in `apps/api/vercel.json#crons`.
  */
+
+/**
+ * THIS CHECK USED TO FAIL OPEN, AND THAT WAS THE WHOLE PROBLEM.
+ *
+ * Each of the four routes below carried its own copy of:
+ *
+ *     if (secret && authHeader !== `Bearer ${secret}`) return 401
+ *
+ * Read the condition: when `CRON_SECRET` is UNSET, `secret` is undefined, the
+ * `&&` short-circuits, and the request is ALLOWED. A missing secret therefore
+ * disabled the only protection these routes had. In production it logged
+ * "request allowed but this is insecure" and ran the job anyway.
+ *
+ * Nothing else stood behind it. `plugins/auth.ts` does not reject
+ * unauthenticated requests — it sets `req.auth = {}` and continues — so an
+ * unset secret left `/cron/daily-notifications` (push notifications to every
+ * worker), `/cron/document-sync` and `/cron/client-backup` publicly
+ * triggerable by anyone who could reach the host.
+ *
+ * Now: a configured secret is REQUIRED in production, and the handler refuses
+ * rather than running unprotected. Outside production a missing secret still
+ * allows the call, because that is how the jobs are exercised locally and
+ * there is no secret in `apps/api/.env` — but it is a deliberate, narrow
+ * exception rather than the default everywhere.
+ *
+ * The comparison is timing-safe. It is a secret compare, and the lengths are
+ * attacker-visible anyway, so the length check leaking is not a weakness.
+ */
+function cronAuthorized(
+  app: FastifyInstance,
+  req: { headers: Record<string, unknown> },
+  reply: { status: (c: number) => { send: (b: unknown) => unknown } },
+  job: string,
+): boolean {
+  const secret = process.env.CRON_SECRET;
+  const isProd = process.env.NODE_ENV === "production";
+
+  if (!secret) {
+    if (isProd) {
+      // FAIL CLOSED. Refusing a scheduled run is visible and recoverable;
+      // running it for anyone who asks is neither.
+      app.log.error({ cron: job, reason: "CRON_SECRET not set — refusing to run unprotected" });
+      reply.status(503).send({ error: "Cron not configured" });
+      return false;
+    }
+    app.log.warn({ cron: job, reason: "CRON_SECRET not set (non-production) — allowing" });
+    return true;
+  }
+
+  const header = req.headers["authorization"];
+  const expected = `Bearer ${secret}`;
+  const got = typeof header === "string" ? header : "";
+  const a = Buffer.from(got);
+  const b = Buffer.from(expected);
+  const ok = a.length === b.length && timingSafeEqual(a, b);
+  if (!ok) {
+    app.log.warn({ cron: job, reason: "Unauthorized request blocked" });
+    reply.status(401).send({ error: "Unauthorized" });
+    return false;
+  }
+  return true;
+}
+
 export default async function cronRoutes(app: FastifyInstance) {
   /**
    * Daily notification: remind workers with jobs tomorrow to plan their day.
@@ -17,15 +85,7 @@ export default async function cronRoutes(app: FastifyInstance) {
    */
   app.get("/cron/daily-notifications", async (req, reply) => {
     // Verify cron secret (Vercel sets this automatically in production)
-    const secret = process.env.CRON_SECRET;
-    const authHeader = req.headers["authorization"];
-    if (secret && authHeader !== `Bearer ${secret}`) {
-      app.log.warn({ cron: "daily-notifications", reason: "Unauthorized request blocked" });
-      return reply.status(401).send({ error: "Unauthorized" });
-    }
-    if (!secret && process.env.NODE_ENV === "production") {
-      app.log.warn({ cron: "daily-notifications", reason: "CRON_SECRET not set in production — request allowed but this is insecure" });
-    }
+    if (!cronAuthorized(app, req as any, reply as any, "daily-notifications")) return;
 
     const tomorrowStr = etTomorrow();
     const tomorrowStart = etMidnight(tomorrowStr);
@@ -58,10 +118,33 @@ export default async function cronRoutes(app: FastifyInstance) {
 
     // Pull all approved workers — used to fan ANNOUNCEMENTs out to the whole team
     // (announcements aren't tied to assignees).
-    const allWorkers = await prisma.user.findMany({
-      where: { isApproved: true, roles: { some: { role: "WORKER" } } },
+    // WHO IS "THE TEAM"? Whoever can see the schedule.
+    //
+    // This asked for a role. Converting it, I first
+    // wrote `workerType IN (EMPLOYEE, CONTRACTOR)` and called payroll "the
+    // durable version of that question". It is not: pay class is a tax and
+    // employment fact, not a permission, and substituting one for the other
+    // is exactly what G30 and G31 exist to prevent. The concrete bug was
+    // that someone carrying a pay class but NO role grants holds no
+    // capability at all, and would still have been sent team announcements.
+    //
+    // `schedule.view` is the real question — every rung of the starter
+    // ladder from Trainee upward holds it, and an operator can grant it to a
+    // custom role without having to classify that person for payroll first.
+    // `capabilitiesForUsers` already drops anyone whose `workerType` is null
+    // (G31), so the mid-onboarding unclassified still fall out, and it
+    // flattens inheritance so a custom role built on Worker counts too.
+    const teamCandidates = await prisma.user.findMany({
+      where: { isApproved: true },
       select: { id: true, displayName: true, email: true, phone: true },
     });
+    const teamCaps = await capabilitiesForUsers(
+      prisma,
+      teamCandidates.map((u) => u.id),
+    );
+    const allWorkers = teamCandidates.filter((u) =>
+      teamCaps.get(u.id)?.has("schedule.view"),
+    );
 
     // Group by worker → by section (jobs / estimates / events / others).
     type WorkerBuckets = { user: any; jobs: string[]; estimates: string[]; events: string[]; others: string[] };
@@ -171,10 +254,23 @@ export default async function cronRoutes(app: FastifyInstance) {
   });
 
   /**
-   * Test endpoint — send a test notification to yourself.
-   * Protected by admin guard when called via the API.
+   * Test endpoint — send a test notification to a given user.
+   *
+   * SHIPPED UNAUTHENTICATED. The comment here used to claim "Protected by
+   * admin guard when called via the API"; there was no guard of any kind, so
+   * anyone who could reach the API could push a notification and send an
+   * email to any userId they could guess. Nothing calls it and it is not in
+   * vercel.json's cron schedule — it is a manual debugging tool that was
+   * never locked down.
+   *
+   * Now behind the same CRON_SECRET bearer as every other route in this file
+   * (see the file header). Call it with:
+   *   curl -X POST .../api/cron/test-notification \
+   *        -H "Authorization: Bearer $CRON_SECRET" ...
    */
-  app.post("/cron/test-notification", async (req: any) => {
+  app.post("/cron/test-notification", async (req: any, reply: any) => {
+    if (!cronAuthorized(app, req as any, reply as any, "test-notification")) return;
+
     const body = req.body || {};
     const userId = body.userId as string;
     const message = body.message as string || "This is a test notification from Seedlings Lawn Care.";
@@ -200,15 +296,7 @@ export default async function cronRoutes(app: FastifyInstance) {
    * See docs/features/documents-gdrive-backup.md.
    */
   app.get("/cron/document-sync", async (req, reply) => {
-    const secret = process.env.CRON_SECRET;
-    const authHeader = req.headers["authorization"];
-    if (secret && authHeader !== `Bearer ${secret}`) {
-      app.log.warn({ cron: "document-sync", reason: "Unauthorized request blocked" });
-      return reply.status(401).send({ error: "Unauthorized" });
-    }
-    if (!secret && process.env.NODE_ENV === "production") {
-      app.log.warn({ cron: "document-sync", reason: "CRON_SECRET not set in production" });
-    }
+    if (!cronAuthorized(app, req as any, reply as any, "document-sync")) return;
     const { runSync } = await import("../services/documentSyncWorker");
     const result = await runSync({ maxTasks: 100 });
     app.log.info({ cron: "document-sync", ...result });
@@ -227,15 +315,7 @@ export default async function cronRoutes(app: FastifyInstance) {
    * See services/clientBackup.ts for the payload + folder logic.
    */
   app.get("/cron/client-backup", async (req, reply) => {
-    const secret = process.env.CRON_SECRET;
-    const authHeader = req.headers["authorization"];
-    if (secret && authHeader !== `Bearer ${secret}`) {
-      app.log.warn({ cron: "client-backup", reason: "Unauthorized request blocked" });
-      return reply.status(401).send({ error: "Unauthorized" });
-    }
-    if (!secret && process.env.NODE_ENV === "production") {
-      app.log.warn({ cron: "client-backup", reason: "CRON_SECRET not set in production" });
-    }
+    if (!cronAuthorized(app, req as any, reply as any, "client-backup")) return;
     try {
       const { runClientBackup } = await import("../services/clientBackup");
       const result = await runClientBackup();

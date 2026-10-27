@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Forecast routes — Super only (Money → Forecast)
+// Forecast routes — `forecasts.view` / `forecasts.manage` (Money → Forecast)
 //
-// Every route here is SUPER-gated. The tool exposes whole-business economics
-// and per-person pay outcomes; an admin has no business in it.
+// Every route here is gated on `forecasts.view`. The tool exposes whole-business economics
+// and per-person pay outcomes; someone with `forecasts.view` has no business in it.
 //
 // Nothing on this surface mutates live money. The forecast is advisory —
 // see services/forecast.ts and forecast-build-gate.test.ts.
@@ -11,7 +11,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import Anthropic from "@anthropic-ai/sdk";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
-import { Role as RoleVal } from "@prisma/client";
 import { etToday, etAddDays, type EtDateKey } from "../lib/dates";
 import {
   buildBaselineWithBacktest,
@@ -28,12 +27,15 @@ import {
   simulate, defaultAssumptions, describePayShape, migrateAssumptions,
   type Assumptions,
 } from "@repo/money";
+import { makeGuards } from "../lib/routeGuards";
 
 export default async function forecastRoutes(app: FastifyInstance) {
-  const superGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireRole(req, reply, RoleVal.SUPER),
-  };
+  // Forecasting is a planning surface, not a money-writing one — it reads
+  // the real payout math but produces scenarios, never PaymentSplit rows.
+  // `forecasts.view` covers the whole file, including the mutating routes:
+  // a scenario is the viewer's own sandbox.
+  const { requires } = makeGuards(app);
+  const forecasts = requires("forecasts.view");
 
   /**
    * The dataset behind the sliders.
@@ -44,7 +46,7 @@ export default async function forecastRoutes(app: FastifyInstance) {
    * would make the tool feel broken, and re-deriving the numbers client-side
    * would reintroduce exactly the drift the shared package exists to prevent.
    */
-  app.get("/super/forecast/baseline", superGuard, async (req: any) => {
+  app.get("/forecast/baseline", forecasts, async (req: any) => {
     const today = etToday();
     const from = (req.query?.from as EtDateKey) ?? etAddDays(today, -90);
     const to = (req.query?.to as EtDateKey) ?? today;
@@ -53,29 +55,29 @@ export default async function forecastRoutes(app: FastifyInstance) {
 
   // ── Saved scenarios ──────────────────────────────────────────────────────
 
-  app.get("/super/forecasts", superGuard, async (req: any) =>
+  app.get("/forecasts", forecasts, async (req: any) =>
     listForecasts(req.query?.includeArchived === "1"),
   );
 
-  app.get("/super/forecasts/:id", superGuard, async (req: any) => getForecast(req.params.id));
+  app.get("/forecasts/:id", forecasts, async (req: any) => getForecast(req.params.id));
 
-  app.post("/super/forecasts", superGuard, async (req: any) =>
+  app.post("/forecasts", forecasts, async (req: any) =>
     createForecast(req.body, req.user.id),
   );
 
-  app.patch("/super/forecasts/:id", superGuard, async (req: any) =>
+  app.patch("/forecasts/:id", forecasts, async (req: any) =>
     updateForecast(req.params.id, req.body, req.user.id),
   );
 
-  app.post("/super/forecasts/:id/duplicate", superGuard, async (req: any) =>
+  app.post("/forecasts/:id/duplicate", forecasts, async (req: any) =>
     duplicateForecast(req.params.id, req.user.id),
   );
 
-  app.post("/super/forecasts/:id/archive", superGuard, async (req: any) =>
+  app.post("/forecasts/:id/archive", forecasts, async (req: any) =>
     archiveForecast(req.params.id, req.body?.archived !== false, req.user.id),
   );
 
-  app.delete("/super/forecasts/:id", superGuard, async (req: any) =>
+  app.delete("/forecasts/:id", forecasts, async (req: any) =>
     deleteForecast(req.params.id, req.user.id),
   );
 
@@ -139,7 +141,7 @@ const ASSESSMENT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-  app.post("/super/forecasts/:id/assess", superGuard, async (req: any) => {
+  app.post("/forecasts/:id/assess", forecasts, async (req: any) => {
     const forecast = await getForecast(req.params.id);
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {

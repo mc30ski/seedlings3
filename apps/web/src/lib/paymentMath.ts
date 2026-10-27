@@ -1,3 +1,4 @@
+import { classify, type WorkerType } from "@repo/money";
 // ─────────────────────────────────────────────────────────────────────────────
 // Client-side payment-math helpers — PROJECTIONS ONLY.
 //
@@ -25,7 +26,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type ViewerLike = {
-  workerType?: "EMPLOYEE" | "TRAINEE" | "CONTRACTOR" | null;
+  workerType?: WorkerType | null;
 } | null | undefined;
 
 export type ProjectionOcc = {
@@ -55,9 +56,21 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  */
 export function rateForViewer(viewer: ViewerLike, rates: ProjectionRates): number {
   const wt = viewer?.workerType ?? null;
-  return wt === "EMPLOYEE" || wt === "TRAINEE"
-    ? rates.employeeMarginPercent
-    : rates.contractorFeePercent;
+  // Exhaustive, deliberately. The old form — employee margin or else the
+  // platform fee — put an unclassified worker in the CONTRACTOR branch, the
+  // same negation bug the server carried (packages/money/workerClass, and §1
+  // of docs/FINANCIAL_SYSTEM.md). This is a projection for a viewer, so it
+  // cannot throw the way `rateFor` does; it shows zero, which reads as
+  // "nothing projected for you" rather than inventing a fee.
+  switch (classify(wt)) {
+    case "w2":
+      return rates.employeeMarginPercent;
+    case "contractor":
+      return rates.contractorFeePercent;
+    case "unpaid":
+    case "unclassified":
+      return 0;
+  }
 }
 
 /**
@@ -138,7 +151,7 @@ export function projectViewerPayout(
  */
 export function projectTeamPayoutsForOcc(
   occ: Omit<ProjectionOcc, "assignees"> & {
-    assignees?: Array<{ role?: string | null; user?: { workerType?: string | null } | null }> | null;
+    assignees?: Array<{ role?: string | null; user?: { workerType?: WorkerType | null } | null }> | null;
   },
   rates: ProjectionRates,
   /** Used for assignees whose workerType wasn't included in the query. */
@@ -151,14 +164,47 @@ export function projectTeamPayoutsForOcc(
   let total = 0;
   for (const a of active) {
     const wt = a.user?.workerType ?? null;
-    const rate =
-      wt === "EMPLOYEE" || wt === "TRAINEE"
-        ? rates.employeeMarginPercent
-        : wt === "CONTRACTOR"
-          ? rates.contractorFeePercent
-          : (defaultRate ?? rates.contractorFeePercent);
+    // `defaultRate` is a caller-supplied guess for a row whose worker type
+    // is not set yet. UNPAID is not a guess — it is a decided "no fee" — so
+    // it must not fall into it.
+    const rate = ((): number => {
+      switch (classify(wt)) {
+        case "w2":
+          return rates.employeeMarginPercent;
+        case "contractor":
+          return rates.contractorFeePercent;
+        case "unpaid":
+          return 0;
+        case "unclassified":
+          return defaultRate ?? rates.contractorFeePercent;
+      }
+    })();
     const fee = round2((sharePer * rate) / 100);
     total += Math.max(0, sharePer - fee);
   }
   return round2(total);
+}
+
+
+/**
+ * The short pay-class chip shown next to a person's name: "W-2", "1099",
+ * "Unpaid".
+ *
+ * One function because this label was written out inline at three callsites
+ * as a ternary chain testing two worker types and defaulting to "W-2" —
+ * a chain whose FINAL branch was the default, so every unrecognised worker
+ * type silently rendered as "W-2". An unpaid helper would have been labelled
+ * an employee on the job card.
+ */
+export function payClassLabel(wt: WorkerType | null | undefined): string {
+  switch (classify(wt)) {
+    case "w2":
+      return "W-2";
+    case "contractor":
+      return "1099";
+    case "unpaid":
+      return "Unpaid";
+    case "unclassified":
+      return "Unclassified";
+  }
 }

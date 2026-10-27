@@ -23,6 +23,8 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Badge, Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { Info } from "lucide-react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
+import { refusalPhrase, type Entitlement } from "@repo/permissions";
+import type { Scope } from "@/src/lib/scope";
 
 /** ONE PREFERENCE, NOT THIRTY-SEVEN.
  *
@@ -39,7 +41,7 @@ import { usePersistedState } from "@/src/lib/usePersistedState";
  *
  *  (This also retires a bug: nine role-branching explainers shared one key
  *  across roles, so collapsing the panel as a worker also collapsed the
- *  different text an admin saw. With one key there is nothing to disagree.) */
+ *  different text someone with `schedule.manage` saw. With one key there is nothing to disagree.) */
 const HELP_OPEN_KEY = "help:open";
 
 /** Fired whenever the preference changes, because `usePersistedState` is
@@ -281,19 +283,19 @@ export default function TabExplainer({
 
 /** ADDITIVE, NOT ALTERNATIVE.
  *
- *  Help text used to branch: a worker saw one version, an admin saw a
- *  DIFFERENT one, a super a third. Three problems with that shape.
+ *  Help text used to branch: a worker saw one version, someone with `schedule.manage` saw a
+ *  DIFFERENT one, someone with `settings.manage` a third. Three problems with that shape.
  *
- *    • An admin is also a worker. Replacing the base text meant the shared
+ *    • Someone with `schedule.manage` is also a worker. Replacing the base text meant the shared
  *      behaviour had to be re-explained in every branch, or silently
  *      dropped — and it was dropped, in several tabs.
  *    • Three parallel copies drift. Fixing a fact in one branch left the
  *      other two wrong, and nothing pointed that out.
- *    • It hid the shape of the product. What an admin can do that a worker
+ *    • It hid the shape of the product. What someone with `schedule.manage` can do that a worker
  *      cannot is exactly the thing worth naming, and a rewritten paragraph
  *      buries it.
  *
- *  Buttons on these tabs are already additive — a super sees the worker's
+ *  Buttons on these tabs are already additive — someone with `settings.manage` sees the worker's
  *  actions plus admin actions plus their own. The help now matches: base
  *  copy for everyone, then an "Admin" section, then a "Super" section, each
  *  appearing only when that role applies and each saying only what it ADDS.
@@ -301,41 +303,69 @@ export default function TabExplainer({
  *  Usage:
  *      <TabExplainer explainerId={...}>
  *        <ExplainerText>...what anyone on this tab can do...</ExplainerText>
- *        {scope.isAdmin && (
- *          <RoleSection role="Admin">
- *            <ExplainerText>...what admin adds...</ExplainerText>
- *          </RoleSection>
+ *        {scope.can("schedule.manage") && (
+ *          <CapabilitySection capability="schedule.manage" scope={scope}>
+ *            <ExplainerText>...what that lets you do here...</ExplainerText>
+ *          </CapabilitySection>
  *        )}
  *      </TabExplainer>
  */
-export function RoleSection({
-  role,
+/**
+ * An extra paragraph for people who can do more on this tab.
+ *
+ * REPLACES `RoleSection`, whose prop was a role NAME — `role="Admin"`. That
+ * was wrong twice over. A role is a row an operator can rename, redefine or
+ * delete, so the badge described today's seed data as though it were the
+ * product. And apportioning in prose ("It can be written off") is an
+ * authorization claim that the route guard actually decides, so the two
+ * drift and the copy starts lying.
+ *
+ * This gates on the SAME capability the route checks, and names the action
+ * in the entitlement's own words — the same phrasebook a refusal uses. Help
+ * text and enforcement agree by construction rather than by review.
+ *
+ *      <CapabilitySection capability="money.approve" scope={scope}>
+ *        <ExplainerText>Write-offs are recorded against…</ExplainerText>
+ *      </CapabilitySection>
+ *
+ * Renders nothing when the reader cannot do it, so the caller does not wrap
+ * it in a condition that could disagree with the label.
+ */
+export function CapabilitySection({
+  capability,
+  scope,
   children,
 }: {
-  role: "Admin" | "Super";
+  capability: Entitlement;
+  /** Optional, because many tabs still take `scope?`. FAIL CLOSED: an
+   *  absent scope renders nothing rather than defaulting to visible. */
+  scope: Scope | undefined;
   children: ReactNode;
 }) {
+  if (!scope?.can(capability)) return null;
+  const phrase = refusalPhrase(capability);
   return (
-    <Box
-      mt={2}
-      pt={2}
-      borderTopWidth="1px"
-      borderColor="blue.emphasized"
-    >
-      <HStack gap={1.5} mb={1}>
-        {/* Named for the ROLE CHIP the reader is wearing, so "Admin" here
-            and "Admin" up in the header are obviously the same thing. */}
-        <Badge size="xs" colorPalette={role === "Super" ? "purple" : "blue"} variant="solid">
-          {role}
-        </Badge>
-        <Text fontSize="2xs" color="fg.muted">
-          in addition to everything above
-        </Text>
-      </HStack>
+    <Box mt={2} pt={2} borderTopWidth="1px" borderColor="blue.emphasized">
+      <Text fontSize="2xs" color="fg.muted" mb={1}>
+        {phrase ? `Because you can ${phrase}:` : "Because of what you can do:"}
+      </Text>
       <VStack align="stretch" gap={1.5}>
         {children}
       </VStack>
     </Box>
+  );
+}
+
+/**
+ * @deprecated Gone. Its prop was a role name; see `CapabilitySection`.
+ * Kept as a throwing stub so a stale import fails at the callsite instead
+ * of silently rendering a badge for a role that may not exist.
+ */
+export function RoleSection(_props: never): never {
+  throw new Error(
+    "RoleSection is gone — its prop was a role NAME. Use " +
+      "<CapabilitySection capability=\"…\" scope={scope}>, which gates on the " +
+      "same capability the route checks and labels itself from it.",
   );
 }
 

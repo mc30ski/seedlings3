@@ -1,4 +1,5 @@
 "use client";
+import { classify, type WorkerType } from "@repo/money";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -15,7 +16,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { bumpAdminPayments } from "@/src/lib/bus";
+import { bumpPayments } from "@/src/lib/bus";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { prettyStatus } from "@/src/lib/labels";
 import { composePaymentMessage } from "@/src/lib/paymentMessages";
@@ -42,6 +43,8 @@ import {
 } from "@/src/ui/components/DialogErrorAlert";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
+import { isW2 } from "@repo/money";
+import { payClassLabel } from "../../lib/paymentMath";
 
 type HandoffPayload = {
   mode: "SERVER" | "CLAIMER";
@@ -59,7 +62,7 @@ type HandoffPayload = {
 type Assignee = {
   userId: string;
   displayName?: string | null;
-  workerType?: string | null;
+  workerType?: WorkerType | null;
   /** True for the job's claimer. Receives the leftover 1¢ of a 100/N split
    *  so the percentages always sum to exactly 100. */
   isClaimer?: boolean;
@@ -88,30 +91,55 @@ type Props = {
   /** Occurrence id — required for the Request Payment footer action
    *  (the dialog fetches /comms-handoff to build the SMS/mailto link). */
   occurrenceId?: string;
-  /** Whether the viewer is acting as an operator (ADMIN or SUPER). Used to
-   *  bypass the REQUEST_PAYMENT_FROM_CLIENT_ENABLED gate: when that flag is
-   *  "false" the Request Payment button is hidden from field workers but
-   *  stays available to operators.
+  /** Bypasses the REQUEST_PAYMENT_FROM_CLIENT_ENABLED gate: when that
+   *  setting is "false" the Request Payment button is hidden, but stays
+   *  available to whoever this is true for. Every callsite passes
+   *  `scope.can("schedule.manage")`.
    *
-   *  Was `isSuper` — a super-only testing hatch for the kill-switch. Widened
-   *  to admins on purpose: a requested payment still lands in the approval
-   *  queue for review, so the safety is the approval step, not hiding the
-   *  button from admins. */
+   *  Was a role flag — a testing hatch for the kill-switch. Widened on
+   *  purpose: a requested payment still lands in the approval queue for
+   *  review, so the safety is the approval step, not hiding the button.
+   *
+   *  NOTE: the gate is enforced in the browser only. No API route reads
+   *  the setting. */
   isOperator?: boolean;
-  /** True only when opened from the Admin Jobs tab. Adds a "Client paid
-   *  another way?" link that expands the method picker from on-site methods
-   *  to ALL active methods — for recording a payment a client made remotely
-   *  (e.g. an unprompted Venmo) on their behalf. Off on the Worker Jobs tab,
-   *  so a field worker's on-site flow stays uncluttered. */
+  /** Adds a "Client paid another way?" link that expands the method picker
+   *  from on-site methods to ALL active methods — for recording a payment a
+   *  client made remotely (e.g. an unprompted Venmo) on their behalf. Passed
+   *  as `scope.can("schedule.manage")` from JobsTab; off by default, so a
+   *  field caller's on-site flow stays uncluttered. */
   allowAllMethods?: boolean;
-  /** Display name of the impersonated worker when admin is viewing-as a
-   *  single worker; renders the inline impersonation warning. */
+  /** Display name of the impersonated person when viewing-as a single
+   *  person; renders the inline impersonation warning. */
   viewAsName?: string | null;
   onAccepted: (result?: any) => void;
 };
 
-function isEmployeeClass(wt: string | null | undefined): boolean {
-  return wt === "EMPLOYEE" || wt === "TRAINEE";
+/**
+ * The rate this assignee's share carries, and whether it is a margin or a fee.
+ *
+ * Exhaustive. This dialog previously asked `isEmployeeClass(wt)` and took the
+ * contractor commission for everyone else — so an UNPAID helper on the crew
+ * was shown being charged a 20% commission, and their fee was added to the
+ * platform-fee total. It runs on ASSIGNEES, before anything is stored, which
+ * made it the one place a reader could see the wrong number today.
+ *
+ * `payClass` is `null` for someone who takes no cut at all.
+ */
+function shareRate(
+  wt: WorkerType | null | undefined,
+  marginPercent: number,
+  commissionPercent: number,
+): { ratePercent: number; payClass: "w2" | "contractor" | null } {
+  switch (classify(wt)) {
+    case "w2":
+      return { ratePercent: marginPercent, payClass: "w2" };
+    case "contractor":
+      return { ratePercent: commissionPercent, payClass: "contractor" };
+    case "unpaid":
+    case "unclassified":
+      return { ratePercent: 0, payClass: null };
+  }
 }
 
 function round2(n: number): number {
@@ -147,11 +175,11 @@ export default function AcceptPaymentDialog({
   // live fee preview both derive from this.
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
   // When true, the method picker shows ALL active methods, not just on-site
-  // ones. Only togglable when `allowAllMethods` is set (Admin Jobs tab) —
+  // ones. Only togglable when `allowAllMethods` is set (`schedule.manage`) —
   // used to record a payment the client made through a remote channel.
   const [showAllMethods, setShowAllMethods] = useState(false);
   // Kill-switch for the Request Payment button. Workers see the button only
-  // when this is "true"; Super always sees it so the toggle can be tested
+  // when this is "true"; `schedule.manage` always sees it so the toggle can be tested
   // without losing access. Defaults to enabled on missing/unparseable rows.
   const [requestPaymentEnabled, setRequestPaymentEnabled] = useState(true);
   useEffect(() => {
@@ -275,7 +303,7 @@ export default function AcceptPaymentDialog({
   }, [open]);
 
   // Derive dropdown items from the loaded taxonomy. Default: active +
-  // supportsOnSite (the field-collection set). When the Admin Jobs tab opened
+  // supportsOnSite (the field-collection set). When the Jobs tab opened
   // the dialog AND the operator tapped "Client paid another way?", widen to
   // ALL active methods so a remotely-made payment can be recorded.
   const availableMethods = useMemo(() => {
@@ -329,9 +357,11 @@ export default function AcceptPaymentDialog({
       const pctStr = splits[a.userId] || "0";
       const pct = Number.parseFloat(pctStr);
       const percent = Number.isFinite(pct) ? pct : 0;
-      const isEmp = isEmployeeClass(a.workerType);
-      const ratePercent = isEmp ? marginPercent : commissionPercent;
-      const gross = N * (percent / 100);
+      const { ratePercent, payClass } = shareRate(a.workerType, marginPercent, commissionPercent);
+      const isEmp = payClass === "w2";
+      // Someone who takes no cut takes no share either: a row at 0 is honest,
+      // where a 0% rate on a real gross would read as "paid in full, no fee".
+      const gross = payClass === null ? 0 : N * (percent / 100);
       const fee = gross * (ratePercent / 100);
       const net = gross - fee;
       return {
@@ -344,12 +374,24 @@ export default function AcceptPaymentDialog({
         fee: round2(fee),
         net: round2(net),
         isEmployeeClass: isEmp,
+        payClass,
       };
     });
-    const platformFeeTotal = round2(rows.filter((r) => !r.isEmployeeClass).reduce((s, r) => s + r.fee, 0));
-    const businessMarginTotal = round2(rows.filter((r) => r.isEmployeeClass).reduce((s, r) => s + r.fee, 0));
+    // Both positive. `!isEmployeeClass` put an unpaid helper in the fee total.
+    const platformFeeTotal = round2(
+      rows.filter((r) => r.payClass === "contractor").reduce((s, r) => s + r.fee, 0),
+    );
+    const businessMarginTotal = round2(
+      rows.filter((r) => r.payClass === "w2").reduce((s, r) => s + r.fee, 0),
+    );
+    // What the crew's percentages left unassigned, because a member of it
+    // takes no pay. Surfaced rather than absorbed: this card has to
+    // reconcile to its own stated total.
+    const unallocated = round2(
+      rows.filter((r) => r.payClass === null).reduce((s, r) => s + N * (r.percent / 100), 0),
+    );
     const totalPayout = round2(rows.reduce((s, r) => s + r.net, 0));
-    return { rows, platformFeeTotal, businessMarginTotal, totalPayout, validAmount, N: round2(N) };
+    return { rows, platformFeeTotal, businessMarginTotal, totalPayout, unallocated, validAmount, N: round2(N) };
   }, [amountPaid, assignees, splits, totalInvoiceCharges, commissionPercent, marginPercent]);
 
   const percentSum = useMemo(() => {
@@ -417,7 +459,7 @@ export default function AcceptPaymentDialog({
     }
     // The service layer already filtered handoff.contacts to the primary
     // contact only. If empty, the client has no primary set — surface that
-    // explicitly so the admin can fix the data invariant.
+    // explicitly so a caller with `money.approve` can fix the data invariant.
     if (handoff.missingPrimaryContact || handoff.contacts.length === 0) {
       dlgErr.setError(
         "No primary contact set for this client. Open the client's contacts and mark one as Primary before requesting payment.",
@@ -435,7 +477,7 @@ export default function AcceptPaymentDialog({
     }
     const useSms = !!phoneContact?.phone;
     // Pull the current OUTGOING_COMMS_CC setting at click time so the URL
-    // can't be stale relative to whatever the admin most recently saved.
+    // can't be stale relative to whatever was most recently saved.
     const cc = await fetchCommsCc();
     const href = useSms
       ? buildSmsHref({ to: phoneContact!.phone!, body: handoff.smsBody, ccPhones: cc.phones })
@@ -451,7 +493,7 @@ export default function AcceptPaymentDialog({
         publishInlineMessage({ type: "SUCCESS", text: "Payment request sent." });
         // New outstanding request — bump so the alerts dropdown's
         // "Payments to review" counter picks it up immediately.
-        bumpAdminPayments();
+        bumpPayments();
         onOpenChange(false);
         onAccepted({ requestSent: true });
       })
@@ -503,13 +545,13 @@ export default function AcceptPaymentDialog({
         text: composePaymentMessage(
           "submitted for approval",
           null,
-          "The job stays in Pending Payment until an admin verifies it. The next occurrence (if any) will be scheduled at approval time.",
+          "The job stays in Pending Payment until it is verified. The next occurrence (if any) will be scheduled at approval time.",
         ),
       });
       // New Payment row in PENDING_APPROVAL state — bump so the alerts
       // dropdown's "Payments to review" counter picks it up across any
-      // admin/super tab the operator currently has open.
-      bumpAdminPayments();
+      // management tab the operator currently has open.
+      bumpPayments();
       onOpenChange(false);
       onAccepted(result);
     } catch (err) {
@@ -730,13 +772,13 @@ export default function AcceptPaymentDialog({
                           >
                             <Text fontSize="sm" color={channel === "missing-primary" ? "red.fg" : "blue.fg"}>
                               {channel === "server" && (
-                                <>The payment request was already sent. Confirming will save the per-worker splits. Once the client indicates payment, an admin will review before the job is closed.</>
+                                <>The payment request was already sent. Confirming will save the per-worker splits. Once the client indicates payment, someone with payment authority will review before the job is closed.</>
                               )}
                               {channel === "sms" && (
-                                <>Your text app will open with a pre-filled message. Send it from there. Once the client indicates payment, an admin will review before the job is closed.</>
+                                <>Your text app will open with a pre-filled message. Send it from there. Once the client indicates payment, someone with payment authority will review before the job is closed.</>
                               )}
                               {channel === "email" && (
-                                <>Your email app will open with a pre-filled message. Send it from there. Once the client indicates payment, an admin will review before the job is closed.</>
+                                <>Your email app will open with a pre-filled message. Send it from there. Once the client indicates payment, someone with payment authority will review before the job is closed.</>
                               )}
                               {channel === "missing-primary" && (
                                 <>This client has no primary contact set. Open the client's contacts and mark one as Primary before requesting payment.</>
@@ -808,7 +850,7 @@ export default function AcceptPaymentDialog({
                   <Text fontSize="sm" color="blue.fg">
                     <Text as="span" fontWeight="semibold">Request Payment</Text> sends the client a message with a link to pay the invoice.{" "}
                     <Text as="span" fontWeight="semibold">Accept Now</Text> records a direct payment (e.g. cash on-site).
-                    Either way the payment will be reviewed by an admin before the job closes.
+                    Either way the payment will be reviewed by someone with payment authority before the job closes.
                   </Text>
                 </Box>
 
@@ -910,16 +952,17 @@ export default function AcceptPaymentDialog({
                                 <Badge
                                   size="xs"
                                   variant="subtle"
-                                  colorPalette={r.isEmployeeClass ? "blue" : "purple"}
+                                  colorPalette={r.payClass === "w2" ? "blue" : r.payClass === null ? "gray" : "purple"}
                                 >
-                                  {r.workerType === "TRAINEE" ? "Trainee" : r.isEmployeeClass ? "Employee" : "Contractor"}
+                                  {payClassLabel(r.workerType)}
                                 </Badge>
                               )}
                             </HStack>
                             {breakdown.validAmount && r.percent > 0 && (
                               <Text fontSize="xs" color="fg.muted">
                                 ${r.gross.toFixed(2)} gross
-                                {r.fee > 0 && <> − ${r.fee.toFixed(2)} {r.isEmployeeClass ? "margin" : "fee"} ({r.ratePercent}%)</>}
+                                {/* worker-class-allow: naming an already-resolved payClass, not choosing a rate. */}
+                                {r.fee > 0 && <> − ${r.fee.toFixed(2)} {r.payClass === "w2" ? "margin" : "fee"} ({r.ratePercent}%)</>}
                                 {" = "}
                                 <Text as="span" color="green.fg" fontWeight="semibold">${r.net.toFixed(2)}</Text>
                               </Text>

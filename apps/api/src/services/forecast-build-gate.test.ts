@@ -1275,7 +1275,30 @@ describe("[build-gate] the actuals side classifies wages like the P&L does", () 
   const SERVICE = readFileSync(SERVICE_PATH, "utf8");
 
   it("contractors are separated from W-2 wages before burden is applied", () => {
-    expect(SERVICE).toMatch(/else if \(u\?\.workerType === "CONTRACTOR"\) contractLabor \+= amt;/);
+    // Asserts the POLICY, not the spelling. This used to pin the exact line
+    // `else if (u?.workerType === "CONTRACTOR") contractLabor += amt;`, which
+    // meant the gate went red when that `else if` chain was replaced by an
+    // exhaustive switch — a change that FIXED a bug the chain had, because
+    // its trailing `else` swept UNPAID and untyped people into crewWages and
+    // therefore into the employer payroll-tax base. A gate that fails on a
+    // correct refactor teaches people to edit the gate.
+    //
+    // What must hold: contract labour is identified POSITIVELY, and the two
+    // tax-facing buckets are filled from separate branches.
+    expect(SERVICE).toMatch(/contractLabor \+= amt;/);
+    expect(SERVICE).toMatch(/crewWages \+= amt;/);
+    // Positively: a contractor is recognised by classify/isFeeable, never by
+    // "not W-2, therefore a contractor".
+    expect(SERVICE).toMatch(/classify\(u\?\.workerType\)|isFeeable\(u\?\.workerType\)/);
+    expect(SERVICE).not.toMatch(/else\s+crewWages \+= amt;/);
+  });
+
+  it("neither tax-facing bucket can be filled by a trailing else", () => {
+    // The specific bug: `if owner / else if contractor / else W-2` gave the
+    // W-2 wage base — the employer payroll-tax base — to anyone whose class
+    // nobody had decided, including an UNPAID helper.
+    expect(SERVICE).toMatch(/case "unpaid":/);
+    expect(SERVICE).toMatch(/case "unclassified":/);
   });
 
   it("employer tax multiplies W-2 wages only", () => {

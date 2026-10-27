@@ -17,10 +17,10 @@ import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 //   • Dispatcher — piggyback + manual burst
 //   • Content assembly (channel-appropriate body + CTA + opt-out footer)
 //
-// See docs/features/promotions.md when it lands; the design decisions
+// There is no promotions feature doc; the design decisions
 // (piggyback, cooldown, multi-promo per-channel policy, invoice_page-as-
 // display-not-dispatch, CAN-SPAM address in email footer, HMAC opt-out
-// URL, APPROVE-gated Super re-opt-in) are all encoded in this file.
+// URL, APPROVE-gated manual re-opt-in) are all encoded in this file.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Content shape (Zod) ────────────────────────────────────────────────────
@@ -1251,7 +1251,7 @@ export function renderEmailPromoBodyText(snapshot: {
 //
 // Escaping: all snapshot values are HTML-escaped before interpolation
 // (belt-and-suspenders — the Zod schema already caps content lengths
-// and the Super-only editor is trusted, but escaping keeps the
+// and the `marketing.manage` editor is trusted, but escaping keeps the
 // rendered mail immune to any accidental HTML in body text).
 export function renderEmailPromoBodyHtml(snapshot: {
   body: string;
@@ -2042,7 +2042,7 @@ export async function runManualSendBurst(params: {
 
 // ── Send-to-self test ─────────────────────────────────────────────────────
 
-// Dispatches the promotion's assembled content to the Super's own email
+// Dispatches the promotion's assembled content to the CALLER's own email
 // / phone. Does NOT write PromotionDelivery rows (tests aren't audit
 // data). Writes an AuditEvent for the test send itself.
 // Test-send mirrors whichever comms mode the org (or Super's own
@@ -2134,7 +2134,7 @@ export async function sendPromotionTest(params: {
   let html: string | undefined;
   if (params.channel === "email") {
     subject = `[TEST] ${snapshot.subject ?? promo.title}`;
-    // Prepend a [TEST] marker to the body so Super sees at a glance
+    // Prepend a [TEST] marker to the body so the sender sees at a glance
     // that this is a preview, not a real send. Everything else is
     // byte-for-byte identical to what recipients will see.
     const bodyWithTestMarker = `[TEST] This is a test send of a promotional message.\n\n${snapshot.body}`;
@@ -2181,7 +2181,7 @@ export async function sendPromotionTest(params: {
   }
 
   // CLAIMER mode — return the composed content so the client opens
-  // the OS `sms:`/`mailto:` intent on the Super's device.
+  // the OS `sms:`/`mailto:` intent on the caller's own device.
   await writeAudit(prisma, AUDIT.PROMOTION.TEST_SENT, params.actorUserId, {
     promotionId: promo.id,
     channel: params.channel,
@@ -3771,9 +3771,9 @@ export async function rotatePromotionHmacSecret(params: {
       rotatedAt: rotatedAt.toISOString(),
     });
   });
-  // Return the fresh secret so Super can reveal it immediately in the
+  // Return the fresh secret so a `time.manage` holder can reveal it immediately in the
   // Settings card without a page reload. Same trust boundary — Super
-  // sees the current secret via /admin/settings anyway.
+  // sees the current secret via /settings anyway.
   return { rotatedAt: rotatedAt.toISOString(), secret: newSecret };
 }
 

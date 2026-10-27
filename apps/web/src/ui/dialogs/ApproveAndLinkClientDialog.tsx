@@ -10,7 +10,7 @@
 // the server route runs the link inside the same transaction as the
 // approval (see services/users.ts approve()), so partial-state failures
 // are impossible. If the picker comes back empty (no unlinked contacts),
-// the operator has to cancel, create the right contact in Admin → Clients
+// the operator has to cancel, create the right contact in Clients
 // first, then come back here.
 
 import { useEffect, useMemo, useState } from "react";
@@ -82,7 +82,7 @@ export default function ApproveAndLinkClientDialog({
     setSearch("");
     setConfirmContact(null);
     const qs = user.email ? `?nearEmail=${encodeURIComponent(user.email)}` : "";
-    apiGet<UnlinkedContact[]>(`/api/admin/client-contacts/unlinked${qs}`)
+    apiGet<UnlinkedContact[]>(`/api/client-contacts/unlinked${qs}`)
       .then((list) => setContacts(Array.isArray(list) ? list : []))
       .catch((err) => {
         publishInlineMessage({
@@ -113,7 +113,7 @@ export default function ApproveAndLinkClientDialog({
   async function performApproveAndLink(c: UnlinkedContact) {
     setSubmitting(true);
     try {
-      await apiPost(`/api/admin/users/${user.id}/approve`, { linkContactId: c.id });
+      await apiPost(`/api/users/${user.id}/approve`, { linkContactId: c.id });
       try {
         window.dispatchEvent(new Event("seedlings3:users-changed"));
       } catch {}
@@ -219,7 +219,7 @@ export default function ApproveAndLinkClientDialog({
                       </Text>
                       <Text fontSize="xs" color="orange.fg" mt={1}>
                         If the contact doesn&apos;t exist yet, cancel and add
-                        it from Admin → Directory → Clients first, then return
+                        it from Directory → Clients first, then return
                         here to approve.
                       </Text>
                     </Box>

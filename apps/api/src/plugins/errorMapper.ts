@@ -37,6 +37,33 @@ export default fp(async (app) => {
           return reply
             .code(404)
             .send({ code: "NOT_FOUND", message: err.message });
+        // P2003 — FOREIGN KEY CONSTRAINT FAILED.
+        //
+        // Unmapped, this fell through to the 500 below, and the API e2e
+        // suite found NINE routes returning "Internal Server Error" for it:
+        // pin/like a visit or a piece of equipment, dismiss a banner, patch a
+        // mileage row, send a payment-request email. All the same shape — a
+        // join row referencing something that is no longer there. In practice
+        // that is a stale card: the visit was archived or deleted while it was
+        // still on somebody's screen, they tapped Pin, and got a 500.
+        //
+        // 404 is the right answer for that: the thing you named is gone.
+        //
+        // ONE CASE WHERE IT IS THE WRONG ANSWER, deliberately not handled
+        // here: deleting a row that others still REFERENCE (a CustomRole that
+        // other roles inherit from) also raises P2003, and there the honest
+        // reply is 409 with "3 roles build on this one". A global mapper
+        // cannot tell the two apart — Prisma does not report the operation —
+        // so a service that can hit the second case must pre-check and raise
+        // its own ServiceError, which takes precedence over this branch.
+        case "P2003":
+          return reply.code(404).send({
+            code: "REFERENCED_RECORD_NOT_FOUND",
+            message:
+              "Something this request refers to no longer exists. It may have " +
+              "been archived or deleted — refresh and try again.",
+            details: { constraint: (err.meta as any)?.constraint ?? undefined },
+          });
       }
     }
 

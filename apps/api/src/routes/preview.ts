@@ -4,20 +4,41 @@ import { getRoutingProvider, AVAILABLE_PROVIDERS, type OptimizedRoute } from "..
 
 import { etMidnight, etToday, etAddDays, etFormatDate , type EtDateKey } from "../lib/dates";
 import { planRoute } from "../lib/routePlanner";
+import { makeGuards } from "../lib/routeGuards";
+import { callerCan } from "../lib/callerCan";
 
-const workerGuard = {
-  preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-    (req.server as any).requireRole(req, reply, "WORKER"),
-};
 
 async function currentUserId(req: any): Promise<string> {
   return (req as any).user?.id;
 }
 
 export default async function previewRoutes(app: FastifyInstance) {
-  app.get("/preview/route-suggestions", workerGuard, async (req: any) => {
+  // Route previewing is OWNERSHIP: it plans the caller's own day. It needs
+  // them signed in and approved, not a role — see routeGuards.
+  const { approvedUser } = makeGuards(app);
+  app.get("/preview/route-suggestions", approvedUser, async (req: any) => {
     const userId = await currentUserId(req);
     const targetUserIdParam = req.query?.userId as string | undefined;
+
+    // PLANNING YOUR OWN DAY IS OWNERSHIP. PLANNING SOMEBODY ELSE'S IS NOT.
+    //
+    // `approvedUser` is a promise that the handler scopes its own query to
+    // the caller, and this one did not keep it: `?userId=` was honoured with
+    // no check at all, so any approved account — a trainee, an unpaid
+    // observer, a client with a login — could read anyone's claimed schedule
+    // along with their email, worker type and home-base address. The code
+    // even named that branch for a role while gating nothing on it.
+    //
+    // The route was role-gated before the cord-cut, and converting it to
+    // `approvedUser` is what opened it. Asking for the capability is the
+    // repair: `schedule.manage` is "you run the schedule", which is exactly
+    // the authority to plan a day that is not yours.
+    if (targetUserIdParam && targetUserIdParam !== userId) {
+      if (!callerCan(req, "schedule.manage")) {
+        throw app.httpErrors.forbidden("NOT_AUTHORIZED");
+      }
+    }
+
     const targetUserId = targetUserIdParam || userId;
 
     const user = await prisma.user.findUnique({
@@ -70,12 +91,17 @@ export default async function previewRoutes(app: FastifyInstance) {
     // resolvable address get skipped from route optimization via the
     // "No address" filter (dataIssues) — same treatment as jobs with
     // missing property data.
-    const isAdminRoute = !!targetUserIdParam;
+    // Are we planning for SOMEBODY ELSE? That is what the parameter means.
+    // It was called `planningForOther`, which reads as a role check and is not
+    // one — it only asks whether a target user was named. Visits that must
+    // be assigned are excluded when planning your own day, because you
+    // cannot claim them; when planning for someone else they are in scope.
+    const planningForOther = !!targetUserIdParam;
     const claimable = mode === "suggest" ? await prisma.jobOccurrence.findMany({
       where: {
         status: "SCHEDULED",
         assignees: { none: {} },
-        ...(isAdminRoute ? {} : { isAdminOnly: false }),
+        ...(planningForOther ? {} : { mustBeAssigned: false }),
         isTentative: false,
         OR: [
           { startAt: { gte: etMidnight(startStr), lt: etMidnight(endStr) } },
@@ -436,7 +462,7 @@ export default async function previewRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/preview/routing-providers", workerGuard, async () => {
+  app.get("/preview/routing-providers", approvedUser, async () => {
     return { providers: AVAILABLE_PROVIDERS };
   });
 }

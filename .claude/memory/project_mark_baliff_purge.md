@@ -17,8 +17,11 @@ used, not a real worker — `$0` wage, never in Gusto, no W-2 or 1099. But
 he carried real activity: 53 job assignments across 23 real clients, 47
 payment splits, $520 collected, 132 photos, 14 checkouts.
 
-**748 rows changed** via `apps/api/scripts/purge-mark-baliff.ts` (kept as
-the record of exactly what moved). Work and money were **reassigned to the
+**748 rows changed** via the purge script, kept as the record of exactly
+what moved — now at `docs/history/purge-mark-baliff.ts.txt`. It moved out of
+`apps/api/scripts/` because that directory is typechecked and runnable, and
+the script had stopped compiling against the current schema; a record is not
+a tool. Work and money were **reassigned to the
 owner** with `ownerEarnings: true`, never deleted — the splits sit on
 $3,740 of real client revenue, so deleting them would have erased real
 income and broken payment conservation.

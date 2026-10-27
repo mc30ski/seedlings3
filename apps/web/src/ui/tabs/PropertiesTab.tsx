@@ -14,12 +14,12 @@ import {
   Select,
   createListCollection,
 } from "@chakra-ui/react";
-import { Filter, LayoutList, Plus, RefreshCw, X } from "lucide-react";
+import { Filter, LayoutList, MapPin, Plus, RefreshCw, X } from "lucide-react";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { prettyStatus, clientLabel } from "@/src/lib/labels";
-import { determineRoles } from "@/src/lib/roles";
+import { scopeFromMe } from "@/src/lib/roles";
 import { propertyStatusColor } from "@/src/lib/statusColors";
 import {
   type TabPropsType,
@@ -43,6 +43,8 @@ import DeleteDialog, {
 import PropertyDialog from "@/src/ui/dialogs/PropertyDialog";
 import PropertyPhotosManager from "@/src/ui/components/PropertyPhotosManager";
 import { TextLink, MapLink } from "@/src/ui/helpers/Link";
+import type { Scope } from "@/src/lib/scope";
+import { isFieldCleared } from "../../lib/scope";
 
 // Constant representing the kind states for this entity.
 const kindStates = ["ALL", ...PROPERTY_KIND] as const;
@@ -51,39 +53,40 @@ const kindStates = ["ALL", ...PROPERTY_KIND] as const;
 const statusStates = ["ALL", ...PROPERTY_STATUS] as const;
 
 type PropertiesTabProps = TabPropsType & {
-  /** Additive scope — capabilities ADD as you climb the ladder.
-   *  scope.isWorker → worker-facing list (ACTIVE only).
-   *  scope.isAdmin  → adds admin list endpoint + CRUD + photos manager.
-   *  scope.isSuper  → adds hard-delete confirmation unlock.
-   *  Falls back to a scope derived from the legacy `purpose` prop when
-   *  not passed, so mounts still on the old shape keep working. */
-  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  /** What the caller may do, as capabilities.
+   *  `clients.view`   → the property list (ACTIVE only without manage).
+   *  `clients.manage` → CRUD, the photos manager, and delete.
+   *  Absent fails closed — it grants nothing. */
+  scope?: Scope;
 };
 
 export default function PropertiesTab({
   me,
-  purpose = "WORKER",
   scope,
 }: PropertiesTabProps) {
-  const { isSuper: hasSuperRole, isAvail, forAdmin } = determineRoles(me, purpose);
 
   // Effective scope: prefer the additive prop; fall back to a scope
   // derived from `purpose` for any callsite still on the old shape.
   const effScope = scope ?? {
-    isWorker: purpose === "WORKER",
-    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
-    isSuper: purpose === "SUPER",
+    // Derived from CAPABILITIES, not from the shell that mounted
+    // this tab. These three read `purpose` and so answered
+    // "what may I do" with "where did you come from".
+    ...scopeFromMe(me),
+    
   };
   // Capabilities render additively AND are strictly governed by the
   // scope prop — not by the underlying role. A user with admin+super
-  // roles viewing the *Admin* tab must NOT see Super buttons.
-  const showWorkerExtras = effScope.isWorker;
-  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
-  const showSuperExtras = effScope.isSuper && hasSuperRole;
+  // roles viewing the *Admin* tab must NOT see management buttons.
+  const canViewClients = effScope.can("clients.view");
+  // What this gates, per the route map.
+  const canManageClients = effScope.can("clients.manage");
 
-  const pfx = showAdminExtras ? "aprops" : "wprops";
-  const isTrainee = !forAdmin && me?.workerType === "TRAINEE";
-  const [traineePropertyIds, setTraineePropertyIds] = useState<Set<string> | null>(null);
+  const pfx = canManageClients ? "aprops" : "wprops";
+  // Not cleared for field work: sees only what they are assigned to.
+  // Clearance is a capability — see isFieldCleared(), which asks for
+  // `work.claim`.
+  const notFieldCleared = !canManageClients && !isFieldCleared(me);
+  const [restrictedPropertyIds, setRestrictedPropertyIds] = useState<Set<string> | null>(null);
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
@@ -93,6 +96,11 @@ export default function PropertiesTab({
 
   const [items, setItems] = useState<Property[]>([]);
   const [loading, setLoading] = useState(false);
+  /** Has the first fetch finished? Not the same as `loading`, which starts
+   *  false while the fetch is kicked off by an effect that runs after the
+   *  first paint — so the empty state was announced before anything had
+   *  been asked for. See the longer note in ClientsTab. */
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Property | null>(null);
@@ -126,12 +134,12 @@ export default function PropertiesTab({
   async function load(displayLoading: boolean = true) {
     setLoading(displayLoading);
     try {
-      const base = showAdminExtras ? "/api/admin/properties" : "/api/properties";
+      const base = canManageClients ? "/api/properties" : "/api/properties";
       const list: Property[] = await apiGet(base);
       setItems(
         list
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
-          .filter((i) => showAdminExtras || i.status === "ACTIVE"),
+          .filter((i) => canManageClients || i.status === "ACTIVE"),
       );
     } catch (err) {
       publishInlineMessage({
@@ -141,17 +149,18 @@ export default function PropertiesTab({
       setItems([]);
     } finally {
       setLoading(false);
+      setHasLoaded(true);
     }
   }
 
   // Loads all the items for the first time.
   useEffect(() => {
     void load();
-  }, [showAdminExtras]);
+  }, [canManageClients]);
 
   // For trainees: fetch their assigned property IDs
   useEffect(() => {
-    if (!isTrainee) { setTraineePropertyIds(null); return; }
+    if (!notFieldCleared) { setRestrictedPropertyIds(null); return; }
     apiGet<any[]>("/api/occurrences")
       .then((occs) => {
         const myId = me?.id;
@@ -161,10 +170,10 @@ export default function PropertiesTab({
             if (occ.job?.property?.id) ids.add(occ.job.property.id);
           }
         }
-        setTraineePropertyIds(ids);
+        setRestrictedPropertyIds(ids);
       })
-      .catch(() => setTraineePropertyIds(new Set()));
-  }, [isTrainee, me?.id]);
+      .catch(() => setRestrictedPropertyIds(new Set()));
+  }, [notFieldCleared, me?.id]);
 
   useEffect(() => {
     // EVERY disposer is kept and run on unmount. These were fire-and-forget:
@@ -176,6 +185,7 @@ export default function PropertiesTab({
       onEventSearchRun("clientTabToPropertiesTabSearch", setQ, inputRef, setHighlightId),
       onEventSearchRun("jobsTabToPropertiesTabSearch", setQ, inputRef, setHighlightId),
       onEventSearchRun("paymentsTabToPropertiesTabSearch", setQ, inputRef, setHighlightId),
+      onEventSearchRun("areasTabToPropertiesTabSearch", setQ, inputRef, setHighlightId),
     ];
     return () => { for (const off of offs) off(); };
   }, []);
@@ -189,13 +199,13 @@ export default function PropertiesTab({
     }
 
     // Trainees: wait for filter data before showing anything
-    if (isTrainee && !traineePropertyIds) return [];
+    if (notFieldCleared && !restrictedPropertyIds) return [];
 
     let rows = items;
 
     // Trainees only see properties they are assigned to
-    if (isTrainee && traineePropertyIds) {
-      rows = rows.filter((r) => traineePropertyIds.has(r.id));
+    if (notFieldCleared && restrictedPropertyIds) {
+      rows = rows.filter((r) => restrictedPropertyIds.has(r.id));
     }
 
     // Filter based on entity type.
@@ -242,7 +252,7 @@ export default function PropertiesTab({
     });
 
     return rows;
-  }, [items, q, kind, statusFilter, highlightId, isTrainee, traineePropertyIds]);
+  }, [items, q, kind, statusFilter, highlightId, notFieldCleared, restrictedPropertyIds]);
 
   function openCreate() {
     setEditing(null);
@@ -256,7 +266,7 @@ export default function PropertiesTab({
 
   async function archive(p: Property) {
     try {
-      await apiPost(`/api/admin/properties/${p.id}/archive`, {});
+      await apiPost(`/api/properties/${p.id}/archive`, {});
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
@@ -274,7 +284,7 @@ export default function PropertiesTab({
   }
   async function unarchive(p: Property) {
     try {
-      await apiPost(`/api/admin/properties/${p.id}/unarchive`, {});
+      await apiPost(`/api/properties/${p.id}/unarchive`, {});
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
@@ -306,7 +316,7 @@ export default function PropertiesTab({
   async function openArchivePropertyConfirm(p: Property) {
     try {
       const preview = await apiGet<{ jobsToArchive: number }>(
-        `/api/admin/properties/${p.id}/archive-preview`,
+        `/api/properties/${p.id}/archive-preview`,
       );
       setArchivePropertyConfirm({ property: p, ...preview });
     } catch (err) {
@@ -320,7 +330,7 @@ export default function PropertiesTab({
   async function openUnarchivePropertyConfirm(p: Property) {
     try {
       const preview = await apiGet<{ jobsToUnarchive: number }>(
-        `/api/admin/properties/${p.id}/unarchive-preview`,
+        `/api/properties/${p.id}/unarchive-preview`,
       );
       setUnarchivePropertyConfirm({ property: p, ...preview });
     } catch (err) {
@@ -333,7 +343,7 @@ export default function PropertiesTab({
   async function hardDelete(id: string, displayName: string) {
     try {
       setLoading(true);
-      await apiDelete(`/api/admin/properties/${id}`);
+      await apiDelete(`/api/properties/${id}`);
       await load(true);
       publishInlineMessage({
         type: "SUCCESS",
@@ -356,30 +366,36 @@ export default function PropertiesTab({
   // Rendering it in the gate branches too keeps it mounted from the first
   // paint. Closed, it renders nothing, so the loading view is unchanged.
   const tabHelp = (
-      <TabExplainer explainerId={`seedlings:propertiesTab:guideOpen:${showAdminExtras ? "admin" : "worker"}`}>
+      <TabExplainer explainerId={`seedlings:propertiesTab:guideOpen:${canManageClients ? "admin" : "worker"}`}>
         <ExplainerText>
           Every place you service, each belonging to a client — where they are, who they
-          belong to, and what is particular about each one. Properties are set up by an admin.
+          belong to, and what is particular about each one. Properties are set up by whoever
+              manages clients.
         </ExplainerText>
         <ExplainerText>
           The <Em>photos</Em> are the useful part: they are what a worker sees as guidance on
           the job — access, gate codes, the awkward corner that is easy to miss. Worth a look
           before a first visit.
         </ExplainerText>
-        {showAdminExtras && (
-          <RoleSection role="Admin">
+        {canManageClients && (
+          <CapabilitySection capability="clients.manage" scope={scope}>
             <ExplainerText>
               You can add and edit properties, and keep <Em>photos with descriptions</Em> — a
               picture of the gate code or the awkward corner earns its place. Archiving a
               property <Em>previews what it will affect</Em> first, so it is never blind.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
       </TabExplainer>
   );
 
-  if (!isAvail) return <>{tabHelp}<UnavailableNotice /></>;
-  if (loading && items.length === 0) return <>{tabHelp}<LoadingCenter /></>;
+  if (!canViewClients) return <>{tabHelp}<UnavailableNotice /></>;
+  // Same two conditions as ClientsTab: the first paint has asked for
+  // nothing yet, and the assigned-property set arrives on its own request.
+  const scopeStillResolving = notFieldCleared && !restrictedPropertyIds;
+  if (!hasLoaded || scopeStillResolving || (loading && items.length === 0)) {
+    return <>{tabHelp}<LoadingCenter /></>;
+  }
 
   return (
     <Box w="full">
@@ -443,7 +459,7 @@ export default function PropertiesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        {forAdmin && (
+        {canManageClients && (
           <Button
             variant="solid"
             size="sm"
@@ -551,9 +567,27 @@ export default function PropertiesTab({
 
               <Card.Body py="2" px="3" pt="1">
                 <VStack align="start" gap={1.5}>
-                  <Box fontSize="sm">
+                  <HStack fontSize="sm" gap={2} align="center" wrap="wrap">
                     <MapLink address={address} />
-                  </Box>
+                    {/* THE TERRITORY, beside the address it qualifies —
+                        the same badge the job cards carry, so the two read
+                        as the same fact. Visible on the card, not only
+                        inside the editor: "which area is this in" is a
+                        question you ask while scanning a list, and having
+                        to open each property to answer it is how a
+                        mis-tagged one goes unnoticed.
+                        OUTSIDE the MapLink: that opens a map of the
+                        address, and an area name is not part of one.
+                        Absent when the property has no area — and that
+                        absence is INFORMATION, because an untagged
+                        property is invisible to every area-scoped reader. */}
+                    {(p as any)?.area?.name && (
+                      <Badge size="sm" variant="subtle" colorPalette="purple" flexShrink={0} display="inline-flex" alignItems="center" gap="1">
+                        <MapPin size={10} />
+                        {(p as any).area.name}
+                      </Badge>
+                    )}
+                  </HStack>
                   <HStack gap={4} fontSize="xs" wrap="wrap">
                     <Text>
                       Client:{" "}
@@ -563,7 +597,7 @@ export default function PropertiesTab({
                           openEventSearch(
                             "propertyTabToClientTabSearch",
                             p.client?.displayName,
-                            forAdmin,
+                            
                             p.clientId,
                           )
                         }
@@ -578,7 +612,7 @@ export default function PropertiesTab({
                             openEventSearch(
                               "propertyTabToClientTabContactSearch",
                               `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`,
-                              forAdmin,
+                              
                               p.clientId,
                             )
                           }
@@ -597,9 +631,9 @@ export default function PropertiesTab({
                 </VStack>
               </Card.Body>
               <Card.Body py="2" px="3" pt="0">
-                <PropertyPhotosManager propertyId={p.id} readOnly={!forAdmin} />
+                <PropertyPhotosManager propertyId={p.id} readOnly={!canManageClients} />
               </Card.Body>
-              {forAdmin && (
+              {canManageClients && (
                 <Card.Footer py="2" px="3" pt="0">
                   <HStack gap={2} wrap="wrap">
                     <StatusButton
@@ -650,25 +684,25 @@ export default function PropertiesTab({
                           let hasJobs = false;
                           try {
                             const jobs = await apiGet<any[]>(
-                              `/api/admin/jobs?propertyId=${p.id}&limit=500`
+                              `/api/jobs?propertyId=${p.id}&limit=500`
                             );
                             hasJobs = Array.isArray(jobs) && jobs.length > 0;
                           } catch { /* proceed; server will guard */ }
 
-                          const superRequired = !showSuperExtras;
+                          const cannotDelete = !canManageClients;
 
                           void setToDelete({
                             id: p.id,
                             title: "Delete property?",
                             summary: p.displayName,
-                            disabled: hasJobs || superRequired,
+                            disabled: hasJobs || cannotDelete,
                             details: hasJobs ? (
                               <Text color="red.fg">
                                 This property has associated jobs. Delete all jobs before deleting the property.
                               </Text>
-                            ) : superRequired ? (
+                            ) : cannotDelete ? (
                               <Text color="red.fg">
-                                You must be a Super Admin to delete.
+                                You must be someone with settings authority Admin to delete.
                               </Text>
                             ) : undefined,
                             extra: p.displayName,
@@ -691,17 +725,17 @@ export default function PropertiesTab({
       </VStack>
       </Box>
 
-      {forAdmin && (
+      {canManageClients && (
         <PropertyDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
           mode={editing ? "UPDATE" : "CREATE"}
-          role={forAdmin ? "ADMIN" : "WORKER"}
+          scope={effScope}
           initial={editing ?? undefined}
           onSaved={() => void load()}
         />
       )}
-      {forAdmin && (
+      {canManageClients && (
         <DeleteDialog
           toDelete={toDelete}
           cancel={() => setToDelete(null)}

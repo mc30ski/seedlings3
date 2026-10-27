@@ -38,7 +38,7 @@ type TimelineEvent = {
   category: string | null;
   rrule: string | null;
   anchorDate: string;
-  adminHidden: boolean;
+  restricted: boolean;
 };
 
 type Props = {
@@ -66,7 +66,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
   const [category, setCategory] = useState<string>("");
   const [anchorDate, setAnchorDate] = useState("");
   const [rrule, setRRule] = useState("");
-  const [adminHidden, setAdminHidden] = useState(false);
+  const [restricted, setRestricted] = useState(false);
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
 
@@ -77,7 +77,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
     if (!open) return;
     (async () => {
       try {
-        const settings = await apiGet<{ key: string; value: string }[]>("/api/admin/settings");
+        const settings = await apiGet<{ key: string; value: string }[]>("/api/settings");
         const tc = (Array.isArray(settings) ? settings : []).find((s) => s.key === "TIMELINE_CATEGORIES");
         const parsed = parseTimelineCategoriesConfig(tc?.value);
         if (parsed) setCategories(parsed);
@@ -92,7 +92,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
       setCategory(event?.category ?? "");
       setAnchorDate(isoToDateInput(event?.anchorDate));
       setRRule(event?.rrule ?? "");
-      setAdminHidden(event?.adminHidden ?? false);
+      setRestricted(event?.restricted ?? false);
     }
   }, [open, event]);
 
@@ -109,18 +109,18 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
         // when crossing timezones.
         anchorDate: new Date(anchorDate + "T12:00:00Z").toISOString(),
         rrule: rrule.trim() || null,
-        adminHidden,
+        restricted,
       };
       if (isEdit && event) {
-        await apiPatch(`/api/super/timeline/${event.id}`, payload);
+        await apiPatch(`/api/timeline/${event.id}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Activity updated." });
       } else {
-        await apiPost("/api/super/timeline", payload);
+        await apiPost("/api/timeline", payload);
         publishInlineMessage({ type: "SUCCESS", text: "Activity created." });
       }
       // Tell every listening surface that the timeline changed — the
       // JobsTab mixes Timeline activities into its admin feed via
-      // /api/admin/timeline/upcoming and needs to refetch, the title-bar
+      // /api/timeline/upcoming and needs to refetch, the title-bar
       // alert count needs to refresh, etc. Without this dispatch, the
       // new activity is invisible everywhere except this dialog's parent
       // until a hard reload.
@@ -185,12 +185,12 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
                   <RRuleEditor value={rrule} onChange={setRRule} anchorDate={anchorDate} />
                 </Box>
                 <Checkbox.Root
-                  checked={adminHidden}
-                  onCheckedChange={(e) => setAdminHidden(!!e.checked)}
+                  checked={restricted}
+                  onCheckedChange={(e) => setRestricted(!!e.checked)}
                 >
                   <Checkbox.HiddenInput />
                   <Checkbox.Control />
-                  <Checkbox.Label>Hide from Admins (Super-only)</Checkbox.Label>
+                  <Checkbox.Label>Restricted — only visible to people who manage the timeline</Checkbox.Label>
                 </Checkbox.Root>
               </VStack>
             </Dialog.Body>

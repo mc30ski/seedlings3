@@ -48,7 +48,7 @@ async function seedPendingPolicyForEmployee() {
     keyPrefix: "E2E_NAV",
     title: "E2E Nav Test Policy",
     enforcement: "BLOCK",
-    createdByUserId: USERS.super,
+    createdByUserId: USERS.owner,
   });
 }
 
@@ -68,27 +68,27 @@ test.describe("View profile navigation", () => {
       JSON.parse(localStorage.getItem("seedlings_topTab") ?? '""'),
     );
     const beforeInner = await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("seedlings_workerTab") ?? '""'),
+      JSON.parse(localStorage.getItem("seedlings_staffTab") ?? '""'),
     );
-    expect(beforeTop).toBe("worker");
+    expect(beforeTop).toBe("staff");
     expect(beforeInner).toBe("home");
 
     await banner.getByRole("button", { name: /View profile/i }).click();
 
-    // After the click, the app should be on worker/profile.
+    // After the click, the app should be on staff/profile.
     // usePersistedState writes to localStorage on state change; give the
     // effect a beat then read it back.
     await page.waitForFunction(
-      () => JSON.parse(localStorage.getItem("seedlings_workerTab") ?? '""') === "profile",
+      () => JSON.parse(localStorage.getItem("seedlings_staffTab") ?? '""') === "profile",
       { timeout: 5_000 },
     );
     const afterTop = await page.evaluate(() =>
       JSON.parse(localStorage.getItem("seedlings_topTab") ?? '""'),
     );
     const afterInner = await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("seedlings_workerTab") ?? '""'),
+      JSON.parse(localStorage.getItem("seedlings_staffTab") ?? '""'),
     );
-    expect(afterTop).toBe("worker");
+    expect(afterTop).toBe("staff");
     expect(afterInner).toBe("profile");
   });
 
@@ -102,7 +102,7 @@ test.describe("View profile navigation", () => {
 
     // Wait for the profile switch to actually land.
     await page.waitForFunction(
-      () => JSON.parse(localStorage.getItem("seedlings_workerTab") ?? '""') === "profile",
+      () => JSON.parse(localStorage.getItem("seedlings_staffTab") ?? '""') === "profile",
       { timeout: 5_000 },
     );
 
@@ -112,11 +112,11 @@ test.describe("View profile navigation", () => {
 
     // Should be back on Home tab.
     await page.waitForFunction(
-      () => JSON.parse(localStorage.getItem("seedlings_workerTab") ?? '""') === "home",
+      () => JSON.parse(localStorage.getItem("seedlings_staffTab") ?? '""') === "home",
       { timeout: 5_000 },
     );
     const afterInner = await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("seedlings_workerTab") ?? '""'),
+      JSON.parse(localStorage.getItem("seedlings_staffTab") ?? '""'),
     );
     expect(afterInner).toBe("home");
 
