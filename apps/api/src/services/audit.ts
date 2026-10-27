@@ -14,7 +14,7 @@ export const audit: ServicesAudit = {
         lte: params.to ? etEndOfDay(params.to as EtDateKey) : undefined,
       };
     }
-    // Business Start Date filter — pre-cutoff audit events hidden. Super can
+    // Business Start Date filter — pre-cutoff audit events hidden. A `books.view` holder can
     // toggle the reveal header to see historical actions. See
     // lib/businessStartCutoff.ts.
     const cutoff = params.cutoff ?? null;

@@ -1,4 +1,5 @@
 "use client";
+import type { WorkerType } from "@repo/money";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -24,7 +25,14 @@ import {
 } from "@/src/ui/components/DialogErrorAlert";
 import TeamMemberList, { type TeamMember } from "@/src/ui/components/TeamMemberList";
 
-type WorkerLite = { id: string; displayName?: string | null; email?: string | null };
+type WorkerLite = {
+  id: string;
+  displayName?: string | null;
+  email?: string | null;
+  /** Needed by TeamMemberList: only someone on payroll may hold a paid seat.
+   *  Omitting it reads as "unknown" and silently re-enables the control. */
+  workerType?: WorkerType | null;
+};
 type GroupBrief = {
   id: string;
   name: string;
@@ -81,11 +89,11 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
     setSelectedGroupId(currentGroup?.id ?? "");
     (async () => {
       try {
-        const list = await apiGet<WorkerLite[]>("/api/admin/users?role=WORKER&approved=true");
+        const list = await apiGet<WorkerLite[]>("/api/users?role=WORKER&approved=true");
         setWorkers(Array.isArray(list) ? list : []);
       } catch { setWorkers([]); }
       try {
-        const gs = await apiGet<GroupBrief[]>("/api/admin/groups");
+        const gs = await apiGet<GroupBrief[]>("/api/groups");
         setGroups(Array.isArray(gs) ? gs : []);
       } catch { setGroups([]); }
     })();
@@ -95,7 +103,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
     dlgErr.clear();
     setGroupBusy(true);
     try {
-      await apiPut(`/api/admin/jobs/${jobId}/default-group`, { groupId });
+      await apiPut(`/api/jobs/${jobId}/default-group`, { groupId });
       publishInlineMessage({
         type: "SUCCESS",
         text: groupId ? "Default group set." : "Default group cleared.",
@@ -125,10 +133,15 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
     setAddBusy(true);
     try {
       for (const userId of userIds) {
-        await apiPost(`/api/admin/jobs/${jobId}/default-assignees/add`, { userId, role });
+        await apiPost(`/api/jobs/${jobId}/default-assignees/add`, { userId, role });
         const worker = workers.find((w) => w.id === userId);
         if (worker) {
-          setMembers((prev) => [...prev, { userId, role, user: { id: userId, displayName: worker.displayName, email: worker.email } }]);
+          setMembers((prev) => [...prev, { userId, role, user: {
+              id: userId,
+              displayName: worker.displayName,
+              email: worker.email,
+              workerType: worker.workerType,
+            } }]);
         }
       }
       // Server-side: adding an individual default clears the default group
@@ -147,7 +160,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
     dlgErr.clear();
     setBusyId(userId);
     try {
-      await apiDelete(`/api/admin/jobs/${jobId}/default-assignees/${userId}`);
+      await apiDelete(`/api/jobs/${jobId}/default-assignees/${userId}`);
       setMembers((prev) => prev.filter((m) => m.userId !== userId));
       publishInlineMessage({ type: "SUCCESS", text: "Worker removed from default team." });
       onChanged?.();
@@ -161,7 +174,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
     dlgErr.clear();
     setBusyId(userId);
     try {
-      await apiPatch(`/api/admin/jobs/${jobId}/default-assignees/${userId}/role`, { role: newRole });
+      await apiPatch(`/api/jobs/${jobId}/default-assignees/${userId}/role`, { role: newRole });
       setMembers((prev) => prev.map((m) => m.userId === userId ? { ...m, role: newRole } : m));
       publishInlineMessage({ type: "SUCCESS", text: newRole === "observer" ? "Changed to observer." : "Changed to worker." });
       onChanged?.();
@@ -174,7 +187,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
     dlgErr.clear();
     setBusyId(userId);
     try {
-      await apiPost(`/api/admin/jobs/${jobId}/default-assignees/${userId}/make-claimer`, {});
+      await apiPost(`/api/jobs/${jobId}/default-assignees/${userId}/make-claimer`, {});
       // Move chosen user to the front, drop observer role if they had one,
       // and stamp assignedById = userId so TeamMemberList highlights them.
       setMembers((prev) => {

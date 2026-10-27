@@ -150,7 +150,7 @@ export function useStreamPauseControls({
             run(
               dialog.occ,
               async () => {
-                await apiPost(`/api/admin/occurrences/${dialog.occ.id}/stream-pause`, {
+                await apiPost(`/api/occurrences/${dialog.occ.id}/stream-pause`, {
                   reasonCode,
                   reason,
                   reminderAt,
@@ -180,7 +180,7 @@ export function useStreamPauseControls({
             run(
               dialog.occ,
               async () => {
-                await apiPatch(`/api/admin/occurrences/${dialog.occ.id}/stream-pause`, {
+                await apiPatch(`/api/occurrences/${dialog.occ.id}/stream-pause`, {
                   reasonCode,
                   reason,
                   reminderAt,
@@ -204,7 +204,7 @@ export function useStreamPauseControls({
             run(
               dialog.occ,
               async () => {
-                await apiPost(`/api/admin/occurrences/${dialog.occ.id}/stream-resume`, {
+                await apiPost(`/api/occurrences/${dialog.occ.id}/stream-resume`, {
                   newStartAt,
                 });
               },
@@ -231,7 +231,7 @@ export function useStreamPauseControls({
  *  Renders nothing unless the occurrence is in a state where a pause action
  *  makes sense, so callers drop it into an action row unconditionally.
  *
- *  Admin/super only: a worker pausing a stream would silently stop the work
+ *  `schedule.manage`: pausing a stream without that would silently stop the work
  *  they are scheduled for, and they have no way to see the consequence. */
 export function StreamPauseActions({
   occ,

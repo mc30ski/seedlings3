@@ -58,7 +58,7 @@ async function enqueue(
 
 /**
  * A CompanyDocument's metadata changed: title, description, expiresAt,
- * adminHidden, archivedAt, currentVersionId. The worker coalesces all
+ * restricted, archivedAt, currentVersionId. The worker coalesces all
  * pending SYNC_DOCUMENT_METADATA tasks per document into one write, so
  * spamming this call across a rapid-fire batch of edits is cheap.
  */

@@ -1,4 +1,5 @@
 "use client";
+import type { WorkerType } from "@repo/money";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -16,12 +17,12 @@ import {
 import { Check, X } from "lucide-react";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import { type Me, type Role } from "@/src/lib/types";
+import { type Me } from "@/src/lib/types";
 import { fmtDate, fmtDateOpts, fmtDateLong, fmtTimeOpts, bizToday, bizDateKey, bizDaysBetween } from "@/src/lib/dates";
 import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
@@ -29,18 +30,13 @@ import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getSeasonOverride, setSeasonOverride, getNaturalSeason, type SeasonOverride } from "@/src/lib/season";
 import { useAppTheme } from "@/src/lib/useAppTheme";
 import { SURFACES, THEME_IDS, THEME_LABELS, THEME_DESCRIPTIONS } from "@/src/styles/themeTokens";
-import {
-  getImpersonation,
-  setImpersonation,
-  IMPERSONATION_LABELS,
-  IMPERSONATION_OPTIONS,
-  type ImpersonationValue,
-} from "@/src/lib/impersonation";
 import { useClerk } from "@clerk/clerk-react";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import WorkerComplianceSection from "@/src/ui/components/WorkerComplianceSection";
+import { payClassLabel } from "../../lib/paymentMath";
+import { scopeFromMe } from "@/src/lib/roles";
 
-type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
+type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: WorkerType | null };
 
 /** Normalize a typed US phone number to E.164 (+1XXXXXXXXXX). Null if not a valid 10-digit US number. */
 function normalizePhone(raw: string): string | null {
@@ -61,29 +57,34 @@ function formatPhoneDisplay(raw: string): string {
 type Props = {
   me: Me | null;
   /**
-   * When true, this is the Admin or Super Profile tab (shows user selector, no self-only sections).
-   * When false/omitted, this is the Worker Profile tab (always shows own profile).
+   * THIS TAB TAKES NO AUTHORIZATION PROPS. It used to take two.
    *
-   * NOTE: This prop controls which TAB context we're in, NOT the user's role.
-   * To check if the current user has admin privileges, use `me?.roles?.includes("ADMIN")`.
-   * Use `isAdmin` (prop) for: user selector, save endpoint routing, tab-level layout.
-   * Use `me?.roles` for: feature gating (e.g., season override is admin-only regardless of tab).
-   * Use `isSelf` for: self-only features (calendar feeds, offline, season) that only make
-   *   sense when viewing your own profile.
+   * A boolean prop meaning "this is the staff build of the Profile tab" sat
+   * here, and index.tsx passed it BARE — i.e. true for everybody. It opened the
+   * "whose profile" picker, which reads `/workers` (`people.view`) and
+   * saves through `/users/:id/profile` (`people.manage`), so somebody with
+   * neither was shown a picker that 403'd on both. A second prop said which
+   * tab you had navigated in through, so an edit could be restricted to
+   * "the owner build of the Profile tab" rather than to an entitlement — the same person
+   * got a different answer depending on how they got here.
+   *
+   * There is one Profile tab. Inside, each question is asked of the
+   * capability whose endpoint it is about, all derived from `me`:
+   *   `people.view`    → the "whose profile" picker (`GET /workers`).
+   *   `people.manage`  → saving somebody else's profile.
+   *   `payroll.manage` → the hourly-wage field.
+   *   `payroll.view`   → somebody else's earnings section.
+   *   `settings.manage`→ the payment-comms override.
+   *   `schedule.manage`→ the season override.
+   * `isSelf` still decides the self-only sections (calendar feeds, offline,
+   * season) — that is a question about WHOSE profile is open, not about
+   * authority, and the two are genuinely different.
    */
-  isAdmin?: boolean;
-  /**
-   * Which tab the user navigated into to land here. Distinguishes the Admin
-   * Profile tab from the Super Profile tab so we can gate Super-only edits
-   * (e.g., payment-comms override) to the Super tab — even if the current
-   * user happens to be a Super viewing the Admin tab.
-   */
-  purpose?: Role;
   onProfileUpdated?: () => void;
 };
 
-export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: Props) {
-  // Admin: user selector
+export default function ProfileTab({ me, onProfileUpdated }: Props) {
+  // The other-person selector — gated on `people.view` below.
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedUserId, setSelectedUserId] = usePersistedState<string>("profile_userId", "");
   const [searchText, setSearchText] = useState("");
@@ -105,8 +106,9 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
   const [savedAvailableDays, setSavedAvailableDays] = useState<number[]>([]);
   const [availableHours, setAvailableHours] = useState(4);
   const [savedAvailableHours, setSavedAvailableHours] = useState(4);
-  // Hourly wage — admin-only field; used by the Reconcile → Payroll
-  // export to compute regular wages vs additional earnings.
+  // Hourly wage — writing it needs `payroll.manage`, which people.ts
+  // checks on `PATCH /users/:id`. Used by the Reconcile → Payroll export
+  // to compute regular wages vs additional earnings.
   const [hourlyWage, setHourlyWage] = useState("0.00");
   const [savedHourlyWage, setSavedHourlyWage] = useState("0.00");
   const [saving, setSaving] = useState(false);
@@ -118,17 +120,29 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
   const [orgCommsMode, setOrgCommsMode] = useState<"SERVER" | "CLAIMER">("CLAIMER");
   const [commsBusy, setCommsBusy] = useState(false);
 
-  // Super-only edits (payment-comms override, etc.) require BOTH the SUPER
-  // role AND being on the Super Profile tab. A Super viewing the Admin Profile
-  // tab sees the same read-only summary that an Admin would.
-  const isSuper = !!me?.roles?.includes("SUPER") && purpose === "SUPER";
+  // The payment-comms override is a business-wide setting, so it is
+  // `settings.manage` — the entitlement and nothing else. It was
+  // a role check ANDed with "and you are on the staff Profile
+  // tab".
+  // `payroll.manage`, matching the server. This was `settings.manage`
+  // wearing the name `canManageWage`; the two are different entitlements and the
+  // write path (`PATCH /users/:id`, people.ts) checks the payroll one.
+  const canManageWage = scopeFromMe(me).can("payroll.manage");
+  // May this person look at somebody ELSE's profile? That is the question
+  // the `canViewOthers` prop was standing in for. The picker reads `/workers`
+  // (`people.view`); saving writes `/users/:id/profile` (`people.manage`).
+  const canViewOthers = scopeFromMe(me).can("people.view");
+  const canEditOthers = scopeFromMe(me).can("people.manage");
+  // Capability answers for the help copy, which must ask the same question
+  // the route does. This component was never given a `scope` prop.
+  const scope = scopeFromMe(me);
 
   const phoneError = phone.trim() !== "" && normalizePhone(phone) === null;
 
   // Hourly wage only counts toward unsaved-changes when the viewer is
-  // a SUPER — non-super viewers see it read-only and the input is
+  // someone with `settings.manage` — non-super viewers see it read-only and the input is
   // disabled.
-  const hourlyWageChanged = isSuper && hourlyWage !== savedHourlyWage;
+  const hourlyWageChanged = canManageWage && hourlyWage !== savedHourlyWage;
   const hasChanges = firstName !== savedFirstName ||
     lastName !== savedLastName ||
     displayName !== savedDisplayName ||
@@ -150,16 +164,22 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
   }, [hasChanges]);
 
   // The user we're viewing — admin must select a user; worker is always self
-  const targetUserId = isAdmin ? (selectedUserId || "") : (me?.id ?? "");
+  // Falls back to YOURSELF, not to nobody. This was `selectedUserId || ""`,
+  // so anyone who could view others landed on Profile with no user selected
+  // and therefore no Appearance section, no calendar feed and no season
+  // override — all of which are self-only. They had to pick themselves out
+  // of a dropdown to see their own profile. Picking someone else still
+  // works; clearing the picker returns you to your own.
+  const targetUserId = canViewOthers ? (selectedUserId || me?.id || "") : (me?.id ?? "");
   const isSelf = !!targetUserId && targetUserId === me?.id;
 
   // Load workers list for admin
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!canViewOthers) return;
     apiGet<Worker[]>("/api/workers")
       .then((list) => setWorkers(Array.isArray(list) ? list : []))
       .catch(() => {});
-  }, [isAdmin]);
+  }, [canViewOthers]);
 
   // Listen for external user selection (from clicking a user name in other tabs)
   useEffect(() => {
@@ -205,7 +225,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
     }
     // Admin viewing another user — fetch their data
     setLoading(true);
-    apiGet<any>(`/api/admin/users/${targetUserId}`)
+    apiGet<any>(`/api/users/${targetUserId}`)
       .then((u) => {
         setFirstName(u?.firstName ?? ""); setSavedFirstName(u?.firstName ?? "");
         setLastName(u?.lastName ?? ""); setSavedLastName(u?.lastName ?? "");
@@ -242,7 +262,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
     if (!targetUserId) return;
     setCommsBusy(true);
     try {
-      await apiPatch(`/api/admin/users/${targetUserId}/payment-comms-mode`, { mode: target });
+      await apiPatch(`/api/users/${targetUserId}/payment-comms-mode`, { mode: target });
       setCommsMode(target);
       publishInlineMessage({ type: "SUCCESS", text: "Payment communications mode updated." });
     } catch (err) {
@@ -255,13 +275,13 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
   async function saveProfile() {
     setSaving(true);
     try {
-      const endpoint = isAdmin && !isSelf
-        ? `/api/admin/users/${targetUserId}/profile`
+      const endpoint = canEditOthers && !isSelf
+        ? `/api/users/${targetUserId}/profile`
         : "/api/me/profile";
       const normPhone = phone.trim() ? normalizePhone(phone) : null;
-      // hourlyWage is admin-only — only include it in the payload when
-      // an admin is the one editing (avoid sending an irrelevant field
-      // from /api/me/profile where it would be rejected).
+      // hourlyWage needs `payroll.manage` — only include it when the
+      // editor holds that, both to avoid a 403 and because
+      // /api/me/profile rejects the field outright.
       const payload: any = {
         firstName,
         lastName,
@@ -271,10 +291,9 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
         availableDays,
         availableHoursPerDay: availableHours,
       };
-      // hourlyWage is SUPER-only on the write side. Only include it
-      // when the viewer is on the Super Profile tab with the SUPER
-      // role — the server enforces the same gate independently.
-      if (isSuper) {
+      // hourlyWage needs `payroll.manage` on the write side. Only include
+      // it when the viewer holds that — the server checks it independently.
+      if (canManageWage) {
         const wageNum = Number(hourlyWage);
         payload.hourlyWage = Number.isFinite(wageNum) && wageNum >= 0 ? wageNum : 0;
       }
@@ -314,12 +333,12 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
     ? { displayName: me?.displayName, email: me?.email, workerType: me?.workerType }
     : workers.find((w) => w.id === targetUserId);
 
-  const workerTypeLabel = (wt: string | null | undefined) =>
-    wt === "EMPLOYEE" ? "W-2 Employee" : wt === "CONTRACTOR" ? "1099 Contractor" : wt === "TRAINEE" ? "Trainee" : "Unclassified";
+  const workerTypeLabel = (wt: WorkerType | null | undefined) =>
+    wt === "EMPLOYEE" ? "W-2 Employee" : wt === "CONTRACTOR" ? "1099 Contractor" : payClassLabel(wt);
 
   return (
     <Box w="full" pb={8}>
-      <TabExplainer explainerId={`seedlings:profileTab:guideOpen:${isAdmin ? "admin" : "worker"}`}>
+      <TabExplainer explainerId={`seedlings:profileTab:guideOpen:${canViewOthers ? "others" : "self"}`}>
         <ExplainerText>
           Your contact details, and how you want to be reached. Keeping your phone and email
           current matters — job alerts and payment notices go there.
@@ -329,18 +348,18 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
           can open one you have already signed. Policies appear <Em>only on your own</Em>{" "}
           profile, and nobody can sign on anyone else&rsquo;s behalf.
         </ExplainerText>
-        {isAdmin && (
-          <RoleSection role="Admin">
+        {canViewOthers && (
+          <CapabilitySection capability="people.manage" scope={scope}>
             <ExplainerText>
               Pick a person above to view or edit theirs — contact details, and their hourly
-              wage, which is admin-only and never shown to the person on their own profile.
+              wage, which is never shown to the person on their own profile.
               Their signing status lives on the Compliance tab, not here.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
       </TabExplainer>
-      {/* Admin: user selector */}
-      {isAdmin && (
+      {/* The other-person selector — `people.view`. */}
+      {canViewOthers && (
         <HStack mb={4} gap={2} align="center" wrap="wrap">
           <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap">
             User:
@@ -400,7 +419,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
         </HStack>
       )}
 
-      {isAdmin && !targetUserId ? (
+      {canViewOthers && !targetUserId ? (
         <Box py={10} textAlign="center">
           <Text color="fg.muted" fontSize="sm">Select a user above to view their profile.</Text>
         </Box>
@@ -496,7 +515,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                     colorPalette={
                       targetUser?.workerType === "EMPLOYEE" ? "blue"
                       : targetUser?.workerType === "CONTRACTOR" ? "orange"
-                      : targetUser?.workerType === "TRAINEE" ? "cyan"
+                      : targetUser?.workerType === "UNPAID" ? "purple"
                       : "gray"
                     }
                   >
@@ -510,8 +529,8 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                     uses, so the two surfaces agree.
 
                     Self-view only. `isOwner` rides on /me; the
-                    /api/workers list an admin picks from does not carry
-                    it, so an admin viewing someone else's profile can't
+                    /api/workers list someone with people authority picks from does not carry
+                    it, so the directory viewing someone else's profile can't
                     render this without widening that payload. */}
                 {isSelf && me?.isOwner && (
                   <HStack fontSize="sm" align="flex-start">
@@ -556,7 +575,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
             </Card.Body>
           </Card.Root>
 
-          {/* Permissions card — self-view only (admins manage other users'
+          {/* Permissions card — self-view only (holders of `people.manage` manage other users'
               privileges via UsersTab). Reads `me.privileges` which is the
               already-resolved effective state from the server. */}
           {isSelf && me?.privileges && (
@@ -585,7 +604,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                       <Text fontWeight="medium">Charge business expenses</Text>
                       <Text fontSize="xs" color="fg.muted">
                         Record new expenses paid on the company account (gas, parts, dump
-                        fees, etc.). Without this privilege, ask an admin to log out-of-pocket
+                        fees, etc.). Without this privilege, ask someone with people authority to log out-of-pocket
                         purchases for you.
                       </Text>
                     </Box>
@@ -595,7 +614,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                   </HStack>
                   {!me.privileges.canPullInventory && !me.privileges.canChargeBusinessExpenses && (
                     <Text fontSize="xs" color="fg.muted" mt={1}>
-                      Job expenses are recorded by an admin on your behalf. Reach out to your admin
+                      Job expenses are recorded by someone with people authority on your behalf. Reach out to your admin
                       if anything needs to be logged.
                     </Text>
                   )}
@@ -605,7 +624,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
           )}
 
           {/* Payment comms — how this user's payment-request messages get sent.
-              All users can see the effective value; only Super can change the
+              Everyone can see the effective value; `settings.manage` changes the
               per-user override. */}
           {targetUserId && (() => {
             const effective: "SERVER" | "CLAIMER" = commsMode ?? orgCommsMode;
@@ -635,7 +654,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                         {effective}
                       </Badge>
                     </HStack>
-                    {isSuper && (
+                    {canManageWage && (
                       <HStack gap={2} wrap="wrap">
                         <Button
                           size="xs"
@@ -764,9 +783,9 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
           </Card.Root>
 
           {/* Hourly Wage — visible to everyone (workers see their own
-              rate on file). Editable only by a SUPER on the Super
-              Profile tab; the server enforces the same gate via
-              `req.user.roles.includes("SUPER")`. Drives the
+              rate on file). Editable only on a caller with settings authority Profile tab; the
+              server enforces the same gate by requiring the
+              `payroll.manage` capability. Drives the
               Reconcile → Payroll export's Regular Wages column.
               $0.00 is treated as "no rate on file" — Regular Wages
               renders as $0 and Additional Earnings absorbs the full
@@ -779,11 +798,11 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
             <Card.Body py="2" px="3">
               <VStack align="stretch" gap={2}>
                 <Text fontSize="xs" color="fg.muted">
-                  {isSuper
+                  {canManageWage
                     ? "Used by Reconcile → Payroll. For employees/trainees, this is the rate Gusto auto-applies to logged hours. Contractors typically leave this at $0 (paid lump-sum via Additional Earnings)."
                     : isSelf
-                      ? "Your hourly rate on file. Only a Super admin can update this."
-                      : "Hourly rate on file. Only a Super admin can update this."}
+                      ? "Your hourly rate on file. Only someone with payroll authority can update this."
+                      : "Hourly rate on file. Only someone with payroll authority can update this."}
                 </Text>
                 <HStack gap={2} align="center">
                   <Text fontSize="sm" fontWeight="semibold">$</Text>
@@ -792,7 +811,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                     min={0}
                     step={0.25}
                     value={hourlyWage}
-                    disabled={!isSuper}
+                    disabled={!canManageWage}
                     onChange={(e) => setHourlyWage(e.target.value)}
                     onBlur={() => {
                       const n = Number(hourlyWage);
@@ -804,9 +823,9 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                       border: "1px solid var(--chakra-colors-border)",
                       borderRadius: "4px",
                       fontSize: "14px",
-                      background: isSuper ? undefined : "var(--chakra-colors-gray-muted)",
-                      color: isSuper ? undefined : "var(--chakra-colors-gray-fg)",
-                      cursor: isSuper ? "text" : "not-allowed",
+                      background: canManageWage ? undefined : "var(--chakra-colors-gray-muted)",
+                      color: canManageWage ? undefined : "var(--chakra-colors-gray-fg)",
+                      cursor: canManageWage ? "text" : "not-allowed",
                     }}
                   />
                   <Text fontSize="sm" color="fg.muted">/hr</Text>
@@ -834,23 +853,33 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
             </Button>
           </Box>
 
-          {/* Earnings — visible when viewing own profile or admin viewing a worker */}
-          <EarningsSection targetUserId={targetUserId} isSelf={isSelf} />
+          {/* Earnings. Your own always; somebody ELSE's needs `payroll.view`,
+              which is what `GET /users/:id/earnings-summary` now requires —
+              it used to be `people.view`. Checked here rather than left to
+              the request, because the component swallowed its own 403 and
+              rendered nothing: graceful by accident, and indistinguishable
+              from a worker who has simply never been paid. */}
+          {(isSelf || scopeFromMe(me).can("payroll.view")) && (
+            <EarningsSection targetUserId={targetUserId} isSelf={isSelf} />
+          )}
 
           {/* Self-only sections — shown on any tab when viewing your own profile.
               Gate on `isSelf` for features any user gets.
-              Gate on `isSelf && me?.roles?.includes(...)` for role-restricted features. */}
+              Gate on `isSelf && holds(me, "some.capability")` for a
+              capability-restricted feature. */}
           {isSelf && <NotificationsSection />}
           {isSelf && <CalendarFeedsSection />}
           {isSelf && <OfflineSection />}
           {/* High contrast exists for reading a phone in direct sun — a worker on
-              a lawn, not an admin at a desk. */}
+              a lawn, not someone with people authority at a desk. */}
           {isSelf && <ThemeSection />}
-          {isSelf && me?.roles?.includes("ADMIN") && <SeasonSection />}
-          {/* View-as picker is gated on REAL Super — must be visible even
-              while impersonating so Super can switch back without having
-              to use the persistent banner. */}
-          {isSelf && me?.realRoles?.includes("SUPER") && <ImpersonationSection />}
+          {isSelf && scopeFromMe(me).can("schedule.manage") && <SeasonSection />}
+          {/* The perspective picker shows whenever there is more than one perspective to
+              choose between, and stays visible while one is active so the
+              person can switch back without using the banner. It no longer
+              needs to ask what they REALLY are: `perspectives` is the same
+              list either way, because a perspective narrows rather than
+              replaces. */}
         </VStack>
       )}
     </Box>
@@ -1298,133 +1327,6 @@ function OfflineSection() {
   );
 }
 
-// Super-only "View as another role" section. Gated at the call site on
-// me.realRoles.includes("SUPER") so it stays visible even while
-// impersonation is active. Reads the current selection from localStorage
-// (NOT from `me`) so the picker reflects the active token even if the
-// page hasn't reloaded yet. Toggling reloads the page and purges the SW
-// cache via setImpersonation().
-function ImpersonationSection() {
-  const [current, setCurrent] = useState<ImpersonationValue | null>(() => getImpersonation());
-  const [detailsOpen, setDetailsOpen] = useState(false);
-
-  function pick(next: ImpersonationValue | null) {
-    setCurrent(next);
-    void setImpersonation(next); // reloads page
-  }
-
-  return (
-    <Card.Root variant="outline" mt={4} borderColor="red.emphasized">
-      <Card.Header py="2" px="3" pb="0">
-        <Text fontWeight="semibold">🛡 View as another role (Super only)</Text>
-      </Card.Header>
-      <Card.Body py="2" px="3">
-        <VStack align="stretch" gap={3}>
-          <Text fontSize="sm" color="fg.muted">
-            Temporarily change your effective role so your UI and the backend's
-            authorization both act like you're a different role. Use this to
-            catch role-conditioning bugs before they hit real users.
-          </Text>
-          <Box>
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={() => setDetailsOpen((v) => !v)}
-            >
-              {detailsOpen ? "Hide details ↑" : "Show details ↓"}
-            </Button>
-          </Box>
-          {detailsOpen && (
-            <Box
-              p={3}
-              bg="blue.faint"
-              borderWidth="1px"
-              borderColor="blue.emphasized"
-              borderLeftWidth="4px"
-              borderLeftColor="blue.500"
-              rounded="md"
-            >
-              <VStack align="stretch" gap={3} fontSize="sm" color="blue.fg">
-                <Box>
-                  <Text fontWeight="semibold" mb={1}>What changes</Text>
-                  <Text>When you pick a role here, the following behave as if you had only that role:</Text>
-                  <VStack as="ul" align="stretch" gap={1} pl={4} mt={1}>
-                    <Text as="li">
-                      <Text as="span" fontWeight="semibold">UI conditionals</Text> — every gate that branches on role / workerType (Confirm Client, Start Job, observer eye, Admin tab visibility, claim flow, tile visibility, etc.) renders the impersonated view.
-                    </Text>
-                    <Text as="li">
-                      <Text as="span" fontWeight="semibold">Backend authorization</Text> — <Text as="code" fontFamily="mono">requireRole(...)</Text> on every protected route checks the impersonated role. Admin-only endpoints return real 403s to you, exactly like they would to an actual worker. "Looks fine on my screen" no longer differs from "actually works for them".
-                    </Text>
-                  </VStack>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" mb={1}>What stays the same</Text>
-                  <VStack as="ul" align="stretch" gap={1} pl={4}>
-                    <Text as="li">
-                      <Text as="span" fontWeight="semibold">Your identity.</Text> User ID, name, email, and Clerk session are unchanged.
-                    </Text>
-                    <Text as="li">
-                      <Text as="span" fontWeight="semibold">Your data.</Text> "My jobs / my expenses / my assignments" still return your records, just rendered through the impersonated role's UI. You are NOT "logging in as Bob" — you are "seeing your own world as if your role were different".
-                    </Text>
-                    <Text as="li">
-                      <Text as="span" fontWeight="semibold">Audit log attribution.</Text> Any mutation you perform while impersonating is recorded as Super performing it. The database is never confused about who really acted.
-                    </Text>
-                  </VStack>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" mb={1}>Things to be careful about</Text>
-                  <VStack as="ul" align="stretch" gap={1} pl={4}>
-                    <Text as="li">
-                      <Text as="span" fontWeight="semibold">Mutations are real.</Text> If the impersonated UI shows a button and you tap it, the server runs the action. Reduced UI ≠ reduced consequences. Be especially careful with delete / archive / payment actions.
-                    </Text>
-                    <Text as="li">
-                      <Text as="span" fontWeight="semibold">Bugs that depend on a specific user's data shape won't surface.</Text> Example: "what does a worker with zero assignments see?" — you'll see your assignments through their role lens, not the empty state they hit. For those, use a real test login.
-                    </Text>
-                    <Text as="li">
-                      <Text as="span" fontWeight="semibold">Toggling reloads the page</Text> to flush in-flight requests and the Service Worker cache. Close any open dialogs first so you don't lose typed-in input.
-                    </Text>
-                  </VStack>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" mb={1}>How to exit</Text>
-                  <VStack as="ul" align="stretch" gap={1} pl={4}>
-                    <Text as="li">
-                      A red banner at the top of every page has an <Text as="span" fontWeight="semibold">Exit impersonation</Text> button — always visible while a role override is active.
-                    </Text>
-                    <Text as="li">
-                      Or return here and pick <Text as="span" fontWeight="semibold">Super (default)</Text>.
-                    </Text>
-                  </VStack>
-                </Box>
-              </VStack>
-            </Box>
-          )}
-          <HStack gap={2} wrap="wrap">
-            <Button
-              size="sm"
-              variant={current === null ? "solid" : "outline"}
-              colorPalette="gray"
-              onClick={() => pick(null)}
-            >
-              Super (default)
-            </Button>
-            {IMPERSONATION_OPTIONS.map((opt) => (
-              <Button
-                key={opt}
-                size="sm"
-                variant={current === opt ? "solid" : "outline"}
-                colorPalette="red"
-                onClick={() => pick(opt)}
-              >
-                {IMPERSONATION_LABELS[opt]}
-              </Button>
-            ))}
-          </HStack>
-        </VStack>
-      </Card.Body>
-    </Card.Root>
-  );
-}
 
 /**
  * Appearance — the five themes. Sits above SeasonSection because it can
@@ -1552,9 +1454,13 @@ function EarningsSection({ targetUserId, isSelf }: { targetUserId: string; isSel
   useEffect(() => {
     if (!targetUserId) { setLoading(false); return; }
     setLoading(true);
-    const endpoint = isSelf ? "/api/payments/earnings-summary" : `/api/admin/users/${targetUserId}/earnings-summary`;
+    const endpoint = isSelf ? "/api/payments/earnings-summary" : `/api/users/${targetUserId}/earnings-summary`;
     apiGet<EarningsSummary>(endpoint)
       .then((d) => setData(d))
+      // Still tolerant, but no longer the ONLY gate: the caller checks
+      // `payroll.view` before mounting this. What reaches here is a real
+      // failure — a worker with no payment history reads the same as a
+      // network error, which is why the capability check moved out.
       .catch(() => setData(null))
       .finally(() => setLoading(false));
   }, [targetUserId, isSelf]);
@@ -1578,7 +1484,7 @@ function EarningsSection({ targetUserId, isSelf }: { targetUserId: string; isSel
               variant="ghost"
               size="xs"
               onClick={() => {
-                window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "payments", category: "Money" } }));
+                window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "payments", category: "Money" } }));
               }}
             >
               View Payments →

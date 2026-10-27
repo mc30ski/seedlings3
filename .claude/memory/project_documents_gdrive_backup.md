@@ -1,6 +1,6 @@
 ---
 name: project-documents-gdrive-backup
-description: "Design + open state of the \"CompanyDocument → Google Drive backup\" feature — tabled 2026-07-14 to fix a prod bug; pick up mid-Google-Cloud-setup."
+description: "CompanyDocument → Google Drive backup. BUILT — services, models, 7 routes, cron and the Sync Status panel all exist. Operator-side Google Cloud/OAuth config is unverified."
 metadata: 
   node_type: memory
   type: project
@@ -8,7 +8,7 @@ metadata:
   modified: 2026-08-21T19:23:43.699Z
 ---
 
-**Status as of 2026-07-14**: design fully spec'd, no code written yet, Google Cloud setup not started (previous "Steps 1-3 done" note was aspirational — user confirmed nothing was actually done).
+**Status: BUILT (verified against the repo 2026-10-18).** The old line here said "design fully spec'd, no code written yet" — that is wrong. `services/documentSyncQueue.ts`, `services/documentSyncWorker.ts`, the `DocumentSyncQueue` + `DocumentSyncState` models, seven `/documents/sync/*` routes (`documents.view` to read, `documents.manage` to act), the cron entry and the Sync Status panel all exist. What is NOT verified from the repo is the Google Cloud project / OAuth consent / refresh token — operator setup, so check an environment before assuming the sync actually runs.
 
 **Why:** durable, human-browsable off-site backup of company records so a Neon/R2 outage or corruption doesn't lose them.
 
@@ -33,7 +33,7 @@ metadata:
 │   ├── _manifest.json                  ← documentId → folder path index
 │   ├── Articles of Organization/       ← per taxonomy-type folder
 │   │   └── {documentId}/               ← per-document folder (cuid)
-│   │       ├── _document.json          ← title/desc/expiresAt/adminHidden/etc.
+│   │       ├── _document.json          ← title/desc/expiresAt/restricted/etc.
 │   │       ├── v1_2026-05-15_articles.pdf
 │   │       └── v1.metadata.json        ← uploader/size/contentType/uploadedAt/isCurrent
 │   └── _deleted/                       ← only used when app hard-deletes a doc
@@ -45,7 +45,7 @@ metadata:
 ## Cadence
 
 - **Daily background job** drains the sync queue.
-- **Super-only "Force Sync Now" button** on Records → Documents page for on-demand runs.
+- **"Force Sync Now" button (`documents.manage`)** on Records → Documents page for on-demand runs.
 - Every mutation writes a queue task **in the same DB transaction** as the app change. Atomic — sync tasks can't be lost between runs.
 
 ## Backend architecture
@@ -59,7 +59,7 @@ Two new Prisma models:
 
 **Worker behavior**:
 - **Coalesce metadata tasks per document** at start of each run — multiple `SYNC_DOCUMENT_METADATA` for the same doc collapse to one, reads current DB state at process time, one write to Drive.
-- **Verify current DB state before running version tasks** — `UPLOAD_VERSION` checks that the version still exists in DB (was it deleted before sync ran?); if not, skip cleanly.
+- **Verify current DB state before running version tasks** — `UPLOAD_DOCUMENT_VERSION` checks that the version still exists in DB (was it deleted before sync ran?); if not, skip cleanly.
 - Exponential backoff on failure. `attempts` bumps each retry.
 
 **Initial backfill**: single script inserts one sync task per existing document + version, worker drains it. Reuses the normal sync path. No separate migration code.
@@ -117,7 +117,7 @@ Located on **Records → Documents tab**. Shows: queue depth, last successful sy
 
 **Steps remaining (OAuth path)**:
 
-1. Delete the unused service account (`IAM & Admin → Service Accounts`).
+1. Delete the unused service account (`IAM & Service Accounts`).
 2. Configure OAuth consent screen (`APIs & Services → OAuth consent screen`): External user type, "Seedlings Documents Backup", support email admin@seedlingslawncare.com, scope `.../auth/drive.file`. Publish to "In production" (no verification needed for single-user internal use; user will see "unverified app" warning once during consent).
 3. Create OAuth 2.0 Client ID (`APIs & Services → Credentials → Create credentials → OAuth client ID`): type = **Desktop app**, name `seedlings-drive-backup`. Save the Client ID + Client secret.
 4. One-time consent flow: `npx tsx apps/api/scripts/oauth-drive-consent.ts <path-to-client_secret.json>` — opens browser, admin@ approves, script prints the refresh token. Save `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN` into `apps/api/.env` (dev) + Vercel (prod). Script has zero dependencies (Node built-ins only).

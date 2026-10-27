@@ -1,0 +1,13 @@
+-- Rename the AuditVerb value POLICY_ADMIN_UPLOADED_ON_BEHALF
+--                        -> POLICY_UPLOADED_ON_BEHALF
+--
+-- The verb records that somebody uploaded a policy signature on another
+-- person's behalf. "ADMIN" named a role that no longer exists; the action
+-- is gated on `compliance.manage`, and who may do it is a property of the
+-- role an operator builds, not of the verb.
+--
+-- RENAME VALUE relabels the enum in place, so every existing AuditEvent row
+-- reads the new label — there is no split between historical and new rows
+-- and no backfill. (Prisma would otherwise have emitted a drop-and-recreate
+-- of the whole enum type, which fails against rows that reference it.)
+ALTER TYPE "AuditVerb" RENAME VALUE 'POLICY_ADMIN_UPLOADED_ON_BEHALF' TO 'POLICY_UPLOADED_ON_BEHALF';

@@ -1,10 +1,20 @@
-// Forecast client — Super → Money → Forecast.
+// Forecast client — Money → Forecast.
 //
 // The simulator itself is NOT here. It lives in @repo/money and is the same
 // code the API runs, so a scenario computed while dragging a slider and a
 // scenario computed server-side for the AI assessment can never disagree.
 // This module is only transport plus the little bits of presentation the tab
 // needs.
+//
+// WHAT A CALLER MUST GATE ON: "forecasts.view".
+//
+// Every mutation below is guarded server-side by that capability
+// (docs/features/permissions-ROUTE-MAP.md). A transport module cannot gate
+// anything itself — it has no `scope` and no control to hide — so naming
+// the capability here is the fix G15 asks for. The next person calling one
+// of these from a new place can see what the control above it has to
+// check, instead of inheriting whatever gate happened to surround the
+// first callsite.
 
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { assumptionsDiffer } from "@repo/money";
@@ -72,13 +82,13 @@ export type ForecastAssessment = {
 
 export const fetchBaseline = (from: string, to: string) =>
   apiGet<BaselineResponse>(
-    `/api/super/forecast/baseline?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    `/api/forecast/baseline?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
   );
 
 export const fetchForecasts = (includeArchived = false) =>
-  apiGet<SavedForecast[]>(`/api/super/forecasts${includeArchived ? "?includeArchived=1" : ""}`);
+  apiGet<SavedForecast[]>(`/api/forecasts${includeArchived ? "?includeArchived=1" : ""}`);
 
-export const fetchForecast = (id: string) => apiGet<SavedForecast>(`/api/super/forecasts/${id}`);
+export const fetchForecast = (id: string) => apiGet<SavedForecast>(`/api/forecasts/${id}`);
 
 export const createForecast = (input: {
   name: string;
@@ -88,23 +98,23 @@ export const createForecast = (input: {
   compareFrom?: string | null;
   compareTo?: string | null;
   assumptions: Assumptions;
-}) => apiPost<SavedForecast>("/api/super/forecasts", input);
+}) => apiPost<SavedForecast>("/api/forecasts", input);
 
 export const updateForecast = (id: string, input: Partial<Parameters<typeof createForecast>[0]>) =>
-  apiPatch<SavedForecast>(`/api/super/forecasts/${id}`, input);
+  apiPatch<SavedForecast>(`/api/forecasts/${id}`, input);
 
 export const duplicateForecast = (id: string) =>
-  apiPost<SavedForecast>(`/api/super/forecasts/${id}/duplicate`, {});
+  apiPost<SavedForecast>(`/api/forecasts/${id}/duplicate`, {});
 
 export const archiveForecast = (id: string, archived: boolean) =>
-  apiPost<SavedForecast>(`/api/super/forecasts/${id}/archive`, { archived });
+  apiPost<SavedForecast>(`/api/forecasts/${id}/archive`, { archived });
 
 export const deleteForecast = (id: string) =>
-  apiDelete<{ ok: true }>(`/api/super/forecasts/${id}`);
+  apiDelete<{ ok: true }>(`/api/forecasts/${id}`);
 
 export const assessForecast = (id: string) =>
   apiPost<{ assessment: ForecastAssessment | null; error?: string; raw?: string }>(
-    `/api/super/forecasts/${id}/assess`,
+    `/api/forecasts/${id}/assess`,
     {},
   );
 

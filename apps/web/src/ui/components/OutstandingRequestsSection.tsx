@@ -1,6 +1,6 @@
 "use client";
 
-// Awaiting-client-payment worklist for the Super → Money → Payments tab.
+// Awaiting-client-payment worklist for the Money → Payments tab.
 //
 // A "Request Payment" sends the client a pay link but creates no payment
 // record — so a request the client never acts on can be silently forgotten.
@@ -25,7 +25,7 @@ import {
 } from "@chakra-ui/react";
 import { Check, ExternalLink, RefreshCw, SkipForward, XCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { bumpAdminPayments } from "@/src/lib/bus";
+import { bumpPayments } from "@/src/lib/bus";
 import { formatNextOccurrenceOutcome, type PaymentActionResult } from "@/src/lib/paymentMessages";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
@@ -166,12 +166,12 @@ export default function OutstandingRequestsSection({ onReady }: {
   const [markPaidBusy, setMarkPaidBusy] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
 
-  // Skip dialog state — Super-only "pretend this service never happened."
+  // Skip dialog state — `money.approve`, "pretend this service never happened."
   // Gated by type-APPROVE via ConfirmDialog.requiredInputValue.
   const [skipRow, setSkipRow] = useState<OutstandingRow | null>(null);
   const [skipBusy, setSkipBusy] = useState(false);
 
-  // Write-off dialog state — Super-only "client ghosted, take the loss."
+  // Write-off dialog state — `money.approve`, "client ghosted, take the loss."
   // Distinct from Skip/Void: employees + trainees still get their promised
   // net paid from business funds, and the loss surfaces on the P&L as
   // acknowledged bad debt rather than being erased entirely. Gated by
@@ -182,7 +182,7 @@ export default function OutstandingRequestsSection({ onReady }: {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await apiGet<OutstandingRow[]>("/api/admin/payment-requests/outstanding");
+      const list = await apiGet<OutstandingRow[]>("/api/payment-requests/outstanding");
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load outstanding requests.", err) });
@@ -281,7 +281,7 @@ export default function OutstandingRequestsSection({ onReady }: {
       publishInlineMessage({ type: "WARNING", text: "Pick a payment method." });
       return;
     }
-    // Only send a fee override when the admin changed it from the computed
+    // Only send a fee override when a caller with `schedule.manage` changed it from the computed
     // estimate. Sending the estimate back would be a no-op but flagging the
     // payment as "manually adjusted" — keep the audit trail honest.
     const cfg = paymentMethods.find((m) => m.key === markPaidMethod);
@@ -300,7 +300,7 @@ export default function OutstandingRequestsSection({ onReady }: {
     }
     setMarkPaidBusy(true);
     try {
-      // admin-mark-paid runs createPayment + approvePayment internally,
+      // mark-paid runs createPayment + approvePayment internally,
       // so the response carries the same next-occurrence shape every
       // other payment-action toast uses. Plumb it through the shared
       // formatter so the wording (with date / skip-reason) matches
@@ -308,7 +308,7 @@ export default function OutstandingRequestsSection({ onReady }: {
       // generated for repeating jobs" wasn't telling the operator the
       // actual date or whether a skip-reason applied.
       const result: PaymentActionResult = await apiPost(
-        `/api/admin/occurrences/${markPaidRow.occurrenceId}/admin-mark-paid`,
+        `/api/occurrences/${markPaidRow.occurrenceId}/mark-paid`,
         {
           amountPaid: amount,
           method: markPaidMethod,
@@ -329,7 +329,7 @@ export default function OutstandingRequestsSection({ onReady }: {
       });
       // Notify the alerts dropdown + the PaymentsTab so their counters
       // and lists update without waiting for the next page refresh.
-      bumpAdminPayments();
+      bumpPayments();
       closeMarkPaid();
       await load();
     } catch (err) {
@@ -339,7 +339,7 @@ export default function OutstandingRequestsSection({ onReady }: {
     }
   }
 
-  // Skip an outstanding request — Super-only "pretend the service
+  // Skip an outstanding request — `money.approve`, "pretend the service
   // never happened." Backend clears every money aggregate/export for
   // the row, closes the occurrence, and generates the next occurrence
   // for repeating jobs. See services/payments.ts skipOccurrence.
@@ -348,7 +348,7 @@ export default function OutstandingRequestsSection({ onReady }: {
     setSkipBusy(true);
     try {
       const result: PaymentActionResult = await apiPost(
-        `/api/admin/occurrences/${skipRow.occurrenceId}/skip`,
+        `/api/occurrences/${skipRow.occurrenceId}/skip`,
         {},
       );
       const nextLine = formatNextOccurrenceOutcome(result);
@@ -358,7 +358,7 @@ export default function OutstandingRequestsSection({ onReady }: {
           ? `Service voided — treated as if it never happened. ${nextLine}`
           : "Service voided — treated as if it never happened.",
       });
-      bumpAdminPayments();
+      bumpPayments();
       setSkipRow(null);
       await load();
     } catch (err) {
@@ -377,7 +377,7 @@ export default function OutstandingRequestsSection({ onReady }: {
     setWriteOffBusy(true);
     try {
       const result: PaymentActionResult = await apiPost(
-        `/api/admin/occurrences/${writeOffRow.occurrenceId}/write-off`,
+        `/api/occurrences/${writeOffRow.occurrenceId}/write-off`,
         {},
       );
       const nextLine = formatNextOccurrenceOutcome(result);
@@ -387,7 +387,7 @@ export default function OutstandingRequestsSection({ onReady }: {
           ? `Payment written off — employees paid, contractors $0. ${nextLine}`
           : "Payment written off — employees paid, contractors $0.",
       });
-      bumpAdminPayments();
+      bumpPayments();
       setWriteOffRow(null);
       await load();
     } catch (err) {
@@ -402,7 +402,6 @@ export default function OutstandingRequestsSection({ onReady }: {
       new CustomEvent("open:jobsTabToServicesTabSearch", {
         detail: {
           q: "",
-          forAdmin: true,
           entityId: `${row.jobId ?? ""}:${row.occurrenceId}`,
         },
       }),
@@ -580,9 +579,9 @@ export default function OutstandingRequestsSection({ onReady }: {
                 >
                   <Check size={12} /> Reconcile Paid
                 </Button>
-                {/* Super-only nuclear option — this section is already
-                    Super-gated by the parent (PaymentsTab renders it
-                    only when isSuper), so the button always shows here.
+                {/* The nuclear option — this section is already gated by
+                    the parent (PaymentsTab renders it only for
+                    `money.approve`), so the button always shows here.
                     The confirmation dialog requires typing APPROVE to
                     prevent accidental use. See services/payments.ts
                     skipOccurrence for the full behavior. */}
@@ -611,7 +610,7 @@ export default function OutstandingRequestsSection({ onReady }: {
                   color="gray.fg"
                   _hover={{ bg: "gray.muted" }}
                   onClick={() => setWriteOffRow(r)}
-                  title="Super only — write off (client ghosted / never paid). Employees + trainees still get their promised net from business funds; contractors get $0; the loss appears as bad debt on the P&L."
+                  title="Write off (client ghosted / never paid). Employees + trainees still get their promised net from business funds; contractors get $0; the loss appears as bad debt on the P&L."
                 >
                   <XCircle size={12} /> Write off
                 </Button>
@@ -620,7 +619,7 @@ export default function OutstandingRequestsSection({ onReady }: {
                   variant="ghost"
                   colorPalette="red"
                   onClick={() => setSkipRow(r)}
-                  title="Super only — void this service (treat as if it never happened). Erases income, payroll, and 1099 aggregation for this occurrence. Distinct from Write Off, which acknowledges the loss but keeps the row on operator dashboards."
+                  title="Void this service (treat as if it never happened). Erases income, payroll, and 1099 aggregation for this occurrence. Distinct from Write Off, which acknowledges the loss but keeps the row on operator dashboards."
                 >
                   <SkipForward size={12} /> Void service
                 </Button>
@@ -631,7 +630,7 @@ export default function OutstandingRequestsSection({ onReady }: {
 
       {/* Mark Paid dialog — admin enters method + amount the client paid
           offline. Defaults amount to the invoice's amountDue. On submit,
-          posts to /admin/occurrences/.../admin-mark-paid which records a
+          posts to /occurrences/:occurrenceId/mark-paid which records a
           confirmed Payment + auto-generates the next occurrence for
           repeating jobs (via the standard approvePayment downstream). */}
       <Dialog.Root
@@ -687,7 +686,7 @@ export default function OutstandingRequestsSection({ onReady }: {
                   </Box>
                   {/* Fee + Net breakdown — mirrors AdjustPaymentDialog. Only
                       surfaces for methods with a non-zero fee config. The fee
-                      is editable so the admin can match the actual amount
+                      is editable so a caller with schedule authority can match the actual amount
                       from the Venmo/Stripe statement. */}
                   {(() => {
                     const cfg = paymentMethods.find((m) => m.key === markPaidMethod);
@@ -799,7 +798,7 @@ export default function OutstandingRequestsSection({ onReady }: {
         </Portal>
       </Dialog.Root>
 
-      {/* Void dialog — Super-only, "pretend this service never happened."
+      {/* Void dialog — `money.approve`, "pretend this service never happened."
           Requires typing APPROVE (case-insensitive) in the input to enable
           the Void button. Everything the operator needs to understand
           before pulling the trigger is spelled out in the messageNode.
@@ -860,7 +859,7 @@ export default function OutstandingRequestsSection({ onReady }: {
                   </Text>
                   <Text fontSize="xs" color="red.fg">
                     • Undoing this is possible via the Payments tab (same
-                    Super + APPROVE gate).
+                    `money.approve` + APPROVE gate).
                   </Text>
                 </VStack>
               </Box>
@@ -876,7 +875,7 @@ export default function OutstandingRequestsSection({ onReady }: {
         />
       )}
 
-      {/* Write-off dialog — Super-only, "client ghosted, take the loss."
+      {/* Write-off dialog — `money.approve`, "client ghosted, take the loss."
           Distinct from Void in that the row STAYS on the books as an
           acknowledged bad debt (visible on P&L), and W-2 employees +
           trainees still get their promised net paid from business

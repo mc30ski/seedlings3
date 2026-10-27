@@ -41,7 +41,7 @@ that actually resolves to the payout.
 Dev fixtures wrote **agreeing** columns on every payment
 (`amount == netAmount == gross − fee`), so **no dev row could reproduce
 the divergence** and the tips e2e suite stayed green while production
-was wrong. `prisma/seed.ts` now has a post-pass (after the expense
+was wrong. `apps/api/prisma/seed.ts` now has a post-pass (after the expense
 reconciler, which would otherwise undo it) that stamps the production
 two-basis shape on every overpaid fixture. See
 [[feedback-seed-must-match-production-math]] and
@@ -49,7 +49,7 @@ two-basis shape on every overpaid fixture. See
 
 ## The test that catches it
 
-`apps/web/tests/e2e/specs/money-card-math-admin.spec.ts` asserts **no
+`apps/web/tests/e2e/specs/money-card-math-owner.spec.ts` asserts **no
 dollar figures at all** — it reads what the cards render and checks the
 equations close against each other. Every prior spec compared a value
 to the DATABASE, which is why none of them could see a rendering bug.

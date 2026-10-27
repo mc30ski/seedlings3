@@ -50,6 +50,6 @@ const collection = useMemo(() => createListCollection({ items }), [items]);
 Key points:
 - Always `positioning={{ strategy: "fixed", hideWhenDetached: true }}` — this is what makes it work correctly inside Dialog/Portal contexts (otherwise the dropdown gets clipped or hidden).
 - `value` is always an array (Chakra v3 collection convention), even for single-select.
-- Reference implementations (grep `Select.Root` in any of these for a working example): `apps/web/src/ui/tabs/InventoryTab.tsx` (renamed from the old EquipmentTab.tsx per the 2026-08-21 refactor — see [[project-tab-refactor-2026-08-21]]), `apps/web/src/ui/tabs/BusinessExpensesTab.tsx`, `apps/web/src/ui/tabs/SuppliesTab.tsx`, `apps/web/src/ui/tabs/SuperUnclaimedTab.tsx`. Copy from these.
+- Reference implementations (grep `Select.Root` in any of these for a working example): `apps/web/src/ui/tabs/InventoryTab.tsx` (renamed from the old EquipmentTab.tsx per the 2026-08-21 refactor — see [[project-tab-refactor-2026-08-21]]), `apps/web/src/ui/tabs/BusinessExpensesTab.tsx`, `apps/web/src/ui/tabs/SuppliesTab.tsx`, `apps/web/src/ui/tabs/UnclaimedTab.tsx`. Copy from these.
 
 Before writing ANY dropdown/picker in this app: search for `Select.Root` in a nearby file and mirror the pattern. Never write `<select>` or `<option>` tags.

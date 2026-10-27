@@ -13,7 +13,18 @@ type Props = {
   count: number;
   /** Property ID — needed for editing (fetching all available photos) */
   propertyId?: string | null;
-  /** Allow editing (admin only) */
+  /**
+   * Allow editing. Every write behind it — the guidance note and the photo
+   * selection — is guarded server-side on "schedule.manage", so that is
+   * the capability a caller must read this from.
+   *
+   * SAY IT IN A STRING, NOT A BACKTICK. The capability was named here in
+   * prose the whole time and G15 still listed this file, because the gate
+   * looks for the entitlement the way a `scope.can("…")` call spells it.
+   * That is not pedantry: the search that finds every control gated on
+   * `schedule.manage` is the same search, and prose it cannot see is
+   * documentation for humans only.
+   */
   canEdit?: boolean;
   /** Start expanded? */
   defaultExpanded?: boolean;
@@ -79,7 +90,7 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
     if (!editing || !propertyId) return;
     setEditLoading(true);
     Promise.all([
-      apiGet<PropertyPhotoItem[]>(`/api/admin/properties/${propertyId}/photos`),
+      apiGet<PropertyPhotoItem[]>(`/api/properties/${propertyId}/photos`),
       apiGet<PropertyPhotoItem[]>(`/api/occurrences/${occurrenceId}/property-photos`),
     ]).then(([all, current]) => {
       const currentIds = new Set((Array.isArray(current) ? current : []).map((p) => p.id));
@@ -96,7 +107,7 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
     setSaving(true);
     try {
       const ids = allPhotos.filter((p) => p.selected).map((p) => p.id);
-      await apiPut(`/api/admin/occurrences/${occurrenceId}/property-photos`, {
+      await apiPut(`/api/occurrences/${occurrenceId}/property-photos`, {
         propertyPhotoIds: ids,
         guidanceNote: noteText.trim() || null,
       });

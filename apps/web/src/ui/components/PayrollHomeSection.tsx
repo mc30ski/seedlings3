@@ -72,9 +72,10 @@ export default function PayrollHomeSection({
   viewAsUserId,
   viewAsDisplayName,
   isOwner = false,
+  canSeeEquity = false,
   storageKey = "seedlings:homeTab:payrollOpen",
 }: {
-  /** Set when an admin is viewing a single worker. Server-gated. */
+  /** Set when someone with `payroll.view` is viewing a single worker. Server-gated. */
   viewAsUserId?: string | null;
   viewAsDisplayName?: string | null;
   /**
@@ -89,6 +90,18 @@ export default function PayrollHomeSection({
    * is unique by a partial index. Everyone else is untouched.
    */
   isOwner?: boolean;
+  /**
+   * May the VIEWER read the rows this card is built from?
+   *
+   * Owner equity comes from `GET /business-expenses`, guarded on
+   * "books.view". Being the owner is not the same question as being able
+   * to see the books right now: an owner viewing through a perspective
+   * that lacks `books.view` is exactly that case, and without this the
+   * panel fetched anyway and published a red "Couldn't load owner equity.
+   * You don't have permission..." — an error for a view the person chose
+   * on purpose.
+   */
+  canSeeEquity?: boolean;
   storageKey?: string;
 }) {
   const [periods, setPeriods] = useState<PayrollPeriodSummary[]>([]);
@@ -145,14 +158,23 @@ export default function PayrollHomeSection({
   // Owner mode applies only to the owner looking at their OWN card — an
   // admin viewing someone else is looking at a worker, by definition.
   const ownerMode = isOwner && !isViewingOther;
+  // THE WHOLE SECTION GOES AWAY when the owner cannot read its data.
+  //
+  // Not a fallback to MY PAYDAY: the owner has no payday — they take
+  // draws, never wages, and never produce a PayrollPeriod row — so that
+  // card would say "No payroll records yet" forever. Between a card that
+  // errors and a card that is permanently empty, the honest answer is
+  // neither.
+  const hideForOwnerWithoutBooks = ownerMode && !canSeeEquity;
   // "Latest pay period" is meaningless without pay periods — and worse,
   // `payrollRangeStart("latest")` is null, so it would fetch ALL-TIME
   // equity under a label promising the latest period. Owner mode drops
   // that option and treats a persisted "latest" as this year.
   const ownerRange: PayrollRangeKey = range === "latest" ? "ytd" : range;
   const effectiveRange = ownerMode ? ownerRange : range;
-  const equity = useOwnerEquity(effectiveRange, ownerMode);
-  // "My payday" for the worker's own section; "Payday: Name" when an admin
+  // Only fetch when the viewer may actually read it.
+  const equity = useOwnerEquity(effectiveRange, ownerMode && canSeeEquity);
+  // "My payday" for the worker's own section; "Payday: Name" when someone with `payroll.view`
   // is viewing someone else, since "My" would then be wrong. Same shape as
   // MY ACTIVITIES / MY EARNINGS, and the colon convention every Home
   // section shares.
@@ -168,6 +190,7 @@ export default function PayrollHomeSection({
       ? `Payday: ${viewAsDisplayName}`
       : "My payday";
 
+  if (hideForOwnerWithoutBooks) return null;
   if (!loaded && !ownerMode) return <SkeletonBanner label="payroll" />;
 
   return (
@@ -202,7 +225,7 @@ export default function PayrollHomeSection({
           flexShrink={0}
           onClick={() =>
             window.dispatchEvent(
-              new CustomEvent("navigate:workerTab", { detail: { tab: "payroll" } }),
+              new CustomEvent("navigate:staffTab", { detail: { tab: "payroll" } }),
             )
           }
         >
@@ -295,7 +318,7 @@ export default function PayrollHomeSection({
                 ? // Deliberately does NOT explain WHY it's empty. The two
                   // obvious reasons look identical from here: nothing has
                   // been imported, OR a row exists but its name hasn't been
-                  // matched to this account yet (see the Super identity
+                  // matched to this account yet (see the `payroll.manage` identity
                   // queue). The old copy asserted "once they've been
                   // imported… contractors aren't included", both of which
                   // are false for an unmatched W-2 employee whose pay is

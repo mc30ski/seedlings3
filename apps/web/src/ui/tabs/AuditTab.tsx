@@ -126,7 +126,7 @@ export default function AuditTab() {
     cachedResults = null;
     cachedTimestamp = null;
     try {
-      const res = await apiPost<{ results: AuditResult[] }>("/api/admin/system-audit", {
+      const res = await apiPost<{ results: AuditResult[] }>("/api/system-audit", {
         checks: [...selected],
       });
       const now = Date.now();
@@ -366,7 +366,7 @@ export default function AuditTab() {
                                 variant="ghost"
                                 colorPalette="blue"
                                 px="1"
-                                onClick={() => openEventSearch("jobsTabToClientsTabSearch", "", true, issue.clientId)}
+                                onClick={() => openEventSearch("jobsTabToClientsTabSearch", "", issue.clientId)}
                                 title="View Client"
                               >
                                 Client <ExternalLink size={10} style={{ marginLeft: 2 }} />
@@ -378,7 +378,7 @@ export default function AuditTab() {
                                 variant="ghost"
                                 colorPalette="blue"
                                 px="1"
-                                onClick={() => openEventSearch("jobsTabToServicesTabSearch", "", true, `${issue.jobId}:${issue.occurrenceId ?? ""}`)}
+                                onClick={() => openEventSearch("jobsTabToServicesTabSearch", "", `${issue.jobId}:${issue.occurrenceId ?? ""}`)}
                                 title="View Job Service"
                               >
                                 Service <ExternalLink size={10} style={{ marginLeft: 2 }} />

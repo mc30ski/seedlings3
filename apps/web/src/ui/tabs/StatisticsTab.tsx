@@ -1,6 +1,8 @@
 "use client";
+import type { WorkerType } from "@repo/money";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { Scope } from "@/src/lib/scope";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
@@ -26,15 +28,21 @@ import {
   Legend,
   CartesianGrid,
 } from "recharts";
+import { payClassLabel } from "../../lib/paymentMath";
+import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 
 type WorkerStat = {
   userId: string;
   displayName: string;
-  workerType: string | null;
+  workerType: WorkerType | null;
   jobsCompleted: number;
-  totalEarnings: number;
-  totalExpenses: number;
-  netEarnings: number;
+  // OPTIONAL BECAUSE THE SERVER OMITS THEM. `/statistics` drops all three
+  // for a caller without `payroll.view`. Typed as required, every read
+  // compiled and crashed at runtime on `undefined.toFixed(2)`; typed
+  // optional, the compiler names each one.
+  totalEarnings?: number;
+  totalExpenses?: number;
+  netEarnings?: number;
   totalActualMinutes: number;
   totalEstimatedMinutes: number;
   jobsWithTiming: number;
@@ -50,6 +58,7 @@ type StatsResponse = {
   workers: WorkerStat[];
   totalOccurrences: number;
   daysInRange: number;
+
 };
 
 function formatDuration(mins: number): string {
@@ -59,28 +68,73 @@ function formatDuration(mins: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function workerTypeLabel(wt: string | null): string {
-  if (wt === "EMPLOYEE") return "W-2";
-  if (wt === "CONTRACTOR") return "1099";
-  if (wt === "TRAINEE") return "Trainee";
-  return "Unclassified";
+function workerTypeLabel(wt: WorkerType | null): string {
+  return payClassLabel(wt);
 }
 
-function workerTypeColor(wt: string | null): string {
+function workerTypeColor(wt: WorkerType | null): string {
   if (wt === "EMPLOYEE") return "blue";
   if (wt === "CONTRACTOR") return "orange";
-  if (wt === "TRAINEE") return "cyan";
+  if (wt === "UNPAID") return "purple";
   return "gray";
 }
 
-const CHART_COLORS = ["#3182CE", "#38A169", "#DD6B20", "#805AD5", "#E53E3E", "#319795", "#D69E2E", "#718096"];
+/**
+ * The chart series palette, as THEME TOKENS rather than hex.
+ *
+ * It was eight literal hex values, which meant eight identical bars in all
+ * fourteen themes — including the four dark-grounded ones, where a
+ * near-black series sat on a near-black page. Hex cannot theme; that is the
+ * whole rule.
+ *
+ * `.solid` is the right slot: it is a FILL, which is what a bar is, as
+ * opposed to `.fg` which is ink for text. The win is visible on `gray`,
+ * which resolves to #18181b on a light theme and #FFFFFF on a dark one —
+ * the series that used to disappear now inverts on its own.
+ *
+ * NO `yellow`, deliberately. `yellow.solid` is #fde047 in every theme but
+ * `contrast` — a pale wash that reads as a disabled bar on white. `pink`
+ * takes that slot; `cyan` was the other candidate and sits too close to
+ * `teal` two places away.
+ *
+ * Written as `var(--chakra-colors-…)` because these are consumed by
+ * recharts `fill=` (plain SVG, which needs a real CSS value) as well as by
+ * Chakra `bg=`. Verified to resolve and paint at runtime — a token in a
+ * CUSTOM namespace does not emit a CSS variable and silently resolves to
+ * nothing, which is how the title bar once lost its gradient. These eight
+ * are standard palette tokens and do emit.
+ */
+const CHART_COLORS = [
+  "var(--chakra-colors-blue-solid)",
+  "var(--chakra-colors-green-solid)",
+  "var(--chakra-colors-orange-solid)",
+  "var(--chakra-colors-purple-solid)",
+  "var(--chakra-colors-red-solid)",
+  "var(--chakra-colors-teal-solid)",
+  "var(--chakra-colors-pink-solid)",
+  "var(--chakra-colors-gray-solid)",
+];
 
 type Props = {
   /** If set, only show this worker's stats and hide the worker selector */
   myId?: string;
+  /** Needed to gate the per-worker money columns, which the server omits
+   *  for a caller without `payroll.view`. Absent fails closed. */
+  scope?: Scope;
 };
 
-export default function StatisticsTab({ myId }: Props = {}) {
+export default function StatisticsTab({ myId, scope }: Props = {}) {
+  // THE MONEY COLUMNS ARE OMITTED, NOT ZEROED.
+  //
+  // `/statistics` drops `netEarnings`, `totalEarnings` and `totalExpenses`
+  // unless the caller holds `payroll.view` — they used to be readable by the
+  // baseline Trainee. Rendering them unguarded is a TypeError on
+  // `undefined.toFixed(2)`, not a blank, and the team average quietly
+  // becomes NaN.
+  //
+  // The server must keep OMITTING rather than sending 0: a zero reads as
+  // "this person earned nothing", which is a lie about somebody's pay.
+  const showsPay = !!scope?.can?.("payroll.view");
   const [data, setData] = useState<StatsResponse | null>(null);
   const [viewMode, setViewMode] = usePersistedState<"cards" | "charts">("stats_view", "cards");
   const [loading, setLoading] = useState(false);
@@ -122,7 +176,7 @@ export default function StatisticsTab({ myId }: Props = {}) {
       const qs = new URLSearchParams();
       if (dateFrom) qs.set("from", dateFrom);
       if (dateTo) qs.set("to", dateTo);
-      const endpoint = myId ? "/api/me/statistics" : "/api/admin/statistics";
+      const endpoint = myId ? "/api/me/statistics" : "/api/statistics";
       const res = await apiGet<StatsResponse>(`${endpoint}?${qs}`);
       setData(res);
     } catch (err: any) {
@@ -160,7 +214,15 @@ export default function StatisticsTab({ myId }: Props = {}) {
     return {
       jobsCompleted: Math.round(active.reduce((s, w) => s + w.jobsCompleted, 0) / active.length),
       avgActualMinutes: Math.round(active.reduce((s, w) => s + w.avgActualMinutes, 0) / active.length),
-      netEarnings: Math.round(active.reduce((s, w) => s + w.netEarnings, 0) / active.length * 100) / 100,
+      // Averaged over the rows that CARRY the field, not over everyone —
+      // a missing column must not drag the team average toward zero.
+      netEarnings: (() => {
+        const paid = active.flatMap((w) =>
+          typeof w.netEarnings === "number" ? [w.netEarnings] : [],
+        );
+        if (paid.length === 0) return null;
+        return Math.round((paid.reduce((a, b) => a + b, 0) / paid.length) * 100) / 100;
+      })(),
       efficiencyPercent: (() => {
         const withEff = active.filter((w) => w.efficiencyPercent != null);
         if (withEff.length === 0) return null;
@@ -171,11 +233,47 @@ export default function StatisticsTab({ myId }: Props = {}) {
 
   return (
     <Box w="full" pb={8}>
-      {/* Preview banner */}
-      <Box mb={3} p={3} bg="yellow.faint" borderWidth="1px" borderColor="yellow.emphasized" rounded="md">
-        <Text fontSize="sm" fontWeight="medium" color="yellow.fg">Preview Feature</Text>
-        <Text fontSize="xs" color="yellow.fg">This feature is in preview and will be updated.</Text>
-      </Box>
+      {/* The "Preview Feature" banner that used to sit here is GONE
+          (2026-10-26). It dated from before this tab was unwired, and it
+          was still claiming the screen was provisional on the day it became
+          the only way an area lead rolls up their district. A standing
+          "this will change" notice on a shipped surface teaches people to
+          discount every other notice on the page — including the one below
+          that says the figures are a slice, which they must not discount. */}
+
+      {/* THE HELP, and it leads with WHO this is about.
+          Every other tab on Insight and Money reports the business. This one
+          reports named individuals — their hours, their pace against an
+          estimate, their pay — which changes how it should be read and who
+          should be shown it. Saying so first is the point of the panel. */}
+      <TabExplainer explainerId="seedlings:statisticsTab:guideOpen">
+        <ExplainerText>
+          <Em>This page is about people, not the business.</Em> Every row is
+          one person: the visits they finished, the time they took against
+          what was estimated, and the properties they covered. For company
+          numbers — jobs by status, revenue, equipment — use the Insights
+          panel on Jobs instead.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Treat it as you would a payslip.</Em> These are real people&rsquo;s
+          hours and earnings, shown next to each other and ranked. Earnings
+          appear only for someone allowed to read pay, and when they are
+          hidden they are left out rather than shown as zero — a zero would
+          read as &ldquo;earned nothing&rdquo;, which is a lie about somebody&rsquo;s wages.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Efficiency is a comparison, not a verdict.</Em> It is actual
+          time against the estimate on the job, so a run of hard properties
+          or a stale estimate moves it as much as the worker does.
+        </ExplainerText>
+        <ExplainerText>
+          <Em>Narrowed to an area, the totals are partial.</Em> If your access
+          covers one territory, or you have picked an area in the title bar,
+          these figures count only work done there — somebody who also worked
+          the next district shows less here than they were actually paid. The
+          strip above the tabs names the area whenever that is the case.
+        </ExplainerText>
+      </TabExplainer>
 
       {/* Controls */}
       <HStack mb={2} gap={2} wrap="wrap" align="flex-end">
@@ -263,6 +361,11 @@ export default function StatisticsTab({ myId }: Props = {}) {
 
       {data && !loading && (
         <>
+          {/* THE "SHOWING DURHAM ONLY" NOTICE IS NOT HERE ANY MORE.
+              This tab had its own, and once the app-wide strip landed
+              above the tab row the two stacked — the same fact twice on
+              one screen, which on a phone pushed the first number below
+              the fold. One notice, one place: AreaScopeNotice. */}
           {/* Summary bar */}
           <HStack gap={4} mb={4} p={3} bg="blue.faint" rounded="xl" borderWidth="1px" borderColor="blue.emphasized" wrap="wrap" justify="center">
             <VStack gap={0}>
@@ -325,7 +428,9 @@ export default function StatisticsTab({ myId }: Props = {}) {
                             <StatBox label="Jobs Completed" value={String(w.jobsCompleted)} highlight={teamAvg && w.jobsCompleted > teamAvg.jobsCompleted ? "green" : undefined} />
                             <StatBox label="Jobs/Day" value={String(jobsPerDay)} />
                             <StatBox label="Properties" value={String(w.propertiesServiced)} />
-                            <StatBox label="Net Earnings" value={`$${w.netEarnings.toFixed(2)}`} highlight={teamAvg && w.netEarnings > teamAvg.netEarnings ? "green" : undefined} />
+                            {showsPay && typeof w.netEarnings === "number" && (
+                              <StatBox label="Net Earnings" value={`$${w.netEarnings.toFixed(2)}`} highlight={teamAvg?.netEarnings != null && w.netEarnings > teamAvg.netEarnings ? "green" : undefined} />
+                            )}
                           </Box>
                           <Box display="grid" gridTemplateColumns={{ base: "repeat(2, 1fr)", md: "repeat(4, 1fr)" }} gap={3} mb={2}>
                             <StatBox label="Avg Actual Time" value={w.avgActualMinutes > 0 ? formatDuration(w.avgActualMinutes) : "—"} />
@@ -339,10 +444,18 @@ export default function StatisticsTab({ myId }: Props = {}) {
                             <StatBox label="Total Hours" value={w.totalActualMinutes > 0 ? formatDuration(w.totalActualMinutes) : "—"} />
                           </Box>
                           <Box display="grid" gridTemplateColumns={{ base: "repeat(2, 1fr)", md: "repeat(4, 1fr)" }} gap={3}>
-                            <StatBox label="Gross Earnings" value={`$${w.totalEarnings.toFixed(2)}`} />
-                            <StatBox label="Charges on jobs" value={`$${w.totalExpenses.toFixed(2)}`} />
-                            <StatBox label="Earnings/Job" value={w.jobsCompleted > 0 ? `$${(w.netEarnings / w.jobsCompleted).toFixed(2)}` : "—"} />
-                            <StatBox label="Earnings/Hour" value={w.totalActualMinutes > 0 ? `$${(w.netEarnings / (w.totalActualMinutes / 60)).toFixed(2)}` : "—"} />
+                            {showsPay && typeof w.totalEarnings === "number" && (
+                              <StatBox label="Gross Earnings" value={`$${w.totalEarnings.toFixed(2)}`} />
+                            )}
+                            {showsPay && typeof w.totalExpenses === "number" && (
+                              <StatBox label="Charges on jobs" value={`$${w.totalExpenses.toFixed(2)}`} />
+                            )}
+                            {showsPay && typeof w.netEarnings === "number" && (
+                              <StatBox label="Earnings/Job" value={w.jobsCompleted > 0 ? `$${(w.netEarnings / w.jobsCompleted).toFixed(2)}` : "—"} />
+                            )}
+                            {showsPay && typeof w.netEarnings === "number" && (
+                              <StatBox label="Earnings/Hour" value={w.totalActualMinutes > 0 ? `$${(w.netEarnings / (w.totalActualMinutes / 60)).toFixed(2)}` : "—"} />
+                            )}
                           </Box>
                         </>
                       )}
@@ -387,7 +500,10 @@ function TeamComparisonChart({
       key: "netEarnings" as const,
       label: "Net Earnings",
       color: CHART_COLORS[5],
-      get: (w: WorkerStat) => Math.round(w.netEarnings * 100) / 100,
+      // null, not 0 — a worker whose pay this caller may not read has no
+      // bar, rather than a bar at the bottom claiming they earned nothing.
+      get: (w: WorkerStat) =>
+        typeof w.netEarnings === "number" ? Math.round(w.netEarnings * 100) / 100 : null,
       tip: (v: number) => `$${v.toFixed(2)}`,
     },
     {
@@ -406,8 +522,12 @@ function TeamComparisonChart({
     },
   ];
   const active = METRICS.find((m) => m.key === metric) ?? METRICS[0];
+  // A worker whose value this caller may not read is dropped from the chart
+  // rather than plotted at zero, which would rank them last on a bar labelled
+  // "Net Earnings".
   const chartData = workers
     .map((w) => ({ name: w.displayName, value: active.get(w) }))
+    .filter((d): d is { name: string; value: number } => d.value !== null)
     .sort((a, b) => b.value - a.value);
   const truncName = (n: string) => (n.length > 18 ? n.slice(0, 17) + "…" : n);
   return (
@@ -482,9 +602,18 @@ function ChartView({ workers, daysInRange }: { workers: WorkerStat[]; daysInRang
     fullName: w.displayName,
     jobs: w.jobsCompleted,
     jobsPerDay: daysInRange > 0 ? Math.round((w.jobsCompleted / daysInRange) * 10) / 10 : 0,
-    netEarnings: Math.round(w.netEarnings),
-    earningsPerJob: w.jobsCompleted > 0 ? Math.round(w.netEarnings / w.jobsCompleted) : 0,
-    earningsPerHour: w.totalActualMinutes > 0 ? Math.round(w.netEarnings / (w.totalActualMinutes / 60)) : 0,
+    // Same rule as the chart series above: absent reads as "not shown to
+    // you", and must never be flattened to a zero that reads as "earned
+    // nothing".
+    netEarnings: typeof w.netEarnings === "number" ? Math.round(w.netEarnings) : null,
+    earningsPerJob:
+      typeof w.netEarnings === "number" && w.jobsCompleted > 0
+        ? Math.round(w.netEarnings / w.jobsCompleted)
+        : null,
+    earningsPerHour:
+      typeof w.netEarnings === "number" && w.totalActualMinutes > 0
+        ? Math.round(w.netEarnings / (w.totalActualMinutes / 60))
+        : null,
     avgActualMins: w.avgActualMinutes,
     avgEstimatedMins: w.avgEstimatedMinutes,
     efficiency: w.efficiencyPercent ?? 0,

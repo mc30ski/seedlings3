@@ -5,7 +5,7 @@
 // stream label, reason, and reminder date. The "Review" button navigates
 // to the Services tab where the operator can Resume / Edit / Extend.
 //
-// Fetches from /api/admin/stream-pauses/reminders — same endpoint
+// Fetches from /api/stream-pauses/reminders — same endpoint
 // that populates the alert badge count. Bus event
 // `seedlings:stream-pauses-changed` keeps the list in sync when
 // pauses are updated from ServicesTab.
@@ -54,7 +54,7 @@ export default function RepeatingPausesDueSection({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await apiGet<DueRow[]>("/api/admin/stream-pauses/reminders");
+      const rows = await apiGet<DueRow[]>("/api/stream-pauses/reminders");
       setItems(Array.isArray(rows) ? rows : []);
     } catch (err) {
       publishInlineMessage({

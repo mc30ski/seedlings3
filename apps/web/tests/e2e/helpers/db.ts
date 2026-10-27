@@ -1,35 +1,70 @@
-import { PrismaClient } from "@prisma/client";
-import { PrismaNeon } from "@prisma/adapter-neon";
-import { neonConfig } from "@neondatabase/serverless";
-import ws from "ws";
+import type { ContactRole, PrismaClient } from "@prisma/client";
 import { createHash, randomUUID } from "crypto";
+import { existsSync, readFileSync } from "fs";
+import path from "path";
 
-neonConfig.webSocketConstructor = ws;
+// Re-exported so the 41 files that import it from here keep working. The
+// factory itself lives in prisma.ts, side-effect-free, so auth.setup.ts can
+// use it without importing this module's seed-user map.
+export { makePrisma } from "./prisma";
+
+export type SeedUserKey =
+  | "employee"
+  | "contractor"
+  | "trainee"
+  | "scheduler"
+  | "owner"
+  | "coordinator"
+  | "bookkeeper"
+  | "payroll"
+  | "unpaid"
+  // AREA-SCOPED. Holds Admin inside Durham only, with no company-wide
+  // grant — the one persona whose reads are territorially narrowed.
+  | "districtLead";
 
 /**
- * Direct DB access for e2e tests — same connection pattern as the API
- * uses, but scoped to a fresh client per test file so we don't hold
- * pooled connections during test run.
+ * Seed user DATABASE ids, resolved at run time — never hardcoded.
+ *
+ * These were five literal cuids until 2026-10-11, when all five turned out to
+ * be dead: the User rows had been recreated by Clerk sign-ins and every id had
+ * changed. The suite did not fail with a helpful message, it failed with
+ * foreign-key violations deep inside helpers — 52 of the first 64 tests, one
+ * root cause.
+ *
+ * `prisma/seed.ts` had already hit this and switched to email lookup, noting
+ * "the email is the stable identity here; the cuid never was." These helpers
+ * now resolve from something stabler still: the Clerk account id. The mapping
+ * is written by the `resolve seed user ids` step in `auth/auth.setup.ts`,
+ * which every project depends on, so it is always current.
  */
-export function makePrisma() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL missing — check apps/api/.env");
-  if (!url.includes("jolly-wildflower")) {
-    throw new Error("SAFETY: e2e tests must run against the dev DB (jolly-wildflower). Refusing.");
+function loadSeedUserIds(): Record<SeedUserKey, string> {
+  const file = path.resolve(__dirname, "../../../playwright/.auth/user-ids.json");
+  if (!existsSync(file)) {
+    throw new Error(
+      `Seed user ids not resolved yet (${file} missing).\n` +
+        `The auth-setup project writes it. Run the suite normally, or run\n` +
+        `  npx playwright test --project=auth-setup\n` +
+        `before running a single spec file directly.`,
+    );
   }
-  const adapter = new PrismaNeon({ connectionString: url });
-  return new PrismaClient({ adapter });
+  return JSON.parse(readFileSync(file, "utf8")) as Record<SeedUserKey, string>;
 }
 
-// Seed user IDs (match apps/api/prisma/seed.ts). Never modified — pre-existing
-// Clerk-linked accounts we own.
-export const USERS = {
-  employee:   "cmnrz00fd002d5abyyr88byen",
-  contractor: "cmnrylyaz000s5abyeyg77m4x",
-  trainee:    "cmnrzapcl003g5abybrzttuxs",
-  admin:      "cmnry8iih000k5acx7hf27aay",
-  super:      "cmexiwrfs003kvdysrjteo2hy",
-} as const;
+let seedIdCache: Record<SeedUserKey, string> | null = null;
+
+/** Lazy, so merely importing this module for an unrelated helper does not
+ *  explode when the ids have not been resolved yet. */
+export const USERS: Record<SeedUserKey, string> = new Proxy(
+  {} as Record<SeedUserKey, string>,
+  {
+    get(_target, key: string) {
+      seedIdCache ??= loadSeedUserIds();
+      const id = seedIdCache[key as SeedUserKey];
+      if (!id) throw new Error(`Unknown seed user "${key}". Known: ${Object.keys(seedIdCache).join(", ")}`);
+      return id;
+    },
+  },
+);
 
 /** Reset a worker's workday state for today so tests can exercise the
  *  "NOT_STARTED → Start workday" gate flow. Also nukes any dangling prior
@@ -37,11 +72,15 @@ export const USERS = {
  *
  *  Uses the ET-anchored date key so it lines up with the app's own
  *  `workdayDate` field. */
-/** Create a scratch approved WORKER-role user with NO workerType set —
- *  exactly the shape the unclassified-worker warning is meant to surface.
- *  Returns the created user's ID. Caller is responsible for cleanup via
- *  `deleteScratchUser`. Uses a random Clerk ID and a random email to
- *  avoid collisions across parallel test runs (should be @unique). */
+/** Create a scratch approved user who holds the WORKER role but has NO
+ *  workerType set — exactly the shape the unclassified-worker warning is
+ *  meant to surface. Returns the created user's ID. Caller is responsible
+ *  for cleanup via `deleteScratchUser`. Uses a random Clerk ID and a random
+ *  email to avoid collisions across parallel test runs (should be @unique).
+ *
+ *  The grant is a `UserCustomRole` row pointing at the `seedlings.worker`
+ *  starter role. Creating the grant any other way throws a
+ *  PrismaClientValidationError and takes the spec with it. */
 export async function createScratchUnclassifiedWorker(
   prisma: PrismaClient,
   opts: { displayName?: string } = {},
@@ -54,19 +93,35 @@ export async function createScratchUnclassifiedWorker(
       displayName: opts.displayName ?? `Test Unclassified ${uid.slice(0, 6)}`,
       isApproved: true,
       // workerType intentionally omitted (null).
-      roles: {
-        create: [{ role: "WORKER" }],
-      },
     },
   });
+
+  // Looked up by KEY, never by name: `name` is an editable label and the
+  // starter script owns the key. A missing role is a seed problem, and
+  // failing loudly here beats creating a user who holds nothing and letting
+  // the spec fail somewhere less obvious.
+  const worker = await prisma.customRole.findUnique({
+    where: { key: "seedlings.worker" },
+    select: { id: true },
+  });
+  if (!worker) {
+    throw new Error(
+      'Starter role "seedlings.worker" is missing — run `npm run db:seed` ' +
+        "(it calls install-starter-roles) before the e2e suite.",
+    );
+  }
+  await prisma.userCustomRole.create({
+    data: { userId: user.id, customRoleId: worker.id },
+  });
+
   return user.id;
 }
 
 /** Cleanup counterpart to `createScratchUnclassifiedWorker`. Deletes the
- *  user + their UserRole rows. Safe to call even if the user's already
+ *  user + their role grants. Safe to call even if the user's already
  *  been deleted. */
 export async function deleteScratchUser(prisma: PrismaClient, userId: string) {
-  // UserRole and other relations cascade via schema onDelete: Cascade
+  // UserCustomRole and other relations cascade via schema onDelete: Cascade
   // where applicable, so a straight delete works.
   await prisma.user.deleteMany({ where: { id: userId } });
 }
@@ -83,7 +138,7 @@ export async function createScratchClientWithContacts(
       firstName: string;
       lastName: string;
       isPrimary?: boolean;
-      role?: string;
+      role?: ContactRole;
       clerkUserId?: string | null;
       email?: string;
     }>;
@@ -166,7 +221,7 @@ export async function createScratchPolicy(
     keyPrefix: string;
     title: string;
     enforcement: "BLOCK" | "WARN" | "INFO";
-    targetWorkerTypes?: Array<"EMPLOYEE" | "CONTRACTOR" | "TRAINEE">;
+    targetWorkerTypes?: Array<"EMPLOYEE" | "CONTRACTOR" | "UNPAID">;
     workerAction?: "SIGN" | "ACKNOWLEDGE" | "NONE";
     requiresWorkerUpload?: boolean;
     workerUploadRequiresApproval?: boolean;
@@ -184,7 +239,12 @@ export async function createScratchPolicy(
       title: opts.title,
       description: `E2E scratch policy: ${opts.title}`,
       enforcement: opts.enforcement,
-      targetWorkerTypes: opts.targetWorkerTypes ?? ["EMPLOYEE", "CONTRACTOR", "TRAINEE"],
+      // The value this defaulted to is not a worker type any more, and
+      // Prisma rejects it — so
+      // this default broke every spec that creates a policy document, not
+      // just the compliance ones. A trainee is an EMPLOYEE without field
+      // clearance, and is therefore already covered by "EMPLOYEE".
+      targetWorkerTypes: opts.targetWorkerTypes ?? ["EMPLOYEE", "CONTRACTOR", "UNPAID"],
       workerAction: opts.workerAction ?? "SIGN",
       requiresWorkerUpload: opts.requiresWorkerUpload ?? false,
       workerUploadRequiresApproval: opts.workerUploadRequiresApproval ?? false,
@@ -316,7 +376,7 @@ export async function signPolicyDirect(
 //
 // Payroll rows are created ONLY by importing a CSV, so these helpers seed
 // the DB directly rather than driving the upload UI. That keeps the
-// worker-facing specs independent of the Super upload spec — an ordering
+// worker-facing specs independent of a caller with `settings.manage` upload spec — an ordering
 // dependency between spec files is exactly how a suite starts passing for
 // the wrong reason.
 //
@@ -367,7 +427,7 @@ export async function createScratchPayrollPeriod(
         grossEarnings: w.grossEarnings,
         netPay: w.netPay,
         checkAmount: w.netPay,
-        // Tax lines — present so a spec can assert an ADMIN payload omits
+        // Tax lines — present so a spec can assert the payload omits
         // them while a worker's own payload includes them.
         federalIncomeTax: 11.11,
         stateTaxEmployee: 22.22,
@@ -380,7 +440,7 @@ export async function createScratchPayrollPeriod(
     });
   }
 
-  // An unmatched row — visible to Super only, never to a worker or admin.
+  // An unmatched row — visible with `payroll.manage` and to nobody else.
   await prisma.payrollEntry.create({
     data: {
       payrollPeriodId: period.id,
@@ -459,9 +519,9 @@ export async function createScratchGuide(
       submittedAt: opts.status === "DRAFT" ? null : now,
       submittedById: opts.status === "DRAFT" ? null : opts.createdById,
       approvedAt: opts.status === "PUBLISHED" ? now : null,
-      approvedById: opts.status === "PUBLISHED" ? USERS.super : null,
+      approvedById: opts.status === "PUBLISHED" ? USERS.owner : null,
       publishedAt: opts.status === "PUBLISHED" ? now : null,
-      publishedById: opts.status === "PUBLISHED" ? USERS.super : null,
+      publishedById: opts.status === "PUBLISHED" ? USERS.owner : null,
     },
   });
 

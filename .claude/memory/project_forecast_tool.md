@@ -1,6 +1,6 @@
 ---
 name: project-forecast-tool
-description: "Super → Money → Forecast: advisory pay-structure simulator. Built 2026-09-02, works end to end. State, decisions, known defects and what's left."
+description: "Money → Forecast: advisory pay-structure simulator. Built 2026-09-02, works end to end. State, decisions, known defects and what's left."
 metadata: 
   node_type: memory
   type: project
@@ -8,7 +8,7 @@ metadata:
   modified: 2026-09-10T00:00:00.000Z
 ---
 
-Pay-structure simulator at **Super → Money → Forecast**. Pick a window of real jobs, move levers (margin, hourly base, prices, volume, cost inflation, crew composition), see what the books AND every named worker's hourly rate would have looked like. Grew out of the 2026-09-02 analysis that found labor at 70.6% of revenue against 37.9% opex.
+Pay-structure simulator at **Money → Forecast**. Pick a window of real jobs, move levers (margin, hourly base, prices, volume, cost inflation, crew composition), see what the books AND every named worker's hourly rate would have looked like. Grew out of the 2026-09-02 analysis that found labor at 70.6% of revenue against 37.9% opex.
 
 **ADVISORY.** Writes no Setting, no Payment, no payroll row. Gated.
 
@@ -17,14 +17,20 @@ Pay-structure simulator at **Super → Money → Forecast**. Pick a window of re
 | Piece | Path |
 | --- | --- |
 | Shared pure math | `packages/money/` — `payoutMath.ts` (moved out of `services/payments.ts`) + `forecastModel.ts` |
-| API service / routes | `apps/api/src/services/forecast.ts`, `src/routes/forecast.ts` (Super-gated) |
-| Cost behavior setting | `apps/api/src/services/costBehavior.ts` |
+| API service / routes | `apps/api/src/services/forecast.ts`, `src/routes/forecast.ts` — every route guarded on `forecasts.view` |
+| Cost behavior | `packages/money/forecastModel.ts` — `CostBehavior`, `DEFAULT_COST_BEHAVIOR` (`SCALES_WITH_JOBS`) and `LEGACY_COST_BEHAVIOR` read-time normalisation. There is no `costBehavior.ts` service, and `settings-section-build-gate` asserts `costBehavior` is NOT a field on `EXPENSE_CATEGORIES`. |
 | Web | `apps/web/src/lib/forecast.ts`, `src/ui/tabs/ForecastTab.tsx` + `.parts.tsx` |
-| Gates | `services/forecast-build-gate.test.ts` (35), `services/settings-section-build-gate.test.ts` (8) |
+| Gates | `apps/api/src/services/forecast-build-gate.test.ts`, `apps/api/src/services/settings-section-build-gate.test.ts` (run them for counts — numbers in prose rot) |
 
 `apps/api/tsup.config.ts` was also recreated — it had been broken since `39c7edb` (pointed at removed entrypoints), so `npm run build` failed. Now builds `src/server.ts` to CJS with `noExternal: [/^@repo\//]`.
 
 ## Decisions worth not relitigating
+
+- **Forecasts are SHARED, deliberately** (confirmed 2026-10-18). `Forecast.createdById`
+  records the author and every change is audited, but nothing checks it: any holder of
+  `forecasts.view` can edit, archive or delete anyone's scenario. That is the chosen
+  behaviour — a forecast is a company planning artefact, not private work — not an
+  oversight. Don't "fix" it into an ownership check without asking.
 
 - **Payout math is shared, not duplicated.** The simulator calls the same `computeBreakdown` that writes real PaymentSplit rows; a gate asserts it owns no split arithmetic. `packages/money` is dependency-free (WorkerType is a local string union) so it bundles into both the browser and Fastify.
 - **Simulation runs client-side** through that same module, so slider drags are instant and can't drift from the server.

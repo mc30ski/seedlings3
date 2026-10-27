@@ -2,7 +2,7 @@
 
 import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { AlertTriangle } from "lucide-react";
-import { getImpersonation, IMPERSONATION_LABELS } from "@/src/lib/impersonation";
+import { getPerspectiveName } from "@/src/lib/impersonation";
 
 // ─────────────────────────────────────────────────────────────────────────
 // ImpersonationWarning — inline red callout placed at the top of any
@@ -18,18 +18,27 @@ import { getImpersonation, IMPERSONATION_LABELS } from "@/src/lib/impersonation"
 //      worker's record. Caller passes the worker's display name as
 //      `viewAsName` so the warning can name them.
 //
-//   2. X-Impersonate-As header (role override) — Super using the global
-//      "view as Admin / Worker" picker. Doesn't change the actor's
-//      userId; included as a secondary warning so the audit context is
-//      obvious to the operator at the moment of action.
+//   2. An active PERSPECTIVE — the actor has narrowed themselves to one of
+//      their other roles. Doesn't change the actor's userId; included so the
+//      operator knows which view they are acting from.
+//
+//      ITS COPY SAID "The audit log flags this action as impersonated",
+//      and that was false twice over. A perspective impersonates nobody —
+//      it can only narrow what you already hold, never act on another
+//      person's record — and nothing was written to the audit row about it
+//      either, so the sentence promised a trail that did not exist. The
+//      app's own Help text said the opposite and was right. Perspectives
+//      ARE recorded now (see `requestContext.ts` and `writeAudit`), and
+//      the actor is still you, which is what this says.
 //
 // Renders nothing when neither path is active.
 //
 // Usage:
 //   <ImpersonationWarning viewAsName={impersonatedWorker?.displayName} />
 //
-// The viewAsName prop is the source of truth for path 1; path 2 reads
-// localStorage internally via getImpersonation().
+// The viewAsName prop is the source of truth for path 1; path 2 reads the
+// display-only cached perspective name, because this renders inside dialogs that
+// have no access to `me`.
 // ─────────────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -37,14 +46,13 @@ type Props = {
    * Display name of the worker whose record will be mutated by the
    * confirm action. Pass null/undefined when the actor is acting on
    * their own record (the warning's path-1 message is suppressed). The
-   * role-impersonation banner still fires if X-Impersonate-As is set.
+   * perspective warning still fires if a perspective is active.
    */
   viewAsName?: string | null;
 };
 
 export default function ImpersonationWarning({ viewAsName }: Props) {
-  const roleTarget = getImpersonation();
-  const roleLabel = roleTarget ? (IMPERSONATION_LABELS[roleTarget] ?? roleTarget) : null;
+  const roleLabel = getPerspectiveName();
   if (!viewAsName && !roleLabel) return null;
   return (
     <Box
@@ -68,8 +76,8 @@ export default function ImpersonationWarning({ viewAsName }: Props) {
           )}
           {roleLabel && (
             <Text fontSize="xs" color="red.fg">
-              <b>Role impersonation: {roleLabel}.</b> The audit log flags this action as
-              impersonated.
+              <b>Viewing as: {roleLabel}.</b> The action runs with your full
+              authority, and the audit records you.
             </Text>
           )}
         </VStack>

@@ -30,7 +30,7 @@ function urlTransform(value: string): string {
  * document.
  *
  * Shared by every surface that renders operator-authored markdown:
- * the worker sign wizard, the admin policy preview, the client-facing
+ * the sign wizard, the policy preview, the client-facing
  * invoice promo block, and the promotion editor's previews. Extend the
  * components map HERE rather than in any callsite, so what an operator
  * previews is byte-for-byte what a client sees.

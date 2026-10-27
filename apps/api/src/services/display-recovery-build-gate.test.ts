@@ -207,6 +207,6 @@ describe("[build-gate] the wall display recovers unattended", () => {
     expect(route, "only an ACTIVE campaign's images may serve").toMatch(/status !== "ACTIVE"/);
     expect(route, "metadata must be stripped").toContain("stripImageMetadata");
     expect(route, "and it reads the promotion bucket, not the job-photo one")
-      .toContain('getObjectBuffer(photo.r2Key, "promotion-images")');
+      .toContain('getObjectBufferIfPresent(photo.r2Key, "promotion-images")');
   });
 });

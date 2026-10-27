@@ -4,7 +4,7 @@
  * Spring/Summer (Mar–Aug): default green icons
  * Fall/Winter (Sep–Feb): fall icons
  *
- * Admins can override via localStorage.
+ * Holders of `schedule.manage` can override via localStorage.
  */
 
 import { bizMonth } from "@/src/lib/dates";
@@ -13,10 +13,10 @@ export type Season = "spring" | "fall";
 export type SeasonOverride = "auto" | "spring" | "fall";
 
 const STORAGE_KEY = "seedlings_seasonOverride";
-/** Who set the override: a theme that names a season, or an admin picking
+/** Who set the override: a theme that names a season, or someone with `schedule.manage` picking
  *  one by hand. Both write the same value, but only a theme's own entry may
  *  be cleared when switching to a theme that follows the calendar — wiping
- *  an admin's deliberate choice because they changed theme is a bug. */
+ *  someone with `schedule.manage`'s deliberate choice because they changed theme is a bug. */
 const SOURCE_KEY = "seedlings_seasonOverrideSource";
 export type SeasonSource = "manual" | "theme";
 
@@ -49,7 +49,7 @@ export function getSeasonOverride(): SeasonOverride {
 export function setSeasonOverride(value: SeasonOverride, source: SeasonSource = "manual") {
   try {
     if (value === "auto") {
-      // Only a theme may clear what a theme set. An admin's hand-picked
+      // Only a theme may clear what a theme set. Someone with `schedule.manage`'s hand-picked
       // season survives a theme change.
       if (source === "theme" && getSeasonSource() === "manual") return;
       localStorage.removeItem(STORAGE_KEY);

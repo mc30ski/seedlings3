@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Forecast model — the pure simulator behind Super → Money → Forecast.
+// Forecast model — the pure simulator behind Money → Forecast.
 //
 // ADVISORY. Nothing here writes a Setting, a Payment, or a payroll row. It
 // answers one question: if the pay structure, prices, volume or crew had been
@@ -15,6 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { computeBreakdown, type Rates, type WorkerInput, type WorkerType } from "./payoutMath";
+import { classify, isFeeable, isW2 } from "./workerClass";
 
 export const FORECAST_MODEL_VERSION = 1;
 
@@ -617,7 +618,27 @@ export type ForecastResult = {
 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const isW2 = (t: WorkerType | null) => t === "EMPLOYEE" || t === "TRAINEE";
+/**
+ * The COMPANY's cut of a hypothetical worker's revenue, as a percent. What
+ * is left over is that worker's pay.
+ *
+ * Exhaustive on purpose. The old form — `isW2(t) ? margin : fee` — reads the
+ * question as binary, so an UNPAID hypothetical would be simulated as a
+ * contractor paying a fee, and a forecast would quietly show payroll for
+ * someone who is not on it. Both non-paid classes keep 100% with the company,
+ * which is the same thing as paying them nothing.
+ */
+function companyCutPercent(t: WorkerType | null, a: Rates): number {
+  switch (classify(t)) {
+    case "w2":
+      return a.employeeMarginPercent;
+    case "contractor":
+      return a.contractorFeePercent;
+    case "unpaid":
+    case "unclassified":
+      return 100;
+  }
+}
 
 /** Rescale a per-period array so it still sums to `to` while keeping its
  *  shape. Falls back to spreading evenly when there is no shape to keep. */
@@ -752,7 +773,7 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
         ? paidJobs.reduce((s, j) => s + j.paid, 0) / paidJobs.length
         : 0;
       jobCount += avgJob > 0 ? Math.round(newRevenue / avgJob) : 0;
-      const rate = isW2(h.workerType) ? a.employeeMarginPercent : a.contractorFeePercent;
+      const rate = companyCutPercent(h.workerType, a);
       add(h.id, newRevenue * (1 - rate / 100));
       if (a.rateCardPerJob > 0 && avgJob > 0) {
         addCard(h.id, (newRevenue / avgJob) * a.rateCardPerJob);
@@ -769,8 +790,8 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
         // The displaced worker's share is re-earned by the substitute at the
         // substitute's own rate — that rate difference IS the question being
         // asked when you compare a W-2 crew against a 1099 one.
-        const fromRate = isW2(from.workerType) ? a.employeeMarginPercent : a.contractorFeePercent;
-        const toRate = isW2(h.workerType) ? a.employeeMarginPercent : a.contractorFeePercent;
+        const fromRate = companyCutPercent(from.workerType, a);
+        const toRate = companyCutPercent(h.workerType, a);
         const grossMoved = fromRate >= 100 ? 0 : moved / (1 - fromRate / 100);
         add(h.id, grossMoved * (1 - toRate / 100));
 
@@ -856,7 +877,11 @@ export function simulate(baseline: ForecastBaseline, a: Assumptions): ForecastRe
     // The owner is never covered: owner earnings are a draw, not a paycheck.
     // Contractors are covered only on an explicit opt-in (see the assumption).
     const covered =
-      guarantee > 0 && !w.isOwner && (isW2(w.workerType) || a.guaranteeContractors);
+      guarantee > 0 &&
+      !w.isOwner &&
+      // Contractors only when the tunable says so. UNPAID never — it must
+      // reach neither branch, which `|| a.guaranteeContractors` allowed.
+      (isW2(w.workerType) || (isFeeable(w.workerType) && a.guaranteeContractors));
     let topUpHours = 0;
     if (covered) {
       for (const h of w.periodHours) topUpHours += Math.max(0, guarantee - h * vm);

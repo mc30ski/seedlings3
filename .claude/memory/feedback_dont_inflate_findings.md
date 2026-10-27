@@ -23,4 +23,10 @@ Earlier the same day: *"I don't need a fucking novel. I need a fucking explanati
 - When the user pushes back on a framing, check whether they're right before defending. Twice here they were, immediately and obviously.
 - Own a mistake in one or two sentences and move to the fix. Explaining the reasoning behind a bad call reads as justification even when it's accurate — and the user has said so explicitly.
 - Jargon is a form of padding. "The leak-finding half is absent" meant "it can't show you the 11 jobs you got paid nothing for." Say the second one.
+- **Walkthrough steps are two or three short paragraphs, not an essay.** On
+  2026-10-16, mid-way through the permissions UI plan walkthrough, the user cut
+  in: *"Be more concise, you are talking too much."* Each step had grown to ~400
+  words of context, rationale and recommendation. They want the finding, the
+  decision needed, and a recommendation — nothing else. Drop the backstory, the
+  "why this matters", and the second option's full defence.
 - Related: [[feedback-step-by-step-walkthroughs]] — the same preference for one thing at a time over a wall of text.

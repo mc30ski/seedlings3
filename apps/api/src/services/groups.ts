@@ -2,7 +2,7 @@ import { prisma } from "../db/prisma";
 import { Prisma } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { writeAudit } from "../lib/auditLogger";
-import { enforceClaimerInvariant } from "../lib/claimerInvariant";
+import { enforceAssigneeInvariants } from "../lib/claimerInvariant";
 import { AUDIT } from "../lib/auditActions";
 
 type Tx = Prisma.TransactionClient;
@@ -35,7 +35,7 @@ const IN_FLIGHT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "PAUSED"] as const;
 // ways that would shift identity or cost math: claimer change, member
 // add/remove/role change, equipmentCostPercent change, or archive. The
 // snapshot model means in-flight work doesn't react to group changes;
-// the lock keeps admins from making changes that would only confuse them.
+// the lock keeps holders of `crews.manage` from making changes that would only confuse them.
 async function isGroupLocked(groupId: string): Promise<boolean> {
   const inFlightOcc = await prisma.jobOccurrence.findFirst({
     where: {
@@ -322,7 +322,7 @@ export const groups = {
     await assertNotLocked(id);
     // Reject archive when this group is the configured default crew on
     // any active Job. Auto-clearing would silently un-staff those jobs;
-    // forcing the admin to detach first surfaces the impact and keeps
+    // forcing a caller with `crews.manage` to detach first surfaces the impact and keeps
     // the data trail clean. Lists affected jobs so the message is
     // actionable rather than just "blocked".
     const defaultOn = await prisma.job.findMany({
@@ -465,7 +465,7 @@ export const groups = {
 
       // Removing a member can invalidate the percent sum. Strategy: if the
       // removed worker had a non-null percent, reset all percents to null
-      // (revert to even split) so the admin re-checks math.
+      // (revert to even split) so a caller with `crews.manage` re-checks math.
       const m = await tx.groupMember.findMany({
         where: { groupId },
         select: { id: true, userId: true, role: true, equipmentCostPercent: true },
@@ -697,7 +697,7 @@ export const groups = {
 
     // The lead is self-assigned and everyone else points at them. Admin mode
     // used to stamp `actorUserId` on every row including the lead's, so
-    // attaching a crew as an admin produced a team with no claimer — and the
+    // attaching a crew as someone with `crews.manage` produced a team with no claimer — and the
     // `update` branch never repaired an existing row's assignedById either.
     // See lib/claimerInvariant.ts.
     const leadUserId = mode === "claimer-claim" ? actorUserId : g.claimerUserId;
@@ -716,7 +716,7 @@ export const groups = {
         update: { role: r.role, assignedById },
       });
     }
-    await enforceClaimerInvariant(tx, occurrenceId, actorUserId);
+    await enforceAssigneeInvariants(tx, occurrenceId, actorUserId);
 
     // Money: staffing an occurrence with a crew decides who gets paid for
     // this job, and binds the occurrence to the group whose claimer +

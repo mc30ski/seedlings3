@@ -10,7 +10,7 @@
 // `computeRentalCost` deliberately does NOT gate on workerType. Returning
 // the notional cost is the right level of abstraction — the splitter (for
 // group rentals) and the release() caller (for solo rentals) decide who
-// actually pays. Employee/trainee billing is enforced in those callers, not
+// actually pays. W-2 billing is enforced in those callers, not
 // here. See feature_per_job_equipment_billing.md for the policy.
 //
 // Two billing models coexist (selected per Equipment.equivalentJobs):
@@ -363,10 +363,10 @@ describe("computeRentalCost — per-job mode (equivalentJobs set)", () => {
 // Lock down who actually pays when a group rental's CheckoutSplit rows
 // are materialized. The policy:
 //   • Only CONTRACTOR and null-workerType members are billable.
-//   • EMPLOYEE / TRAINEE members get amount=0 but keep their row (audit
+//   • Non-contractor members get amount=0 but keep their row (audit
 //     trail intact).
 //   • Unbilled shares are NOT redistributed to remaining contractors —
-//     the W-2 / trainee equipment usage is already covered by the higher
+//     the W-2 equipment usage is already covered by the higher
 //     business margin charged on their jobs.
 //
 // These tests pin the policy fix for the two mixed-crew bugs that existed
@@ -413,18 +413,30 @@ describe("calculateContractorSplits — even-split (no custom percents)", () => 
     expect(contractorTotal).toBe(5);
   });
 
-  it("mixed crew (1 contractor + 1 trainee): trainee billed $0, contractor billed half", () => {
-    // TRAINEE treated the same as EMPLOYEE — usage covered by margin.
+  it("mixed crew (1 contractor + 1 unpaid): unpaid billed $0, contractor billed half", () => {
+    // Only contractors carry equipment cost.
     const { splits, contractorTotal } = calculateContractorSplits(
       [
         { userId: "c1", equipmentCostPercent: null, workerType: "CONTRACTOR" },
-        { userId: "t1", equipmentCostPercent: null, workerType: "TRAINEE" },
+        { userId: "u1", equipmentCostPercent: null, workerType: "UNPAID" },
       ],
       10,
     );
     expect(splits[1].amount).toBe(0);
     expect(splits[0].amount).toBe(5);
     expect(contractorTotal).toBe(5);
+  });
+
+  it("an untyped worker is billed $0, not billed as a contractor", () => {
+    // Was `billable = workerType === "CONTRACTOR" || workerType === null`:
+    // unknown was read as contractor, so an unclassified person was charged
+    // equipment cost. Nobody is billed before it is decided how they are paid.
+    const { splits, contractorTotal } = calculateContractorSplits(
+      [{ userId: "x1", equipmentCostPercent: null, workerType: null }],
+      10,
+    );
+    expect(splits[0].amount).toBe(0);
+    expect(contractorTotal).toBe(0);
   });
 
   it("all-employee crew: everyone billed $0, contractorTotal = $0", () => {
@@ -462,12 +474,27 @@ describe("calculateContractorSplits — even-split (no custom percents)", () => 
     expect(contractorTotal).toBe(6); // not $9 — employee's share absorbed
   });
 
-  it("null workerType (unclassified) is treated as billable (historical-compat)", () => {
-    // Pre-fix policy in writeCheckoutSplits also billed unclassified
-    // workers (they fell through the workerType !== CONTRACTOR check).
-    // We preserve that since unclassified usually means "mid-onboarding
-    // contractor, type not yet entered." Admin should classify them as
-    // EMPLOYEE if free usage is intended.
+  it("null workerType (unclassified) is NOT billed — the fee needs a decision, not a default", () => {
+    // THIS TEST USED TO ASSERT THE OPPOSITE, AND IT WAS ASSERTING A BUG.
+    //
+    // It read: "null workerType is treated as billable (historical-compat)",
+    // justified as "unclassified usually means mid-onboarding contractor."
+    // Its own comment named the mechanism — unclassified workers "fell
+    // through the `workerType !== CONTRACTOR` check" — which is the negation
+    // this codebase now forbids outright (G30). `!isW2(x)` reads as
+    // "therefore a contractor" and is also false for UNPAID and for someone
+    // with no type at all, so both landed in the fee branch. That shape
+    // charged unclassified workers a contractor fee on every split, filed
+    // them under QuickBooks Contract Labor, and swept them into the employer
+    // payroll-tax base.
+    //
+    // Guessing wrong costs real money in both directions, so the model does
+    // not guess: a pay class is a decision someone makes, and until they do,
+    // nobody is charged. `classify()` is an exhaustive switch precisely so a
+    // missing type cannot fall through to a default.
+    //
+    // The contractor beside them is still billed their own share. An
+    // unclassified teammate suppresses only their own fee, not the split.
     const { splits, contractorTotal } = calculateContractorSplits(
       [
         { userId: "c1", equipmentCostPercent: null, workerType: "CONTRACTOR" },
@@ -475,8 +502,9 @@ describe("calculateContractorSplits — even-split (no custom percents)", () => 
       ],
       10,
     );
-    expect(splits[1].amount).toBe(5);
-    expect(contractorTotal).toBe(10);
+    expect(splits[1].amount, "an unclassified worker is charged nothing").toBe(0);
+    expect(splits[0].amount, "the contractor still pays their share").toBe(5);
+    expect(contractorTotal, "only the classified share is collected").toBe(5);
   });
 });
 

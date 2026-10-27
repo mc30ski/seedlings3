@@ -12,7 +12,7 @@ metadata:
 endpoint pattern. Read before adding any `GET /me/*` route.
 
 The rule: every `GET /me/*` route must EITHER accept `?viewAsUserId=<id>`
-with an ADMIN/SUPER role gate, OR carry a `// view-as-allow: <reason>`
+with someone with `schedule.manage`/SUPER role gate, OR carry a `// view-as-allow: <reason>`
 comment within 12 lines above the route header.
 
 Enforcement: [`apps/api/src/services/view-as-endpoints-build-gate.test.ts`](apps/api/src/services/view-as-endpoints-build-gate.test.ts).
@@ -21,9 +21,10 @@ Wired via `test:build-gate` script + `turbo.json` build.dependsOn test.
 Two blessed patterns for adding view-as support:
 - **`resolveWorkdayTarget(req, { allowImpersonationFor: "read" })`** — the
   shared helper used across the workday routes in
-  `apps/api/src/routes/worker.ts`.
+  the resource route files (`time.ts`, `reports.ts`, `policies.ts`,
+  `occurrences.ts`, `vehicles.ts`, `payroll.ts`, `guides.ts`).
 - **Inline `viewAsUserId` + role check** — see `/me/policies` in
-  `worker.ts`. Copy the shape for one-off routes.
+  those files. Copy the shape for one-off routes.
 
 Client side: when a component renders in view-as mode (e.g. `HomeTab`
 mounts `<ComplianceBanner>`), the URL for any `/me/*` GET must include

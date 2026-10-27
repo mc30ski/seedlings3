@@ -29,8 +29,8 @@ MyDashboard pattern) but restored everything it had silently lost:
   `Sign now` / `View profile` labels the doc specifies — so
   `compliance.md` needed no edit.
 - **Real app bug fixed:** `HomeTab` hid `MyDashboard` (and with it the
-  compliance banner) whenever an admin was in aggregate/subset mode.
-  An admin parked in Team overview never saw their own BLOCK-level
+  compliance banner) whenever someone with `compliance.manage` was in aggregate/subset mode.
+  Someone with `compliance.manage` parked in Team overview never saw their own BLOCK-level
   items. Now renders a standalone self-scoped
   `<CompliancePromptBanner>` in those modes.
 

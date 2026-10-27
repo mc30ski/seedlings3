@@ -184,7 +184,7 @@ const THEME_BOOT_JS = `
     var SEASON = ${JSON.stringify(THEME_SEASON)};
     var want = SEASON[t] || "auto";
     if (want === "auto") {
-      // Clear only what a THEME set. An admin who picked a season by hand on
+      // Clear only what a THEME set. Somebody who picked a season by hand on
       // the Profile tab keeps it when they switch to Original or Dark.
       if (localStorage.getItem("seedlings_seasonOverrideSource") === "theme") {
         localStorage.removeItem("seedlings_seasonOverride");

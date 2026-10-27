@@ -1,16 +1,19 @@
 "use client";
+import type { WorkerType } from "@repo/money";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Badge, Box, Button, Card, Checkbox, HStack, Select, Spinner, Table, Text, VStack, createListCollection } from "@chakra-ui/react";
 import { FiDownload, FiInfo, FiUpload } from "react-icons/fi";
 import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { apiGet, apiDownload, apiGetText } from "@/src/lib/api";
+import type { Scope } from "@/src/lib/scope";
 import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import DateInput from "@/src/ui/components/DateInput";
 import PayrollUploadDialog from "@/src/ui/dialogs/PayrollUploadDialog";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { bizToday, bizAddDays, bizMondayOnOrBefore, bizStartOfMonth, bizStartOfYear, type EtDateKey, fmtDate } from "@/src/lib/dates";
+import { isW2 } from "@repo/money";
 
 /**
  * Money → Reconcile tab. Replaces the old Exports + P&L Report tabs.
@@ -121,7 +124,7 @@ type PnLDetail = {
 };
 type DetailState = PnLDetail | "loading" | { error: string };
 
-// ── Worker reconciliation (period) types — sourced from /api/super/reconcile/period
+// ── Worker reconciliation (period) types — sourced from /api/reconcile/period
 //
 // Previously rendered in a standalone "Workers Reconcile" tab; folded
 // into this surface so the P&L and the per-worker drill-downs share
@@ -129,7 +132,7 @@ type DetailState = PnLDetail | "loading" | { error: string };
 type WorkerJobAssigneeBreakdown = {
   userId: string;
   displayName: string | null;
-  workerType: string | null;
+  workerType: WorkerType | null;
   isOwner: boolean;
   splitPercent: number;
   gross: number;
@@ -183,7 +186,7 @@ type WorkerRow = {
   userId: string;
   displayName: string | null;
   email: string | null;
-  workerType: string | null;
+  workerType: WorkerType | null;
   isOwner: boolean;
   hoursActive: number;
   daysWorked: number;
@@ -250,7 +253,7 @@ type PayrollRow = {
   userId: string;
   displayName: string | null;
   email: string | null;
-  workerType: string | null;
+  workerType: WorkerType | null;
   isOwner: boolean;
   hours: number;
   hourlyWage: number;
@@ -269,7 +272,7 @@ function payrollTypeLabelClient(t: string | null | undefined, isOwner: boolean):
   if (isOwner) return "Owner";
   switch (t) {
     case "EMPLOYEE": return "Employee";
-    case "TRAINEE": return "Trainee";
+    case "UNPAID": return "Unpaid";
     case "CONTRACTOR": return "Contractor";
     default: return "Unclassified";
   }
@@ -279,7 +282,7 @@ type PayrollPreviewRow = {
   userId: string;
   displayName: string | null;
   email: string | null;
-  workerType: string | null;
+  workerType: WorkerType | null;
   isOwner: boolean;
   hours: number;
   hourlyWage: number;
@@ -631,7 +634,7 @@ function hasWageViolation(w: WorkerRow, minWage: number): boolean {
   if (w.isOwner) return false;
   if (w.preTopUpHourly == null || w.preTopUpHourly >= minWage) return false;
   if (w.jobsCompleted === 0) return false;
-  return w.workerType === "EMPLOYEE" || w.workerType === "TRAINEE";
+  return isW2(w.workerType);
 }
 
 // Row-level warnings — the single source of truth for the orange
@@ -665,24 +668,24 @@ function getRowWarnings(w: WorkerRow, minWage: number): string[] {
   return out;
 }
 
-function workerTypeLabel(t: string | null | undefined, isOwner: boolean): string {
+function workerTypeLabel(t: WorkerType | null | undefined, isOwner: boolean): string {
   // LLC owner takes draws, not W-2 wages — surface that distinction
   // in the badge so the operator doesn't accidentally try to run the
   // owner through Gusto payroll.
   if (isOwner) return "Owner";
   switch (t) {
     case "EMPLOYEE": return "Employee";
-    case "TRAINEE": return "Trainee";
+    case "UNPAID": return "Unpaid";
     case "CONTRACTOR": return "Contractor";
     default: return "Unclassified";
   }
 }
 
-function workerTypePalette(t: string | null | undefined, isOwner: boolean): string {
+function workerTypePalette(t: WorkerType | null | undefined, isOwner: boolean): string {
   if (isOwner) return "orange";
   switch (t) {
     case "EMPLOYEE": return "blue";
-    case "TRAINEE": return "purple";
+    case "UNPAID": return "purple";
     case "CONTRACTOR": return "green";
     default: return "gray";
   }
@@ -697,10 +700,20 @@ async function copyToClipboard(text: string) {
   }
 }
 
-export default function ReconcileTab() {
+export default function ReconcileTab({ scope }: { scope?: Scope }) {
   // Shortcut so the routine "payroll just ran, import it" case doesn't
-  // require navigating to Super → Money → Payroll. Same dialog, same
-  // Super-only endpoint. See docs/features/payroll.md.
+  // require navigating to Money → Payroll. Same dialog, same endpoint —
+  // `POST /payroll/import`, which needs `payroll.manage`. See
+  // docs/features/payroll.md.
+  //
+  // THE BUTTON WAS UNGATED. This tab opens on `books.view`, and the books
+  // and payroll are deliberately separable: a bookkeeper holds the first
+  // and not the second. They were shown an Upload payroll button that
+  // could only ever refuse them. Found by reading the persona sweep's
+  // control inventory — no automated check catches a control that is
+  // merely VISIBLE and shouldn't be, because nothing distinguishes it from
+  // one that is legitimately hidden until somebody presses it.
+  const mayImportPayroll = !!scope?.can("payroll.manage");
   //
   // NOTE: this does NOT connect payroll to anything on this tab. The P&L's
   // "Employer payroll taxes (est.)" line stays an estimate — see the
@@ -828,7 +841,7 @@ export default function ReconcileTab() {
     // start the other. Each failure surfaces its own toast — the
     // other side still renders if available. Each handler guards on
     // the request token so a stale response can't clobber the latest.
-    const pnlPromise = apiGet<PnLReport>(`/api/admin/business-expenses/pnl-report?from=${start}&to=${end}&mode=${pnlMode}`)
+    const pnlPromise = apiGet<PnLReport>(`/api/business-expenses/pnl-report?from=${start}&to=${end}&mode=${pnlMode}`)
       .then((r) => {
         if (token === requestTokenRef.current) setReport(r);
       })
@@ -840,7 +853,7 @@ export default function ReconcileTab() {
       .finally(() => {
         if (token === requestTokenRef.current) setLoading(false);
       });
-    const periodPromise = apiGet<Period>(`/api/super/reconcile/period?from=${start}&to=${end}`)
+    const periodPromise = apiGet<Period>(`/api/reconcile/period?from=${start}&to=${end}`)
       .then((p) => {
         if (token === requestTokenRef.current) setPeriod(p);
       })
@@ -914,7 +927,7 @@ export default function ReconcileTab() {
         // the CSV-preview kinds — no userIds param applies to any
         // of them.
         const text = await apiGetText(
-          `/api/admin/exports/${downloadKind}.csv?start=${start}&end=${end}`,
+          `/api/exports/${downloadKind}.csv?start=${start}&end=${end}`,
         );
         if (cancelled) return;
         const parsed = parseCsv(text);
@@ -967,7 +980,7 @@ export default function ReconcileTab() {
       if (!cached || (typeof cached === "object" && "error" in cached)) {
         setDetails((d) => ({ ...d, [qbAccount]: "loading" }));
         apiGet<PnLDetail>(
-          `/api/admin/business-expenses/pnl-report/details?from=${start}&to=${end}&qbAccount=${encodeURIComponent(qbAccount)}&mode=${pnlMode}`,
+          `/api/business-expenses/pnl-report/details?from=${start}&to=${end}&qbAccount=${encodeURIComponent(qbAccount)}&mode=${pnlMode}`,
         )
           .then((data) => setDetails((d) => ({ ...d, [qbAccount]: data })))
           .catch((err: any) =>
@@ -1000,7 +1013,7 @@ export default function ReconcileTab() {
         qs += `&assignToOwner=${encodeURIComponent(payrollAssignToOwnerIds.join(","))}`;
       }
       await apiDownload(
-        `/api/admin/exports/${kind}.csv?start=${start}&end=${end}${qs}`,
+        `/api/exports/${kind}.csv?start=${start}&end=${end}${qs}`,
         `${kind}-${start}_${end}.csv`,
       );
     } catch (err) {
@@ -1045,7 +1058,7 @@ export default function ReconcileTab() {
           batchQs += `&assignToOwner=${encodeURIComponent(payrollAssignToOwnerIds.join(","))}`;
         }
         await apiDownload(
-          `/api/admin/exports/${kind}.csv?start=${start}&end=${end}${batchQs}`,
+          `/api/exports/${kind}.csv?start=${start}&end=${end}${batchQs}`,
           `${kind}-${start}_${end}.csv`,
         );
       } catch (err) {
@@ -1355,17 +1368,19 @@ export default function ReconcileTab() {
                   </VStack>
                 )}
               </Box>
-              <Button
-                size="sm"
-                colorPalette="green"
-                variant="outline"
-                flexShrink={0}
-                onClick={() => setPayrollUploadOpen(true)}
-                title="Import the latest Gusto payroll journal (also on Money → Payroll)."
-              >
-                <FiUpload />
-                <Text ml={2}>Upload payroll</Text>
-              </Button>
+              {mayImportPayroll && (
+                <Button
+                  size="sm"
+                  colorPalette="green"
+                  variant="outline"
+                  flexShrink={0}
+                  onClick={() => setPayrollUploadOpen(true)}
+                  title="Import the latest Gusto payroll journal (also on Money → Payroll)."
+                >
+                  <FiUpload />
+                  <Text ml={2}>Upload payroll</Text>
+                </Button>
+              )}
             </HStack>
             {/* By-category chip strip — same look as the Ledger tab. Sits
                 directly under the timeframe so the operator sees the spend
@@ -1590,7 +1605,7 @@ export default function ReconcileTab() {
               {report.employerPayrollTaxes && (
                 <Box px={3} py={2} mt={1}>
                   <Text fontSize="2xs" color="fg.muted" lineHeight="1.4">
-                    Wages and Employer Payroll Taxes are accrued — counted in the period the payment was confirmed, not when Gusto cuts the check. This makes Net Operating Income show whether the work billed this period was profitable. QuickBooks reports them in the period Gusto actually disburses, so this NOI typically leads QB&apos;s by a few days. Employer tax rates are configurable in Super → Settings → PAYROLL_TAX_ESTIMATES (default {report.employerPayrollTaxes.totalRatePct.toFixed(2)}% of wages).
+                    Wages and Employer Payroll Taxes are accrued — counted in the period the payment was confirmed, not when Gusto cuts the check. This makes Net Operating Income show whether the work billed this period was profitable. QuickBooks reports them in the period Gusto actually disburses, so this NOI typically leads QB&apos;s by a few days. Employer tax rates are configurable in Settings → PAYROLL_TAX_ESTIMATES (default {report.employerPayrollTaxes.totalRatePct.toFixed(2)}% of wages).
                   </Text>
                 </Box>
               )}
@@ -2445,7 +2460,6 @@ function DetailRows({ state }: { state: DetailState | undefined }) {
               window.dispatchEvent(
                 new CustomEvent("open:paymentsTabToJobsTabSearch", {
                   detail: {
-                    forAdmin: true,
                     entityId: r.occurrenceId,
                     anchorAt: r.serviceDate ?? null,
                   },

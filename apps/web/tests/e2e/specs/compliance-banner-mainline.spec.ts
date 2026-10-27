@@ -101,7 +101,7 @@ test.describe("Mainline: BLOCK-level pending", () => {
       keyPrefix: "E2E_BLOCK_SINGLE",
       title: "E2E Single BLOCK",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -144,7 +144,7 @@ test.describe("Mainline: BLOCK-level pending", () => {
         keyPrefix: `E2E_BLOCK_MULTI_${i}`,
         title: `E2E Multi BLOCK ${i}`,
         enforcement: "BLOCK",
-        createdByUserId: USERS.super,
+        createdByUserId: USERS.owner,
       });
     }
     await gotoHomeFresh(page);
@@ -174,7 +174,7 @@ test.describe("Mainline: WARN-only pending", () => {
       keyPrefix: "E2E_WARN_SINGLE",
       title: "E2E Single WARN",
       enforcement: "WARN",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -212,19 +212,19 @@ test.describe("Mainline: Mixed BLOCK + WARN", () => {
       keyPrefix: "E2E_MIX_BLOCK",
       title: "E2E Mix BLOCK",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await createScratchPolicy(prisma, {
       keyPrefix: "E2E_MIX_WARN",
       title: "E2E Mix WARN",
       enforcement: "WARN",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await createScratchPolicy(prisma, {
       keyPrefix: "E2E_MIX_INFO",
       title: "E2E Mix INFO",
       enforcement: "INFO",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);
@@ -260,7 +260,7 @@ test.describe("Mainline: Position", () => {
       keyPrefix: "E2E_POS_BLOCK",
       title: "E2E Position BLOCK",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await gotoHomeFresh(page);
 
@@ -299,7 +299,7 @@ test.describe("Mainline: Refresh on policies:signed event", () => {
       keyPrefix: "E2E_REFRESH",
       title: "E2E Refresh BLOCK",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoHomeFresh(page);

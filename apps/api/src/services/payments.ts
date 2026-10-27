@@ -7,7 +7,7 @@ import { ServiceError } from "../lib/errors";
 import type { ServicesPayments } from "../types/services";
 import { etMidnight, etEndOfDay, etFormatDate, etToday, etInstantFromParts, etHourMinute , type EtDateKey } from "../lib/dates";
 import { writeAudit } from "../lib/auditLogger";
-import { enforceClaimerInvariant } from "../lib/claimerInvariant";
+import { enforceAssigneeInvariants } from "../lib/claimerInvariant";
 import { AUDIT } from "../lib/auditActions";
 import { generateLedgerId } from "../lib/ledgerId";
 import { generateReceiptNumber } from "../lib/receiptNumber";
@@ -42,13 +42,14 @@ import {
   reconcileApproval,
   allocateExact,
   round2,
-  isEmployeeClass,
   type FinalSplitRow,
   type WorkerInput,
   type Rates,
   type PromisedRow,
   type TipDesignation,
 } from "../lib/payoutMath";
+import { isW2, isFeeable } from "@repo/money";
+import { resolveOccurrenceArea } from "../lib/occurrenceArea";
 // Valid payment-method keys are the keys of the active PAYMENT_METHODS
 // taxonomy — not a DB enum. A typo in the Settings JSON, or a method that
 // isn't configured, is rejected at every write site. `client` may be a
@@ -126,7 +127,7 @@ export function computeNextOccurrenceStart(
   let overrideUsed = false;
 
   if (overrideDate && /^\d{4}-\d{2}-\d{2}$/.test(overrideDate)) {
-    // Override path — an admin has set a one-time date shift on the
+    // Override path — someone with `money.approve` has set a one-time date shift on the
     // source occurrence (e.g. "for THIS next visit come one day
     // earlier"). Build the next start at the override date + the
     // source's time-of-day. DST-safe via etInstantFromParts. Endpoint
@@ -155,7 +156,7 @@ export function computeNextOccurrenceStart(
   // Reconstruct today's version of the same time-of-day, then shift
   // endAt by the SAME delta as startAt so the duration is exact even
   // across DST edges (naive shift would drift by ±1h). Applies to
-  // BOTH the cadence path AND the override path — an admin who sets
+  // BOTH the cadence path AND the override path — someone with `money.approve` who sets
   // an override date that's already lapsed by the time the payment
   // clears still gets a valid future occurrence, not a past one.
   const timeOfDay = etHourMinute(nextStart);
@@ -179,7 +180,7 @@ type NextOccurrenceSource = {
   id: string;
   jobId: string | null;
   kind: any;
-  isAdminOnly?: boolean | null;
+  mustBeAssigned?: boolean | null;
   jobType?: string | null;
   jobTags?: string | null;
   notes?: string | null;
@@ -203,7 +204,7 @@ type NextOccurrenceSource = {
  * ONE implementation, TWO callers:
  *   • approvePayment — the normal path; the next visit is generated when
  *     the money lands.
- *   • forceCreateNextOccurrence — the admin escape hatch for when the
+ *   • forceCreateNextOccurrence — the escape hatch for when the
  *     visit has to exist BEFORE the payment does (a client asks for an
  *     extra service on the next visit while this one is still awaiting
  *     payment, say).
@@ -225,16 +226,21 @@ async function createNextOccurrenceFrom(
   source: NextOccurrenceSource,
   next: { startAt: Date; endAt: Date | null },
 ): Promise<any> {
+  const areaId = await resolveOccurrenceArea(tx, {
+    jobId: source.jobId!,
+    previousOccurrenceId: source.id ?? null,
+  });
   const created = await tx.jobOccurrence.create({
     data: {
       jobId: source.jobId!,
+      areaId,
       kind: source.kind,
       startAt: next.startAt,
       endAt: next.endAt,
       status: "SCHEDULED",
       source: "GENERATED",
       workflow: "STANDARD",
-      isAdminOnly: !!source.isAdminOnly,
+      mustBeAssigned: !!source.mustBeAssigned,
       jobType: source.jobType ?? null,
       jobTags: source.jobTags ?? null,
       // A pinned note is a note about THIS visit — it never rides forward.
@@ -298,7 +304,7 @@ async function createNextOccurrenceFrom(
     });
     // No actor in scope — this runs during automatic chain rollover, so a
     // repair here is system-initiated. writeAudit accepts a null actor.
-    await enforceClaimerInvariant(tx, created.id, null);
+    await enforceAssigneeInvariants(tx, created.id, null);
   }
 
   // Carry-alongs: who liked the visit, the property reference photos the
@@ -375,7 +381,7 @@ async function loadOwnerSet(client: typeof prisma | any, userIds: string[]): Pro
 // Resolves the per-worker split list from the occurrence (completionSplits
 // preferred; else even split across active assignees). Pairs each entry
 // with the worker's current type.
-async function resolveWorkers(
+export async function resolveWorkers(
   client: typeof prisma | any,
   occ: { id: string; completionSplits: any; assignees: { userId: string; role: string | null }[] },
 ): Promise<WorkerInput[]> {
@@ -665,8 +671,8 @@ export const payments: ServicesPayments = {
       const { processorFeeAmount, netReceived } = computeProcessorFee(amountPaid, feeCfg);
 
       const recon = reconcileApproval(amountPaid, totalExpenses, workersList, promised, rates);
-      const hasContractors = workersList.some((w) => !isEmployeeClass(w.workerType));
-      const hasEmployees = workersList.some((w) => isEmployeeClass(w.workerType));
+      const hasContractors = workersList.some((w) => isFeeable(w.workerType));
+      const hasEmployees = workersList.some((w) => isW2(w.workerType));
       const ownerSet = await loadOwnerSet(tx, recon.splits.map((s) => s.userId));
 
       // Create payment + splits. Always unconfirmed — admin sign-off via
@@ -797,20 +803,20 @@ export const payments: ServicesPayments = {
    * the occurrence is stuck in PENDING_PAYMENT, the "Awaiting payment" alert
    * keeps firing, and there's no Payment row in the approval queue.
    *
-   * This method records a Payment row attributed to the admin and immediately
+   * This method records a Payment row attributed to a caller with `money.approve` and immediately
    * confirms it, running the same downstream as the normal approvePayment
    * flow (split reconciliation, audit, status transition, and the next
    * occurrence is generated for repeating jobs). The two service calls are
    * not wrapped in a single transaction — they each open their own — so a
    * failure between record and approve leaves an unconfirmed Payment row,
-   * which the admin can then approve via the normal Pending Payments queue.
+   * which a caller with `money.approve` can then approve via the normal Pending Payments queue.
    *
    * Splits default to an even distribution across non-observer assignees so
-   * the admin doesn't have to dictate them inline. approvePayment then
+   * a caller with `money.approve` doesn't have to dictate them inline. approvePayment then
    * reconciles against the occurrence's promised-payout snapshot if one
    * exists, so the actual recorded split values match downstream payroll.
    */
-  async adminMarkInvoicePaid(
+  async markInvoicePaidAsManager(
     currentUserId: string,
     occurrenceId: string,
     input: {
@@ -887,7 +893,7 @@ export const payments: ServicesPayments = {
       method,
       note: note ?? null,
       completionSplits,
-      context: "ADMIN" as any,
+      context: "BACK_OFFICE" as any,
       ...(paidAt ? { createdAt: paidAt } : {}),
     } as any);
 
@@ -1118,6 +1124,17 @@ export const payments: ServicesPayments = {
     if (cutoff) {
       where.createdAt = { ...(where.createdAt ?? {}), gte: maxDate(where.createdAt?.gte, cutoff) };
     }
+    // Area scoping — threaded exactly like the cutoff above: resolved at the
+    // route, merged here. A Payment reaches its area through the occurrence,
+    // so the caller passes an `occurrence`-nested fragment.
+    //
+    // EMPTY MEANS UNCHANGED. Someone holding money.view globally gets {} and
+    // this query is byte-identical to its pre-feature shape. Only an
+    // area-limited principal narrows it. See lib/areaScope.ts invariant 1.
+    const areaFilter = params?.areaWhere ?? {};
+    if (Object.keys(areaFilter).length > 0) {
+      Object.assign(where, areaFilter);
+    }
 
     const payments = await prisma.payment.findMany({
       where,
@@ -1143,7 +1160,7 @@ export const payments: ServicesPayments = {
             promisedPayouts: true,
             // Reconciliation hint — the method the client tapped on
             // the pay page. Feeds the "Tapped X" chip on the pending-
-            // approval card so the admin can spot mismatches (client
+            // approval card so a caller with `money.approve` can spot mismatches (client
             // tapped Zelle but the recorded payment says Venmo, or
             // similar). Never a payment claim on its own.
             paymentIntentMethod: true,
@@ -1206,7 +1223,7 @@ export const payments: ServicesPayments = {
       // split feeAmount which holds the actual-against-collected fee.
       // Mixing them breaks the decomposition identity
       //   TotalRevenue = totalMargin + totalFee + totalOverage − totalShortfall
-      // which is what the Admin Money tab summary relies on for sanity.
+      // which is what the Money tab summary relies on for sanity.
       totalPlatformFees += p.platformFeeAmount ?? 0;
       totalBusinessMargin += p.businessMarginAmount ?? 0;
       const splitsHaveBreakdown = p.splits.every((sp: any) => sp.netAmount != null);
@@ -1230,21 +1247,39 @@ export const payments: ServicesPayments = {
       const margin = p.businessMarginAmount ?? 0;
       const charges = (p.occurrence?.invoiceCharges ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
       const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
+      // HISTORICAL PRICING, NOT CURRENT POLICY — and the distinction is the
+      // whole point of this block.
+      //
+      // These rows were priced by the OLD rule, `isEmployeeClass(wt) ? margin
+      // : fee`, under which anyone not W-2 — including a worker nobody had
+      // classified — carried the contractor fee. The fee stored on the
+      // Payment row was computed that way. A reader that re-derives per-person
+      // nets must reproduce how the row was priced AT THE TIME, or it
+      // disagrees with the number it is dividing up: switching this to the
+      // current `isFeeable` would leave an untyped worker in neither bucket,
+      // the stored fee would be distributed to nobody, and every person's
+      // reported net would silently read high by their share of it.
+      //
+      // So this deliberately keeps the old negation. It is correct here and
+      // nowhere else. New pricing uses isFeeable and refuses to guess.
+      // worker-class-allow: reproduces the OLD pricing rule on purpose —
+      // see the paragraph above. Current pricing uses isFeeable.
+      const carriedFeeWhenPriced = (wt: WorkerType | null) => !isW2(wt);
       const feeableSplitTotal = p.splits
-        .filter((sp) => sp.user.workerType !== "EMPLOYEE" && sp.user.workerType !== "TRAINEE")
+        .filter((sp) => carriedFeeWhenPriced(sp.user.workerType))
         .reduce((s, sp) => s + sp.amount, 0);
       const employeeSplitTotal = p.splits
-        .filter((sp) => sp.user.workerType === "EMPLOYEE" || sp.user.workerType === "TRAINEE")
+        .filter((sp) => isW2(sp.user.workerType))
         .reduce((s, sp) => s + sp.amount, 0);
       for (const sp of p.splits) {
         const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
         const chargeShare = charges * ratio;
-        const isFeeable = sp.user.workerType !== "EMPLOYEE" && sp.user.workerType !== "TRAINEE";
-        const isEmployee = sp.user.workerType === "EMPLOYEE" || sp.user.workerType === "TRAINEE";
-        const feeShare = isFeeable && feeableSplitTotal > 0
+        const feeable = carriedFeeWhenPriced(sp.user.workerType);
+        const employee = isW2(sp.user.workerType);
+        const feeShare = feeable && feeableSplitTotal > 0
           ? fee * (sp.amount / feeableSplitTotal)
           : 0;
-        const marginShare = isEmployee && employeeSplitTotal > 0
+        const marginShare = employee && employeeSplitTotal > 0
           ? margin * (sp.amount / employeeSplitTotal)
           : 0;
         const netAmount = sp.amount - feeShare - marginShare - chargeShare;
@@ -1327,8 +1362,8 @@ export const payments: ServicesPayments = {
 
       // Audit EVERY changed field, not just the date. This started as a
       // paidAt-only audit, which left an amount or method correction — or a
-      // rewrite of who gets paid what — with no trail on a superGuard route
-      // that edits real money.
+      // rewrite of who gets paid what — with no trail on a `money.approve`
+      // route that edits real money.
       //
       // Tax-period relevance is why paidAt gets its own before/after: it can
       // move a payment across a reporting week, a BSD cutoff, or a Gusto
@@ -1603,7 +1638,7 @@ export const payments: ServicesPayments = {
       }
       // Processor-fee snapshot at self-report time. Same logic as
       // createPayment — keeps the Payment row complete from the moment it
-      // lands so the admin queue + admin Money tab show the fee correctly
+      // lands so the approvals queue + admin Money tab show the fee correctly
       // even before approval.
       const methodsList = await loadPaymentMethods(tx);
       const feeCfg = getProcessorFee(method, methodsList);
@@ -1696,7 +1731,7 @@ export const payments: ServicesPayments = {
     const finalMethod = overrides?.method ?? existing.method;
     const finalNote = overrides?.note !== undefined ? overrides.note : existing.note;
     const wasAdjusted = overrides?.amountPaid !== undefined && overrides.amountPaid !== existing.amountPaid;
-    // Only validate the method when the admin is *changing* it. An unchanged
+    // Only validate the method when a caller with `money.approve` is *changing* it. An unchanged
     // method was already validated at record time — re-validating would block
     // approval if that method had since been removed from the taxonomy.
     if (overrides?.method !== undefined) {
@@ -1725,12 +1760,12 @@ export const payments: ServicesPayments = {
       throw new ServiceError("NO_ASSIGNEES", "Cannot approve — no active assignees on the occurrence.", 400);
     }
 
-    // Recompute the processor-fee snapshot at approval time so an admin
+    // Recompute the processor-fee snapshot at approval time so someone with `money.approve`
     // amount adjustment (or method change) recalculates the fee against the
     // final values. If the method/amount didn't change, the result matches
     // what's already on the row.
     //
-    // The admin can override the computed fee with the actual figure from the
+    // A caller with `money.approve` can override the computed fee with the actual figure from the
     // processor's statement (e.g. Venmo) — the formula is only an estimate and
     // can land a penny off. The override changes ONLY processorFeeAmount and
     // netReceived; the business always absorbs the fee, so worker payouts are
@@ -1785,12 +1820,23 @@ export const payments: ServicesPayments = {
             amount: r.net,
             tipAmount: 0,
           }));
+          // Both positive, and the partition must be total — see the same
+          // assertion in payoutMath.summarizeApproval.
           const platformFeeAmount = round2(
-            splits.filter((s) => !isEmployeeClass(s.workerType)).reduce((sum, s) => sum + s.feeAmount, 0),
+            splits.filter((s) => isFeeable(s.workerType)).reduce((sum, s) => sum + s.feeAmount, 0),
           );
           const businessMarginAmount = round2(
-            splits.filter((s) => isEmployeeClass(s.workerType)).reduce((sum, s) => sum + s.feeAmount, 0),
+            splits.filter((s) => isW2(s.workerType)).reduce((sum, s) => sum + s.feeAmount, 0),
           );
+          const allFeeAmounts = round2(splits.reduce((sum, s) => sum + s.feeAmount, 0));
+          if (Math.abs(platformFeeAmount + businessMarginAmount - allFeeAmounts) > 0.011) {
+            throw new ServiceError(
+              "FEE_PARTITION_BROKEN",
+              "A split carries a fee but its worker is neither W-2 nor a " +
+                "contractor, so part of the business's cut belongs to nobody.",
+              500,
+            );
+          }
           let tipToBusinessAmount = 0;
           if (tipTotal > 0 && tipReq) {
             const alloc = allocateExact(tipTotal, [
@@ -1813,8 +1859,8 @@ export const payments: ServicesPayments = {
           };
         })();
 
-    const hasContractors = workersList.some((w) => !isEmployeeClass(w.workerType));
-    const hasEmployees = workersList.some((w) => isEmployeeClass(w.workerType));
+    const hasContractors = workersList.some((w) => isFeeable(w.workerType));
+    const hasEmployees = workersList.some((w) => isW2(w.workerType));
 
     return prisma.$transaction(async (tx) => {
       // Replace splits to reflect the reconciled amounts (gross/fee/net/topUp).
@@ -1836,10 +1882,10 @@ export const payments: ServicesPayments = {
           })),
         });
       }
-      // Flip the row to confirmed. Stamp adjustment fields when the admin
+      // Flip the row to confirmed. Stamp adjustment fields when a caller with `money.approve`
       // changed the amount at approval time.
       //
-      // `paidAt` override — when the admin has provided the actual
+      // `paidAt` override — when a caller with `money.approve` has provided the actual
       // money-received date (reconciliation workflow), we anchor BOTH
       // confirmedAt and createdAt to it so cash-basis reports and BSD
       // filters see the payment on the correct day. Without an override,
@@ -1949,7 +1995,7 @@ export const payments: ServicesPayments = {
           feeAmount: processorFeeAmount,
           grossCharged: finalAmount,
           netReceived,
-          context: "ADMIN",
+          context: "BACK_OFFICE",
           source: overrides?.processorFeeAmount !== undefined
             ? "fee-overridden-at-approval"
             : wasAdjusted ? "adjusted-at-approval" : "approval-recompute",
@@ -1986,7 +2032,7 @@ export const payments: ServicesPayments = {
       // the approve toast can call it out — the operator should know
       // the new occurrence isn't on the usual cadence.
       let nextOccurrenceSnappedForward = false;
-      // True when an admin had set a one-time date override on the
+      // True when someone with `money.approve` had set a one-time date override on the
       // source occurrence (nextStartOverride) and we used it to build
       // the next occurrence instead of the naive cadence. Toast
       // callout mirrors the snap flag above.
@@ -2025,7 +2071,7 @@ export const payments: ServicesPayments = {
         nextOccurrenceSnappedForward = snappedForward;
         nextOccurrenceOverrideUsed = overrideUsed;
 
-        const isAdminOnly = !!fullOcc.isAdminOnly;
+        const mustBeAssigned = !!fullOcc.mustBeAssigned;
 
         // Guard against duplicate: skip creation if a SCHEDULED repeating
         // occurrence already exists on the same ET calendar day for this
@@ -2064,13 +2110,13 @@ export const payments: ServicesPayments = {
               ? "next_visit_held"
               : "duplicate_exists";
         } else {
-          // Same builder the admin force-next path uses — see
+          // Same builder the force-next path uses — see
           // createNextOccurrenceFrom. Everything that rides along with a new
           // visit (crew, guidance note, reference photos, likes, repeating
           // instructions) is decided in that one place.
           const built = await createNextOccurrenceFrom(
             tx,
-            { ...(fullOcc as any), isAdminOnly },
+            { ...(fullOcc as any), mustBeAssigned },
             { startAt: nextStart, endAt: nextEnd },
           );
           nextOccurrence = built.occurrence;
@@ -2082,7 +2128,7 @@ export const payments: ServicesPayments = {
       //
       // They used to be copied HERE instead, guarded on
       // `skipReason !== "duplicate_exists"` — because when the dedupe
-      // matches a pre-existing SCHEDULED visit (an admin force-created it,
+      // matches a pre-existing SCHEDULED visit (someone with `money.approve` force-created it,
       // say) that row belongs to another path and stamping this payment's
       // carryover onto it would overwrite legitimate state. That guard is
       // still honoured, and more simply: the copy now happens only inside
@@ -2211,7 +2257,7 @@ export const payments: ServicesPayments = {
         409,
       );
     }
-    // Even split — matches adminMarkInvoicePaid / skipOccurrence so
+    // Even split — matches markInvoicePaidAsManager / skipOccurrence so
     // all three paths produce identical Payment shapes on the way in.
     // Unlike skip, write-off DOES land amounts on the splits ledger
     // (employees are made whole via top-up from business funds), so
@@ -2231,7 +2277,7 @@ export const payments: ServicesPayments = {
       method: "CASH",
       note: null,
       completionSplits,
-      context: "ADMIN" as any,
+      context: "BACK_OFFICE" as any,
     } as any);
     return payments.writeOffPayment(currentUserId, payment.id, reason);
   },
@@ -2273,7 +2319,7 @@ export const payments: ServicesPayments = {
     return result;
   },
 
-  // Super-only "pretend this service never happened" path. Runs the
+  // The "pretend this service never happened" path (`money.approve`). Runs the
   // standard approval path with collected=0 (identical to writeOff so
   // occurrence closes + next-occurrence generation + carryforward
   // fires consistently), then stamps `skippedAt`. Every downstream
@@ -2282,9 +2328,9 @@ export const payments: ServicesPayments = {
   // while remaining visible on the operator payment list with a
   // "Skipped" chip (audit trail preserved).
   //
-  // Guarded by superGuard at the route layer; gated by type-APPROVE
-  // in the confirm dialog on the UI. This service function itself
-  // does not know about roles — enforce upstream.
+  // Guarded by `money.approve` at the route layer; gated by type-APPROVE
+  // in the confirm dialog on the UI. This service function itself asks no
+  // authorization question — enforce upstream.
   async skipPayment(currentUserId, paymentId, reason) {
     const existing = await prisma.payment.findUnique({ where: { id: paymentId } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Payment not found.", 404);
@@ -2367,7 +2413,7 @@ export const payments: ServicesPayments = {
         409,
       );
     }
-    // Even split — matches adminMarkInvoicePaid so both paths produce
+    // Even split — matches markInvoicePaidAsManager so both paths produce
     // identical Payment shapes on the way in. All amounts land at $0
     // downstream so who's on the split list doesn't affect any
     // aggregate (splits are filtered by skippedAt).
@@ -2386,7 +2432,7 @@ export const payments: ServicesPayments = {
       method: "CASH",
       note: null,
       completionSplits,
-      context: "ADMIN" as any,
+      context: "BACK_OFFICE" as any,
     } as any);
     return payments.skipPayment(currentUserId, payment.id, reason);
   },
@@ -2397,7 +2443,7 @@ export const payments: ServicesPayments = {
   // without the writtenOff flag). If the operator needs to also
   // reverse the approval itself, they use the existing revert flow.
   //
-  // Same superGuard + type-APPROVE gate as skip.
+  // Same `money.approve` + type-APPROVE gate as skip.
   async unskipPayment(currentUserId, paymentId) {
     const existing = await prisma.payment.findUnique({ where: { id: paymentId } });
     if (!existing) throw new ServiceError("NOT_FOUND", "Payment not found.", 404);
@@ -2422,11 +2468,19 @@ export const payments: ServicesPayments = {
     });
   },
 
-  async listPendingApprovals(cutoff?: Date | null) {
+  async listPendingApprovals(cutoff?: Date | null, areaWhere?: Record<string, unknown>) {
     // Business Start Date filter — pre-cutoff pending approvals hidden.
-    // Super can toggle the reveal header to see them when chasing the client.
+    // A `books.view` holder can toggle the reveal header to see them when chasing the client.
+    //
+    // Area scoping merges in the same way. Empty for a global money.view
+    // holder, so this query is byte-identical to its pre-feature shape; a
+    // Payment reaches its area through the occurrence it settles.
     return prisma.payment.findMany({
-      where: { confirmed: false, ...cutoffWhere("Payment", cutoff ?? null) },
+      where: {
+        confirmed: false,
+        ...cutoffWhere("Payment", cutoff ?? null),
+        ...(areaWhere ?? {}),
+      },
       orderBy: { createdAt: "asc" },
       include: {
         collectedBy: { select: { id: true, displayName: true, email: true } },
@@ -2498,7 +2552,7 @@ export const payments: ServicesPayments = {
                 user: { select: { displayName: true, email: true, isOwner: true } },
               },
             },
-            // Seeds the tip editor's default percentages: a trainee credited
+            // Seeds the tip editor's default percentages: an observer credited
             // 20% of the job defaults to 20% of the tip.
             completionSplits: true,
           },

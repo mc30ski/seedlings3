@@ -65,6 +65,24 @@ function gateFilesOnDisk(): string[] {
   return out;
 }
 
+/** Every `*.test.ts` under src/, gate or not. */
+function allTestFilesOnDisk(): string[] {
+  const out: string[] = [];
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(join(API_ROOT, rel), { withFileTypes: true })) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === "dist") continue;
+        walk(child);
+      } else if (entry.name.endsWith(".test.ts")) {
+        out.push(child);
+      }
+    }
+  };
+  walk("src");
+  return out;
+}
+
 describe("test roster build gate", () => {
   it("finds the script and a plausible number of entries", () => {
     // A parse that returned [] would make every assertion below vacuous —
@@ -96,6 +114,56 @@ describe("test roster build gate", () => {
           "roster in .claude/memory/reference_build_gates_roster.md.",
       ).toBe(true);
     }
+  });
+
+  it("every test file is either wired in or explicitly skipped", () => {
+    /**
+     * WHY THIS COVERS MORE THAN THE GATE CHECK ABOVE.
+     *
+     * That one requires `*-build-gate.test.ts` files to be listed. Ordinary
+     * unit tests were exempt, on the reasoning that some are slow or need a
+     * database. Defensible — but the exemption was SILENT, and silence is
+     * what this whole gate exists to remove.
+     *
+     * `services/equipment.test.ts` sat unlisted for months: 600 lines of
+     * equipment rental-cost invariants, neither slow nor database-backed,
+     * that simply never ran. When it was finally executed it FAILED — one
+     * assertion had rotted into asserting a bug as policy ("null workerType
+     * is treated as billable"), which is the negation G30 forbids and the
+     * shape that charged unclassified workers a contractor fee. A test that
+     * does not run cannot tell you it has gone wrong.
+     *
+     * So the exemption stays available and stops being silent: skip a file
+     * by writing the reason in it.
+     *
+     *     // roster-skip: needs a live Neon branch; run with `npm run test:db`
+     *
+     * Listed or skipped — either is fine. Neither is not.
+     */
+    const listed = new Set(listedFiles());
+    const offenders: string[] = [];
+    for (const rel of allTestFilesOnDisk()) {
+      if (listed.has(rel)) continue;
+      const src = readFileSync(join(API_ROOT, rel), "utf8");
+      // Match the marker FIRST, then judge the reason — otherwise a bare
+      // `// roster-skip:` reports as "no roster-skip", which is the kind of
+      // not-quite-true message this gate exists to stamp out.
+      const skip = /^[ \t]*\/\/[ \t]*roster-skip:(.*)$/m.exec(src);
+      const reason = skip ? skip[1].trim() : null;
+      if (reason && reason.length >= 10) continue;
+      offenders.push(
+        skip
+          ? `${rel} — has a roster-skip but gives no reason for it`
+          : `${rel} — not in test:build-gate and no roster-skip`,
+      );
+    }
+    expect(
+      offenders.sort(),
+      "A test file that is neither wired into `test:build-gate` nor marked " +
+        "`// roster-skip: <reason>` never runs, and a test that never runs " +
+        "cannot report that it has started failing. Add it to the script, " +
+        "or say in the file why it is excluded.",
+    ).toEqual([]);
   });
 
   it("the list has no duplicate entries", () => {

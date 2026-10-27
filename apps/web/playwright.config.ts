@@ -40,13 +40,77 @@ export default defineConfig({
       testMatch: /auth\/.*\.setup\.ts$/,
     },
     {
+      // BACKEND API COVERAGE — not a browser-behaviour project.
+      //
+      // These specs drive the API over HTTP as real signed-in personas and
+      // assert authorization and response shape for every endpoint the
+      // backend declares. They live in `tests/e2e/api/` rather than
+      // `tests/e2e/specs/` so the five UI projects (whose testMatch is
+      // anchored on `specs/`) never pick them up, and so one project owns
+      // the whole API surface.
+      //
+      // The timeout is raised because a single test here covers every route
+      // guarded by one entitlement — up to ~50 routes, two requests each —
+      // and grouping them that way is what makes a failure say "money.approve
+      // is broken" instead of naming one URL out of 639.
+      name: "api",
+      dependencies: ["auth-setup"],
+      testMatch: /api\/.*\.spec\.ts$/,
+      timeout: 240_000,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1280, height: 900 },
+      },
+    },
+    {
+      // THE READ-ONLY PERSONA SWEEP. One project rather than one per
+      // persona: `storageState` is set per describe-block inside the spec,
+      // so adding a tenth persona is a line in `PERSONAS`, not a project.
+      //
+      // Long timeout because a single test walks every tab one persona can
+      // reach — twenty-odd page loads — and grouping it that way is what
+      // makes a failure say "bookkeeper is stranded" rather than naming one
+      // URL.
+      // MUTATION ROUND. One persona per run (MUTATION_PERSONA), with the
+      // database reseeded between them by scripts/mutation-round.sh —
+      // these tests write real rows, and without a reset each persona
+      // would act on what the last one changed.
+      name: "persona-mutations",
+      dependencies: ["auth-setup"],
+      testMatch: /mutations\/.*\.spec\.ts$/,
+      timeout: 300_000,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1280, height: 900 },
+      },
+    },
+    {
+      name: "persona-sweep",
+      dependencies: ["auth-setup"],
+      testMatch: /sweep\/.*\.spec\.ts$/,
+      // Super walks 36 tabs, each a navigation that waits to confirm it
+      // arrived. Five minutes was not enough and both admin and super
+      // timed out — a harness failure that reads exactly like an app
+      // failure, which is the worst kind to report.
+      timeout: 900_000,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1280, height: 900 },
+      },
+    },
+    {
       name: "employee",
       dependencies: ["auth-setup"],
-      // Admin-facing specs (any filename with a hyphen-delimited `-admin`
-      // token, e.g. `foo-admin.spec.ts` or `foo-admin-bar.spec.ts`) run
-      // under the `super` project — exclude them here so employee
-      // doesn't try to load pages it can't access.
-      testMatch: /specs\/(?!.*-admin(?:-|\.)|mobile-|adminrole-).*\.spec\.ts$/,
+      // THE EMPLOYEE ACCOUNT — a W-2 worker with field clearance and no
+      // management authority. Projects are named for the account that
+      // signs in. They were `employee` / `admin-role` / `super`, and that
+      // last pair was actively misleading: a spec suffixed `-admin` ran
+      // under the `super` project, so "admin" in a filename named a
+      // different account than the one executing it.
+      //
+      // Specs belonging to the other two accounts carry their own filename
+      // token; exclude them so this one never loads a page it cannot reach.
+      testMatch: /specs\/(?!.*-owner(?:-|\.)|mobile-|scheduler-).*\.spec\.ts$/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "./playwright/.auth/employee.json",
@@ -63,30 +127,31 @@ export default defineConfig({
       },
     },
     {
-      // ADMIN-but-not-SUPER. The `super` project cannot stand in for this:
-      // SUPER outranks ADMIN and gets the full projection, so an
-      // admin-only restriction is invisible from a super session.
+      // RUNS THE SCHEDULE, DOES NOT RUN THE BUSINESS. The `owner` project
+      // cannot stand in for this: that account holds a superset, so a
+      // restriction only this one feels is invisible from it.
       // Prefix convention mirrors `mobile-`.
-      name: "admin-role",
+      name: "scheduler",
       dependencies: ["auth-setup"],
-      testMatch: /specs\/adminrole-.*\.spec\.ts$/,
+      testMatch: /specs\/scheduler-.*\.spec\.ts$/,
       use: {
         ...devices["Desktop Chrome"],
-        storageState: "./playwright/.auth/admin.json",
+        storageState: "./playwright/.auth/scheduler.json",
         viewport: { width: 1280, height: 900 },
       },
     },
     {
-      name: "super",
+      // THE OWNER ACCOUNT — holds everything, so it runs the specs needing
+      // the widest access. The token is `-owner`; it was `-admin`, which
+      // named a different account than the one that actually ran. The
+      // `(?:-|\.)` matches either a further hyphen (multi-word suffix) or
+      // the terminal `.spec.ts`.
+      name: "owner",
       dependencies: ["auth-setup"],
-      // Super user (Michael) has SUPER + ADMIN + WORKER roles so this
-      // project runs any spec that includes the `-admin` token in its
-      // filename. The `(?:-|\.)` matches either a further hyphen
-      // (multi-word suffix) or the terminal `.spec.ts`.
-      testMatch: /specs\/.*-admin(?:-.*)?\.spec\.ts$/,
+      testMatch: /specs\/.*-owner(?:-.*)?\.spec\.ts$/,
       use: {
         ...devices["Desktop Chrome"],
-        storageState: "./playwright/.auth/super.json",
+        storageState: "./playwright/.auth/owner.json",
         viewport: { width: 1280, height: 900 },
       },
     },

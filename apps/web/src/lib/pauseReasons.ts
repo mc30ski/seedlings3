@@ -23,15 +23,16 @@ let inflight: Promise<PauseReason[]> | null = null;
 async function load(): Promise<PauseReason[]> {
   if (cache) return cache;
   if (!inflight) {
-    inflight = apiGet<{ reasons: PauseReason[] }>("/api/admin/pause-reasons")
+    inflight = apiGet<{ reasons: PauseReason[] }>("/api/pause-reasons")
       .then((r) => {
         cache = Array.isArray(r?.reasons) ? r.reasons : [];
         return cache;
       })
-      // CACHE THE FAILURE TOO. JobsTab is mounted for workers, and the
-      // endpoint is admin-gated — without this every worker mount retried
-      // the 403 forever. An empty list is correct for them: the pause
-      // surfaces are admin-only, so nothing renders a label anyway.
+      // CACHE THE FAILURE TOO, as a backstop. The caller now declines to
+      // ask at all without `schedule.manage` (see `usePauseReasons`), so
+      // this should no longer be reached from a worker mount — but a
+      // cached empty list is still the right answer if it is, and retrying
+      // a 403 forever was the original bug.
       .catch(() => { cache = []; return cache; })
       .finally(() => { inflight = null; });
   }
@@ -44,13 +45,25 @@ export function invalidatePauseReasons() {
   cache = null;
 }
 
-export function usePauseReasons(): PauseReason[] {
+/**
+ * The pause-reason taxonomy, or an empty list for somebody who may not read
+ * it.
+ *
+ * `enabled` exists because `/api/pause-reasons` requires `schedule.manage`
+ * and JobsTab mounts for every worker: asking unconditionally meant a 403
+ * on the Jobs tab for every contractor and employee, once per session. The
+ * caller passes `scope.can("schedule.manage")` — the same capability the
+ * route checks — so the request is simply not made. An empty list was
+ * already the correct answer for them; this stops paying a refusal for it.
+ */
+export function usePauseReasons(enabled = true): PauseReason[] {
   const [reasons, setReasons] = useState<PauseReason[]>(cache ?? []);
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     void load().then((r) => { if (!cancelled) setReasons(r); });
     return () => { cancelled = true; };
-  }, []);
+  }, [enabled]);
   return reasons;
 }
 

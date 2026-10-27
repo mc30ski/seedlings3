@@ -33,8 +33,8 @@ type PricingEntry = {
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Endpoint to fetch from. Admin/Super pass /api/admin/pricing; workers
-   *  pass /api/pricing. Defaults to the worker route since the dialog is
+  /** Endpoint to fetch from. Every caller passes /api/pricing — the two
+   *  arms of this used to differ and no longer do. Defaults to it since the dialog is
    *  most often consumed in worker flows. */
   endpoint?: string;
   /** Pre-filled search query on open (e.g. the jobTag label or service

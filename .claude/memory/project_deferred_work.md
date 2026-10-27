@@ -43,16 +43,18 @@ contrast condition), but needs the full sweep to verify.
 
 ---
 
-## AREA: theming / Profile — the Appearance picker is hidden from admins
-*Deferred 2026-09-15.*
+## ~~AREA: theming / Profile — the Appearance picker is hidden from holders of `schedule.manage`~~
+*Deferred 2026-09-15. **FIXED 2026-10-17.***
 
-`ProfileTab` computes `targetUserId = isAdmin ? selectedUserId : me.id`, which
-defaults to `""`. So an **admin or super lands on Profile and sees no Appearance
-section at all** until they pick themselves in the user dropdown. Workers are
-fine. Found while writing a theme e2e test, which had to work around it.
+`ProfileTab` computed `targetUserId` as "the selected user, or nothing",
+defaulting to `""`, so anyone who could view other people's profiles landed
+on Profile with no user selected and therefore no Appearance section, no
+calendar feed and no season override — all self-only. They had to pick
+themselves out of a dropdown to see their own profile. Found while writing a
+theme e2e test, which had to work around it.
 
-Fix is probably one line — default `selectedUserId` to `me.id` for admins — but
-check it does not change the "viewing another user" flows on that tab.
+It was the predicted one-liner: the fallback is now `me?.id`. Picking someone
+else still works, and clearing the picker returns you to your own profile.
 
 ---
 
@@ -72,7 +74,7 @@ check it does not change the "viewing another user" flows on that tab.
 ## AREA: testing — the contrast sweep does not cover everything
 *Noted 2026-09-15.*
 
-`theme-contrast-sweep-admin.spec.ts` measures the **resting state of 34 tab
+`theme-contrast-sweep-owner.spec.ts` measures the **resting state of 34 tab
 bodies**. It does NOT cover dialogs, menus, transient/loading states, hover
 styling, or the Tasks overlay. Every bug found in those areas was found by eye.
 **A clean sweep is not a clean app.** If a theming bug is reported in a dialog,
@@ -106,6 +108,105 @@ Do not do this unilaterally; it is the user's index.
 ## AREA: testing — leftover scratch-named spec
 *Noted 2026-09-15.*
 
-`tests/e2e/specs/zz-supplyform-admin.spec.ts` still carries the `zz-` scratch
+`tests/e2e/specs/zz-supplyform-owner.spec.ts` still carries the `zz-` scratch
 prefix (it predates the 2026-09-15 session). Either rename it to the normal
 convention or confirm it is intentionally scratch.
+
+---
+
+## ~~AREA: permissions / areas — the two taxonomy Settings were never created~~
+*Noted 2026-10-18. **DONE the same day** — both rows seeded in the `catalogs`
+section, AreasTab tier field is a Select-with-Other over `AREA_TIER_NAMES`,
+RolesTab offers `MANAGER_TITLES` as chips. Kept here only so the reasoning
+below is not lost.*
+
+`docs/features/permissions.md` section **E — Settings** calls for two
+config-driven taxonomies, `AREA_TIER_NAMES` and `MANAGER_TITLES`. Sections
+A–D of that design all shipped; E did not. Neither Setting row exists and no
+code reads either key.
+
+The gap is visible but small:
+- `Area.tier` IS a real nullable column, and its schema comment cites
+  `AREA_TIER_NAMES` — but nothing populates or suggests from it, so a tier is
+  free text today. Two people can type "Region" and "region".
+- The role builder suggests no titles when naming a custom role.
+
+Size: small. Add the two rows the way every other taxonomy is added (see
+[[feedback-config-driven-taxonomies]] — JSON Setting, not a DB enum), then
+have the area editor and the role-name field read them. Remember the Setting
+rows must be upserted into dev directly and copied to prod via the Neon UI
+([[feedback-settings-dev-then-neon]]).
+
+---
+
+## AREA: exports — there is no QuickBooks export at all
+*Noted 2026-10-18. Corrected the same day — the first version of this note
+overstated the problem.*
+
+Three things that sound related, all true:
+
+1. There is **no QuickBooks export**. The whole export surface is five
+   routes: `expenses.csv`, `capital.csv`, `income.csv`, `workdays.csv`,
+   `payroll.csv`. No `qb-journal-expenses.csv` exists, in the working tree
+   or at HEAD.
+2. **No export emits Contract Labor rows.** `CONTRACT_LABOR_CATEGORY` is
+   declared in `services/exports.ts` and referenced nowhere else.
+3. `QB_INCLUDE_CONTRACT_LABOR`, a Setting that claimed to switch those rows
+   off, was deleted on 2026-10-18 because no code read it. It had been
+   rendered as a live toggle on the Settings tab, doing nothing. The
+   operator had it set to `false` in production since 2026-06-09.
+
+So **nothing is broken and nothing is owed right now.** The reason this note
+exists is the day someone builds a QuickBooks export: contractor payments
+must appear EITHER from the app OR from Gusto's own QB integration, never
+both, or the books double-count contractor labour. Build the switch in the
+same change as the export, not afterwards.
+
+---
+
+## ~~AREA: permissions / areas — area scoping~~ — CLOSED 2026-10-18
+*Kept because the reasoning is worth not relitigating.*
+
+**Backlog reached zero-work.** 13 scopable, 7 threaded, 6 remaining — and all
+6 are zero-work: five have no GET route at all (`clients.manage`,
+`crews.manage`, `estimates.accept`, `money.approve`, `money.record`), and
+`clients.contribute`'s only one is `/properties/:x/photos`, a by-id read.
+They clear themselves if such a route is ever added, because adding the group
+to `THREADED` makes G10 binding. The ratchet ceiling is now 6 and must only
+fall.
+
+**Verification exists.** `scripts/verify-area-scope.ts` builds a real
+principal, applies the real `areaWhere`, runs real Prisma queries and
+compares rows. Eight checks. Run it after `npm run db:seed`.
+
+**The fixture that made it possible:** seed creates **District Lead
+(Durham)** — EMPLOYEE, approved, NO company-wide role, Admin only via an
+`AreaAssignment` on Durham. Every other persona holds its role company-wide,
+and a company-wide grant wins, so without this every scope test passes
+vacuously. That is why the gap survived so long.
+
+**Seed bug it found:** a new area tree was built on EVERY reseed — 10 roots,
+10 Durhams — because the root was located with an unordered
+`findFirst({ parentId: null })` that sometimes grabbed an `E2E_MUT_… Area`
+and renamed it, stranding the real data under whichever tree won. Root is now
+name + oldest id, duplicates are pruned, the seed is idempotent.
+
+**Decisions taken (operator, 2026-10-18), all recorded in
+`GLOBAL_BY_DECISION` with reasons:**
+- A lead sees ALL people → `people.view`, and by the same logic
+  `crews.view` (a crew is people, not a place), `pricing.view` (one
+  catalogue) and `schedule.manage` (its scopable GET is a taxonomy).
+- Timesheets and driving are a PERSON and a DAY → `time.view` and
+  `routes.plan`. `WorkerWorkday` and `MileageEntry` carry no `areaId` and
+  sensibly could not: a Tuesday across two districts belongs to neither.
+  `time.manage`, which APPROVES those rows, was already global, so scoping
+  the view would have been the inconsistency.
+
+**Do NOT confuse the two "hours" surfaces.** `time.approve` covers per-visit
+hours on `JobOccurrence`, which DOES carry an area, and stays territorial.
+Workdays and mileage are the other surface and are global. Both get called
+"hours"; only one happens in a place.
+
+**If a district lead's workday queue should ever be genuinely theirs**, that
+is the point to derive territory from the day's occurrences — a migration
+plus an answer to the two-districts question. Not before.

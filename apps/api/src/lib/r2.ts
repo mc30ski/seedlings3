@@ -262,6 +262,32 @@ export async function getObjectBuffer(
   return { bytes: Buffer.from(arr), contentType: res.ContentType };
 }
 
+/**
+ * Read an object, returning null when it is not in the bucket.
+ *
+ * `getObjectBuffer` THROWS for a missing key, which reaches the error
+ * mapper as a 500. Three routes were written as though it returned
+ * something falsy (`if (!obj?.bytes) return 404`) — dead branches, so a
+ * photo row whose object is gone answered 500 "server error" instead of
+ * the 404 their own comments promise. Anything that is not a missing key
+ * still throws: an R2 outage is not a missing photo and must not be
+ * reported as one.
+ */
+export async function getObjectBufferIfPresent(
+  key: string,
+  bucket: BucketType = "photos",
+  maxBytes = 100_000_000,
+): Promise<{ bytes: Buffer; contentType: string | undefined } | null> {
+  try {
+    return await getObjectBuffer(key, bucket, maxBytes);
+  } catch (err: any) {
+    const name = err?.name ?? err?.Code ?? "";
+    const status = err?.$metadata?.httpStatusCode;
+    if (name === "NoSuchKey" || name === "NotFound" || status === 404) return null;
+    throw err;
+  }
+}
+
 /** Read an object's true size + content type WITHOUT downloading it.
  *
  * Presigned PUT is signed on content-type only, so the size a browser

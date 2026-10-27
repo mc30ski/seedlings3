@@ -1,33 +1,147 @@
 import { prisma } from "../db/prisma";
 
-import { Role as RoleVal, WorkerType } from "@prisma/client";
+import { WorkerType } from "@prisma/client";
 import { verifyToken, createClerkClient } from "@clerk/backend";
-import type { ServicesUsers, Role } from "../types/services";
+import type { ServicesUsers } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
-import { enforceClaimerInvariant } from "../lib/claimerInvariant";
+import { enforceAssigneeInvariants, canHoldPaidSeat } from "../lib/claimerInvariant";
 import { ServiceError } from "../lib/errors";
-import { resolvePrivileges } from "../lib/privileges";
-import { resolveImpersonation } from "../lib/impersonation";
+import { resolvePerspective } from "../lib/impersonation";
+import { availablePerspectives } from "../lib/perspectives";
+import { heldCapabilities, flattenRole } from "@repo/permissions";
+import { isEntitlement } from "@repo/permissions";
+import { isWorkerType } from "@repo/money";
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
-
-function parseBootstrapList() {
-  return (process.env.ADMIN_BOOTSTRAP_EMAILS ?? "")
-    .split(/[,\s]+/)
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-}
 
 export const users: ServicesUsers = {
   async list(params) {
     const where: any = {};
     if (params?.approved !== undefined) where.isApproved = params.approved;
-    if (params?.role) where.roles = { some: { role: params.role as any } };
-    return prisma.user.findMany({
+    // Filter by the role's stable KEY, not an enum value. Inheritance is
+    // respected: asking for "seedlings.worker" includes anyone holding Admin
+    // or Super, because those build on it — which is what the old role
+    // filter meant in practice, since the tiers inherited.
+    if (params?.roleKey) {
+      const wanted = await prisma.customRole.findUnique({
+        where: { key: params.roleKey },
+        select: { id: true },
+      });
+      if (!wanted) return [];
+      const all = await prisma.customRole.findMany({ select: { id: true, inheritsFromId: true } });
+      const parentOf = new Map(all.map((r) => [r.id, r.inheritsFromId]));
+      const inheritsWanted = (id: string) => {
+        const seen = new Set<string>();
+        let cur: string | null | undefined = id;
+        while (cur && !seen.has(cur)) {
+          if (cur === wanted.id) return true;
+          seen.add(cur);
+          cur = parentOf.get(cur) ?? null;
+        }
+        return false;
+      };
+      const matching = all.filter((r) => inheritsWanted(r.id)).map((r) => r.id);
+      where.customRoles = { some: { customRoleId: { in: matching }, suspendedAt: null } };
+    }
+    const rows = await prisma.user.findMany({
       where,
-      include: { roles: true },
       orderBy: { displayName: "asc" },
+      include: {
+        customRoles: {
+          where: { suspendedAt: null, customRole: { suspendedAt: null } },
+          select: { customRoleId: true },
+        },
+        areaAssignments: {
+          where: { suspendedAt: null, customRole: { suspendedAt: null }, area: { retiredAt: null } },
+          select: {
+            customRoleId: true,
+            isTemporary: true,
+            area: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    // ── Roles and capabilities, resolved HERE ────────────────────────────
+    //
+    // The directory used to read `u.roles` off the UserRole table and work
+    // the rest out itself. That table is gone, and the work it was doing —
+    // walking inheritance to decide what someone can actually do — must not
+    // be reimplemented in a browser: there would then be two answers to the
+    // same question, and the one on screen would be the one nobody tested.
+    //
+    // So both facts come from the server, and the capability set comes from
+    // `heldCapabilities`, the SAME function that resolves a request's
+    // principal. A badge in this list and a 403 from a route cannot disagree
+    // if they are computed by one function.
+    //
+    // The role table is read once for all rows rather than per user: this is
+    // a page of the directory, and a findMany per person is how a 40-person
+    // list becomes 40 round trips to a serverless Postgres.
+    const roleRows = await prisma.customRole.findMany({
+      select: {
+        id: true, name: true, key: true, inheritsFromId: true,
+        entitlements: { select: { entitlement: true } },
+      },
+    });
+    const rolesById = new Map(
+      roleRows.map((r) => [
+        r.id,
+        {
+          id: r.id, name: r.name, key: r.key, inheritsFromId: r.inheritsFromId,
+          entitlements: r.entitlements.map((e) => e.entitlement).filter(isEntitlement),
+        },
+      ]),
+    );
+
+    return rows.map((u) => {
+      const companyWide = (u.customRoles ?? []).map((g) => ({
+        roleId: g.customRoleId,
+        key: rolesById.get(g.customRoleId)?.key ?? null,
+        name: rolesById.get(g.customRoleId)?.name ?? "(unknown role)",
+        areaId: null as string | null,
+        areaName: null as string | null,
+        isTemporary: false,
+      }));
+      const areaScoped = (u.areaAssignments ?? []).map((g) => ({
+        roleId: g.customRoleId,
+        key: rolesById.get(g.customRoleId)?.key ?? null,
+        name: rolesById.get(g.customRoleId)?.name ?? "(unknown role)",
+        areaId: g.area.id,
+        areaName: g.area.name,
+        isTemporary: g.isTemporary,
+      }));
+
+      // COMPANY-WIDE GRANTS ONLY, deliberately.
+      //
+      // `heldCapabilities` is a union over grants and does not look at
+      // `areaPath` — that is `can()`'s job, which needs the area of the
+      // RECORD being acted on and there is no record here. Folding the
+      // area-scoped grants in would therefore report "runs the schedule"
+      // for someone who only runs Durham's, and the directory would read as
+      // if they were someone with `people.manage` of the business. They are not.
+      //
+      // The area grants are not lost: each one is its own entry in
+      // `roleGrants` with its area name, which is how a badge says
+      // "Admin — Durham" rather than "Admin".
+      //
+      // No perspective either. A perspective is something a person looks through at
+      // their own view; it has no meaning when an operator is reading
+      // somebody else's row, and applying one would under-report them.
+      const capabilities = heldCapabilities({
+        kind: "user",
+        workerType: u.workerType ?? null,
+        roles: companyWide.map((g) => ({
+          roleId: g.roleId,
+          name: g.name,
+          entitlements: flattenRole(g.roleId, rolesById as never),
+        })),
+        perspective: null,
+      });
+
+      const { customRoles: _c, areaAssignments: _a, ...user } = u as typeof u & Record<string, unknown>;
+      return { ...(user as typeof u), roleGrants: [...companyWide, ...areaScoped], capabilities };
     });
   },
 
@@ -76,10 +190,10 @@ export const users: ServicesUsers = {
   async approve(currentUserId, userId, opts) {
     // Optional `linkContactId` folds the "link Clerk account to a
     // ClientContact" step into the same transaction so the approval
-    // surface in Super → Users guarantees a wired-up client. Previously
+    // surface in Users guarantees a wired-up client. Previously
     // "Approve as Client" only flipped isApproved, leaving the link as a
     // separate step that often got forgotten — the contact landed in the
-    // Admin → Directory → Clients "Unlinked client accounts" worklist
+    // Directory → Clients "Unlinked client accounts" worklist
     // even though the operator believed approval did everything.
     return prisma.$transaction(async (tx) => {
       const updated = await tx.user.update({
@@ -153,63 +267,7 @@ export const users: ServicesUsers = {
     });
   },
 
-  async addRole(currentUserId, userId, role) {
-    return prisma.$transaction(async (tx) => {
-      const user = await tx.user.findUnique({ where: { id: userId } });
-      if (!user) {
-        throw new ServiceError("NOT_FOUND", "User not found", 404);
-      }
 
-      const roleRow = await tx.userRole.create({
-        data: { userId, role: role as any },
-      });
-
-      await writeAudit(tx, AUDIT.USER.ROLE_ASSIGNED, currentUserId, {
-        userRecord: { ...user },
-        roleRecord: { ...roleRow },
-      });
-
-      return roleRow;
-    });
-  },
-
-  async removeRole(currentUserId, userId, role) {
-    if (role === "WORKER") {
-      const active = await prisma.checkout.count({
-        where: { userId, releasedAt: null },
-      });
-      if (active > 0) {
-        throw new ServiceError(
-          "USER_HAS_ACTIVE_EQUIPMENT",
-          "Cannot remove Worker role while the user has reserved/checked-out equipment.",
-          409
-        );
-      }
-    }
-
-    return prisma.$transaction(async (tx) => {
-      const user = await tx.user.findUnique({ where: { id: userId } });
-      if (!user) {
-        throw new ServiceError("NOT_FOUND", "User not found", 404);
-      }
-
-      const toDelete = await tx.userRole.findFirst({
-        where: { userId, role: role as any },
-      });
-      if (!toDelete) return { deleted: false };
-
-      const roleRecord = await tx.userRole.delete({
-        where: { id: toDelete.id },
-      });
-
-      await writeAudit(tx, AUDIT.USER.ROLE_REMOVED, currentUserId, {
-        userRecord: { ...user },
-        roleRecord: { ...roleRecord },
-      });
-
-      return { deleted: true };
-    });
-  },
 
   async remove(currentUserId, userId, actorUserId) {
     if (!actorUserId) {
@@ -225,25 +283,39 @@ export const users: ServicesUsers = {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      include: { roles: true },
+      
     });
     if (!user) {
       throw new ServiceError("NOT_FOUND", "User not found", 404);
     }
 
     return prisma.$transaction(async (tx) => {
-      const isAdmin = user.roles.some((r) => r.role === "ADMIN");
-      if (isAdmin) {
-        const otherAdmins = await tx.userRole.count({
-          where: { role: "ADMIN", userId: { not: userId } },
-        });
-        if (otherAdmins === 0) {
-          throw new ServiceError(
-            "LAST_ADMIN",
-            "Cannot delete the last remaining admin",
-            409
-          );
-        }
+      // DON'T LOCK THE BUSINESS OUT OF ITSELF.
+      //
+      // This refused deleting the last holder of the top role. The sharper question
+      // under capabilities is who can still GRANT ROLES: lose the last
+      // holder of `people.grant-roles` and nobody can ever hand it to
+      // anybody again, which is unrecoverable from inside the app — the
+      // starter script and database access are the only way back.
+      const canGrant = await tx.userCustomRole.findMany({
+        where: {
+          suspendedAt: null,
+          customRole: {
+            suspendedAt: null,
+            entitlements: { some: { entitlement: "people.grant-roles" } },
+          },
+        },
+        select: { userId: true },
+      });
+      const otherGranters = new Set(canGrant.map((g) => g.userId));
+      otherGranters.delete(userId);
+      if (otherGranters.size === 0 && canGrant.some((g) => g.userId === userId)) {
+        throw new ServiceError(
+          "LAST_ROLE_GRANTER",
+          "This is the only person who can grant roles. Give somebody else " +
+            "that ability first, or nobody will be able to grant anything again.",
+          409,
+        );
       }
 
       let clerkDeleted = false;
@@ -292,7 +364,7 @@ export const users: ServicesUsers = {
       const userDelete = await tx.user.delete({ where: { id: userId } });
 
       for (const occurrenceId of orphanedOccIds) {
-        await enforceClaimerInvariant(tx, occurrenceId, currentUserId);
+        await enforceAssigneeInvariants(tx, occurrenceId, currentUserId);
       }
 
       await writeAudit(tx, AUDIT.USER.DELETED, currentUserId, {
@@ -310,26 +382,28 @@ export const users: ServicesUsers = {
     return { pending: count };
   },
 
-  // Implements a GET /me endpoint that authenticates with Clerk (via header or cookie),
-  // ensures there’s a matching user in your Prisma DB, optionally bootstraps ADMIN/WORKER roles based on an env list,
-  // then returns a normalized “me” object.
+  // Implements a GET /me endpoint that authenticates with Clerk (via header
+  // or cookie), ensures there is a matching user in the database, then
+  // returns a normalized "me" object. It grants NOTHING: there is no env
+  // var that confers a role, and recovery is re-running
+  // apps/api/scripts/install-starter-roles.ts.
   //
   // The optional `clientImpersonationContactId` swaps the returned identity
-  // to look like a signed-in client when a Super has an active client
+  // to look like a signed-in client when someone with `people.approve` has an active client
   // "View as" session. See plugins/clientImpersonation.ts — that plugin
-  // validates the header + SUPER gate + read-only enforcement BEFORE this
+  // validates the header + the view-as gate + read-only enforcement BEFORE this
   // service is called, so by the time we get here we only need to overlay
   // the me shape.  When applied:
   //   - roles becomes empty (`[]`) so every UI visibility guard that
-  //     hides tabs from workers/admins/supers passes as it would for a
+  //     hides tabs from workers/holders of `people.manage`/holders of `settings.manage` passes as it would for a
   //     signed-in client
   //   - workerType becomes null
   //   - isApproved becomes true (clients don't go through worker approval)
   //   - identity fields (email, first/last, phone, displayName) reflect
-  //     the ClientContact, not the Super
+  //     the ClientContact, not the real caller
   //   - realRoles / realWorkerType / isImpersonating are preserved so the
   //     ImpersonationBanner keeps rendering with its Exit affordance
-  //   - `me.id` stays as the Super's real User.id — audit / attribution
+  //   - `me.id` stays as the CALLER's real User.id — audit / attribution
   //     downstream never confuses the actor
   async me(
     token: string,
@@ -371,7 +445,16 @@ export const users: ServicesUsers = {
     // Ensure local DB user exists (create if missing)
     let user = await prisma.user.findUnique({
       where: { clerkUserId },
-      include: { roles: true },
+      include: {
+                    customRoles: {
+                where: { suspendedAt: null, customRole: { suspendedAt: null } },
+                include: { customRole: { include: { entitlements: true } } },
+              },
+              areaAssignments: {
+                where: { suspendedAt: null, customRole: { suspendedAt: null } },
+                include: { area: { select: { path: true, name: true } } },
+              },
+            },
     });
 
     if (!user) {
@@ -383,7 +466,16 @@ export const users: ServicesUsers = {
             displayName: fetchedDisplayName,
             isApproved: false,
           },
-          include: { roles: true },
+          include: {
+                            customRoles: {
+                    where: { suspendedAt: null, customRole: { suspendedAt: null } },
+                    include: { customRole: { include: { entitlements: true } } },
+                  },
+                  areaAssignments: {
+                    where: { suspendedAt: null, customRole: { suspendedAt: null } },
+                    include: { area: { select: { path: true, name: true } } },
+                  },
+                },
         });
         // First sign-in auto-provisions the account row. USER.SIGN_IN
         // covers sessions, not the birth of the row — without this the
@@ -414,7 +506,16 @@ export const users: ServicesUsers = {
         user = await prisma.user.update({
           where: { clerkUserId },
           data: { email: nextEmail, displayName: nextDisplayName },
-          include: { roles: true },
+          include: {
+                            customRoles: {
+                    where: { suspendedAt: null, customRole: { suspendedAt: null } },
+                    include: { customRole: { include: { entitlements: true } } },
+                  },
+                  areaAssignments: {
+                    where: { suspendedAt: null, customRole: { suspendedAt: null } },
+                    include: { area: { select: { path: true, name: true } } },
+                  },
+                },
         });
       }
     }
@@ -424,7 +525,7 @@ export const users: ServicesUsers = {
     // person, so its email should track the account — otherwise a client
     // who updates their email leaves the CRM record (and payment-request
     // delivery) stale. Best-effort: a failure here must not break /me.
-    // Only clients have a ClientContact — for workers/admins this is a
+    // Only clients have a ClientContact — for workers/holders of `people.manage` this is a
     // no-op, and the User row above IS their record. Phone is not synced:
     // the email-magic-link Clerk setup doesn't carry a phone number.
     if (user.email) {
@@ -456,120 +557,233 @@ export const users: ServicesUsers = {
       }
     }
 
-    // Bootstrap admins via ADMIN_BOOTSTRAP_EMAILS (idempotent)
-    const bootstrapEmails = parseBootstrapList();
-    const normalizedEmail = (user.email ?? fetchedEmail ?? "").toLowerCase();
-    const shouldBootstrap =
-      normalizedEmail && bootstrapEmails.includes(normalizedEmail);
-
-    if (shouldBootstrap) {
-      await prisma.$transaction(async (tx) => {
-        // Audit what this actually GRANTS. Approving a user and handing
-        // them ADMIN are both audited on the normal admin-driven paths
-        // (see approve() and addRole() above); this env-driven path did
-        // the same thing silently, leaving the one privilege escalation
-        // in the codebase with no trail.
-        //
-        // Only log real transitions. This block runs on EVERY /me for a
-        // bootstrap email and is idempotent, so auditing unconditionally
-        // would bury the History tab under a row per request.
-        const approvedNow = !user!.isApproved;
-        if (approvedNow) {
-          await tx.user.update({
-            where: { id: user!.id },
-            data: { isApproved: true },
-          });
-        }
-        const existing = await tx.userRole.findMany({
-          where: { userId: user!.id, role: { in: [RoleVal.WORKER, RoleVal.ADMIN] } },
-          select: { role: true },
-        });
-        const had = new Set(existing.map((r) => r.role));
-        const rolesGranted: string[] = [];
-        for (const role of [RoleVal.WORKER, RoleVal.ADMIN]) {
-          if (had.has(role)) continue;
-          await tx.userRole.create({ data: { userId: user!.id, role } });
-          rolesGranted.push(String(role));
-        }
-        if (approvedNow || rolesGranted.length > 0) {
-          // actorUserId is the user themselves — no admin is involved.
-          // `source` is what distinguishes this from a human decision.
-          if (approvedNow) {
-            await writeAudit(tx, AUDIT.USER.APPROVED, user!.id, {
-              userId: user!.id,
-              email: normalizedEmail,
-              source: "bootstrap_env",
-            });
-          }
-          if (rolesGranted.length > 0) {
-            await writeAudit(tx, AUDIT.USER.ROLE_ASSIGNED, user!.id, {
-              userId: user!.id,
-              email: normalizedEmail,
-              rolesGranted,
-              source: "bootstrap_env",
-            });
-          }
-        }
-      });
-      user = await prisma.user.findUnique({
-        where: { clerkUserId },
-        include: { roles: true },
-      });
-    }
+    // THE ENV-VAR BREAK-GLASS IS GONE (decision 47).
+    //
+    // It granted the full role ladder to any address listed in an env var,
+    // on every single /me, so a fresh install had someone who could log in
+    // and the owner could never be locked out. Two reasons it is deleted:
+    //
+    //   1. There are no enum roles left to grant. It would have to create
+    //      custom-role grants instead — which means break-glass resolving
+    //      THROUGH the entitlement tables, so a single bad grant row could
+    //      lock the owner out permanently and the recovery path would be the
+    //      thing that needed recovering.
+    //   2. It was a standing back door keyed on an environment variable.
+    //      Anyone who could set one on the deployment became someone with `people.manage`
+    //      silently, on their next request, with an audit row that said the
+    //      user approved themselves.
+    //
+    // Initial assignment is now `scripts/install-starter-roles.ts` plus a
+    // grant, run against the database by someone with Neon access. Slower,
+    // deliberate, and leaves no permanent hole.
 
     // Respond
-    // Real, unmodified identity values from the DB. The "effective" values
-    // below may diverge from these when a Super has the View-as-another-role
-    // mode active. The frontend uses realRoles/realWorkerType to keep the
-    // impersonation menu visible so Super can always exit back to default.
-    const realRolesArr = (user!.roles ?? []).map((r) => r.role) as Role[];
+    //
+    // PERSPECTIVES REPLACED THE ROLE SWAP. This block used to compute
+    // `effectiveRoles` by substituting a synthetic roles array, and return
+    // `realRoles` alongside so the menu could still offer a way back. Both
+    // are gone with the enum.
+    //
+    // A perspective narrows the caller's OWN capability set instead, which
+    // is strictly better: the old swap dropped custom-role grants wholesale
+    // to avoid leaking them, so "view as worker" could only ever show the
+    // generic worker experience — someone with `people.approve` could not actually check what one
+    // of their own people sees. There is also no `realRoles` to expose any
+    // more, because the full list of perspectives is always returned and the
+    // unnarrowed view is simply "no perspective selected".
     const realWorkerType = user!.workerType ?? null;
     const realIsOwner = !!user!.isOwner;
-    // Gate for the client "View as" overlay applied at the end of this
-    // function. Matches the same SUPER-only gate the role impersonation
-    // uses — we never mutate the me shape for a non-Super caller.
-    const isReallySuper = realRolesArr.includes("SUPER" as Role);
 
-    // Apply impersonation only when the underlying user really is SUPER and
-    // the header parsed cleanly. Non-Super requests with this header silently
-    // fall through with no impersonation applied.
-    const impersonation = resolveImpersonation(realRolesArr, impersonateHeader ?? null);
+    // Does this login belong to a customer? See the field's note on the
+    // response below. Counted rather than fetched — nothing here needs the
+    // contact, only whether one exists — and keyed on the REAL Clerk id, so
+    // someone with `people.approve` in a client "View as" session is still not a client contact.
+    const isClientContact =
+      (await prisma.clientContact.count({
+        where: { clerkUserId, status: "ACTIVE" },
+      })) > 0;
 
-    const effectiveRoles: Role[] = impersonation ? (impersonation.roles as Role[]) : realRolesArr;
-    const effectiveWorkerType = impersonation ? impersonation.workerType : realWorkerType;
-    const effectiveIsOwner = impersonation ? false : realIsOwner;
+    // Role table, for inheritance. Small, and read once.
+    const allRoles = await prisma.customRole.findMany({
+      select: {
+        id: true, name: true, key: true, inheritsFromId: true,
+        isPerspective: true, perspectiveOrder: true, perspectiveIcon: true,
+        entitlements: { select: { entitlement: true } },
+      },
+    });
+    const rolesById = new Map(
+      allRoles.map((r) => [
+        r.id,
+        {
+          id: r.id, name: r.name, key: r.key, inheritsFromId: r.inheritsFromId,
+          isPerspective: r.isPerspective, perspectiveOrder: r.perspectiveOrder,
+          perspectiveIcon: r.perspectiveIcon,
+          entitlements: r.entitlements.map((e) => e.entitlement).filter(isEntitlement),
+        },
+      ]),
+    );
+    // Company-wide grants only. Area-scoped ones do not change which PERSPECTIVES
+    // are on offer — a perspective narrows what you may do, not where, and
+    // mixing an area grant in would offer a perspective the person only holds in
+    // one territory as if they held it everywhere.
+    // AREA GRANTS COUNT HERE TOO.
+    //
+    // This read `customRoles` alone, so somebody whose ONLY access is an
+    // AreaAssignment — which is the entire point of the feature — came back
+    // with zero capabilities and zero perspectives. The server authorized
+    // them correctly all along (`currentUser.me` builds `req.principal`
+    // from BOTH lists, twenty lines of a sibling file away), so the API
+    // worked and the browser showed them the no-access notice. Area
+    // scoping has never been usable in the UI because of this line.
+    //
+    // The narrowing still happens server-side: `visibleAreaPaths` reads
+    // `areaPath` off the principal's grants. What this list decides is what
+    // the person may DO at all, which is not a territorial question — a
+    // Durham-only Admin can do Admin things, inside Durham.
+    const heldRoleIds = [
+      ...(user!.customRoles ?? []).map((ucr: any) => ucr.customRoleId),
+      ...((user as any)!.areaAssignments ?? []).map((aa: any) => aa.customRoleId),
+    ];
+    const perspectives = availablePerspectives(heldRoleIds, rolesById as never);
+    const perspective = resolvePerspective(perspectives, impersonateHeader ?? null);
 
-    // Privileges must be re-resolved against the EFFECTIVE roles/workerType.
-    // resolvePrivileges short-circuits to all-true for ADMIN/SUPER, so if we
-    // passed the real user row when impersonating a Trainee, the response
-    // would still grant inventory/business-expense rights — defeating the
-    // purpose. Build a synthetic shape with the swapped values.
-    const privInput = impersonation
-      ? {
-          workerType: effectiveWorkerType ?? null,
-          canPullInventory: user!.canPullInventory ?? null,
-          canChargeBusinessExpenses: user!.canChargeBusinessExpenses ?? null,
-          roles: effectiveRoles.map((r) => ({ role: r })),
-        }
-      : user!;
-    const priv = resolvePrivileges(privInput as any);
+
+
+    // What this caller may DO, for UI gating — narrowed by the active perspective,
+    // because a button that appears for an action the route will refuse is
+    // the mismatch G15 exists to prevent.
+    const capabilities = heldCapabilities({
+      kind: "user",
+      workerType: realWorkerType as WorkerType | null,
+      roles: heldRoleIds.map((roleId: string) => ({
+        roleId,
+        name: rolesById.get(roleId)?.name ?? "",
+        entitlements: flattenRole(roleId, rolesById as never),
+      })),
+      perspective,
+    });
+
+    // The two legacy "privileges" are just capabilities now, narrowed by
+    // any active perspective. The columns and `resolvePrivileges` are gone: they
+    // were a SECOND source of truth for the same facts, and the two could
+    // disagree — which is exactly what a feature flag is supposed to prevent
+    // and what a duplicate store guarantees.
+    const priv = {
+      canPullInventory: capabilities.includes("inventory.pull"),
+      canChargeBusinessExpenses: capabilities.includes("expenses.charge"),
+      // A field named for two deleted roles sat here, computed from
+       // `schedule.manage` and read by nothing. A role name carrying a
+       // capability's value is exactly the confusion this model removes.
+    };
+
+    // WHERE THIS PERSON'S VIEW IS NARROWED TO, for the app-wide notice.
+    //
+    // Area scoping was threaded through ~30 query sites and announced in
+    // TWO of them, so a district lead saw shorter lists on every tab with
+    // nothing anywhere saying "Durham". That is the exact failure the whole
+    // area design is built around — a territory's rows vanishing looks
+    // identical to that territory being empty — and the header chip does
+    // not cover it: the chip hides itself when there is nothing to choose
+    // between, which is precisely the grant-limited case.
+    //
+    // Computed from the caller's OWN grants rather than per-capability,
+    // because one banner cannot be per-capability. `mixed` carries the
+    // honesty: somebody holding one role company-wide and another inside an
+    // area is narrowed on SOME views and not others, so the notice softens
+    // rather than claiming every tab is filtered.
+    const grantedAreas: Array<{ path: string; name: string }> = [
+      ...new Map(
+        (((user as any)!.areaAssignments ?? []) as any[])
+          .map((aa) => aa.area)
+          .filter((a: any) => a?.path)
+          .map((a: any) => [a.path as string, { path: a.path as string, name: a.name as string }]),
+      ).values(),
+    ];
+
+    // THE ANCESTOR CHAIN, so the notice can read "Chapel Hill → Carrboro"
+    // rather than just "Carrboro". A bare leaf name is ambiguous the moment
+    // two districts both have a route called "North", and it tells somebody
+    // looking at a narrowed screen nothing about how much of the business
+    // they are missing.
+    //
+    // Only queried when there IS an area grant — `/me` is on the hot path
+    // for every request and most people have none.
+    let areaTrails: string[][] = [];
+    if (grantedAreas.length > 0) {
+      const all = await prisma.area.findMany({ select: { id: true, name: true, path: true } });
+      const nameById = new Map(all.map((a) => [a.id, a.name]));
+      // The path is "/rootId/childId/…", so its ids ARE the chain. The root
+      // is dropped: it is the container, not a place, and prefixing every
+      // trail with "All areas" says nothing.
+      areaTrails = grantedAreas
+        .map((a) =>
+          a.path.split("/").filter(Boolean).slice(1).map((id) => nameById.get(id) ?? "?"),
+        )
+        .filter((t) => t.length > 0)
+        .sort((x, y) => x.join("/").localeCompare(y.join("/")));
+    }
+
+    const hasCompanyWideRole = ((user!.customRoles ?? []) as any[]).length > 0;
+    const areaScope =
+      areaTrails.length === 0 ? null : { trails: areaTrails, mixed: hasCompanyWideRole };
 
     const me = {
       id: user!.id,
       isApproved: !!user!.isApproved,
-      roles: effectiveRoles,
+      /**
+       * The territories this person's access is confined to, or null when
+       * it is not confined at all. Each entry is the chain from the top of
+       * the tree down to the granted area ("Chapel Hill", "Carrboro"), with
+       * the root left out. `mixed` means they ALSO hold something
+       * company-wide, so only some views are narrowed.
+       */
+      areaScope,
+      /** Perspectives this person may look through, lowest access first. The web
+       *  renders the top-tab dropdown from this. */
+      // `icon` is here because a field has to survive THREE hops to reach
+      // the browser — the Prisma `select`, the `rolesById` mapping, and
+      // this re-pick — and every one of them silently drops what it does
+      // not name. The map is handed over as `rolesById as never`, so the
+      // type checker cannot see a missing field either. Adding one means
+      // checking all three.
+      perspectives: perspectives.map((p) => ({
+        roleId: p.roleId, key: p.key, name: p.name, icon: p.icon, order: p.order,
+      })),
+      /** Which perspective is active, or null for "everything I hold". */
+      activePerspectiveRoleId: perspective?.roleId ?? null,
+      /** What this caller may DO, for UI gating. Mirrors the server's own
+       *  decision so a button never appears for an action the route refuses
+       *  — the mismatch G15 exists to prevent. */
+      capabilities,
       email: user!.email ?? null,
       phone: user!.phone ?? null,
       firstName: user!.firstName ?? null,
       lastName: user!.lastName ?? null,
       displayName: user!.displayName ?? null,
-      workerType: effectiveWorkerType,
-      isOwner: effectiveIsOwner,
+      workerType: realWorkerType,
+      // NOT NARROWED BY A PERSPECTIVE, as of 2026-10-23.
+      //
+      // This read `perspective ? false : realIsOwner`, on the reasoning that
+      // "an owner looking through a narrower perspective is not an owner in
+      // it". But `isOwner` is not a capability — it authorizes nothing,
+      // appears in no guard and in no `can()` branch. It records WHO THE
+      // BUSINESS BELONGS TO, and a perspective narrows what you may DO.
+      // Note the line directly above: `workerType` is deliberately the real
+      // value for the same reason. Suppressing one identity fact and not
+      // the other was the inconsistency.
+      //
+      // The visible cost of suppressing it was a card that cannot work. An
+      // LLC owner is not on payroll — they take draws, not wages, and never
+      // produce a PayrollPeriod row — so under any perspective Home fell
+      // back to MY PAYDAY and showed "No payroll records yet" forever.
+      // OwnerEquityPanel exists precisely to replace that "true but useless
+      // answer", and the suppression put it back.
+      isOwner: realIsOwner,
       homeBaseAddress: user!.homeBaseAddress ?? null,
       availableDays: user!.availableDays ? JSON.parse(user!.availableDays) : [],
       availableHoursPerDay: user!.availableHoursPerDay ?? 4,
-      // Hourly wage — read-only for the user themselves; only a SUPER
-      // can update it via PATCH /admin/users/:id/profile. Surfaced
+      // Hourly wage — read-only for the user themselves; only someone with `people.approve`
+      // can update it via PATCH /users/:id/profile. Surfaced
       // here so workers can see what's on file for them in their
       // profile.
       hourlyWage: Number(user!.hourlyWage ?? 0),
@@ -577,34 +791,60 @@ export const users: ServicesUsers = {
       // SOP, etc.) is served separately in Slice 2 via GET /me/policies +
       // getMe compliance-cache. Removed from this response payload with the
       // migration; frontends should read the new endpoint instead.
-      canPullInventoryOverride: user!.canPullInventory ?? null,
-      canChargeBusinessExpensesOverride: user!.canChargeBusinessExpenses ?? null,
-      // Resolved values (admin/super wins, otherwise override-or-default).
-      // Computed against the effective roles above so impersonating a Trainee
-      // correctly returns canPullInventory:false, canChargeBusinessExpenses:false.
+      // The two `*Override` fields are GONE. They exposed a per-person tick
+      // that this model forbids (G20) — an exception is a named role, which
+      // is visible in a role list rather than hidden on a profile.
+      // THE NAMES HERE ARE THE OLD COLUMNS; the values are capabilities.
+      // `canPullInventory` is `inventory.pull` and `canChargeBusinessExpenses`
+      // is `expenses.charge`, resolved from the caller's roles through any
+      // active perspective — there is no longer an "management wins, otherwise
+      // override-or-default" resolution, because there are no override
+      // columns and no roles to short-circuit on. The field names survive
+      // only as the wire contract the web still reads; renaming them is a
+      // coordinated API+web change and has not been done yet.
       privileges: {
         canPullInventory: priv.canPullInventory,
         canChargeBusinessExpenses: priv.canChargeBusinessExpenses,
       },
       // Real (unimpersonated) identity values. Present even when no
-      // impersonation is active so the frontend can unconditionally read
-      // them — the View-as menu reads realRoles to decide whether to show
-      // itself. When impersonation is OFF, real* === the regular fields.
-      realRoles: realRolesArr,
+      // the perspective is active so the frontend can unconditionally read them.
+      // The dropdown no longer needs `realRoles` to decide whether to show
+      // itself: it renders from `perspectives`, which is non-empty exactly
+      // when there is something to switch to.
       realWorkerType,
-      isImpersonating: !!impersonation,
-      // False by default; overlaid to true below when the Super's client
+      isImpersonating: !!perspective,
+      // False by default; overlaid to true below when the caller's client
       // "View as" session is active. Independent of the role-impersonation
       // flag above.
       isClientImpersonating: false,
+      // Is this login attached to a customer record?
+      //
+      // Holding no capability means two completely different things, and
+      // until now the web could not tell them apart: a CUSTOMER, who is
+      // meant to see the client portal, and a staff account nobody has
+      // granted a role to yet, who should be told so. Both arrived with an
+      // empty capability set, so the staff case silently rendered the
+      // customer shell — which is what four real accounts have been seeing.
+      isClientContact,
     };
 
     // Client "View as" overlay. Only applies when the underlying caller
-    // is a real SUPER AND an impersonation-target contact ID was passed
+    // may view-as AND an impersonation-target contact ID was passed
     // (both true only if plugins/clientImpersonation.ts already validated
     // the session — the plugin refuses the request with 400 or silently
     // no-ops long before we reach this code path otherwise).
-    if (isReallySuper && clientImpersonationContactId) {
+    // THE AUTHORITATIVE CHECK for client view-as.
+    //
+    // `capabilities` here is the caller's resolved set with any active
+    // perspective already applied, so this is the only place that can decide
+    // it correctly — the plugin runs in an onRequest hook, before a
+    // principal exists, and now only records which contact was requested.
+    //
+    // `clients.view-as`, not `identity.link`: linking a login to a client
+    // record is data entry someone with `people.manage` does, while this reads a customer's
+    // entire portal as them. The old gate let every admin do it.
+    const mayViewAsClient = capabilities.includes("clients.view-as");
+    if (mayViewAsClient && clientImpersonationContactId) {
       const contact = await prisma.clientContact.findUnique({
         where: { id: clientImpersonationContactId },
         select: {
@@ -620,11 +860,17 @@ export const users: ServicesUsers = {
           [contact.firstName, contact.lastName].filter(Boolean).join(" ") || null;
         return {
           ...me,
-          // Swap the identity + role shape to what a signed-in client
-          // would receive. Every downstream tab-visibility guard reads
-          // these fields and now behaves as if the caller were a client.
+          // Swap the identity + capability shape to what a signed-in client
+          // would receive. Every downstream tab-visibility guard reads these
+          // fields and now behaves as if the caller were a client.
+          //
+          // `capabilities: []` is what `roles: []` used to be. A client holds
+          // no internal capability at all, so every button in the staff UI
+          // gates itself off — which is the point of the overlay.
           isApproved: true,
-          roles: [] as Role[],
+          capabilities: [] as string[],
+          perspectives: [],
+          activePerspectiveRoleId: null,
           workerType: null,
           isOwner: false,
           email: contact.email ?? null,
@@ -639,7 +885,7 @@ export const users: ServicesUsers = {
             canPullInventory: false,
             canChargeBusinessExpenses: false,
           },
-          // real* stays as-is (the Super's actual roles) so the exit
+          // real* stays as-is (the caller's actual roles) so the exit
           // affordance in ImpersonationBanner keeps rendering.
           isClientImpersonating: true,
         };
@@ -649,8 +895,8 @@ export const users: ServicesUsers = {
     return me;
   },
 
-  async setWorkerType(currentUserId: string, userId: string, workerType: string | null) {
-    if (workerType !== null && workerType !== "EMPLOYEE" && workerType !== "CONTRACTOR" && workerType !== "TRAINEE") {
+  async setWorkerType(currentUserId: string, userId: string, workerType: WorkerType | null) {
+    if (workerType !== null && !isWorkerType(workerType)) {
       throw new ServiceError("BAD_REQUEST", "Invalid worker type", 400);
     }
     return prisma.$transaction(async (tx) => {
@@ -661,13 +907,43 @@ export const users: ServicesUsers = {
       await writeAudit(tx, AUDIT.USER.WORKER_TYPE_SET, currentUserId, {
         userId, workerType: workerType ?? "UNCLASSIFIED",
       });
+
+      // Leaving payroll vacates every PAID seat this person holds on work
+      // that has not been completed yet. Without this, their worker type
+      // says "not paid" while live visits still expect to pay them — and the
+      // next time one of those is priced, computeBreakdown refuses and the
+      // whole completion fails.
+      //
+      // COMPLETED work is left untouched. Those promised payouts were locked
+      // at completion under the class the person held at the time, and
+      // rewriting them would restate what someone was owed for work already
+      // done.
+      if (!canHoldPaidSeat(workerType)) {
+        const openSeats = await tx.jobOccurrenceAssignee.findMany({
+          where: {
+            userId,
+            // A paid seat is `role: null` OR anything that is not
+            // "observer". `NOT: { role: "observer" }` alone would miss the
+            // NULL rows — and NULL is the ordinary worker state, so it would
+            // have found nobody at all. Caught by the observer-filter gate,
+            // which exists for exactly this three-valued-logic trap.
+            OR: [{ role: null }, { role: { not: "observer" } }],
+            occurrence: { completedAt: null },
+          },
+          select: { occurrenceId: true },
+        });
+        for (const occurrenceId of new Set(openSeats.map((s) => s.occurrenceId))) {
+          await enforceAssigneeInvariants(tx, occurrenceId, currentUserId);
+        }
+      }
+
       return updated;
     });
   },
 
   // Set/unset the LLC-owner flag on a user. Singleton-enforced both in app
   // logic and via a partial unique index on User(isOwner) WHERE isOwner=true.
-  // Route layer must restrict this to SUPER role — the service trusts its
+  // The route layer must gate this on `settings.manage` — the service trusts its
   // caller, like setWorkerType.
   async setIsOwner(currentUserId: string, userId: string, isOwner: boolean) {
     return prisma.$transaction(async (tx) => {
@@ -702,36 +978,4 @@ export const users: ServicesUsers = {
   // for the replacement flow — worker sign, admin upload on behalf, admin
   // review of uploaded artifacts.
 
-  async setPrivilegeOverrides(
-    currentUserId: string,
-    userId: string,
-    overrides: { canPullInventory?: boolean | null; canChargeBusinessExpenses?: boolean | null },
-  ) {
-    // null = clear override (use workerType default); true/false = explicit override.
-    // undefined = leave alone.
-    const data: any = {};
-    if ("canPullInventory" in overrides) data.canPullInventory = overrides.canPullInventory;
-    if ("canChargeBusinessExpenses" in overrides) {
-      data.canChargeBusinessExpenses = overrides.canChargeBusinessExpenses;
-    }
-    if (Object.keys(data).length === 0) {
-      return prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    }
-    return prisma.$transaction(async (tx) => {
-      const before = await tx.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: { canPullInventory: true, canChargeBusinessExpenses: true },
-      });
-      const updated = await tx.user.update({ where: { id: userId }, data });
-      await writeAudit(tx, AUDIT.USER.PRIVILEGES_UPDATED, currentUserId, {
-        userId,
-        before,
-        after: {
-          canPullInventory: updated.canPullInventory,
-          canChargeBusinessExpenses: updated.canChargeBusinessExpenses,
-        },
-      });
-      return updated;
-    });
-  },
 };

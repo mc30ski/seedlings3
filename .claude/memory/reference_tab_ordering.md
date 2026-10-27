@@ -1,97 +1,72 @@
 ---
 name: reference-tab-ordering
-description: "Canonical top-tab category order and per-role sub-tab order across Worker / Admin / Super. Reference before adding, removing, or reordering tabs."
+description: "Canonical category and tab order for the one staff tab list. Read before adding, removing or reordering a tab."
 metadata: 
   node_type: memory
   type: reference
   originSessionId: d1686705-f7d7-47c4-8f20-2cd1389e185a
-  modified: 2026-08-21T19:07:15.491Z
+  modified: 2026-10-18T00:00:00.000Z
 ---
 
 # Canonical tab ordering
 
-## Top-level categories (Super's category strip)
+**Rewritten 2026-10-18.** This file described three sub-tab lists — Worker,
+Admin and Super — each with its own category strip and its own `catMap`.
+All of that is deleted. There is ONE staff tab list and one category map.
+If you are reading an older copy, discard it.
 
-**Work → Equipment → Directory → Money → Records → Tools → System**
+## Two shells
 
-Every category the user configured. Records was placed between Money
-and Tools per the 2026-08-21 spec. Worker/Admin have flat tab lists
-(no category strip today) but the SAME logical grouping is preserved
-via the section-comment order in the tab arrays, and the `catMap`
-lookups match this ordering.
+`topTab` persists as `"client" | "staff"` (`seedlings_topTab`). The inner
+tab is `seedlings_staffTab`, the category strip is `seedlings_staffCategory`.
+There are no per-shell keys; anything else persisted is migrated to `staff`
+on read.
 
-## Worker sub-tabs (flat list, in order)
+## The one staff list — 37 tabs, in order
 
-Work: Home, Jobs, Routes, Actions
-Equipment: Inventory, Collections, Vehicles
-Directory: Clients, Properties, Users, Groups
-Money: Payments, Payroll, Pricing, Supplies
-System: Profile
+Defined as `staffTabs` in `apps/web/pages/index.tsx`. Category order is the
+order these first appear:
 
-(No Records or Tools categories for Worker.)
+| Category | Tabs, in order |
+|---|---|
+| Work | home, jobs, routes, services, tasks |
+| Equipment | equipment, collections, vehicles |
+| Directory | clients, properties, users, groups |
+| Money | payments, payroll, ledger, pricing, supplies, promotions, forecast |
+| Records | reconcile, workdays, compliance, activity, history, timeline, documents, guides, audit |
+| Tools | tools-mowing, tools-mulch |
+| System | profile, notify, roles, areas, vanity, displays, settings |
 
-## Admin sub-tabs (flat list, in order)
+## Which of them a person sees
 
-Work: Home, Jobs, Routes, Services, Actions
-Equipment: Inventory, Collections, Vehicles
-Directory: Clients, Properties, Users, Groups
-Money: Payments, Payroll, Pricing, Supplies
-Records: Engagement, History, Timeline, Documents
-System: Profile, Notify, Settings
+Not a list per rank — a capability question, one row per tab in
+`TAB_REQUIREMENTS` (`apps/web/src/lib/tabRequirements.ts`). A tab renders
+when the signed-in person holds one of its entitlements, read from the
+PERSPECTIVE-NARROWED set `/api/me` returns. Two tabs (`guides`, `profile`)
+carry the `ALWAYS` sentinel and need none.
 
-(No Tools category for Admin.)
+So the answer to "who sees Ledger" is "whoever holds `books.view`", and it
+changes when an operator edits a role — not when someone edits this file.
 
-## Super sub-tabs (per category)
+## Cross-tab jumps
 
-- **Work**: Home, Jobs, Routes, Services, Actions
-- **Equipment**: Inventory, Collections, Vehicles
-- **Directory**: Clients, Properties, Users, Groups
-- **Money**: Payments, Payroll, Ledger, Pricing, Supplies, Promotions
-  (Ledger + Promotions are Super-only; Payroll is shared but heavily
-  scoped per role.) Ledger sits directly under Payroll (2026-08-27,
-  operator request): the first three are the money-MOVEMENT surfaces —
-  what came in, what went out to people, what went out everywhere else —
-  while Pricing and Supplies are configuration rather than record-keeping
-  and follow after.
-- **Records**: Reconcile, Workdays, Compliance, Engagement, History,
-  Timeline, Documents, Audit
-- **Tools**: Mowing, Mulch (calculators; Super-only)
-- **System**: Profile, Notify, Vanity, Settings
-  (Vanity is Super-only.)
+`TAB_CATEGORY` at the top of `index.tsx` maps every tab id to its category,
+and the single `navigate:staffTab` handler uses it to move the category
+strip so the destination is revealed. Values must match the `category:` on
+the tab entry.
 
-## Category dispatch maps
+Two things to know, both of which shipped broken:
 
-`apps/web/pages/index.tsx` has three catMap tables that MUST stay in
-sync with the actual tab tree ordering:
+- There were THREE handlers on that one event, one per old shell. Every
+  jump ran all three — `pushNavHistory` up to three times for one
+  navigation, which is why Back sometimes needed several presses.
+- Their maps disagreed. the copy was missing ten tabs, so a jump to
+  Ledger, Promotions, Forecast, Reconcile, Workdays, Compliance, Audit,
+  Tools, Vanity or Displays resolved no category and left the strip where
+  it was, showing the wrong inner tabs.
 
-1. **Worker `catMap`** (~L1290) — inline object mapping tab value →
-   category label. Consumed by BreadcrumbNav's category derivation.
-2. **Admin `catMap`** (~L1339) — same shape.
-3. **Super `superCatMap`** (~L3010) — same shape but as a lookup
-   inside the `navigate:superTab` event handler. Every super inner
-   tab needs an entry; values must match the `category:` field on the
-   tab entry. Bugs in this map cause cross-tab jumps to land with
-   the wrong category highlighted.
+Adding a tab means adding it to `staffTabs`, to `TAB_REQUIREMENTS`, and to
+`TAB_CATEGORY`. Miss the third and it is reachable by deep link but not by
+clicking.
 
-The 2026-08-21 audit caught six wrong entries in `superCatMap`
-(`reconcile/workdays/compliance/activity → "Records"`,
-`promotions → "Money"`, `tools-mowing/tools-mulch → "Tools"`). All
-fixed. `goToCompliance` and `goToWorkerCompliance` also had wrong
-category strings and were corrected.
-
-## Chip styling on tabs
-
-The Actions/tasks tab was previously rendered as a rounded chip on
-Worker + Admin (via `chip: t.value === "tasks"`) but plain on Super.
-The mismatch read as a bug. All roles now render Actions without the
-chip (`chip: false` on the tab-transform map).
-
-## Types union file
-
-`apps/web/src/lib/types.ts` — `WorkerTabs`, `AdminTabs`, `SuperTabs`
-unions must include every value that appears in the respective tab
-array. The 2026-08-21 refactor added `"users"` + `"groups"` +
-`"vehicles"` to WorkerTabs, `"vehicles"` to AdminTabs, and pruned
-dead `"reminders"` / `"usage"` / `"statistics"` values. If a tab
-value is missing from the union, TypeScript errors on
-`setWorkerInnerTab("xxx")` etc.
+Related: [[reference-tab-blend-pattern]], [[reference-capabilities-model]].

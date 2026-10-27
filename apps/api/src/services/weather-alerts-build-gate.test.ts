@@ -19,7 +19,7 @@ import { kindFor } from "./weatherAlerts";
 
 const REPO_ROOT = resolve(__dirname, "../../../..");
 const SERVICE = readFileSync(join(REPO_ROOT, "apps/api/src/services/weatherAlerts.ts"), "utf8");
-const WORKER = readFileSync(join(REPO_ROOT, "apps/api/src/routes/worker.ts"), "utf8");
+const WORKER = readFileSync(join(REPO_ROOT, "apps/api/src/routes/weather.ts"), "utf8");
 
 describe("weather alerts build gate — alerts can never break the weather bar", () => {
   it("the NWS call is NOT inside the Promise.all that throws on a bad response", () => {

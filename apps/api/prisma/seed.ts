@@ -1,4 +1,11 @@
 import { PrismaClient } from "@prisma/client";
+import { SYSTEM_CALLER_CAN } from "../src/lib/callerCan";
+import { loadRates, resolveWorkers } from "../src/services/payments";
+import { computeBreakdown, invoiceTotal, isW2, type WorkerType } from "@repo/money";
+// The ONLY way a string may reach `RoleEntitlement.entitlement` — a typo
+// otherwise becomes a grant the role builder displays and `can()` denies,
+// with no error anywhere.
+import { assertEntitlement } from "@repo/permissions";
 import { PARCEL_SETTINGS } from "../src/services/parcels";
 import { ALERT_SETTINGS } from "../src/services/weatherAlerts";
 import { HOURLY_WEATHER_SETTINGS } from "../src/services/hourlyForecast";
@@ -7,10 +14,11 @@ import { DEFAULT_PAUSE_REASONS, PAUSE_REASONS_SETTING_KEY } from "../src/service
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
-import { etAddDays, etEndOfDay, etFormatDate, etInstantFromParts, etMidnight, etToday } from "../src/lib/dates";
+import { etAddDays, etEndOfDay, etFormatDate, etInstantFromParts, etMidnight, etToday, toEtDateKey } from "../src/lib/dates";
 import { legacyReceiptNumberFor } from "../src/lib/receiptNumber";
 import { getObjectBuffer, putObjectBuffer, headObject } from "../src/lib/r2";
 import { createHash } from "crypto";
+import { installStarterRoles } from "../scripts/install-starter-roles";
 
 // ── Safety guard ────────────────────────────────────────────────────────────
 const dbUrl = process.env.DATABASE_URL ?? "";
@@ -32,8 +40,8 @@ const prisma = new PrismaClient({ adapter });
 // RESOLVED BY EMAIL AT RUN TIME, with these as the fallback.
 //
 // They used to be plain constants, and the seed assumed the matching User
-// rows existed — `clearDatabase()` deliberately preserves User/UserRole
-// because those are Clerk-linked. That holds right up until the rows are
+// rows existed — `clearDatabase()` deliberately preserves User and its
+// role grants because those are Clerk-linked. That holds right up until the rows are
 // recreated: a Clerk sign-in against an empty User table (the Playwright
 // auth setup does exactly this) makes them again with FRESH cuids, and from
 // then on every seed dies on the first foreign key —
@@ -43,34 +51,53 @@ const prisma = new PrismaClient({ adapter });
 // — with nothing to say which id was wrong or why. The email is the stable
 // identity here; the cuid never was. Fallbacks are kept so a database that
 // still has the original rows behaves exactly as before.
-let ADMIN_WORKER_ID   = "cmnry8iih000k5acx7hf27aay";
+let SCHEDULER_ID   = "cmnry8iih000k5acx7hf27aay";
 let CONTRACTOR_ID     = "cmnrylyaz000s5abyeyg77m4x";
 let EMPLOYEE_ID       = "cmnrz00fd002d5abyyr88byen";
 let TRAINEE_ID        = "cmnrzapcl003g5abybrzttuxs";
+let UNPAID_ID         = "";
+let NEWHIRE_ID        = "";
+let COORDINATOR_ID    = "";
+let BOOKKEEPER_ID     = "";
+let PAYROLL_ID        = "";
 let CLIENT_USER_ID    = "cmnrzcwxc00495abyodg1qnuy";
 let MICHAEL_ID        = "cmexiwrfs003kvdysrjteo2hy";
 
 /** Stable identity for each seed user. Email, because it survives the row
  *  being recreated by a Clerk sign-in; the id does not. */
 const SEED_USER_EMAILS = {
-  ADMIN_WORKER: "admin+admin@seedlingslawncare.com",
+  SCHEDULER: "admin+admin@seedlingslawncare.com",
   CONTRACTOR:   "admin+contractor@seedlingslawncare.com",
   EMPLOYEE:     "admin+employee@seedlingslawncare.com",
   TRAINEE:      "admin+trainee@seedlingslawncare.com",
+  UNPAID:       "admin+unpaid@seedlingslawncare.com",
+  // Approved staff that nobody has granted anything to yet.
+  NEWHIRE:      "admin+newhire@seedlingslawncare.com",
+  // The three NON-FIELD personas. They exist to be clicked through as —
+  // the only way to check a surface that no starter role produces.
+  COORDINATOR:  "admin+coordinator@seedlingslawncare.com",
+  BOOKKEEPER:   "admin+bookkeeper@seedlingslawncare.com",
+  PAYROLL:      "admin+payroll@seedlingslawncare.com",
   MICHAEL:      "mc30ski@gmail.com",
 } as const;
 
 const CLIENT_CLERK_ID   = "user_3C8aJI7a58wmVbrK4Ao3pZRp3RF";
+// The no-grants persona. Created here rather than waited for, same as the
+// client accounts below — a fixture that only exists once somebody has
+// signed in is not a fixture.
+const NEWHIRE_CLERK_ID  = "user_3LEXIdBPWHEhac9hu5VlnTRhTkY";
 const PENDING_CLIENT_CLERK_ID = "user_3CJXY4nnIzxamLgzfpLwQLS0dyR";
 // A phantom Clerk-authenticated client — signed up via /pay or /sign-up with
 // an email that DOESN'T match any ClientContact on file. Used to exercise
-// the admin re-link worklist on the Clients tab.
+// the re-link worklist on the Clients tab.
 const PHANTOM_CLIENT_CLERK_ID = "user_seed_phantom_clientacct_001";
 
 // Workers available for assignment (not Michael — overseer). Rebuilt by
 // resolveSeedUserIds() once the real ids are known — a module-scope array
 // would otherwise capture the fallbacks before they are resolved.
-let WORKERS = [ADMIN_WORKER_ID, CONTRACTOR_ID, EMPLOYEE_ID, TRAINEE_ID];
+// The unpaid helper is deliberately absent: WORKERS seeds paid seats on
+// visits, and G33 refuses a non-paid person in one.
+let WORKERS = [SCHEDULER_ID, CONTRACTOR_ID, EMPLOYEE_ID, TRAINEE_ID];
 
 /** Point the id constants at the User rows that actually exist.
  *
@@ -87,11 +114,19 @@ async function resolveSeedUserIds() {
     if (!hit) { missing.push(`${label} <${email}>`); return fallback; }
     return hit;
   };
-  ADMIN_WORKER_ID = pick("ADMIN_WORKER", SEED_USER_EMAILS.ADMIN_WORKER, ADMIN_WORKER_ID);
+  SCHEDULER_ID = pick("SCHEDULER", SEED_USER_EMAILS.SCHEDULER, SCHEDULER_ID);
   CONTRACTOR_ID   = pick("CONTRACTOR",   SEED_USER_EMAILS.CONTRACTOR,   CONTRACTOR_ID);
   EMPLOYEE_ID     = pick("EMPLOYEE",     SEED_USER_EMAILS.EMPLOYEE,     EMPLOYEE_ID);
   TRAINEE_ID      = pick("TRAINEE",      SEED_USER_EMAILS.TRAINEE,      TRAINEE_ID);
+  UNPAID_ID       = pick("UNPAID",       SEED_USER_EMAILS.UNPAID,       UNPAID_ID);
+  // NOT `pick`ed. `pick` records a miss and `resolveSeedUserIds` then
+  // throws "sign in as each, then reseed" — right for the personas a
+  // human signs in as, wrong for this one, which the seed CREATES by
+  // Clerk id a few lines below exactly as it does the client accounts.
   MICHAEL_ID      = pick("MICHAEL",      SEED_USER_EMAILS.MICHAEL,      MICHAEL_ID);
+  COORDINATOR_ID  = pick("COORDINATOR",  SEED_USER_EMAILS.COORDINATOR,  COORDINATOR_ID);
+  BOOKKEEPER_ID   = pick("BOOKKEEPER",   SEED_USER_EMAILS.BOOKKEEPER,   BOOKKEEPER_ID);
+  PAYROLL_ID      = pick("PAYROLL",      SEED_USER_EMAILS.PAYROLL,      PAYROLL_ID);
   // The client-portal user is Clerk-identified, not email-identified — and
   // unlike the workers the seed CREATES it, the same way it already creates
   // the pending-client and phantom-client accounts below. Without this the
@@ -112,7 +147,26 @@ async function resolveSeedUserIds() {
   });
   CLIENT_USER_ID = clientUser.id;
 
-  WORKERS = [ADMIN_WORKER_ID, CONTRACTOR_ID, EMPLOYEE_ID, TRAINEE_ID];
+  // Same reason as the client row above: this account is brand new in Clerk
+  // and has never signed in, so `pick` finds no row and every later update
+  // against it fails with P2025. Upserting by Clerk id makes the seed the
+  // thing that establishes the fixture.
+  const newHireUser = await prisma.user.upsert({
+    where: { clerkUserId: NEWHIRE_CLERK_ID },
+    create: {
+      clerkUserId: NEWHIRE_CLERK_ID,
+      email: SEED_USER_EMAILS.NEWHIRE,
+      firstName: "New",
+      lastName: "Hire",
+      displayName: "New Hire",
+      isApproved: true,
+    },
+    update: {},
+    select: { id: true },
+  });
+  NEWHIRE_ID = newHireUser.id;
+
+  WORKERS = [SCHEDULER_ID, CONTRACTOR_ID, EMPLOYEE_ID, TRAINEE_ID];
 
   // SHAPE THEM, DO NOT ASSUME THEY ARE SHAPED.
   //
@@ -124,34 +178,302 @@ async function resolveSeedUserIds() {
   // like a bug in the supply code rather than a user missing a role.
   //
   // Idempotent: this is the shape every seeded fixture below assumes.
-  const shape: Array<{ id: string; type: "EMPLOYEE" | "CONTRACTOR" | "TRAINEE"; roles: string[] }> = [
-    { id: ADMIN_WORKER_ID, type: "EMPLOYEE",   roles: ["WORKER", "ADMIN"] },
-    { id: CONTRACTOR_ID,   type: "CONTRACTOR", roles: ["WORKER"] },
-    { id: EMPLOYEE_ID,     type: "EMPLOYEE",   roles: ["WORKER"] },
-    { id: TRAINEE_ID,      type: "TRAINEE",    roles: ["WORKER"] },
-    // Michael is the owner: SUPER, and a worker type so payroll math has one.
-    { id: MICHAEL_ID,      type: "EMPLOYEE",   roles: ["WORKER", "ADMIN", "SUPER"] },
+  //
+  // ONE ROLE PER PERSONA, and the assignment REPLACES rather than merges.
+  // Each line below names either a starter role by immutable `key` or one of
+  // the example custom roles by name; the loop revokes every other role this
+  // seed knows about. Merging instead would let a database that once granted
+  // something broader keep it, and the persona would quietly behave like
+  // somebody else.
+  //
+  // There is no floor role. Holding NOTHING is a legitimate state — the
+  // unpaid helper and anyone mid-onboarding are in it — and the app renders
+  // the client shell for them rather than an empty staff one.
+  //
+  // The client-portal user above is deliberately absent: clients hold no
+  // roles at all, and granting one would make them internal.
+  //
+  // `fieldCleared` records what used to be a pay class. Someone in training
+  // is an EMPLOYEE holding the Trainee role rather than the Worker one, so
+  // the persona is the same person with one role withheld — which is the
+  // whole point of separating pay class from permission.
+  // ── Starter roles ─────────────────────────────────────────────────────
+  //
+  // Installed by the SAME function the production script runs, so dev and a
+  // fresh install cannot drift. The seed assigns `seedlings.*` keys above,
+  // so it cannot assume somebody remembered to run the script first.
+  //
+  // This replaced a block that created "Field Clearance" here by hand. The
+  // ladder covers it: Worker inherits Trainee and adds the three field
+  // capabilities, so withholding clearance is granting Trainee instead of
+  // Worker. The standalone role survives in the starter set for the case the
+  // ladder cannot express — somebody who should do field work without the
+  // rest of a Worker's reads.
+  await installStarterRoles(prisma, (m) => console.log(m));
+
+  // `roleKey` is a STARTER ROLE, not an enum value. The old fixture listed
+  // every tier cumulatively; the ladder replaces that, because holding Admin
+  // already means holding Worker and Trainee through inheritance. One grant
+  // each, and the inheritance does the rest.
+  //
+  // `fieldCleared` is what a worker type used to encode. A trainee
+  // is now an EMPLOYEE holding the Trainee role and NOT the Worker one.
+  // ── Three example CUSTOM roles, for the three non-field personas ──────
+  //
+  // These are NOT starter roles and deliberately not in
+  // `install-starter-roles.ts`: the starter set is what the product ships
+  // with, and "coordinator" is one company's idea of a job. They are seeded
+  // as ordinary custom roles — non-system, deletable, editable in the role
+  // builder — which is exactly what an operator would build, and what makes
+  // the builder testable against something other than the ladder.
+  //
+  // Each one exists because the LADDER CANNOT EXPRESS IT:
+  //   · Coordinator runs the schedule but does no field work. Admin cannot
+  //     do this — it inherits Worker, so it carries field clearance.
+  //   · Bookkeeper and Payroll are the two halves of a split the ladder
+  //     keeps together in Super. Granting either without the other is the
+  //     whole point, and nothing inherits here for that reason.
+  const EXAMPLE_ROLES: Array<{
+    name: string;
+    description: string;
+    inheritsKey: string | null;
+    entitlements: string[];
+  }> = [
+    {
+      name: "Coordinator",
+      description:
+        "Office staff who run the schedule and the client list, and never go out. " +
+        "Deliberately does not inherit Worker: field clearance is what they lack.",
+      inheritsKey: "seedlings.trainee",
+      entitlements: [
+        "schedule.manage", "clients.manage", "crews.manage",
+        // `routes.plan` AND `crews.view` both come from Trainee, which this
+        // inherits — listing them again states a grant this role does not
+        // own, so a later edit to the base rung would look like it had no
+        // effect here.
+        "time.approve", "people.view",
+      ],
+    },
+    {
+      name: "Bookkeeper",
+      // THE OLD WORDING WAS FALSE, and this text renders in the Roles tab,
+      // so an operator read it as a promise about what the role can see.
+      // It said "nothing to do with what anyone is paid" — but `books.view`
+      // opens Reconcile, and `buildReconcileWorkers` returns each worker's
+      // name, hourly wage, net paid and a below-minimum-wage flag. You
+      // cannot reconcile a period without labour cost; wages are the
+      // largest deduction on the P&L. The real line is payroll
+      // ADMINISTRATION and the imported Gusto records, which this role has
+      // no part of.
+      description:
+        "The company's books: expenses, the P&L, tax exports and reconciling a " +
+        "period. Sees labour cost, because the books cannot balance without it. " +
+        "Does not administer payroll and cannot see imported payroll records — " +
+        "that is the Payroll role. Inherits nothing; the point of this role is " +
+        "the half it does NOT have.",
+      inheritsKey: null,
+      entitlements: [
+        "books.view", "books.manage", "books.export-tax",
+        "money.view", "reports.view", "supplies.view", "pricing.view",
+      ],
+    },
+    {
+      name: "Payroll",
+      description:
+        "Runs payroll and reads the imported records — what Gusto actually paid " +
+        "each person — with no view of the company books. The other half of the " +
+        "split Bookkeeper holds.",
+      inheritsKey: null,
+      entitlements: ["payroll.view", "payroll.manage", "people.view", "time.view"],
+    },
+  ];
+  for (const r of EXAMPLE_ROLES) {
+    const parent = r.inheritsKey
+      ? await prisma.customRole.findUnique({ where: { key: r.inheritsKey }, select: { id: true } })
+      : null;
+    const existing = await prisma.customRole.findUnique({ where: { name: r.name }, select: { id: true } });
+    const row = existing
+      ? await prisma.customRole.update({
+          where: { id: existing.id },
+          data: { description: r.description, inheritsFromId: parent?.id ?? null },
+        })
+      : await prisma.customRole.create({
+          data: {
+            name: r.name,
+            description: r.description,
+            inheritsFromId: parent?.id ?? null,
+            // NOT a system role: the operator may rename or delete these.
+            isSystem: false,
+          },
+        });
+    // Absolute, never a delta — the same rule the role builder's save
+    // follows, so a reseed cannot leave an entitlement the fixture dropped.
+    await prisma.roleEntitlement.deleteMany({ where: { customRoleId: row.id } });
+    await prisma.roleEntitlement.createMany({
+      data: r.entitlements.map((e) => ({ customRoleId: row.id, entitlement: assertEntitlement(e) })),
+    });
+  }
+  console.log(`  Seeded ${EXAMPLE_ROLES.length} example custom roles (Coordinator, Bookkeeper, Payroll).`);
+
+  const shape: Array<{
+    id: string;
+    type: "EMPLOYEE" | "CONTRACTOR" | "UNPAID";
+    /** A STARTER role key, or `roleName` for one of the examples above. */
+    roleKey: string | null;
+    roleName?: string;
+    fieldCleared: boolean;
+  }> = [
+    { id: SCHEDULER_ID, type: "EMPLOYEE",   roleKey: "seedlings.admin",   fieldCleared: true },
+    { id: CONTRACTOR_ID,   type: "CONTRACTOR", roleKey: "seedlings.worker",  fieldCleared: true },
+    { id: EMPLOYEE_ID,     type: "EMPLOYEE",   roleKey: "seedlings.worker",  fieldCleared: true },
+    // Paid exactly like an employee, not cleared to work — what a worker
+    // type used to encode on its own.
+    { id: TRAINEE_ID,      type: "EMPLOYEE",   roleKey: "seedlings.trainee", fieldCleared: false },
+    // THE UNPAID HELPER. Trainee, so the "real access to look" half of that
+    // sentence is true — with no role at all it could look at nothing, and
+    // the one account named for the UNPAID pay class could never be put on
+    // a visit to exercise it. Trainee and not Worker on purpose: field
+    // clearance would let it claim and complete, and an unpaid person may
+    // only ever be an observer (G33), so clearance would contradict the
+    // fixture. Granting here is legal — the schema triggers refuse a grant
+    // to someone with NO worker type, and UNPAID is one.
+    //
+    // The grant-less state it used to stand in for by accident is NEWHIRE
+    // below, which is the state on purpose.
+    { id: UNPAID_ID,       type: "UNPAID",     roleKey: "seedlings.trainee", fieldCleared: false },
+    // APPROVED, AND GRANTED NOTHING. The gap between being admitted and
+    // being given something to do. EMPLOYEE rather than no worker type:
+    // unset short-circuits `can()` at the payroll gate before it reads a
+    // role, so the account would pass for a reason that has nothing to do
+    // with having no grants.
+    { id: NEWHIRE_ID,      type: "EMPLOYEE",   roleKey: null,                fieldCleared: false },
+    // Michael is the owner.
+    { id: MICHAEL_ID,      type: "EMPLOYEE",   roleKey: "seedlings.super",   fieldCleared: true },
+    // ── The three non-field personas ──────────────────────────────────
+    // They were APPROVED-PENDING with no worker type and no role, so
+    // signing in as one landed on "awaiting approval" — not even the
+    // no-access page, let alone the surface each is supposed to exercise.
+    { id: COORDINATOR_ID,  type: "EMPLOYEE",   roleKey: null, roleName: "Coordinator", fieldCleared: false },
+    // 1099 on purpose: a contractor who never does field work is the case
+    // that proves pay class and field clearance are independent.
+    { id: BOOKKEEPER_ID,   type: "CONTRACTOR", roleKey: null, roleName: "Bookkeeper",  fieldCleared: false },
+    { id: PAYROLL_ID,      type: "EMPLOYEE",   roleKey: null, roleName: "Payroll",     fieldCleared: false },
   ];
   for (const u of shape) {
     await prisma.user.update({
       where: { id: u.id },
       data: { workerType: u.type as any, isApproved: true },
     });
-    for (const role of u.roles) {
-      await prisma.userRole.upsert({
-        where: { userId_role: { userId: u.id, role: role as any } },
-        create: { userId: u.id, role: role as any },
-        update: {},
+    // Replace rather than merge: a database that once granted something
+    // broader would otherwise keep it and the persona would quietly behave
+    // like somebody else.
+    const starterIds = (
+      await prisma.customRole.findMany({
+        where: { key: { startsWith: "seedlings." } },
+        select: { id: true, key: true },
+      })
+    );
+    // A persona holds EITHER a starter role (by key) or one of the example
+    // custom roles (by name). The examples have no key by design — they are
+    // the operator's to rename or delete.
+    const byName = u.roleName
+      ? await prisma.customRole.findUnique({ where: { name: u.roleName }, select: { id: true, key: true } })
+      : null;
+    const wanted = u.roleKey ? starterIds.find((r) => r.key === u.roleKey) : byName;
+    // Revoke every OTHER role this seed knows about, starter or example, so
+    // a database that once granted something broader does not keep it and
+    // leave the persona quietly behaving like somebody else.
+    const exampleIds = await prisma.customRole.findMany({
+      where: { name: { in: ["Coordinator", "Bookkeeper", "Payroll"] } },
+      select: { id: true },
+    });
+    const revocable = [...starterIds.map((r) => r.id), ...exampleIds.map((r) => r.id)];
+    await prisma.userCustomRole.deleteMany({
+      where: {
+        userId: u.id,
+        customRoleId: { in: revocable.filter((id) => id !== wanted?.id) },
+      },
+    });
+    if (wanted) {
+      await prisma.userCustomRole.upsert({
+        where: { userId_customRoleId: { userId: u.id, customRoleId: wanted.id } },
+        create: { userId: u.id, customRoleId: wanted.id },
+        update: { suspendedAt: null },
       });
     }
-    // Roles the fixture does NOT grant must be absent, or a database that
-    // once had a broader grant keeps it and the role gates read as passing
-    // for the wrong user.
-    await prisma.userRole.deleteMany({
-      where: { userId: u.id, role: { notIn: u.roles as any } },
-    });
   }
-  console.log("  Ensured roles + worker types on the 5 seed users.");
+  console.log(`  Ensured starter roles + worker types on ${shape.length} seed users.`);
+
+  // ── The LLC owner flag ────────────────────────────────────────────────
+  //
+  // `isOwner` is its OWN boolean on User, independent of roles and of
+  // worker type — it says who the business belongs to, not what they may
+  // do. Super does not imply it and holding it grants nothing.
+  //
+  // Seeded because it was not, and a reseed therefore cleared it: set by
+  // hand on the Users tab, it survived until the next `db:seed` and then
+  // silently went away, leaving no LLC Owner badge anywhere and the wage
+  // row below still annotated "LLC owner — takes draws, not wages".
+  //
+  // EXACTLY ONE, enforced by clearing the others first. The Users tab hides
+  // the "Set as Owner" button on every other row once anybody holds it
+  // (`hasOwner`), so two owners is a state the UI cannot create and cannot
+  // undo — you would see the button on neither row.
+  await prisma.user.updateMany({
+    where: { isOwner: true, NOT: { id: MICHAEL_ID } },
+    data: { isOwner: false },
+  });
+  await prisma.user.update({ where: { id: MICHAEL_ID }, data: { isOwner: true } });
+  console.log("  LLC owner flag set on Michael (sole owner).");
+
+  // STAFF_DEFAULT_ROLE_ID, AREA_TIER_NAMES and MANAGER_TITLES are created
+  // by `installStarterRoles` (called above), not here — production never
+  // runs this seed, and a setting that only exists in the seed has to be
+  // hand-written into Neon on every promotion.
+
+  // ── Remove roles the previous model created ───────────────────────────
+  //
+  // clearDatabase() preserves CustomRole, so roles from a superseded model
+  // SURVIVE A RESEED as live grants. "Employee Defaults" kept handing three
+  // people entitlements keyed on how they were paid, and "Trainee — may pull
+  // inventory" re-granted the very clearance the trainee persona is supposed
+  // to lack. A stale role is not inert: it is policy nobody wrote down.
+  //
+  // Delete by name, and let the UserCustomRole cascade take the grants with
+  // it. Upserting the new fixture is not enough — nothing writes these names
+  // any more, so nothing ever overwrites them.
+  const SUPERSEDED_ROLE_NAMES = [
+    "Employee Defaults",
+    "Contractor Defaults",
+    "Trainee Defaults",
+    "Trainee — may pull inventory",
+  ];
+  const superseded = await prisma.customRole.deleteMany({
+    where: { name: { in: SUPERSEDED_ROLE_NAMES } },
+  });
+  if (superseded.count > 0) {
+    console.log(`  Removed ${superseded.count} role(s) from the previous model.`);
+  }
+
+  // ── Roles left behind by the e2e mutation round ───────────────────────
+  //
+  // `clearDatabase()` PRESERVES CustomRole — deliberately, so a reseed does
+  // not wipe an operator's roles — which means a test that creates one
+  // outlives the reseed that is supposed to clean up after it. The mutation
+  // specs name theirs `E2E_MUT_…`, and three had accumulated before anyone
+  // noticed, in a list the role builder shows to the operator.
+  //
+  // Swept here rather than in the test's teardown because a test that fails
+  // part-way never reaches its teardown, and that is exactly when it has
+  // left something behind.
+  const testRoles = await prisma.customRole.deleteMany({
+    where: { name: { startsWith: "E2E_MUT_" } },
+  });
+  if (testRoles.count > 0) {
+    console.log(`  Removed ${testRoles.count} role(s) left by the e2e mutation round.`);
+  }
+
+
 
   if (missing.length) {
     throw new Error(
@@ -280,7 +602,7 @@ async function clearDatabase() {
   console.log("  Clearing audit log...");
   await prisma.auditEvent.deleteMany();
 
-  console.log("  Done. (User, UserRole, Setting preserved)");
+  console.log("  Done. (User, UserCustomRole, Setting preserved)");
 }
 
 // Presentational grouping for the Settings tab. Maps each general setting
@@ -312,7 +634,6 @@ const SETTING_SECTIONS: Record<string, string> = {
   WORKDAY_APPROVAL_CUTOFF_HOUR_ET: "payments",
   MIN_WAGE_PER_HOUR: "payments",
   FIXED_ASSET_MIN_COST: "payments",
-  QB_INCLUDE_CONTRACT_LABOR: "payments",
   EQUIPMENT_BILLING_ENABLED: "payments",
   PAYROLL_TAX_ESTIMATES: "payments",
   // Client Payment Requests
@@ -342,6 +663,15 @@ const SETTING_SECTIONS: Record<string, string> = {
   EXPENSE_CATEGORIES: "catalogs",
   EQUIPMENT_RENTAL_INCOME_CONFIG: "catalogs",
   GUIDE_CATEGORIES: "catalogs",
+  // What a LEVEL of the area tree is called where you operate — "Region",
+  // "District", "Route". The schema does not care; `Area.tier` is a free
+  // string. This exists so two people typing the same level spell it the
+  // same way.
+  AREA_TIER_NAMES: "catalogs",
+  // Suggested names when creating a custom role. SUGGESTIONS, not a
+  // vocabulary: a role's name is free text, because the whole point of
+  // custom roles is that we cannot know yours in advance.
+  MANAGER_TITLES: "catalogs",
   // Why a repeating visit is held. A taxonomy like the rest — the operator
   // adds "Storm damage" in October and needs it that afternoon, not after a
   // migration. See services/pauseReasons.ts.
@@ -436,7 +766,7 @@ async function seedDatabase() {
 
   // ── Phantom client account (admin re-link test fixture) ─────────────────
   // An approved Clerk-side client signup with NO roles and whose email
-  // doesn't match any ClientContact's email. The admin Clients tab should
+  // doesn't match any ClientContact's email. A caller with `schedule.manage` Clients tab should
   // surface this in its "Unlinked client accounts" worklist on load.
   console.log("  Ensuring phantom client account...");
   await prisma.user.upsert({
@@ -461,7 +791,7 @@ async function seedDatabase() {
       type: "PERSON",
       displayName: "Phantom Test Family",
       notesInternal:
-        "Seed-only fixture for the admin re-link worklist. The phantom Clerk account 'phantom.client@example.com' should be matched to this client's primary contact.",
+        "Seed-only fixture for a caller with schedule authority re-link worklist. The phantom Clerk account 'phantom.client@example.com' should be matched to this client's primary contact.",
     },
   });
   await prisma.clientContact.create({
@@ -480,41 +810,79 @@ async function seedDatabase() {
     },
   });
 
-  // ── Privilege overrides on seed workers ──────────────────────────────────
-  // Demos the per-user override layer on top of workerType defaults:
-  //   EMPLOYEE: gets `canChargeBusinessExpenses = true` (trusted employee
-  //             who carries the company card — can record new expenses).
-  //   TRAINEE:  gets `canPullInventory = true` (a specific trainee allowed
-  //             to consume from inventory; ordinarily trainees can't).
-  //   CONTRACTOR / ADMIN_WORKER: cleared to null, so defaults apply
-  //             (contractor: inventory-only; admin: everything).
-  console.log("  Setting privilege overrides on seed workers...");
-  const privilegeUpdates: Array<{ id: string; canPullInventory: boolean | null; canChargeBusinessExpenses: boolean | null }> = [
-    { id: ADMIN_WORKER_ID, canPullInventory: null, canChargeBusinessExpenses: null },
-    { id: CONTRACTOR_ID,   canPullInventory: null, canChargeBusinessExpenses: null },
-    { id: EMPLOYEE_ID,     canPullInventory: null, canChargeBusinessExpenses: true },
-    { id: TRAINEE_ID,      canPullInventory: true, canChargeBusinessExpenses: null },
+  // The per-person privilege block is GONE with the columns.
+  //
+  // It set `canPullInventory` / `canChargeBusinessExpenses` directly, which
+  // made it a second source of truth alongside the role grants — and the two
+  // DID disagree here: a reseed rewrote the columns while leaving the grants
+  // alone, so the trainee persona read as cleared through one path and
+  // uncleared through the other.
+  //
+  // Both are capabilities now. Clearance comes from holding Worker (which
+  // inherits Trainee and adds the three field capabilities) rather than
+  // Trainee; charging the card comes from `expenses.charge`, which the baseline
+  // Admin role from install-starter-roles.ts holds, and which the "May charge
+  // business expenses" exception role grants to one trusted employee. Both are set by the persona fixture above.
+
+
+  // ── Named exception roles ───────────────────────────────────────────────
+  //
+  // These were once the SECOND of two representations: the privilege columns
+  // that `resolvePrivileges` read, and these grants that `can()` read, kept
+  // in step by hand. Migration 20261011234500 created the roles from the
+  // columns, and the columns, `resolvePrivileges` and the cutover flag have
+  // all since been deleted. There is one representation now, and this is it.
+  //
+  // They are ROLES, not per-person ticks, because G20 forbids per-person
+  // grants: an exception has to be named, visible and reusable.
+  const exceptionRoles: Array<{ name: string; entitlement: string; userIds: string[]; description: string }> = [
+    // "Trainee — may pull inventory" was REMOVED. It granted inventory.pull
+    // to the trainee persona, mirroring a `canPullInventory: true` column
+    // override that is also gone. Field clearance is now one role, withheld
+    // from that persona — so re-granting it here would hand the trainee a
+    // capability the role ladder deliberately withholds.
+    {
+      name: "May charge business expenses",
+      entitlement: "expenses.charge",
+      userIds: [EMPLOYEE_ID],
+      description: "Charge the company's own purchases to the business, without any other books access.",
+    },
   ];
-  for (const p of privilegeUpdates) {
-    await prisma.user.update({
-      where: { id: p.id },
-      data: {
-        canPullInventory: p.canPullInventory,
-        canChargeBusinessExpenses: p.canChargeBusinessExpenses,
-      },
-    }).catch((err) => {
-      console.warn(`  ⚠ skipped privilege seed for ${p.id}: ${err?.message ?? err}`);
+  for (const ex of exceptionRoles) {
+    const role = await prisma.customRole.upsert({
+      where: { name: ex.name },
+      create: { name: ex.name, description: ex.description, isSystem: false },
+      update: {},
+      select: { id: true },
+    });
+    await prisma.roleEntitlement.upsert({
+      where: { customRoleId_entitlement: { customRoleId: role.id, entitlement: ex.entitlement } },
+      create: { customRoleId: role.id, entitlement: ex.entitlement },
+      update: {},
+    });
+    for (const userId of ex.userIds) {
+      await prisma.userCustomRole.upsert({
+        where: { userId_customRoleId: { userId, customRoleId: role.id } },
+        create: { userId, customRoleId: role.id },
+        update: {},
+      });
+    }
+    // Anyone who no longer diverges must lose it, or a stale grant reads as
+    // policy — the same reason the role fixture replaces rather than merges.
+    await prisma.userCustomRole.deleteMany({
+      where: { customRoleId: role.id, userId: { notIn: ex.userIds } },
     });
   }
+  console.log(`  Seeded ${exceptionRoles.length} named exception role(s).`);
 
   // ── Hourly wage on seed workers ──────────────────────────────────────────
   // Drives the Reconcile → Payroll export's Regular Wages column. W-2
-  // workers (Employee + Trainee + the admin who also works field) get
+  // workers (Employee + Trainee + the scheduler, who also works field) get
   // realistic rates; the contractor + the LLC owner stay at 0 (paid
   // lump-sum / via draws, not Gusto wages).
   console.log("  Setting hourly wage on seed workers...");
   const wageUpdates: Array<{ id: string; hourlyWage: number; note: string }> = [
-    { id: ADMIN_WORKER_ID, hourlyWage: 25.00, note: "Admin who also works field" },
+    { id: SCHEDULER_ID, hourlyWage: 25.00, note: "Admin who also works field" },
     { id: EMPLOYEE_ID,     hourlyWage: 18.00, note: "Field employee" },
     { id: TRAINEE_ID,      hourlyWage: 15.00, note: "Trainee" },
     { id: CONTRACTOR_ID,   hourlyWage:  0.00, note: "Contractor — paid lump-sum" },
@@ -536,10 +904,10 @@ async function seedDatabase() {
     data: { type: "PERSON", displayName: "Harrington Estate", isVip: true, vipReason: "Long-time client, premium service tier", notesInternal: "Gate code: 4821" },
   });
   const martinezFamily = await prisma.client.create({
-    data: { type: "PERSON", displayName: "Martinez Family", adminTags: JSON.stringify(["LATE_PAYER"]) },
+    data: { type: "PERSON", displayName: "Martinez Family", internalTags: JSON.stringify(["LATE_PAYER"]) },
   });
   const willowbrookHoa = await prisma.client.create({
-    data: { type: "COMMUNITY", displayName: "Willowbrook HOA", notesInternal: "Board contact: Susan Park. Monthly board meeting first Tuesday at 7pm in the clubhouse. Budget approved through December. They compare our pricing annually against two other providers so keep quality high. Previous vendor was let go for inconsistent scheduling. Susan prefers text over email for urgent issues.", adminTags: JSON.stringify(["HIGH_MAINTENANCE", "ARGUMENTATIVE"]) },
+    data: { type: "COMMUNITY", displayName: "Willowbrook HOA", notesInternal: "Board contact: Susan Park. Monthly board meeting first Tuesday at 7pm in the clubhouse. Budget approved through December. They compare our pricing annually against two other providers so keep quality high. Previous vendor was let go for inconsistent scheduling. Susan prefers text over email for urgent issues.", internalTags: JSON.stringify(["HIGH_MAINTENANCE", "ARGUMENTATIVE"]) },
   });
   const chenResidence = await prisma.client.create({
     data: { type: "PERSON", displayName: "Chen Residence" },
@@ -548,7 +916,7 @@ async function seedDatabase() {
     data: { type: "PERSON", displayName: "Thompson Manor", isVip: true, vipReason: "Referral source - sends 3+ clients/year" },
   });
   const obrienFamily = await prisma.client.create({
-    data: { type: "PERSON", displayName: "O'Brien Family", notesInternal: "Dog in backyard, latch gate before entering", adminTags: JSON.stringify(["DIFFICULT_ACCESS"]) },
+    data: { type: "PERSON", displayName: "O'Brien Family", notesInternal: "Dog in backyard, latch gate before entering", internalTags: JSON.stringify(["DIFFICULT_ACCESS"]) },
   });
   const sunriseHoa = await prisma.client.create({
     data: { type: "COMMUNITY", displayName: "Sunrise Meadows HOA", notesInternal: "Monthly board meeting first Tuesday" },
@@ -846,7 +1214,7 @@ async function seedDatabase() {
       description: "Heavy debris, branch removal, and post-winter property restoration.",
       sortOrder: 50,
       // Wheelbarrow is intentionally included even though it's RETIRED
-      // — populates the Super Collections Insights "Kits with issues"
+      // — populates the Collections Insights "Kits with issues"
       // panel with a real actionable row for the reviewer.
       equipmentIds: [blower1.id, blower2.id, chainsawEquip.id, wheelbarrow.id],
     },
@@ -899,7 +1267,7 @@ async function seedDatabase() {
     data: {
       name: "Alpha Crew",
       description: "Primary mowing crew — standard residential + light commercial.",
-      claimerUserId: ADMIN_WORKER_ID,
+      claimerUserId: SCHEDULER_ID,
       members: {
         create: [
           { userId: EMPLOYEE_ID, role: "worker" },
@@ -960,7 +1328,7 @@ async function seedDatabase() {
   // We can't store the claimer's percent on a GroupMember row (claimer is
   // implicit), so to make percents sum to 100 we'd need a different schema.
   // For now, reset Quiet Hours to even-split by clearing the custom percent —
-  // keeps the seed clean. (Admins can edit on the Groups tab to re-introduce
+  // keeps the seed clean. (Holders of `schedule.manage` can edit on the Groups tab to re-introduce
   // percents through the proper UI flow.)
   await prisma.groupMember.updateMany({
     where: { groupId: quietHoursCrew.id, userId: CONTRACTOR_ID },
@@ -1017,9 +1385,9 @@ async function seedDatabase() {
 
   await prisma.checkout.create({ data: { equipmentId: mower1.id, userId: EMPLOYEE_ID, reservedAt: daysAgo(5), checkedOutAt: daysAgo(5) } });
   await prisma.checkout.create({ data: { equipmentId: blower1.id, userId: CONTRACTOR_ID, reservedAt: daysAgo(3), checkedOutAt: daysAgo(3) } });
-  await prisma.checkout.create({ data: { equipmentId: trimmer2.id, userId: ADMIN_WORKER_ID, reservedAt: daysAgo(2), checkedOutAt: daysAgo(2) } });
+  await prisma.checkout.create({ data: { equipmentId: trimmer2.id, userId: SCHEDULER_ID, reservedAt: daysAgo(2), checkedOutAt: daysAgo(2) } });
   await prisma.checkout.create({ data: { equipmentId: blower3.id, userId: TRAINEE_ID, reservedAt: daysAgo(1), checkedOutAt: daysAgo(1) } });
-  await prisma.checkout.create({ data: { equipmentId: trailer.id, userId: ADMIN_WORKER_ID, reservedAt: daysAgo(7), checkedOutAt: daysAgo(7) } });
+  await prisma.checkout.create({ data: { equipmentId: trailer.id, userId: SCHEDULER_ID, reservedAt: daysAgo(7), checkedOutAt: daysAgo(7) } });
   // These four push "Out now" past one page on the wall display.
   await prisma.checkout.create({ data: { equipmentId: edger1.id, userId: EMPLOYEE_ID, reservedAt: daysAgo(4), checkedOutAt: daysAgo(4) } });
   await prisma.checkout.create({ data: { equipmentId: aerator.id, userId: CONTRACTOR_ID, reservedAt: daysAgo(6), checkedOutAt: daysAgo(6) } });
@@ -1029,19 +1397,19 @@ async function seedDatabase() {
   await prisma.checkout.create({ data: { equipmentId: chainsawEquip.id, userId: CONTRACTOR_ID, reservedAt: daysAgo(14), checkedOutAt: daysAgo(14), releasedAt: daysAgo(12), rentalDays: 2, rentalCost: 10.0 } });
 
   // Today activity — checked out this morning + released this afternoon.
-  // Populates the Super Work Home dashboard "today" view (windowCheckouts,
+  // Populates the Home dashboard "today" view (windowCheckouts,
   // windowIncome, distinctUsed) so the operator sees real numbers on
   // landing. Times are anchored to NOW so we don't depend on a specific
   // wall-clock hour for the seed run.
   const todayCheckoutStart = new Date(NOW.getTime() - 5 * 3_600_000); // 5h ago
   const todayCheckoutReturn = new Date(NOW.getTime() - 2 * 3_600_000); // 2h ago
-  await prisma.checkout.create({ data: { equipmentId: mower2.id, userId: ADMIN_WORKER_ID, reservedAt: todayCheckoutStart, checkedOutAt: todayCheckoutStart } });
+  await prisma.checkout.create({ data: { equipmentId: mower2.id, userId: SCHEDULER_ID, reservedAt: todayCheckoutStart, checkedOutAt: todayCheckoutStart } });
   await prisma.checkout.create({ data: { equipmentId: trimmer1.id, userId: CONTRACTOR_ID, reservedAt: todayCheckoutStart, checkedOutAt: todayCheckoutStart, releasedAt: todayCheckoutReturn, rentalDays: 1, rentalCost: 5.0 } });
 
   // ── Equipment enrichment for the blended Inventory / Collections /
   //     Vehicles views. Adds:
   //       • Historical released checkouts (last 60d) — populates the
-  //         Usage breakdown, Super Insights leaderboard, and
+  //         Usage breakdown, the Insights rollup leaderboard, and
   //         "Pieces Used" counters.
   //       • PinnedEquipment / LikedEquipment rows for each seed
   //         worker so the pin/like affordances have visible state.
@@ -1056,7 +1424,7 @@ async function seedDatabase() {
     blower1, blower2, blower3, edger1, edger2, chainsawEquip,
     aerator, spreader, pressureWasher, trailer,
   ];
-  const workerPool = [MICHAEL_ID, ADMIN_WORKER_ID, EMPLOYEE_ID, CONTRACTOR_ID, TRAINEE_ID];
+  const workerPool = [MICHAEL_ID, SCHEDULER_ID, EMPLOYEE_ID, CONTRACTOR_ID, TRAINEE_ID];
 
   // Deterministic pseudo-random so re-runs produce the same layout —
   // helps testing (screenshot stability, e2e determinism).
@@ -1069,7 +1437,7 @@ async function seedDatabase() {
 
   // 25 released historical checkouts spread across the last 60 days.
   // Each spans 1-4 days. Contractors get a small rentalCost so the
-  // Super Insights income leaderboard has non-zero numbers.
+  // the Insights rollup income leaderboard has non-zero numbers.
   for (let i = 0; i < 25; i++) {
     const daysBack = 2 + Math.floor(rng() * 58); // 2-60 days ago
     const rentalDays = 1 + Math.floor(rng() * 4); // 1-4 days
@@ -1097,7 +1465,7 @@ async function seedDatabase() {
   // Pinned equipment — 2 per worker with a stable, useful selection.
   const pinSeeds: Array<{ userId: string; equipmentIds: string[] }> = [
     { userId: MICHAEL_ID,      equipmentIds: [mower1.id, trailer.id] },
-    { userId: ADMIN_WORKER_ID, equipmentIds: [mower2.id, blower2.id] },
+    { userId: SCHEDULER_ID, equipmentIds: [mower2.id, blower2.id] },
     { userId: EMPLOYEE_ID,     equipmentIds: [mower1.id, trimmer2.id, blower1.id] },
     { userId: CONTRACTOR_ID,   equipmentIds: [trimmer1.id, edger1.id] },
     { userId: TRAINEE_ID,      equipmentIds: [blower3.id] },
@@ -1117,7 +1485,7 @@ async function seedDatabase() {
   // employee likes the daily workhorses.
   const likeSeeds: Array<{ userId: string; equipmentIds: string[] }> = [
     { userId: MICHAEL_ID,      equipmentIds: [mower1.id, mower2.id, trailer.id, chainsawEquip.id] },
-    { userId: ADMIN_WORKER_ID, equipmentIds: [mower2.id, blower2.id, trimmer2.id] },
+    { userId: SCHEDULER_ID, equipmentIds: [mower2.id, blower2.id, trimmer2.id] },
     { userId: EMPLOYEE_ID,     equipmentIds: [mower1.id, trimmer2.id, blower1.id, edger1.id] },
     { userId: CONTRACTOR_ID,   equipmentIds: [trimmer1.id, edger1.id, blower2.id] },
     { userId: TRAINEE_ID,      equipmentIds: [blower3.id, wheelbarrow.id] },
@@ -1294,21 +1662,21 @@ async function seedDatabase() {
   console.log("  Creating default assignees...");
 
   const defaults: { jobId: string; userId: string; role: string }[] = [
-    { jobId: harringtonMow.id, userId: ADMIN_WORKER_ID, role: "primary" },
+    { jobId: harringtonMow.id, userId: SCHEDULER_ID, role: "primary" },
     { jobId: harringtonMow.id, userId: EMPLOYEE_ID, role: "helper" },
     { jobId: harringtonLakeMow.id, userId: CONTRACTOR_ID, role: "primary" },
     { jobId: martinezBiweekly.id, userId: EMPLOYEE_ID, role: "primary" },
-    { jobId: willowbrookWeekly.id, userId: ADMIN_WORKER_ID, role: "primary" },
+    { jobId: willowbrookWeekly.id, userId: SCHEDULER_ID, role: "primary" },
     { jobId: willowbrookWeekly.id, userId: CONTRACTOR_ID, role: "helper" },
     { jobId: thompsonMow.id, userId: CONTRACTOR_ID, role: "primary" },
     { jobId: thompsonMow.id, userId: TRAINEE_ID, role: "helper" },
     { jobId: obrienMow.id, userId: EMPLOYEE_ID, role: "primary" },
-    { jobId: sunriseWeekly.id, userId: ADMIN_WORKER_ID, role: "primary" },
+    { jobId: sunriseWeekly.id, userId: SCHEDULER_ID, role: "primary" },
     { jobId: sunriseWeekly.id, userId: EMPLOYEE_ID, role: "helper" },
     { jobId: sunriseWeekly.id, userId: CONTRACTOR_ID, role: "helper" },
     { jobId: patelMow.id, userId: EMPLOYEE_ID, role: "primary" },
     { jobId: patelMow.id, userId: TRAINEE_ID, role: "helper" },
-    { jobId: riverBendWeekly.id, userId: ADMIN_WORKER_ID, role: "primary" },
+    { jobId: riverBendWeekly.id, userId: SCHEDULER_ID, role: "primary" },
     { jobId: riverBendWeekly.id, userId: CONTRACTOR_ID, role: "helper" },
     { jobId: kimMow.id, userId: EMPLOYEE_ID, role: "primary" },
     { jobId: churchWeekly.id, userId: EMPLOYEE_ID, role: "primary" },
@@ -1340,12 +1708,12 @@ async function seedDatabase() {
       // else's row gets assignedById === claimer.userId (assigned
       // by the claimer). This matches the real claim flow in
       // production. Without this, seed jobs where the team doesn't
-      // happen to include the admin worker ended up with NO
+      // happen to include the scheduler ended up with NO
       // self-assigned assignee — i.e., no claimer at all — which
       // breaks the strict `assignedById === userId` check that the
       // job-card UI uses to surface the Claimer badge. If the team
       // is observers-only (no first non-observer), we fall back to
-      // ADMIN_WORKER_ID so assignedById is never null — but that
+      // SCHEDULER_ID so assignedById is never null — but that
       // path means the job effectively stays unclaimable until the
       // admin reassigns.
       const claimer = assignees.find((a) => a.role !== "observer");
@@ -1357,7 +1725,7 @@ async function seedDatabase() {
             occurrenceId: o.id,
             userId: a.userId,
             role: a.role ?? null,
-            assignedById: isClaimer ? a.userId : (claimerUserId ?? ADMIN_WORKER_ID),
+            assignedById: isClaimer ? a.userId : (claimerUserId ?? SCHEDULER_ID),
           },
         });
       }
@@ -1371,15 +1739,15 @@ async function seedDatabase() {
   // ─── COMPLETED (past) ─────────────────────────────────────────────────────
   const cHarrington21 = await occ(
     { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(21, 8), endAt: addMinutes(daysAgo(21, 8), 45), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(21, 8), completedAt: addMinutes(daysAgo(21, 8), 40) },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cHarrington14 = await occ(
     { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 8), endAt: addMinutes(daysAgo(14, 8), 45), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(14, 8), completedAt: addMinutes(daysAgo(14, 8), 42) },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cHarrington7 = await occ(
     { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(6, 8), endAt: addMinutes(daysAgo(6, 8), 45), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(6, 8), completedAt: addMinutes(daysAgo(6, 8), 50) },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cLake14 = await occ(
     { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 13), endAt: addMinutes(daysAgo(14, 13), 35), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(14, 13), completedAt: addMinutes(daysAgo(14, 13), 30) },
@@ -1424,7 +1792,7 @@ async function seedDatabase() {
   //
   // Status MUST be PENDING_PAYMENT, not COMPLETED. approvePayment() rejects
   // anything else with "Occurrence is not pending payment", so a COMPLETED
-  // occurrence with an unconfirmed payment renders in the admin's PENDING
+  // occurrence with an unconfirmed payment renders in the manager’s PENDING
   // APPROVAL queue but can never actually be approved — a dead row that
   // looks real. The client-side "Confirming payment" label is driven by
   // `!!payment && !payment.confirmed` (routes/client.ts), not by status, so
@@ -1455,11 +1823,11 @@ async function seedDatabase() {
   });
   const cWillowbrook14 = await occ(
     { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(14, 7), endAt: addMinutes(daysAgo(14, 7), 120), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(14, 7), completedAt: addMinutes(daysAgo(14, 7), 110) },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cWillowbrook7 = await occ(
     { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(5, 7), endAt: addMinutes(daysAgo(5, 7), 120), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(5, 7), completedAt: addMinutes(daysAgo(5, 7), 115) },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cThompson14 = await occ(
     { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 60), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 55) },
@@ -1475,7 +1843,7 @@ async function seedDatabase() {
   );
   const cSunrise7 = await occ(
     { jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(6, 7), endAt: addMinutes(daysAgo(6, 7), 180), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 350.0, estimatedMinutes: 180, startedAt: daysAgo(6, 7), completedAt: addMinutes(daysAgo(6, 7), 170) },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: CONTRACTOR_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cPatel7 = await occ(
     { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(3, 15), endAt: addMinutes(daysAgo(3, 15), 25), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25, startedAt: daysAgo(3, 15), completedAt: addMinutes(daysAgo(3, 15), 22) },
@@ -1483,7 +1851,7 @@ async function seedDatabase() {
   );
   const cRiverBend7 = await occ(
     { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(6, 6), endAt: addMinutes(daysAgo(6, 6), 150), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150, startedAt: daysAgo(6, 6), completedAt: addMinutes(daysAgo(6, 6), 145) },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cChurch7 = await occ(
     { jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(5, 14), endAt: addMinutes(daysAgo(5, 14), 90), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90, startedAt: daysAgo(5, 14), completedAt: addMinutes(daysAgo(5, 14), 85) },
@@ -1565,7 +1933,7 @@ async function seedDatabase() {
   // Overdue — completed but payment not accepted (PENDING_PAYMENT)
   await occ(
     { jobId: willowbrookPoolMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(3, 8), endAt: addMinutes(daysAgo(3, 8), 30), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 75.0, estimatedMinutes: 30, startedAt: daysAgo(3, 8), completedAt: addMinutes(daysAgo(3, 8), 28) },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }],
   );
   // Overdue — assigned to trainee, still scheduled
   await occ(
@@ -1577,11 +1945,11 @@ async function seedDatabase() {
   // Assigned today
   const todayHarrington = await occ(
     { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, isClientConfirmed: true },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const todayWillowbrook = await occ(
     { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 7), endAt: addMinutes(daysFromNow(0, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, pinnedNote: "Cut shorter — board meeting tomorrow" },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }],
   );
   await occ(
     { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 15), endAt: addMinutes(daysFromNow(0, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25 },
@@ -1589,7 +1957,7 @@ async function seedDatabase() {
   );
   const todayRiverBend = await occ(
     { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 6), endAt: addMinutes(daysFromNow(0, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150, isClientConfirmed: true, pinnedNote: "Bag clippings — client event this weekend", pinnedNoteRepeats: false },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   // In progress today (must be confirmed to have been started)
   await occ(
@@ -1602,7 +1970,7 @@ async function seedDatabase() {
   await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 14), endAt: addMinutes(daysFromNow(0, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90 });
 
   // ─── COMPLETED TODAY ─────────────────────────────────────────────────────
-  // Fixtures for the Super Work Home dashboard "today" landing view.
+  // Fixtures for the Home dashboard "today" landing view.
   // Anchors the completedAt / startedAt to NOW-minus-hours so these rows
   // are always in the past regardless of when the seed script runs
   // (avoids the "seed ran at 3am so 8am today is in the future" edge
@@ -1624,7 +1992,7 @@ async function seedDatabase() {
     // Gusto W-2, Gusto Contractors, the workdays CSV, the P&L wage/contract
     // -labor buckets and the min-wage check. Without an owner-assigned,
     // owner-PAID job in the seed, none of those filters are exercised in dev.
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: MICHAEL_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: MICHAEL_ID, role: "helper" }],
   );
   const cTodayThompson = await occ(
     {
@@ -1648,7 +2016,7 @@ async function seedDatabase() {
       startedAt: todayHoursAgo(8),
       completedAt: todayHoursAgo(5),
     },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: CONTRACTOR_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   // Awaiting client payment today — a completed job whose invoice was
   // sent this morning but the client hasn't paid yet. Feeds the
@@ -1679,7 +2047,7 @@ async function seedDatabase() {
   // callback for the check logic). Small, quick to complete (25 min at
   // Harrington Lake) and starts late enough (2 PM ET) that it's still
   // in the future for most of the workday — easy to find on the
-  // Worker Jobs timeline. Test flow: sign in as Michael → Start
+  // the Jobs timeline. Test flow: sign in as Michael → Start
   // workday → open this occurrence → Start → Complete → dismiss photo
   // prompt → the nudge dialog fires.
   await occ(
@@ -1737,10 +2105,10 @@ async function seedDatabase() {
   //     list, so the occ() helper makes them the self-assigned
   //     claimer. They have IN_PROGRESS workday today, so their OWN
   //     workday gate passes and the call reaches the team check.
-  //   • Helper: ADMIN_WORKER_ID — assigned by the claimer (Employee).
+  //   • Helper: SCHEDULER_ID — assigned by the claimer (Employee).
   //     Has NO workday row for today (only yesterday's dangling row),
   //     so the team gate trips on them.
-  // Verify by: log in (or View-as) as Employee Worker → Worker Jobs →
+  // Verify by: log in (or View-as) as the Employee persona → Jobs →
   // find the "Guest House" card with the "TEST: Team workday gate"
   // pinned note → tap Start → dialog should list "Admin Worker."
   await occ(
@@ -1760,7 +2128,7 @@ async function seedDatabase() {
     },
     [
       { userId: EMPLOYEE_ID, role: "primary" },
-      { userId: ADMIN_WORKER_ID, role: "helper" },
+      { userId: SCHEDULER_ID, role: "helper" },
     ],
   );
 
@@ -1777,19 +2145,19 @@ async function seedDatabase() {
   // Admin-assigned tomorrow (diverse: confirmed, unconfirmed, estimate, event)
   await occ(
     { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 8), endAt: addMinutes(daysFromNow(1, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, isClientConfirmed: true },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   await occ(
     { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(1, 10), endAt: addMinutes(daysFromNow(1, 10), 120), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 250.0, estimatedMinutes: 120 },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   await occ(
     { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 14), endAt: addMinutes(daysFromNow(1, 14), 30), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 60.0, estimatedMinutes: 30 },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }],
   );
   await occ(
     { jobId: chenTreeEstimate.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 11), endAt: addMinutes(daysFromNow(1, 11), 60), status: "SCHEDULED", workflow: "ESTIMATE", price: null, estimatedMinutes: 60, isEstimate: true },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }],
   );
 
   // Unclaimed tomorrow
@@ -1806,11 +2174,11 @@ async function seedDatabase() {
   await prisma.jobOccurrenceAssignee.createMany({
     data: [
       // Claimer of the group: self-assigned (assignedById === userId).
-      { occurrenceId: sunriseTomorrowOcc.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID },
+      { occurrenceId: sunriseTomorrowOcc.id, userId: SCHEDULER_ID, assignedById: SCHEDULER_ID },
       // Workers + observer: assigned-by the group claimer.
-      { occurrenceId: sunriseTomorrowOcc.id, userId: EMPLOYEE_ID, assignedById: ADMIN_WORKER_ID },
-      { occurrenceId: sunriseTomorrowOcc.id, userId: CONTRACTOR_ID, assignedById: ADMIN_WORKER_ID },
-      { occurrenceId: sunriseTomorrowOcc.id, userId: TRAINEE_ID, role: "observer", assignedById: ADMIN_WORKER_ID },
+      { occurrenceId: sunriseTomorrowOcc.id, userId: EMPLOYEE_ID, assignedById: SCHEDULER_ID },
+      { occurrenceId: sunriseTomorrowOcc.id, userId: CONTRACTOR_ID, assignedById: SCHEDULER_ID },
+      { occurrenceId: sunriseTomorrowOcc.id, userId: TRAINEE_ID, role: "observer", assignedById: SCHEDULER_ID },
     ],
   });
   await occ({ jobId: kimMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 10), endAt: addMinutes(daysFromNow(1, 10), 30), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 50.0, estimatedMinutes: 30 });
@@ -1819,7 +2187,7 @@ async function seedDatabase() {
   // Assigned
   await occ(
     { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(7, 8), endAt: addMinutes(daysFromNow(7, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45 },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }],
   );
   await occ(
     { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(7, 13), endAt: addMinutes(daysFromNow(7, 13), 35), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 65.0, estimatedMinutes: 35 },
@@ -1831,7 +2199,7 @@ async function seedDatabase() {
   );
   await occ(
     { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(6, 6), endAt: addMinutes(daysFromNow(6, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150 },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
 
   // Unclaimed upcoming
@@ -1853,10 +2221,10 @@ async function seedDatabase() {
   // ─── FURTHER OUT (8-14 days) ──────────────────────────────────────────────
   await occ(
     { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(14, 8), endAt: addMinutes(daysFromNow(14, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45 },
-    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+    [{ userId: SCHEDULER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   await occ({ jobId: willowbrookPoolMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(10, 8), endAt: addMinutes(daysFromNow(10, 8), 30), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 75.0, estimatedMinutes: 30 });
-  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(12, 7), endAt: addMinutes(daysFromNow(12, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, isTentative: true, isAdminOnly: true });
+  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(12, 7), endAt: addMinutes(daysFromNow(12, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, isTentative: true, mustBeAssigned: true });
 
   // ─── CANCELED ─────────────────────────────────────────────────────────────
   await occ({ jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(28, 8), endAt: addMinutes(daysAgo(28, 8), 45), status: "CANCELED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45 });
@@ -1864,8 +2232,8 @@ async function seedDatabase() {
   await occ({ jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(21, 9), endAt: addMinutes(daysAgo(21, 9), 60), status: "CANCELED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60 });
 
   // ─── ESTIMATES ────────────────────────────────────────────────────────────
-  const estChenTree = await occ({ jobId: chenTreeEstimate.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 10), endAt: addMinutes(daysFromNow(3, 10), 60), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobTags: '["TREE_TRIM"]', isEstimate: true, isAdminOnly: true, proposalAmount: 450, proposalNotes: "3 large live oaks in the backyard need trimming. Two are approximately 30ft tall with branches overhanging the fence line into the neighbor's yard. The third is smaller (~20ft) but has significant dead wood that should be removed. Estimate includes all debris removal and hauling. We would need the chipper for this job. Recommend scheduling on a weekday when the neighbor is home so we can coordinate fence-line access. Lisa mentioned she also wants us to look at the crepe myrtle out front but that can be a separate estimate." });
-  const estChurchWash = await occ({ jobId: churchPressureWash.id, kind: "ENTIRE_SITE", startAt: daysFromNow(8, 10), endAt: addMinutes(daysFromNow(8, 10), 120), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobTags: '["PLANT"]', isEstimate: true, isAdminOnly: true, proposalAmount: 800, proposalNotes: "Full walkway and parking lot pressure wash covering approximately 5000 sqft of concrete. The main walkway from the parking lot to the front entrance has significant algae buildup on the north-facing side. Parking lot has oil stains in several spots that will need degreaser pre-treatment. We should avoid Sunday entirely and Saturday afternoon due to services. Pastor David said Tuesday or Wednesday would be ideal. Will need to bring the 3100 PSI unit and at least 200ft of hose to reach the far end of the lot. Estimate includes surface cleaner attachment rental." });
+  const estChenTree = await occ({ jobId: chenTreeEstimate.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 10), endAt: addMinutes(daysFromNow(3, 10), 60), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobTags: '["TREE_TRIM"]', isEstimate: true, mustBeAssigned: true, proposalAmount: 450, proposalNotes: "3 large live oaks in the backyard need trimming. Two are approximately 30ft tall with branches overhanging the fence line into the neighbor's yard. The third is smaller (~20ft) but has significant dead wood that should be removed. Estimate includes all debris removal and hauling. We would need the chipper for this job. Recommend scheduling on a weekday when the neighbor is home so we can coordinate fence-line access. Lisa mentioned she also wants us to look at the crepe myrtle out front but that can be a separate estimate." });
+  const estChurchWash = await occ({ jobId: churchPressureWash.id, kind: "ENTIRE_SITE", startAt: daysFromNow(8, 10), endAt: addMinutes(daysFromNow(8, 10), 120), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobTags: '["PLANT"]', isEstimate: true, mustBeAssigned: true, proposalAmount: 800, proposalNotes: "Full walkway and parking lot pressure wash covering approximately 5000 sqft of concrete. The main walkway from the parking lot to the front entrance has significant algae buildup on the north-facing side. Parking lot has oil stains in several spots that will need degreaser pre-treatment. We should avoid Sunday entirely and Saturday afternoon due to services. Pastor David said Tuesday or Wednesday would be ideal. Will need to bring the 3100 PSI unit and at least 200ft of hose to reach the far end of the lot. Estimate includes surface cleaner attachment rental." });
 
   // ─── ONE-OFF (aeration) ───────────────────────────────────────────────────
   await occ(
@@ -1879,9 +2247,9 @@ async function seedDatabase() {
   // payment acceptance, no next occurrence has been scheduled — so
   // JobsTab should render a "ghost" card at the would-be next date.
   //
-  //   Ghost 1 — assigned to Michael only        → visible on Worker Jobs (Michael) + Admin Jobs
-  //   Ghost 2 — assigned to a worker only       → NOT on Michael's Worker Jobs; visible on Admin Jobs
-  //   Ghost 3 — assigned to Michael + a worker  → visible on both, and both see it on Admin Jobs
+  //   Ghost 1 — assigned to Michael only        → on Michael's own Jobs list, and to `schedule.manage`
+  //   Ghost 2 — assigned to someone else only   → NOT on Michael's own list; still to `schedule.manage`
+  //   Ghost 3 — assigned to Michael + another   → on both own-lists, and to `schedule.manage`
   //
   // Each uses a fresh Job on an existing property so the property's
   // OTHER jobs (with normal future occurrences) aren't disturbed.
@@ -1995,10 +2363,10 @@ async function seedDatabase() {
     ownLedgerRow?: boolean;
   };
   const invoiceChargeData: SeedCharge[] = [
-    { occId: cWillowbrook7.id, userId: ADMIN_WORKER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Fuel", ownLedgerRow: true, actualCost: 25.0 },
-    { occId: cWillowbrook14.id, userId: ADMIN_WORKER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Fuel", ownLedgerRow: true, actualCost: 28.0 },
+    { occId: cWillowbrook7.id, userId: SCHEDULER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Fuel", ownLedgerRow: true, actualCost: 25.0 },
+    { occId: cWillowbrook14.id, userId: SCHEDULER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Fuel", ownLedgerRow: true, actualCost: 28.0 },
     { occId: cMartinez14.id, userId: EMPLOYEE_ID, cost: 12.5, desc: "Trimmer line replacement", category: "Supplies", ownLedgerRow: true, actualCost: 12.5 },
-    { occId: cSunrise7.id, userId: ADMIN_WORKER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Fuel", ownLedgerRow: true, actualCost: 35.0 },
+    { occId: cSunrise7.id, userId: SCHEDULER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Fuel", ownLedgerRow: true, actualCost: 35.0 },
     { occId: cHarrington7.id, userId: EMPLOYEE_ID, cost: 8.0, desc: "Edger blade", category: "Supplies", actualCost: 6.25 },
     // Two jobs, one Lowe's receipt — the many-to-one breadcrumb.
     { occId: cRiverBend7.id, userId: CONTRACTOR_ID, cost: 18.0, desc: "Mulch bags (2)", category: "Supplies", actualCost: 13.4, sharedReceipt: "lowes-run" },
@@ -2039,7 +2407,7 @@ async function seedDatabase() {
         customLabel: a.customLabel ?? null,
         price: a.price,
         detail: a.detail ?? null,
-        createdById: ADMIN_WORKER_ID,
+        createdById: SCHEDULER_ID,
       },
     });
   }
@@ -2048,7 +2416,8 @@ async function seedDatabase() {
 
   // Worker type lookup for fee calculation
   const contractorIds = new Set([CONTRACTOR_ID]);
-  const employeeIds = new Set([ADMIN_WORKER_ID, EMPLOYEE_ID, TRAINEE_ID]);
+  // All three are EMPLOYEE now — the trainee persona differs by clearance.
+  const employeeIds = new Set([SCHEDULER_ID, EMPLOYEE_ID, TRAINEE_ID]);
   const PLATFORM_FEE_PCT = 20;
   const BUSINESS_MARGIN_PCT = 30;
 
@@ -2078,25 +2447,30 @@ async function seedDatabase() {
   // Zelle) — the PAYMENT_METHODS taxonomy. Venmo entries carry a processor
   // fee; the loop below computes and stores it so tax-export testing has
   // realistic fee data. Mix: 4 Cash, 5 Check, 4 Venmo, 3 Zelle.
-  const paymentData: { occId: string; amount: number; method: "CASH" | "CHECK" | "VENMO" | "ZELLE"; collector: string; splits: { userId: string; amount: number }[]; createdAt: Date; overage?: number }[] = [
-    { occId: cHarrington21.id, amount: 85, method: "CASH", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(20) },
-    { occId: cHarrington14.id, amount: 85, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(13) },
-    { occId: cHarrington7.id, amount: 85, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(6) },
+  const paymentData: { occId: string; amount: number; method: "CASH" | "CHECK" | "VENMO" | "ZELLE"; collector: string; splits: { userId: string; amount: number }[]; createdAt: Date; overage?: number;
+    /** Designated tip: the total, the business's cut, and each worker's
+     *  share. Absent from the declared type before, so TS never checked
+     *  the three reads of it further down. */
+    tip?: { total: number; toBusiness: number; perWorker: Record<string, number> };
+  }[] = [
+    { occId: cHarrington21.id, amount: 85, method: "CASH", collector: SCHEDULER_ID, splits: [{ userId: SCHEDULER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(20) },
+    { occId: cHarrington14.id, amount: 85, method: "CHECK", collector: SCHEDULER_ID, splits: [{ userId: SCHEDULER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(13) },
+    { occId: cHarrington7.id, amount: 85, method: "VENMO", collector: SCHEDULER_ID, splits: [{ userId: SCHEDULER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(6) },
     { occId: cLake14.id, amount: 65, method: "CASH", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 65 }], createdAt: daysAgoRandom(13) },
     { occId: cLake7.id, amount: 65, method: "VENMO", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 65 }], createdAt: daysAgoRandom(6) },
     { occId: cMartinez14.id, amount: 55, method: "ZELLE", collector: EMPLOYEE_ID, splits: [{ userId: EMPLOYEE_ID, amount: 55 }], createdAt: daysAgoRandom(12) },
-    { occId: cWillowbrook14.id, amount: 250, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(13) },
-    { occId: cWillowbrook7.id, amount: 250, method: "ZELLE", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(5) },
+    { occId: cWillowbrook14.id, amount: 250, method: "CHECK", collector: SCHEDULER_ID, splits: [{ userId: SCHEDULER_ID, amount: 150 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(13) },
+    { occId: cWillowbrook7.id, amount: 250, method: "ZELLE", collector: SCHEDULER_ID, splits: [{ userId: SCHEDULER_ID, amount: 150 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(5) },
     { occId: cThompson14.id, amount: 125, method: "VENMO", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 85 }, { userId: TRAINEE_ID, amount: 40 }], createdAt: daysAgoRandom(11) },
     { occId: cThompson7.id, amount: 125, method: "VENMO", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 85 }, { userId: TRAINEE_ID, amount: 40 }], createdAt: daysAgoRandom(5) },
     { occId: cObrien7.id, amount: 60, method: "CASH", collector: EMPLOYEE_ID, splits: [{ userId: EMPLOYEE_ID, amount: 60 }], createdAt: daysAgoRandom(4) },
-    { occId: cSunrise7.id, amount: 350, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: EMPLOYEE_ID, amount: 100 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(6) },
+    { occId: cSunrise7.id, amount: 350, method: "CHECK", collector: SCHEDULER_ID, splits: [{ userId: SCHEDULER_ID, amount: 150 }, { userId: EMPLOYEE_ID, amount: 100 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(6) },
     { occId: cPatel7.id, amount: 45, method: "CASH", collector: TRAINEE_ID, splits: [{ userId: TRAINEE_ID, amount: 45 }], createdAt: daysAgoRandom(3) },
-    { occId: cRiverBend7.id, amount: 400, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 250 }, { userId: CONTRACTOR_ID, amount: 150 }], createdAt: daysAgoRandom(6) },
+    { occId: cRiverBend7.id, amount: 400, method: "CHECK", collector: SCHEDULER_ID, splits: [{ userId: SCHEDULER_ID, amount: 250 }, { userId: CONTRACTOR_ID, amount: 150 }], createdAt: daysAgoRandom(6) },
     { occId: cChurch7.id, amount: 200, method: "CHECK", collector: EMPLOYEE_ID, splits: [{ userId: EMPLOYEE_ID, amount: 200 }], createdAt: daysAgoRandom(5) },
     { occId: cKim14.id, amount: 50, method: "ZELLE", collector: EMPLOYEE_ID, splits: [{ userId: EMPLOYEE_ID, amount: 50 }], createdAt: daysAgoRandom(10) },
-    // Today's completed jobs — populate the SuperWorkHomeTab "today"
-    // view with real revenue + team pay data. createdAt is NOW-minus-a-
+    // Today's completed jobs — populate the HomeTab "today" view with real
+    // revenue + team pay data. createdAt is NOW-minus-a-
     // few-hours (guaranteed in the past regardless of when seed runs).
     // TIP FIXTURE. $85 job, client paid $105, and the $20 overpayment was
     // designated a tip: 25% business / 75% crew. Split amounts must sum to
@@ -2106,14 +2480,14 @@ async function seedDatabase() {
     // job splits here — the operator can override the defaults.
     // Includes the LLC owner's share — see the assignee note on
     // cTodayHarrington. His split is stamped ownerEarnings below.
-    { occId: cTodayHarrington.id, amount: 105, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 40 }, { userId: EMPLOYEE_ID, amount: 30 }, { userId: MICHAEL_ID, amount: 15 }], createdAt: new Date(NOW.getTime() - 4 * 3_600_000), tip: { total: 20, toBusiness: 5, perWorker: { [ADMIN_WORKER_ID]: 9, [EMPLOYEE_ID]: 6 } } },
+    { occId: cTodayHarrington.id, amount: 105, method: "VENMO", collector: SCHEDULER_ID, splits: [{ userId: SCHEDULER_ID, amount: 40 }, { userId: EMPLOYEE_ID, amount: 30 }, { userId: MICHAEL_ID, amount: 15 }], createdAt: new Date(NOW.getTime() - 4 * 3_600_000), tip: { total: 20, toBusiness: 5, perWorker: { [SCHEDULER_ID]: 9, [EMPLOYEE_ID]: 6 } } },
     // OVERPAID fixture — a $125 job the client paid $140 cash for (rounded
     // up). Worker splits are unchanged, so the $15 is retained by the
     // business and stamped as `overageAmount`. Without a row like this the
     // "Overpaid" badge on the Payments tab has nothing to render, and an
     // overpayment is otherwise indistinguishable from a normal payment.
     { occId: cTodayThompson.id, amount: 140, overage: 15, method: "CASH", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 85 }, { userId: TRAINEE_ID, amount: 40 }], createdAt: new Date(NOW.getTime() - 3 * 3_600_000) },
-    { occId: cTodaySunrise.id, amount: 350, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: EMPLOYEE_ID, amount: 100 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: new Date(NOW.getTime() - 3 * 3_600_000) },
+    { occId: cTodaySunrise.id, amount: 350, method: "CHECK", collector: SCHEDULER_ID, splits: [{ userId: SCHEDULER_ID, amount: 150 }, { userId: EMPLOYEE_ID, amount: 100 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: new Date(NOW.getTime() - 3 * 3_600_000) },
   ];
 
   // A SERVICE IS ON THE INVOICE, so the client paid for it. The amounts above
@@ -2375,7 +2749,7 @@ async function seedDatabase() {
   for (const e of businessExpenseData) {
     await prisma.businessExpense.create({
       data: {
-        createdById: ADMIN_WORKER_ID,
+        createdById: SCHEDULER_ID,
         date: daysAgo(e.ago, 12),
         cost: e.cost,
         description: e.desc,
@@ -2417,7 +2791,7 @@ async function seedDatabase() {
   for (const e of equityEntryData) {
     await prisma.businessExpense.create({
       data: {
-        createdById: ADMIN_WORKER_ID,
+        createdById: SCHEDULER_ID,
         type: e.type,
         date: daysAgo(e.ago, 12),
         cost: e.cost,
@@ -2528,7 +2902,7 @@ async function seedDatabase() {
   for (const s of supplyCatalog) {
     const created = await prisma.supply.create({
       data: {
-        createdById: ADMIN_WORKER_ID,
+        createdById: SCHEDULER_ID,
         name: s.name,
         unit: s.unit,
         upc: s.upc ?? null,
@@ -2544,7 +2918,7 @@ async function seedDatabase() {
       const totalCost = Math.round(p.quantity * p.unitCost * 100) / 100;
       const be = await prisma.businessExpense.create({
         data: {
-          createdById: ADMIN_WORKER_ID,
+          createdById: SCHEDULER_ID,
           date: daysAgo(p.ago, 10),
           cost: totalCost,
           description: `${s.name} × ${p.quantity} ${s.unit}`,
@@ -2559,7 +2933,7 @@ async function seedDatabase() {
           totalCost,
           date: daysAgo(p.ago, 10),
           businessExpenseId: be.id,
-          createdById: ADMIN_WORKER_ID,
+          createdById: SCHEDULER_ID,
         },
       });
       await prisma.supply.update({
@@ -2656,7 +3030,7 @@ async function seedDatabase() {
 
   // User approvals
   const approvals = [
-    { userId: ADMIN_WORKER_ID, name: "Admin Worker", ago: 50 },
+    { userId: SCHEDULER_ID, name: "Admin Worker", ago: 50 },
     { userId: CONTRACTOR_ID, name: "Contractor Worker", ago: 48 },
     { userId: EMPLOYEE_ID, name: "Employee Worker", ago: 48 },
     { userId: TRAINEE_ID, name: "Trainee Worker", ago: 45 },
@@ -2670,10 +3044,12 @@ async function seedDatabase() {
 
   // Worker type assignments
   const workerTypes = [
-    { userId: ADMIN_WORKER_ID, type: "EMPLOYEE", ago: 50 },
+    { userId: SCHEDULER_ID, type: "EMPLOYEE", ago: 50 },
     { userId: CONTRACTOR_ID, type: "CONTRACTOR", ago: 48 },
     { userId: EMPLOYEE_ID, type: "EMPLOYEE", ago: 48 },
-    { userId: TRAINEE_ID, type: "TRAINEE", ago: 45 },
+    // Historical: this person WAS a trainee. The audit log keeps what was
+    // recorded at the time, but the value has to be one the enum accepts.
+    { userId: TRAINEE_ID, type: "EMPLOYEE", ago: 45 },
   ];
   for (const w of workerTypes) {
     await prisma.auditEvent.create({
@@ -2681,21 +3057,36 @@ async function seedDatabase() {
     });
   }
 
-  // Role assignments
-  await prisma.auditEvent.create({
-    data: { scope: "USER", verb: "ROLE_ASSIGNED", actorUserId: MICHAEL_ID, metadata: { userId: ADMIN_WORKER_ID, role: "ADMIN" }, createdAt: daysAgo(50, 11) },
-  });
+  // Role assignments. The metadata names the CustomRole that was granted,
+  // by id and name, matching what `customRoles.assign` writes — a seeded
+  // audit row that carries a shape the live code never produces teaches the
+  // reader a format that does not exist.
+  {
+    const adminRole = await prisma.customRole.findUnique({
+      where: { key: "seedlings.admin" },
+      select: { id: true, name: true },
+    });
+    if (adminRole) {
+      await prisma.auditEvent.create({
+        data: {
+          scope: "USER", verb: "ROLE_ASSIGNED", actorUserId: MICHAEL_ID,
+          metadata: { userId: SCHEDULER_ID, customRoleId: adminRole.id, name: adminRole.name },
+          createdAt: daysAgo(50, 11),
+        },
+      });
+    }
+  }
 
   // Equipment events
   const equipEvents: { eqId: string; desc: string; userId: string; verb: "CHECKED_OUT" | "RELEASED" | "MAINTENANCE_START"; ago: number; meta?: Record<string, unknown> }[] = [
     { eqId: mower1.id, desc: "Commercial stand-on mower", userId: EMPLOYEE_ID, verb: "CHECKED_OUT", ago: 5 },
     { eqId: blower1.id, desc: "Backpack blower", userId: CONTRACTOR_ID, verb: "CHECKED_OUT", ago: 3 },
-    { eqId: trimmer2.id, desc: "Lightweight string trimmer", userId: ADMIN_WORKER_ID, verb: "CHECKED_OUT", ago: 2 },
+    { eqId: trimmer2.id, desc: "Lightweight string trimmer", userId: SCHEDULER_ID, verb: "CHECKED_OUT", ago: 2 },
     { eqId: blower3.id, desc: "Backpack blower (mid-range)", userId: TRAINEE_ID, verb: "CHECKED_OUT", ago: 1 },
-    { eqId: trailer.id, desc: "12ft utility trailer", userId: ADMIN_WORKER_ID, verb: "CHECKED_OUT", ago: 7 },
+    { eqId: trailer.id, desc: "12ft utility trailer", userId: SCHEDULER_ID, verb: "CHECKED_OUT", ago: 7 },
     { eqId: chainsawEquip.id, desc: "20\" chainsaw", userId: CONTRACTOR_ID, verb: "CHECKED_OUT", ago: 14 },
     { eqId: chainsawEquip.id, desc: "20\" chainsaw", userId: CONTRACTOR_ID, verb: "RELEASED", ago: 12 },
-    { eqId: mower3.id, desc: "21\" push mower", userId: ADMIN_WORKER_ID, verb: "MAINTENANCE_START", ago: 2, meta: { reason: "Blade needs sharpening" } },
+    { eqId: mower3.id, desc: "21\" push mower", userId: SCHEDULER_ID, verb: "MAINTENANCE_START", ago: 2, meta: { reason: "Blade needs sharpening" } },
   ];
   for (const e of equipEvents) {
     await prisma.auditEvent.create({
@@ -2725,26 +3116,26 @@ async function seedDatabase() {
   ];
   for (const j of jobEvents) {
     await prisma.auditEvent.create({
-      data: { scope: "JOB", verb: "CREATED", actorUserId: ADMIN_WORKER_ID, metadata: { jobId: j.id, note: j.note }, createdAt: daysAgo(j.ago, 11) },
+      data: { scope: "JOB", verb: "CREATED", actorUserId: SCHEDULER_ID, metadata: { jobId: j.id, note: j.note }, createdAt: daysAgo(j.ago, 11) },
     });
   }
 
   // Completed occurrence audit events
   const completedOccs = [
-    { id: cHarrington21.id, actor: ADMIN_WORKER_ID, at: addMinutes(daysAgo(21, 8), 40) },
-    { id: cHarrington14.id, actor: ADMIN_WORKER_ID, at: addMinutes(daysAgo(14, 8), 42) },
-    { id: cHarrington7.id, actor: ADMIN_WORKER_ID, at: addMinutes(daysAgo(7, 8), 50) },
+    { id: cHarrington21.id, actor: SCHEDULER_ID, at: addMinutes(daysAgo(21, 8), 40) },
+    { id: cHarrington14.id, actor: SCHEDULER_ID, at: addMinutes(daysAgo(14, 8), 42) },
+    { id: cHarrington7.id, actor: SCHEDULER_ID, at: addMinutes(daysAgo(7, 8), 50) },
     { id: cLake14.id, actor: CONTRACTOR_ID, at: addMinutes(daysAgo(14, 13), 30) },
     { id: cLake7.id, actor: CONTRACTOR_ID, at: addMinutes(daysAgo(7, 13), 32) },
     { id: cMartinez14.id, actor: EMPLOYEE_ID, at: addMinutes(daysAgo(14, 9), 38) },
-    { id: cWillowbrook14.id, actor: ADMIN_WORKER_ID, at: addMinutes(daysAgo(14, 7), 110) },
-    { id: cWillowbrook7.id, actor: ADMIN_WORKER_ID, at: addMinutes(daysAgo(7, 7), 115) },
+    { id: cWillowbrook14.id, actor: SCHEDULER_ID, at: addMinutes(daysAgo(14, 7), 110) },
+    { id: cWillowbrook7.id, actor: SCHEDULER_ID, at: addMinutes(daysAgo(7, 7), 115) },
     { id: cThompson14.id, actor: CONTRACTOR_ID, at: addMinutes(daysAgo(14, 9), 55) },
     { id: cThompson7.id, actor: CONTRACTOR_ID, at: addMinutes(daysAgo(7, 9), 58) },
     { id: cObrien7.id, actor: EMPLOYEE_ID, at: addMinutes(daysAgo(7, 8), 33) },
-    { id: cSunrise7.id, actor: ADMIN_WORKER_ID, at: addMinutes(daysAgo(7, 7), 170) },
+    { id: cSunrise7.id, actor: SCHEDULER_ID, at: addMinutes(daysAgo(7, 7), 170) },
     { id: cPatel7.id, actor: TRAINEE_ID, at: addMinutes(daysAgo(7, 15), 22) },
-    { id: cRiverBend7.id, actor: ADMIN_WORKER_ID, at: addMinutes(daysAgo(7, 6), 145) },
+    { id: cRiverBend7.id, actor: SCHEDULER_ID, at: addMinutes(daysAgo(7, 6), 145) },
     { id: cChurch7.id, actor: EMPLOYEE_ID, at: addMinutes(daysAgo(7, 14), 85) },
     { id: cKim14.id, actor: EMPLOYEE_ID, at: addMinutes(daysAgo(14, 10), 28) },
   ];
@@ -2764,12 +3155,12 @@ async function seedDatabase() {
 
   // Garcia paused
   await prisma.auditEvent.create({
-    data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: ADMIN_WORKER_ID, metadata: { clientId: garciaFamily.id, displayName: "Garcia Family", status: "PAUSED", reason: "Winter pause" }, createdAt: daysAgo(10, 11) },
+    data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: SCHEDULER_ID, metadata: { clientId: garciaFamily.id, displayName: "Garcia Family", status: "PAUSED", reason: "Winter pause" }, createdAt: daysAgo(10, 11) },
   });
 
   // Kim paused
   await prisma.auditEvent.create({
-    data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: ADMIN_WORKER_ID, metadata: { clientId: kimResidence.id, displayName: "Kim Residence", status: "PAUSED", reason: "Traveling abroad" }, createdAt: daysAgo(5, 11) },
+    data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: SCHEDULER_ID, metadata: { clientId: kimResidence.id, displayName: "Kim Residence", status: "PAUSED", reason: "Traveling abroad" }, createdAt: daysAgo(5, 11) },
   });
 
   // Dawson archived
@@ -2784,11 +3175,11 @@ async function seedDatabase() {
     { key: "CONTRACTOR_PLATFORM_FEE_PERCENT", value: "20", description: "Platform fee percentage charged on contractor (1099) payment splits" },
     { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT", value: "30", description: "Business margin percentage retained from employee (W-2) and trainee payment splits" },
     { key: "HIGH_VALUE_JOB_THRESHOLD", value: "200", description: "Jobs at or above this price require insurance for contractors to claim" },
-    { key: "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT", value: "30", description: "Percent variance (over OR under the estimate) that auto-approves logged hours for payroll. Anything outside this window leaves hoursApprovedAt null and surfaces in the 'Hours awaiting review' alert until an admin reviews. Same threshold drives the visual '⚠ X% over estimate' warning on the JobsTab card." },
-    { key: "WORKERS_COMP_PERCENT_OF_WAGES", value: "12", description: "Workers compensation premium as a percent of W-2 wages. Used ONLY as the starting position for the Super forecasting tool (Money -> Forecast), where it is a tunable slider — it does not affect the P&L, payroll, or any export. Landscaping class codes run high and first-year minimum premiums distort the effective rate, so treat this as a placeholder until you can read the real percentage off a renewal quote." },
+    { key: "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT", value: "30", description: "Percent variance (over OR under the estimate) that auto-approves logged hours for payroll. Anything outside this window leaves hoursApprovedAt null and surfaces in the 'Hours awaiting review' alert until someone with schedule authority reviews. Same threshold drives the visual '⚠ X% over estimate' warning on the JobsTab card." },
+    { key: "WORKERS_COMP_PERCENT_OF_WAGES", value: "12", description: "Workers compensation premium as a percent of W-2 wages. Used ONLY as the starting position for a caller with settings authority forecasting tool (Money -> Forecast), where it is a tunable slider — it does not affect the P&L, payroll, or any export. Landscaping class codes run high and first-year minimum premiums distort the effective rate, so treat this as a placeholder until you can read the real percentage off a renewal quote." },
     { key: "MIN_WAGE_PER_HOUR", value: "7.25", description: "Minimum wage floor (USD/hour) used by the Operations → Worker Performance compliance check. Defaults to the federal FLSA minimum ($7.25) which is what applies in NC (no state-level higher floor). If you operate in a state with a higher minimum (e.g., NJ, NY, CA), bump this to match. Drives color coding on the per-worker $/hr column; contractors are shown for reclassification-risk monitoring (the floor is not a legal requirement for true 1099 workers)." },
     { key: "FIXED_ASSET_MIN_COST", value: "500", description: "Capitalization threshold (USD). BusinessExpense purchases at or above this cost, dated on/after the policy start date, are treated as Fixed Assets — excluded from qb-expenses.csv and emitted into qb-fixed-assets.csv instead. Policy start date is currently hardcoded in code; only the dollar threshold is editable here." },
-    { key: "WORKDAY_APPROVAL_CUTOFF_HOUR_ET", value: "4", description: "Hour (0-23, ET) the next morning at which workday approval becomes available to admins/supers and the worker's edit window closes. Default 4 covers late-night work that wraps past midnight. Symmetric — worker can still edit until this hour the next day; admin can approve from this hour onward." },
+    { key: "WORKDAY_APPROVAL_CUTOFF_HOUR_ET", value: "4", description: "Hour (0-23, ET) the next morning at which workday approval becomes available to holders of schedule authority/holders of settings authority and the worker's edit window closes. Default 4 covers late-night work that wraps past midnight. Symmetric — worker can still edit until this hour the next day; admin can approve from this hour onward." },
     { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab." },
     {
       key: "PAYMENT_METHODS",
@@ -2855,7 +3246,7 @@ async function seedDatabase() {
         { label: "Venmo balance" },
         { label: "Zelle (bank transfer)" },
       ]),
-      description: "Presets for the 'Payment From' picker in the Super → Money → Ledger Add Expense dialog. Each entry is a free-form label (e.g., 'Chase business card', 'Owner cash'). Operator can still leave the field blank or pick 'Other' and type a custom value. Used for matching expense rows to bank/card statements at month-end.",
+      description: "Presets for the 'Payment From' picker in the Money → Ledger Add Expense dialog. Each entry is a free-form label (e.g., 'Chase business card', 'Owner cash'). Operator can still leave the field blank or pick 'Other' and type a custom value. Used for matching expense rows to bank/card statements at month-end.",
     },
     {
       key: "EXPENSE_CATEGORIES",
@@ -3054,7 +3445,7 @@ async function seedDatabase() {
 
   // ── Education guide fixtures ──────────────────────────────────────────────
   // Three guides covering the states an operator needs to SEE working:
-  // published (what a worker reads), pending (what sits in the Super
+  // published (what a worker reads), pending (what sits in the
   // review queue and drives the alert), and a bare draft.
   await seedGuides();
 
@@ -3068,13 +3459,13 @@ async function seedDatabase() {
   });
   await prisma.setting.upsert({
     where: { key: "GUIDE_MAX_IMAGE_MB" },
-    create: { key: "GUIDE_MAX_IMAGE_MB", value: "10", description: "HARD limit (MB) for a guide image upload. Admins are many; this is a real ceiling and an over-size upload is rejected.", updatedById: MICHAEL_ID },
-    update: { description: "HARD limit (MB) for a guide image upload. Admins are many; this is a real ceiling and an over-size upload is rejected.", updatedById: MICHAEL_ID },
+    create: { key: "GUIDE_MAX_IMAGE_MB", value: "10", description: "HARD limit (MB) for a guide image upload. Holders of schedule authority are many; this is a real ceiling and an over-size upload is rejected.", updatedById: MICHAEL_ID },
+    update: { description: "HARD limit (MB) for a guide image upload. Holders of schedule authority are many; this is a real ceiling and an over-size upload is rejected.", updatedById: MICHAEL_ID },
   });
   await prisma.setting.upsert({
     where: { key: "GUIDE_MAX_VIDEO_MB" },
-    create: { key: "GUIDE_MAX_VIDEO_MB", value: "200", description: "SOFT limit (MB) for a guide video. Video is Super-only, so this catches accidents rather than abuse — a Super may override with an audited confirmation.", updatedById: MICHAEL_ID },
-    update: { description: "SOFT limit (MB) for a guide video. Video is Super-only, so this catches accidents rather than abuse — a Super may override with an audited confirmation.", updatedById: MICHAEL_ID },
+    create: { key: "GUIDE_MAX_VIDEO_MB", value: "200", description: "SOFT limit (MB) for a guide video. Video needs `content.approve`, so this catches accidents rather than abuse — a `content.approve` holder may override with an audited confirmation.", updatedById: MICHAEL_ID },
+    update: { description: "SOFT limit (MB) for a guide video. Video needs `content.approve`, so this catches accidents rather than abuse — a `content.approve` holder may override with an audited confirmation.", updatedById: MICHAEL_ID },
   });
   await prisma.setting.upsert({
     where: { key: "GUIDE_VIDEO_HARD_CEILING_MB" },
@@ -3096,7 +3487,12 @@ async function seedDatabase() {
   const paymentSettings = [
     { key: "BUSINESS_NAME", value: "Seedlings Lawn Care, LLC", description: "Display name of the business — appears on receipts, the public payment page, and other client-facing surfaces." },
     { key: "BUSINESS_EIN", value: "", description: "Employer Identification Number (EIN) — appears on client-facing statements so a client's accountant has the vendor's tax ID for their records. Leave blank to omit from the statement header." },
-    { key: "BUSINESS_ADDRESS", value: "", description: "Full business mailing address (street, city, state, zip). Appears in the header of client-facing statements. Leave blank to omit." },
+    // NOT BLANK ANY MORE, and the weather is why. This address is also the
+    // anchor for the forecast: `businessLatLng()` geocodes it, and with no
+    // address the weather bar falls back to geolocating the device — so a
+    // freshly seeded dev box showed the forecast for wherever the developer
+    // happened to be rather than for where the seeded work is.
+    { key: "BUSINESS_ADDRESS", value: "225 Stony Branch Trl., Chapel Hill, NC. 27516", description: "Full business mailing address (street, city, state, zip). Appears in the header of client-facing statements, and is geocoded to anchor the weather forecast. Leave blank to omit." },
     { key: "BUSINESS_PHONE", value: "", description: "Business phone number shown on client-facing statements. Leave blank to omit." },
     { key: "BUSINESS_EMAIL", value: "admin@seedlingslawncare.com", description: "Business email address shown on client-facing statements. Distinct from OUTGOING_COMMS_CC — this one is a public contact address." },
     { key: "CLIENT_BACKUP_ENABLED", value: "false", description: "Nightly full-database snapshot to Google Drive at CompanyClients/YYYY-MM-DD.json. Off in dev; flip to 'true' in prod. Distinct from DOCUMENT_SYNC_ENABLED (which controls the per-document CompanyDocuments backup) so you can run one without the other. See services/clientBackup.ts." },
@@ -3104,12 +3500,12 @@ async function seedDatabase() {
     { key: "ZELLE_ADDRESS", value: "seedlingslawncare", description: "Email or phone clients use to send Zelle payments." },
     { key: "PAYMENT_REQUEST_BASE_URL", value: "https://www.seedlings.team", description: "Base URL used when generating payment-request SMS/email links (e.g., {BASE}/pay/{token})." },
     { key: "PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS", value: "72", description: "Hours a payment-request token stays valid after the job transitions to PENDING_PAYMENT." },
-    { key: "PAYMENT_REQUEST_STALE_DAYS", value: "4", description: "A payment request sent to a client but not yet paid is flagged 'stale' after this many days — surfaced as a Super alert and worklist so it isn't forgotten." },
+    { key: "PAYMENT_REQUEST_STALE_DAYS", value: "4", description: "A payment request sent to a client but not yet paid is flagged 'stale' after this many days — surfaced as someone with settings authority alert and worklist so it isn't forgotten." },
     { key: "DEFAULT_PAYMENT_COMMUNICATIONS_MODE", value: "CLAIMER", description: "How clients are notified when a payment is due after a finished job. Set to 'Server' to have the app automatically text or email the client. Set to 'Claimer' to have whoever finished the job send the message from their own phone or email. Workers can override this on their profile." },
     { key: "MAX_PHOTOS_PER_JOB", value: "10", description: "Maximum number of photos a worker can upload to a single job. Lowering this only restricts future uploads — photos already on a job are never removed." },
     { key: "PHOTO_MAX_EDGE_PX", value: "1200", description: "Longest edge in pixels for uploaded photos. Photos are resized down to this size before upload to save bandwidth. Only applies to new uploads — already-stored photos keep their original size." },
     { key: "PHOTO_JPEG_QUALITY", value: "0.8", description: "JPEG quality for uploaded photos (0.1 = smaller files, lower quality; 1.0 = largest files, best quality). 0.8 is the recommended balance. Only applies to new uploads." },
-    { key: "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL", value: "false", description: "When a client reports they sent a payment, push notifications to admins always fire (free). Turn this on to also send a paid SMS (Twilio) or email (Resend) on top of the push. Default is off to keep notification costs at zero." },
+    { key: "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL", value: "false", description: "When a client reports they sent a payment, push notifications to holders of schedule authority always fire (free). Turn this on to also send a paid SMS (Twilio) or email (Resend) on top of the push. Default is off to keep notification costs at zero." },
     { key: "OUTGOING_COMMS_CC", value: '{"emails":[],"phones":[]}', description: "Recipients automatically CC'd on client SMS/email comms opened from the app (the owner and any supervisors). Email addresses are added as visible cc=; phone numbers join the SMS as additional recipients, which on iOS/Android creates a group thread the client can see. Org policy is full transparency — no silent BCC. Only applies to templated comms (invoices, reschedules, reminders, work-day confirms). Plain contact-menu opens stay 1:1." },
     // Promotion opt-out footers — appended to promo piggyback content on
     // outbound email/SMS. Email footer MUST include {{businessAddress}}
@@ -3228,7 +3624,7 @@ async function seedDatabase() {
     title: string;
     description?: string;
     expiresAt: Date;
-    adminHidden?: boolean;
+    restricted?: boolean;
   }> = [
     {
       type: "INSURANCE_CERT",
@@ -3269,7 +3665,7 @@ async function seedDatabase() {
         data: {
           description: d.description ?? null,
           expiresAt: d.expiresAt,
-          adminHidden: !!d.adminHidden,
+          restricted: !!d.restricted,
         },
       });
     } else {
@@ -3279,7 +3675,7 @@ async function seedDatabase() {
           title: d.title,
           description: d.description ?? null,
           expiresAt: d.expiresAt,
-          adminHidden: !!d.adminHidden,
+          restricted: !!d.restricted,
           createdById: MICHAEL_ID,
         },
       });
@@ -3297,10 +3693,10 @@ async function seedDatabase() {
       // Pick a representative cutoff for dev — seeded backdated rows below
       // straddle this date so the filter can be exercised end-to-end.
       value: "2026-06-01",
-      description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — Super can temporarily reveal pre-cutoff history via the page-level toggle.",
+      description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — a `books.view` holder can temporarily reveal pre-cutoff history via the page-level toggle.",
       updatedById: MICHAEL_ID,
     },
-    update: { description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — Super can temporarily reveal pre-cutoff history via the page-level toggle.", updatedById: MICHAEL_ID },
+    update: { description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — a `books.view` holder can temporarily reveal pre-cutoff history via the page-level toggle.", updatedById: MICHAEL_ID },
   });
   await prisma.setting.upsert({
     where: { key: "BUSINESS_START_DATE_ENABLED" },
@@ -3308,25 +3704,10 @@ async function seedDatabase() {
       key: "BUSINESS_START_DATE_ENABLED",
       // OFF by default — flipping it on in Settings engages the filter.
       value: "false",
-      description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them).",
+      description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (a `books.view` holder can transiently reveal them).",
       updatedById: MICHAEL_ID,
     },
-    update: { description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them).", updatedById: MICHAEL_ID },
-  });
-  await prisma.setting.upsert({
-    where: { key: "QB_INCLUDE_CONTRACT_LABOR" },
-    create: {
-      key: "QB_INCLUDE_CONTRACT_LABOR",
-      // ON by default — the app's qb-journal-expenses.csv is the only
-      // path getting contractor labor into QB until Gusto's QB
-      // integration is configured. Flip OFF after enabling Gusto-QB
-      // sync; the integration posts contractor payments directly so
-      // the app's rows become duplicative.
-      value: "true",
-      description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payment splits. When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.",
-      updatedById: MICHAEL_ID,
-    },
-    update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payment splits. When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
+    update: { description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (a `books.view` holder can transiently reveal them).", updatedById: MICHAEL_ID },
   });
   await prisma.setting.upsert({
     where: { key: "EQUIPMENT_BILLING_ENABLED" },
@@ -3358,6 +3739,36 @@ async function seedDatabase() {
     update: { value: timelineCategoriesValue, description: "Timeline event categories. Array of {key, label, description}.", updatedById: MICHAEL_ID },
   });
 
+  // ── Area tiers + role-name suggestions ──────────────────────────────────
+  //
+  // Both are SUGGESTION lists, not vocabularies. `Area.tier` and
+  // `CustomRole.name` are free strings and stay that way: an operator who
+  // runs "Zones" rather than "Districts" must not have to ask us. What the
+  // list buys is spelling — two people naming the same level the same way,
+  // so the tree reads consistently and a report can group on it.
+  //
+  // Shape is a flat string array, like a simple taxonomy. Anything richer
+  // would imply the values mean something to the code. They do not.
+  const areaTierNamesValue = JSON.stringify(["Region", "District", "Territory", "Route"]);
+  await prisma.setting.upsert({
+    where: { key: "AREA_TIER_NAMES" },
+    create: { key: "AREA_TIER_NAMES", value: areaTierNamesValue, description: "What a level of the area tree is called where you operate. Array of strings. Suggestions only — Area.tier accepts any text.", updatedById: MICHAEL_ID },
+    update: { description: "What a level of the area tree is called where you operate. Array of strings. Suggestions only — Area.tier accepts any text." },
+  });
+
+  const managerTitlesValue = JSON.stringify([
+    "Regional Manager",
+    "District Manager",
+    "Crew Lead",
+    "Office Coordinator",
+    "Bookkeeper",
+  ]);
+  await prisma.setting.upsert({
+    where: { key: "MANAGER_TITLES" },
+    create: { key: "MANAGER_TITLES", value: managerTitlesValue, description: "Suggested names when creating a custom role. Array of strings. Suggestions only — a role name is free text.", updatedById: MICHAEL_ID },
+    update: { description: "Suggested names when creating a custom role. Array of strings. Suggestions only — a role name is free text." },
+  });
+
   // Compliance-system tunables. Description + section reinforced on every
   // reseed so drift can't reintroduce the empty-fields state we shipped
   // in the initial compliance migration. See docs/features/compliance.md.
@@ -3386,7 +3797,7 @@ async function seedDatabase() {
     category?: string;
     rrule: string | null;
     anchorDate: Date;
-    adminHidden?: boolean;
+    restricted?: boolean;
     /** Explicit next-due override — otherwise anchorDate is used. */
     nextDueDate?: Date;
   }> = [
@@ -3428,7 +3839,7 @@ async function seedDatabase() {
       category: "INSURANCE",
       rrule: "FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=1",
       anchorDate: date(thisYear, 3, 1),
-      adminHidden: true, // example of a Super-only event
+      restricted: true, // example of a restricted event (`timeline.manage`)
     },
     {
       title: "Spring season kickoff meeting",
@@ -3460,21 +3871,21 @@ async function seedDatabase() {
     // ── Regression fixture: admin-hidden AND due today ────────────────
     // This is the exact shape that broke on 2026-08-31. Two bugs met here:
     //  1. The header badge scoped by the operator's ROLE while the Timeline
-    //     tab scoped by the ROLE CHIP, so a super on the Admin chip got a
-    //     count including this adminHidden row and a list that couldn't
+    //     tab scoped by the ROLE CHIP, so the chip selection drove a
+    //     count including this restricted row and a list that couldn't
     //     show it — badge said 2, tab showed 1.
     //  2. Server-side urgency compared raw timestamps, so a row due TODAY
     //     read as "past" by mid-morning while the tab filed it under Today.
-    // Keep this fixture: without an adminHidden row that is also due today,
+    // Keep this fixture: without an restricted row that is also due today,
     // dev cannot reproduce either one.
     {
       title: "Weekly Payroll",
-      description: "Run payroll in Gusto. Super-only — not visible to admins.",
+      description: "Run payroll in Gusto. Needs `payroll.manage`.",
       category: "FINANCE",
       rrule: "FREQ=WEEKLY;BYDAY=MO",
       anchorDate: daysFromNow(0, 9),
       nextDueDate: daysFromNow(0, 9),
-      adminHidden: true,
+      restricted: true,
     },
   ];
   for (const e of timelineSeed) {
@@ -3493,7 +3904,7 @@ async function seedDatabase() {
           // never set it, so on a database without the 2026-05 backfill
           // migration every seeded event was invisible.
           nextDueDate: e.nextDueDate ?? e.anchorDate,
-          adminHidden: !!e.adminHidden,
+          restricted: !!e.restricted,
         },
       });
     } else {
@@ -3505,7 +3916,7 @@ async function seedDatabase() {
           rrule: e.rrule,
           anchorDate: e.anchorDate,
           nextDueDate: e.nextDueDate ?? e.anchorDate,
-          adminHidden: !!e.adminHidden,
+          restricted: !!e.restricted,
           createdById: MICHAEL_ID,
         },
       });
@@ -3585,13 +3996,13 @@ async function seedDatabase() {
   // ── Reminders ──────────────────────────────────────────────────────────────
   console.log("  Creating reminders...");
 
-  // Admin Worker: reminder due today to follow up on Chen tree estimate
+  // Scheduler: reminder due today to follow up on Chen tree estimate
   await prisma.reminder.create({
-    data: { userId: ADMIN_WORKER_ID, occurrenceId: estChenTree.id, remindAt: daysFromNow(0, 9), note: "Follow up with Lisa Chen on tree trimming pricing" },
+    data: { userId: SCHEDULER_ID, occurrenceId: estChenTree.id, remindAt: daysFromNow(0, 9), note: "Follow up with Lisa Chen on tree trimming pricing" },
   });
-  // Admin Worker: future reminder on church pressure wash
+  // Scheduler: future reminder on church pressure wash
   await prisma.reminder.create({
-    data: { userId: ADMIN_WORKER_ID, occurrenceId: estChurchWash.id, remindAt: daysFromNow(5, 9), note: "Check if church board approved pressure wash" },
+    data: { userId: SCHEDULER_ID, occurrenceId: estChurchWash.id, remindAt: daysFromNow(5, 9), note: "Check if church board approved pressure wash" },
   });
   // Employee: reminder due yesterday (overdue) on a completed job
   await prisma.reminder.create({
@@ -3602,8 +4013,8 @@ async function seedDatabase() {
   console.log("  Creating tasks...");
 
   const taskData: { title: string; startAt: Date; userId: string; notes?: string; status?: string; linkedOccurrenceId?: string }[] = [
-    { title: "Buy mulch bags for Harrington", startAt: daysFromNow(0, 9), userId: ADMIN_WORKER_ID, notes: "Need 10 bags of premium hardwood mulch from Home Depot", linkedOccurrenceId: todayHarrington.id },
-    { title: "Call Lisa Chen about tree trimming schedule", startAt: daysFromNow(1, 10), userId: ADMIN_WORKER_ID, linkedOccurrenceId: estChenTree.id },
+    { title: "Buy mulch bags for Harrington", startAt: daysFromNow(0, 9), userId: SCHEDULER_ID, notes: "Need 10 bags of premium hardwood mulch from Home Depot", linkedOccurrenceId: todayHarrington.id },
+    { title: "Call Lisa Chen about tree trimming schedule", startAt: daysFromNow(1, 10), userId: SCHEDULER_ID, linkedOccurrenceId: estChenTree.id },
     { title: "Sharpen mower blades", startAt: daysAgo(1, 8), userId: EMPLOYEE_ID, notes: "Honda push mower in maintenance — blades need sharpening before next use", status: "CLOSED" },
     { title: "Pick up new trimmer line", startAt: daysFromNow(2, 9), userId: CONTRACTOR_ID, notes: "Stihl .095 round, 3lb spool" },
   ];
@@ -3631,14 +4042,14 @@ async function seedDatabase() {
   console.log("  Creating pinned occurrences...");
 
   // Admin Worker pins today's Harrington mow and Willowbrook
-  await prisma.pinnedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: todayHarrington.id } });
-  await prisma.pinnedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: todayWillowbrook.id } });
+  await prisma.pinnedOccurrence.create({ data: { userId: SCHEDULER_ID, occurrenceId: todayHarrington.id } });
+  await prisma.pinnedOccurrence.create({ data: { userId: SCHEDULER_ID, occurrenceId: todayWillowbrook.id } });
   // Employee pins tomorrow's leaf cleanup
   await prisma.pinnedOccurrence.create({ data: { userId: EMPLOYEE_ID, occurrenceId: tomorrowChenLeaf.id } });
 
   console.log("  Creating liked occurrences...");
-  await prisma.likedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: todayHarrington.id } });
-  await prisma.likedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: cThompson7.id } });
+  await prisma.likedOccurrence.create({ data: { userId: SCHEDULER_ID, occurrenceId: todayHarrington.id } });
+  await prisma.likedOccurrence.create({ data: { userId: SCHEDULER_ID, occurrenceId: cThompson7.id } });
   await prisma.likedOccurrence.create({ data: { userId: EMPLOYEE_ID, occurrenceId: cObrien7.id } });
   await prisma.likedOccurrence.create({ data: { userId: CONTRACTOR_ID, occurrenceId: cSunrise7.id } });
 
@@ -3686,7 +4097,7 @@ async function seedDatabase() {
           contentType: "image/jpeg",
           description: g.description,
           sortOrder: i,
-          uploadedById: ADMIN_WORKER_ID,
+          uploadedById: SCHEDULER_ID,
         },
       });
       await prisma.occurrencePropertyPhoto.create({
@@ -3736,7 +4147,7 @@ async function seedDatabase() {
       notes: "Policy expires end of month. Call State Farm agent at (512) 555-0199.",
     } as any,
   });
-  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: reminder1.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID } });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: reminder1.id, userId: SCHEDULER_ID, assignedById: SCHEDULER_ID } });
 
   const reminder2 = await prisma.jobOccurrence.create({
     data: {
@@ -3759,7 +4170,7 @@ async function seedDatabase() {
       workflow: "REMINDER",
     } as any,
   });
-  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: reminder3.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID } });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: reminder3.id, userId: SCHEDULER_ID, assignedById: SCHEDULER_ID } });
 
   console.log("  Creating light estimates...");
   const lightEst1 = await prisma.jobOccurrence.create({
@@ -3770,7 +4181,7 @@ async function seedDatabase() {
       source: "MANUAL",
       workflow: "ESTIMATE",
       isEstimate: true,
-      isAdminOnly: true,
+      mustBeAssigned: true,
       contactName: "Mark Johnson",
       contactPhone: "(555) 888-1234",
       contactEmail: "mark.johnson@example.com",
@@ -3778,8 +4189,8 @@ async function seedDatabase() {
       notes: "Neighbor referral from Thompson. Large backyard, needs full cleanup and mulch install. Has 3 flower beds and a hedge row.",
     } as any,
   });
-  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: lightEst1.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID } });
-  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: lightEst1.id, userId: CONTRACTOR_ID, assignedById: ADMIN_WORKER_ID } });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: lightEst1.id, userId: SCHEDULER_ID, assignedById: SCHEDULER_ID } });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: lightEst1.id, userId: CONTRACTOR_ID, assignedById: SCHEDULER_ID } });
 
   const lightEst2 = await prisma.jobOccurrence.create({
     data: {
@@ -3789,7 +4200,7 @@ async function seedDatabase() {
       source: "MANUAL",
       workflow: "ESTIMATE",
       isEstimate: true,
-      isAdminOnly: true,
+      mustBeAssigned: true,
       contactName: "Tina Nguyen",
       contactPhone: "(555) 777-5678",
       estimateAddress: "892 Barton Springs Rd, Austin, TX 78704",
@@ -3798,12 +4209,12 @@ async function seedDatabase() {
       notes: "Called in from website. Wants to improve curb appeal before listing house.",
     } as any,
   });
-  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: lightEst2.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID } });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: lightEst2.id, userId: SCHEDULER_ID, assignedById: SCHEDULER_ID } });
 
   console.log("  Creating comments...");
-  await prisma.occurrenceComment.create({ data: { occurrenceId: todayHarrington.id, authorId: ADMIN_WORKER_ID, body: "Gate code changed to 5912 — confirmed with James this morning." } });
+  await prisma.occurrenceComment.create({ data: { occurrenceId: todayHarrington.id, authorId: SCHEDULER_ID, body: "Gate code changed to 5912 — confirmed with James this morning." } });
   await prisma.occurrenceComment.create({ data: { occurrenceId: todayHarrington.id, authorId: EMPLOYEE_ID, body: "Got it, thanks. Also the sprinkler heads near the driveway are sticking up — watch the mower." } });
-  await prisma.occurrenceComment.create({ data: { occurrenceId: todayWillowbrook.id, authorId: ADMIN_WORKER_ID, body: "HOA board meeting next week — Susan wants the entrance looking sharp. Extra attention on edging please." } });
+  await prisma.occurrenceComment.create({ data: { occurrenceId: todayWillowbrook.id, authorId: SCHEDULER_ID, body: "HOA board meeting next week — Susan wants the entrance looking sharp. Extra attention on edging please." } });
   await prisma.occurrenceComment.create({ data: { occurrenceId: cThompson7.id, authorId: CONTRACTOR_ID, body: "Dog was loose in the backyard last time. Call ahead to make sure it's inside." } });
 
   // ── Audit-triggering test data ──────────────────────────────────────────
@@ -3860,7 +4271,7 @@ async function seedDatabase() {
   await prisma.jobOccurrenceAssignee.createMany({
     data: [
       { occurrenceId: weeklyMeeting.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
-      { occurrenceId: weeklyMeeting.id, userId: ADMIN_WORKER_ID, assignedById: MICHAEL_ID },
+      { occurrenceId: weeklyMeeting.id, userId: SCHEDULER_ID, assignedById: MICHAEL_ID },
       { occurrenceId: weeklyMeeting.id, userId: CONTRACTOR_ID, assignedById: MICHAEL_ID },
       { occurrenceId: weeklyMeeting.id, userId: EMPLOYEE_ID, assignedById: MICHAEL_ID },
     ],
@@ -3880,7 +4291,7 @@ async function seedDatabase() {
   await prisma.jobOccurrenceAssignee.createMany({
     data: [
       { occurrenceId: equipmentInspection.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
-      { occurrenceId: equipmentInspection.id, userId: ADMIN_WORKER_ID, assignedById: MICHAEL_ID },
+      { occurrenceId: equipmentInspection.id, userId: SCHEDULER_ID, assignedById: MICHAEL_ID },
     ],
   });
 
@@ -3939,7 +4350,7 @@ async function seedDatabase() {
   await prisma.jobOccurrenceAssignee.createMany({
     data: [
       { occurrenceId: followupWillowbrook.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
-      { occurrenceId: followupWillowbrook.id, userId: ADMIN_WORKER_ID, assignedById: MICHAEL_ID },
+      { occurrenceId: followupWillowbrook.id, userId: SCHEDULER_ID, assignedById: MICHAEL_ID },
     ],
   });
   await prisma.followupClient.create({
@@ -4109,7 +4520,7 @@ async function seedDatabase() {
       } as any,
     });
     await prisma.jobOccurrenceAssignee.create({
-      data: { occurrenceId: alertPendingPayApprovalOcc.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID },
+      data: { occurrenceId: alertPendingPayApprovalOcc.id, userId: SCHEDULER_ID, assignedById: SCHEDULER_ID },
     });
     await prisma.payment.create({
       data: {
@@ -4119,7 +4530,7 @@ async function seedDatabase() {
         amountPaid: 150,
         method: "CASH",
         note: "Alert fixture — waiting on admin approval",
-        collectedById: ADMIN_WORKER_ID,
+        collectedById: SCHEDULER_ID,
         confirmed: false,
         selfReported: false,
         grossCharged: 150,
@@ -4147,14 +4558,14 @@ async function seedDatabase() {
         price: 200,
         estimatedMinutes: 120,
         completionSplits: [
-          { userId: ADMIN_WORKER_ID, percent: 60 },
+          { userId: SCHEDULER_ID, percent: 60 },
           { userId: EMPLOYEE_ID, percent: 40 },
         ] as any,
       } as any,
     });
-    for (const uid of [ADMIN_WORKER_ID, EMPLOYEE_ID]) {
+    for (const uid of [SCHEDULER_ID, EMPLOYEE_ID]) {
       await prisma.jobOccurrenceAssignee.create({
-        data: { occurrenceId: tipPendingOcc.id, userId: uid, assignedById: ADMIN_WORKER_ID },
+        data: { occurrenceId: tipPendingOcc.id, userId: uid, assignedById: SCHEDULER_ID },
       });
     }
     await prisma.payment.create({
@@ -4165,7 +4576,7 @@ async function seedDatabase() {
         amountPaid: 240,
         method: "CASH",
         note: "TIP FIXTURE — $200 job, client paid $240",
-        collectedById: ADMIN_WORKER_ID,
+        collectedById: SCHEDULER_ID,
         confirmed: false,
         selfReported: false,
         grossCharged: 240,
@@ -4193,12 +4604,12 @@ async function seedDatabase() {
       } as any,
     });
     await prisma.jobOccurrenceAssignee.create({
-      data: { occurrenceId: alertOutstandingInvoiceOcc.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID },
+      data: { occurrenceId: alertOutstandingInvoiceOcc.id, userId: SCHEDULER_ID, assignedById: SCHEDULER_ID },
     });
 
     // 3. Change request — a client asked to reschedule the upcoming
     //    occurrence of this job. Status PENDING + resolvedAt null
-    //    surfaces in the admin Client requests counter.
+    //    surfaces in the Client requests counter.
     const alertChangeReqOcc = await prisma.jobOccurrence.create({
       data: {
         jobId: alertAnchorJob.id,
@@ -4214,7 +4625,7 @@ async function seedDatabase() {
       } as any,
     });
     await prisma.jobOccurrenceAssignee.create({
-      data: { occurrenceId: alertChangeReqOcc.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID },
+      data: { occurrenceId: alertChangeReqOcc.id, userId: SCHEDULER_ID, assignedById: SCHEDULER_ID },
     });
     await prisma.occurrenceChangeRequest.create({
       data: {
@@ -4231,7 +4642,7 @@ async function seedDatabase() {
   // 4. Stale estimate followup — an ESTIMATE-workflow occurrence with
   //    status PROPOSAL_SUBMITTED dated 14 days ago lands in the
   //    7–28-day stale-followup window the title-bar counter uses
-  //    (admin.ts:/admin/estimates/stale-followup-count).
+  //    (routes/jobs.ts: GET /estimates/stale-followup-count).
   if (alertAnchorJob) {
     const alertStaleEstimateOcc = await prisma.jobOccurrence.create({
       data: {
@@ -4243,7 +4654,7 @@ async function seedDatabase() {
         source: "MANUAL",
         workflow: "ESTIMATE",
         isEstimate: true,
-        isAdminOnly: true,
+        mustBeAssigned: true,
         proposalAmount: 600,
         proposalNotes: "Alert fixture — stale estimate awaiting client follow-up.",
       } as any,
@@ -4255,7 +4666,7 @@ async function seedDatabase() {
 
   // 5. Ledger followup — flag the first BusinessExpense as needing
   //    follow-up (e.g. "ACH didn't post / verify next month"). Drives
-  //    the Super → Ledger followups counter + Tasks shortcut.
+  //    the Ledger followups counter + Tasks shortcut.
   if (alertAnchorExpense) {
     await prisma.ledgerFollowup.create({
       data: {
@@ -4284,6 +4695,367 @@ async function seedDatabase() {
   await seedSupplyLifecycle();
 
   await applySettingSections();
+
+  // ── Areas ─────────────────────────────────────────────────────────────
+  //
+  // The root area and its backfill were a MIGRATION
+  // (20261011235100_create_root_area_and_backfill), which places every
+  // existing row in the root exactly once. That is right for a real
+  // database and useless for dev: `clearDatabase()` wipes properties, jobs
+  // and occurrences, the migration has already run and will not run again,
+  // so every reseed left `areaId` NULL on everything — 0 of 120
+  // occurrences, and every territorial rollup reading zero.
+  //
+  // So the seed reproduces it. A tier below the root exists too, because a
+  // single-node tree exercises nothing: prefix matching, "a parent covers
+  // its children", and "a sibling does not" all need real depth.
+  // THE ROOT IS IDENTIFIED BY NAME, AND IT IS THE OLDEST ONE.
+  //
+  // This read `findFirst({ where: { parentId: null } })` with no ordering.
+  // Two things go wrong with that. Postgres returns an arbitrary row, so a
+  // reseed could latch onto a different root each time; and the e2e
+  // mutation specs create their OWN root-level areas (`E2E_MUT_… Area`), so
+  // the arbitrary row was sometimes a scratch area — which the `update`
+  // below then RENAMED to "All areas" before building a fresh Durham and
+  // Chapel Hill beneath it.
+  //
+  // The result was a complete new tree per run: ten roots, ten Durhams, ten
+  // Chapel Hills, with the real data stranded under whichever one happened
+  // to win. Found 2026-10-18 by scripts/verify-area-scope.ts, which asked a
+  // territory-limited principal for Durham's properties and got rows from a
+  // DIFFERENT Durham.
+  const existingRoot = await prisma.area.findFirst({
+    where: { parentId: null, name: "All areas" },
+    orderBy: { id: "asc" },
+    select: { id: true },
+  });
+  const rootArea = await prisma.area.upsert({
+    where: { id: existingRoot?.id ?? "__none__" },
+    create: { name: "All areas", parentId: null, path: "" },
+    update: { name: "All areas" },
+    select: { id: true, path: true },
+  });
+
+  // Fold away any duplicate trees a previous run left behind. Only ones
+  // holding nothing — this can never strand work.
+  const dupRoots = await prisma.area.findMany({
+    where: {
+      parentId: null, name: "All areas", id: { not: rootArea.id },
+      properties: { none: {} }, occurrences: { none: {} }, assignments: { none: {} },
+      children: { every: { properties: { none: {} }, occurrences: { none: {} }, assignments: { none: {} } } },
+    },
+    select: { id: true, children: { select: { id: true } } },
+  });
+  if (dupRoots.length > 0) {
+    const childIds = dupRoots.flatMap((r) => r.children.map((c) => c.id));
+    if (childIds.length) await prisma.area.deleteMany({ where: { id: { in: childIds } } });
+    await prisma.area.deleteMany({ where: { id: { in: dupRoots.map((r) => r.id) } } });
+    console.log(`  Removed ${dupRoots.length} duplicate area tree(s) from earlier reseeds.`);
+  }
+  if (!rootArea.path) {
+    await prisma.area.update({
+      where: { id: rootArea.id },
+      data: { path: `/${rootArea.id}/` },
+    });
+  }
+  const rootPath = `/${rootArea.id}/`;
+
+  // TWO LEVELS BENEATH THE ROOT, not one.
+  //
+  // A flat tree proves prefix matching and nothing else. The questions that
+  // actually decide whether area scoping works are about DEPTH: does a grant
+  // on a parent cover its grandchildren, does a lens on a branch pull in the
+  // leaves below it, and does a sibling branch stay out of both. None of
+  // those have a wrong answer available in a one-level tree.
+  //
+  // NOTHING IS REPARENTED TO BUILD THIS. Durham and Chapel Hill keep the ids
+  // and paths they already have, so the districtLead fixture, the e2e
+  // constants and any coordinates set by hand all survive a reseed — and the
+  // app forbids reparenting anyway (G14), so a seed that did it would be
+  // modelling a state no operator can reach. The second level is added
+  // BENEATH them.
+  //
+  // EVERY NODE HOLDS REAL ROWS, with one deliberate exception: Chatham has
+  // no properties of its own and five beneath it. That is the case worth
+  // having — a branch whose lens must return its child's rows — and it is
+  // not the same as the empty "Raleigh" an earlier fixture created, which
+  // had nothing anywhere under it and exercised nothing.
+  //
+  // Named after cities the fixture genuinely has, and nested the way the
+  // geography actually runs: Carrboro and Hillsborough are Orange County
+  // neighbours of Chapel Hill, Pittsboro is Chatham County.
+  const AREA_TREE: Array<{
+    name: string;
+    tier: string;
+    lat?: number;
+    lng?: number;
+    children?: Array<{ name: string; tier: string; lat?: number; lng?: number }>;
+  }> = [
+    // Coordinates anchor the weather forecast when this area is the lens.
+    // Seeded so a fresh database can exercise that; Chatham is left blank on
+    // purpose, so the "falls back to the business address" path is in the
+    // fixture too.
+    { name: "Durham", tier: "District", lat: 35.994, lng: -78.8986 },
+    {
+      name: "Chapel Hill", tier: "District", lat: 35.9132, lng: -79.0558,
+      children: [
+        { name: "Carrboro", tier: "Route", lat: 35.9101, lng: -79.0753 },
+        { name: "Hillsborough", tier: "Route", lat: 36.0754, lng: -79.0998 },
+      ],
+    },
+    {
+      name: "Chatham", tier: "District",
+      children: [{ name: "Pittsboro", tier: "Route", lat: 35.7196, lng: -79.1778 }],
+    },
+  ];
+
+  /** Upsert one node by (name, parent) and stamp its path. Returns its id. */
+  async function seedArea(
+    node: { name: string; tier: string; lat?: number; lng?: number },
+    parentId: string,
+    parentPath: string,
+  ): Promise<string> {
+    const existing = await prisma.area.findFirst({
+      where: { name: node.name, parentId },
+      select: { id: true },
+    });
+    const row = existing
+      ? existing
+      : await prisma.area.create({
+          data: { name: node.name, tier: node.tier, parentId, path: "pending" },
+          select: { id: true },
+        });
+    await prisma.area.update({
+      where: { id: row.id },
+      // The path is rewritten every run rather than only on create: a node
+      // whose ANCESTOR was rebuilt would otherwise keep a path pointing at
+      // the old chain, and a stale path is invisible — every query still
+      // runs, just against a prefix nothing matches.
+      data: { path: `${parentPath}${row.id}/`, tier: node.tier, lat: node.lat ?? null, lng: node.lng ?? null },
+    });
+    return row.id;
+  }
+
+  /** name → id, for every node in the fixture at any depth. */
+  const areaIds: Record<string, string> = {};
+  for (const top of AREA_TREE) {
+    const id = await seedArea(top, rootArea.id, rootPath);
+    areaIds[top.name] = id;
+    for (const child of top.children ?? []) {
+      areaIds[child.name] = await seedArea(child, id, `${rootPath}${id}/`);
+    }
+  }
+  // Kept under the old name so the placement code below reads unchanged.
+  const districts = areaIds;
+
+  // ── Place the data in areas ───────────────────────────────────────────
+  //
+  // Runs HERE, not with the tree above, because it needs properties, jobs
+  // and occurrences to exist. Placing them when the tree was created put
+  // 0 of 120 occurrences in an area and said so cheerfully.
+  // Remove districts the fixture no longer names — same class of problem as
+  // the stale custom roles: `clearDatabase()` preserves Area, so a district
+  // from an earlier fixture survives as an empty territory that looks real.
+  // Only ones with nothing pointing at them, so this can never orphan work.
+  //
+  // Scans EVERY non-root area, not just the root's children — the fixture is
+  // two levels deep now, so a leaf dropped from a nested branch is just as
+  // stale as a district dropped from the top and was previously invisible to
+  // this sweep. The root itself is excluded: it is never part of the
+  // fixture's name list and deleting it would take the tree with it.
+  const stale = await prisma.area.findMany({
+    where: {
+      parentId: { not: null },
+      name: { notIn: Object.keys(districts) },
+      properties: { none: {} },
+      occurrences: { none: {} },
+      assignments: { none: {} },
+      children: { none: {} },
+    },
+    select: { id: true, name: true },
+  });
+  if (stale.length > 0) {
+    await prisma.area.deleteMany({ where: { id: { in: stale.map((a) => a.id) } } });
+    console.log(`  Removed ${stale.length} empty area(s) from an earlier fixture: ${stale.map((a) => a.name).join(", ")}`);
+  }
+
+  // Properties split by their real city, so the fixture is not arbitrary;
+  // anything else lands in the root rather than nowhere.
+  // EVERY SEEDED CITY HAS A LEAF, so nothing falls through to the root.
+  // Properties sitting ON the root were the old behaviour and it quietly
+  // contradicted the model: the root is the container, not a place — it has
+  // no tier, no coordinates and nobody in charge of it. A property tagged
+  // there is in "everywhere", which is not an answer.
+  for (const [city, areaId] of [
+    ["Durham", districts["Durham"]],
+    ["Chapel Hill", districts["Chapel Hill"]],
+    ["Carrboro", districts["Carrboro"]],
+    ["Hillsborough", districts["Hillsborough"]],
+    ["Pittsboro", districts["Pittsboro"]],
+  ] as const) {
+    await prisma.property.updateMany({ where: { city }, data: { areaId } });
+  }
+  // Safety net for a city the list above does not name. It lands on the root
+  // rather than staying null, and SAYS SO — an untagged property is allowed
+  // but discouraged, and one appearing silently is how the fixture drifts
+  // away from the map above.
+  const unplaced = await prisma.property.count({ where: { areaId: null } });
+  if (unplaced > 0) {
+    const cities = await prisma.property.findMany({
+      where: { areaId: null }, select: { city: true }, distinct: ["city"],
+    });
+    await prisma.property.updateMany({ where: { areaId: null }, data: { areaId: rootArea.id } });
+    console.log(
+      `  ${unplaced} propert(ies) had no area and were put on the root — ` +
+        `add a leaf for: ${cities.map((c) => c.city ?? "(no city)").join(", ")}`,
+    );
+  }
+
+  // Jobs default to their property's area; occurrences follow the job. This
+  // is the same order `resolveOccurrenceArea` uses at runtime.
+  const propsWithArea = await prisma.property.findMany({
+    where: { areaId: { not: null } },
+    select: { id: true, areaId: true },
+  });
+  for (const prop of propsWithArea) {
+    await prisma.job.updateMany({
+      where: { propertyId: prop.id },
+      data: { defaultAreaId: prop.areaId },
+    });
+  }
+  const jobsWithArea = await prisma.job.findMany({
+    where: { defaultAreaId: { not: null } },
+    select: { id: true, defaultAreaId: true },
+  });
+  for (const job of jobsWithArea) {
+    await prisma.jobOccurrence.updateMany({
+      where: { jobId: job.id },
+      data: { areaId: job.defaultAreaId },
+    });
+  }
+  await prisma.jobOccurrence.updateMany({ where: { areaId: null }, data: { areaId: rootArea.id } });
+  console.log(
+    `  Areas: root + ${Object.keys(districts).length} districts; ` +
+      `${propsWithArea.length} properties and ` +
+      `${await prisma.jobOccurrence.count({ where: { areaId: { not: null } } })} occurrences placed.`,
+  );
+
+  // ── A TERRITORY-LIMITED PERSON ────────────────────────────────────────
+  //
+  // Without one, area scoping cannot be tested at all. Every other persona
+  // holds its role COMPANY-WIDE, and a company-wide grant wins: for them
+  // `visibleAreaPaths` correctly returns null (no narrowing), so a test
+  // would pass while proving nothing. The gap was invisible for exactly
+  // that reason — 33 areas seeded and zero assignments.
+  //
+  // This person holds NO company-wide role. Their only grant is an
+  // AreaAssignment of the DISTRICT LEAD role inside Durham, which is what
+  // makes them narrowed: `visibleAreaPaths` returns Durham's path alone,
+  // and every threaded read must drop Chapel Hill's rows for them.
+  //
+  // THE ROLE CHANGED FROM ADMIN TO DISTRICT LEAD (2026-10-26). The fixture
+  // was Admin-in-Durham, and Admin deliberately lacks `reports.business`
+  // so INSIGHTS stays off the Admin tier — which left the one persona named
+  // "District Lead" unable to roll up the district they lead. District Lead
+  // inherits Admin and adds that single capability, so the lead sees their
+  // area's business numbers while every company-wide Admin is unchanged.
+  //
+  // Deliberately NOT one of the Clerk-backed personas. Re-pointing an
+  // existing one would change what the persona-mutation specs assert.
+  //
+  // SIGNED IN AS, since 2026-10-22. This used to say the fixture exists to
+  // be "queried directly rather than signed in as", and that was the whole
+  // weakness: area scoping was proven by unit tests over hand-built
+  // principals and by a direct query, never by a request from a real
+  // narrowed user. It now has a Clerk account and a Playwright persona, so
+  // the sweep drives it through the UI like any other.
+  const districtLeadId = "seed-district-lead-durham";
+  const durhamId = districts["Durham"];
+  // Falls back to Admin if the District Lead role is not installed yet —
+  // a database seeded before `install-starter-roles.ts` gained it would
+  // otherwise skip the whole fixture and take the persona with it.
+  const leadRole =
+    (await prisma.customRole.findUnique({
+      where: { key: "seedlings.district-lead" },
+      select: { id: true },
+    })) ??
+    (await prisma.customRole.findUnique({
+      where: { key: "seedlings.admin" },
+      select: { id: true },
+    }));
+  if (durhamId && leadRole) {
+    await prisma.user.upsert({
+      where: { id: districtLeadId },
+      create: {
+        id: districtLeadId,
+        // A REAL CLERK ID, not `seed_…`. `auth.setup.ts` mints a sign-in
+        // ticket from this, and a synthetic id cannot sign in — which is
+        // exactly why this fixture had no persona for so long.
+        clerkUserId: "user_3L4dcamBCzjUi4HM66iShU6jRFx",
+        email: "admin+districtlead@seedlingslawncare.com",
+        displayName: "District Lead (Durham)",
+        isApproved: true,
+        workerType: "EMPLOYEE",
+      },
+      update: {
+        isApproved: true,
+        workerType: "EMPLOYEE",
+        displayName: "District Lead (Durham)",
+        // Carried in the UPDATE branch too: a database seeded before the
+        // Clerk account existed still holds `seed_seed-district-lead-durham`,
+        // and an upsert that only sets these on create would leave it there
+        // and fail at sign-in with nothing pointing here.
+        clerkUserId: "user_3L4dcamBCzjUi4HM66iShU6jRFx",
+        email: "admin+districtlead@seedlingslawncare.com",
+      },
+    });
+    // Company-wide grants would defeat the fixture — strip any that exist.
+    await prisma.userCustomRole.deleteMany({ where: { userId: districtLeadId } });
+    // And any assignment to a DIFFERENT area. A stale one (a Durham from a
+    // duplicate tree, say) makes the principal hold two subtrees, so the
+    // scoped read legitimately returns both and the fixture stops being
+    // "limited to one territory" without ever looking wrong.
+    await prisma.areaAssignment.deleteMany({
+      where: { userId: districtLeadId, NOT: { areaId: durhamId } },
+    });
+    // And any Durham assignment carrying a DIFFERENT role — the fixture was
+    // Admin-in-Durham before District Lead existed, and an upsert alone
+    // would leave that row in place so the persona held both.
+    await prisma.areaAssignment.deleteMany({
+      where: { userId: districtLeadId, areaId: durhamId, NOT: { customRoleId: leadRole.id } },
+    });
+    await prisma.areaAssignment.upsert({
+      where: {
+        userId_areaId_customRoleId: {
+          userId: districtLeadId, areaId: durhamId, customRoleId: leadRole.id,
+        },
+      },
+      create: {
+        userId: districtLeadId, areaId: durhamId, customRoleId: leadRole.id,
+        grantedById: MICHAEL_ID, note: "Area-scope fixture — Durham only.",
+      },
+      update: { suspendedAt: null },
+    });
+    console.log("  District Lead (Durham) — District Lead inside Durham only, no company-wide role.");
+  }
+
+  // Second prune. The pass above skips a duplicate tree that still holds an
+  // assignment; clearing the stale ones just made some of those empty.
+  const nowEmpty = await prisma.area.findMany({
+    where: {
+      parentId: null, name: "All areas", id: { not: rootArea.id },
+      properties: { none: {} }, occurrences: { none: {} }, assignments: { none: {} },
+      children: { every: { properties: { none: {} }, occurrences: { none: {} }, assignments: { none: {} } } },
+    },
+    select: { id: true, children: { select: { id: true } } },
+  });
+  if (nowEmpty.length > 0) {
+    const kids = nowEmpty.flatMap((r) => r.children.map((c) => c.id));
+    if (kids.length) await prisma.area.deleteMany({ where: { id: { in: kids } } });
+    await prisma.area.deleteMany({ where: { id: { in: nowEmpty.map((r) => r.id) } } });
+    console.log(`  Removed ${nowEmpty.length} further duplicate area tree(s).`);
+  }
+
 
   console.log("  Seed complete!");
 }
@@ -4333,7 +5105,7 @@ async function seedPayrollFixtures() {
   // He still UPLOADS payroll and CONFIRMS identities below; he just isn't
   // paid through it.
   const people = [
-    { userId: ADMIN_WORKER_ID, last: "Alvarez",   first: "Admin",   rate: 18.5, hours: 32 },
+    { userId: SCHEDULER_ID, last: "Alvarez",   first: "Admin",   rate: 18.5, hours: 32 },
     // Names deliberately DIFFERENT from the real Gusto fixture
     // (__fixtures__/gusto-payroll-journal.csv uses Serrano/Torres/
     // Wanderski-Jacob). If they collided, importing that fixture would
@@ -4502,7 +5274,7 @@ async function seedPayrollFixtures() {
     imported++;
   }
 
-  // One unmatched name on the most recent period, so the Super
+  // One unmatched name on the most recent period, so the
   // identity-review queue has something realistic to work.
   const newest = await prisma.payrollPeriod.findFirst({ orderBy: { payDay: "desc" } });
   if (newest) {
@@ -4912,27 +5684,23 @@ async function seedPromotionFixtures() {
  *      INFO/WARN surface in the worker Compliance tab.
  */
 async function seedPolicyFixtures() {
-  // Find a seed admin — first SUPER, else first ADMIN, else first user.
-  const supers = await prisma.userRole.findMany({
-    where: { role: "SUPER" },
-    include: { user: true },
-    orderBy: { user: { createdAt: "asc" } },
-    take: 1,
-  });
-  let seedAdmin = supers[0]?.user;
-  if (!seedAdmin) {
-    const admins = await prisma.userRole.findMany({
-      where: { role: "ADMIN" },
+  // Whoever holds the highest starter role, by KEY — `seedlings.super`,
+  // then `seedlings.admin`, else the oldest user. Keys, because the
+  // operator may rename any role.
+  let seedScheduler: Awaited<ReturnType<typeof prisma.user.findFirst>> = null;
+  for (const key of ["seedlings.super", "seedlings.admin"]) {
+    const grant = await prisma.userCustomRole.findFirst({
+      where: { customRole: { key }, suspendedAt: null },
       include: { user: true },
       orderBy: { user: { createdAt: "asc" } },
-      take: 1,
     });
-    seedAdmin = admins[0]?.user;
+    if (grant?.user) { seedScheduler = grant.user; break; }
   }
-  if (!seedAdmin) {
-    seedAdmin = (await prisma.user.findFirst({ orderBy: { createdAt: "asc" } })) ?? undefined;
+  if (!seedScheduler) {
+    const fallback = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
+    if (fallback) seedScheduler = fallback;
   }
-  if (!seedAdmin) {
+  if (!seedScheduler) {
     console.log("  ⚠  No users found — skipping policy fixtures.");
     return;
   }
@@ -4941,10 +5709,10 @@ async function seedPolicyFixtures() {
     key: string;
     title: string;
     description: string;
-    targetWorkerTypes: ("EMPLOYEE" | "CONTRACTOR" | "TRAINEE")[];
+    targetWorkerTypes: ("EMPLOYEE" | "CONTRACTOR" | "UNPAID")[];
     enforcement: "BLOCK" | "WARN" | "INFO";
     workerAction: "SIGN" | "ACKNOWLEDGE" | "NONE";
-    adminCanUploadOnBehalf?: boolean;
+    allowUploadOnBehalf?: boolean;
     requiresWorkerUpload?: boolean;
     workerUploadLabel?: string;
     workerUploadRequiresExpiry?: boolean;
@@ -4976,7 +5744,7 @@ async function seedPolicyFixtures() {
         targetWorkerTypes: input.targetWorkerTypes,
         enforcement: input.enforcement,
         workerAction: input.workerAction,
-        adminCanUploadOnBehalf: input.adminCanUploadOnBehalf ?? false,
+        allowUploadOnBehalf: input.allowUploadOnBehalf ?? false,
         requiresWorkerUpload: input.requiresWorkerUpload ?? false,
         workerUploadLabel: input.workerUploadLabel ?? null,
         workerUploadRequiresExpiry: input.workerUploadRequiresExpiry ?? false,
@@ -4988,7 +5756,7 @@ async function seedPolicyFixtures() {
         sortOrder: input.sortOrder,
         notifyOnPublish: "PUSH_ONLY",
         graceHoursOverride: input.graceHoursOverride ?? null,
-        createdById: seedAdmin!.id,
+        createdById: seedScheduler!.id,
       },
     });
     const version = await prisma.policyDocumentVersion.create({
@@ -5002,8 +5770,8 @@ async function seedPolicyFixtures() {
         forcesResign: false,
         status: "PUBLISHED",
         publishedAt: now,
-        publishedById: seedAdmin!.id,
-        createdById: seedAdmin!.id,
+        publishedById: seedScheduler!.id,
+        createdById: seedScheduler!.id,
       },
     });
     await prisma.policyDocument.update({
@@ -5016,7 +5784,7 @@ async function seedPolicyFixtures() {
     key: "SAFETY_SOP",
     title: "Safety Standard Operating Procedure",
     description: "Standard safety procedures every worker must acknowledge before starting a workday or claiming a job.",
-    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR", "TRAINEE"],
+    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR"],
     enforcement: "BLOCK",
     workerAction: "SIGN",
     resignTrigger: "ANNUAL_ON_DATE",
@@ -5077,7 +5845,7 @@ async function seedPolicyFixtures() {
     key: "PHOTO_RELEASE",
     title: "Photo & Media Release",
     description: "Grant company permission to use your image in marketing photos taken on job sites.",
-    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR", "TRAINEE"],
+    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR"],
     enforcement: "INFO",
     workerAction: "ACKNOWLEDGE",
     resignTrigger: "ONE_TIME",
@@ -5098,7 +5866,7 @@ async function seedPolicyFixtures() {
     key: "SOCIAL_MEDIA",
     title: "Social Media Policy",
     description: "What you can and can't post from a Seedlings job — protecting yourself, your coworkers, and our clients.",
-    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR", "TRAINEE"],
+    targetWorkerTypes: ["EMPLOYEE", "CONTRACTOR"],
     enforcement: "INFO",
     workerAction: "ACKNOWLEDGE",
     resignTrigger: "DAYS_SINCE_SIGN",
@@ -5128,7 +5896,7 @@ async function seedPolicyFixtures() {
 
   // NEW: contractor-only insurance certificate policy. Exercises the
   // requiresWorkerUpload + workerUploadRequiresExpiry + workerUploadRequiresApproval
-  // + adminCanUploadOnBehalf combination. Only CONTRACTOR is targeted.
+  // + allowUploadOnBehalf combination. Only CONTRACTOR is targeted.
   await seedPolicy({
     key: "INSURANCE_CERT",
     title: "Contractor Liability Insurance",
@@ -5136,7 +5904,7 @@ async function seedPolicyFixtures() {
     targetWorkerTypes: ["CONTRACTOR"],
     enforcement: "BLOCK",
     workerAction: "SIGN",
-    adminCanUploadOnBehalf: true,
+    allowUploadOnBehalf: true,
     requiresWorkerUpload: true,
     workerUploadLabel: "Certificate of Insurance (PDF)",
     workerUploadRequiresExpiry: true,
@@ -5169,7 +5937,7 @@ async function seedPolicyFixtures() {
     key: "HANDBOOK",
     title: "Employee Handbook",
     description: "Review and sign the current employee handbook.",
-    targetWorkerTypes: ["EMPLOYEE", "TRAINEE"],
+    targetWorkerTypes: ["EMPLOYEE"],
     enforcement: "WARN",
     workerAction: "SIGN",
     resignTrigger: "ONE_TIME",
@@ -5383,30 +6151,23 @@ async function seedStreamPauseFixtures() {
  * INSURANCE_CERT, HANDBOOK) at version 1 (PUBLISHED).
  */
 async function seedTestScenarios() {
-  // Find the seed admin the same way seedPolicyFixtures does — first SUPER,
-  // then first ADMIN, then first user. Any of these can appear as the
-  // grantedById on synthetic exceptions and the publishedById on new versions.
-  const supers = await prisma.userRole.findMany({
-    where: { role: "SUPER" },
-    include: { user: true },
-    orderBy: { user: { createdAt: "asc" } },
-    take: 1,
-  });
-  let seedAdmin = supers[0]?.user;
-  if (!seedAdmin) {
-    const admins = await prisma.userRole.findMany({
-      where: { role: "ADMIN" },
+  // Whoever holds the highest starter role, resolved by KEY the same way
+  // seedPolicyFixtures does. Any of them can appear as the grantedById on
+  // synthetic exceptions and the publishedById on new versions.
+  let seedScheduler: Awaited<ReturnType<typeof prisma.user.findFirst>> = null;
+  for (const key of ["seedlings.super", "seedlings.admin"]) {
+    const grant = await prisma.userCustomRole.findFirst({
+      where: { customRole: { key }, suspendedAt: null },
       include: { user: true },
       orderBy: { user: { createdAt: "asc" } },
-      take: 1,
     });
-    seedAdmin = admins[0]?.user;
+    if (grant?.user) { seedScheduler = grant.user; break; }
   }
-  if (!seedAdmin) {
+  if (!seedScheduler) {
     console.log("  ⚠  No admin found — skipping test scenarios.");
     return;
   }
-  const adminId = seedAdmin.id;
+  const schedulerId = seedScheduler.id;
 
   const now = new Date();
   const daysAgoDate = (n: number) => {
@@ -5448,13 +6209,13 @@ async function seedTestScenarios() {
         forcesResign: input.forcesResign ?? false,
         status: input.status,
         publishedAt: input.publishedAt ?? null,
-        publishedById: input.publishedAt ? adminId : null,
+        publishedById: input.publishedAt ? schedulerId : null,
         approvedAt: input.status === "APPROVED" || input.status === "PUBLISHED" ? now : null,
-        approvedById: input.status === "APPROVED" || input.status === "PUBLISHED" ? adminId : null,
+        approvedById: input.status === "APPROVED" || input.status === "PUBLISHED" ? schedulerId : null,
         submittedAt: input.status !== "DRAFT" ? now : null,
-        submittedById: input.status !== "DRAFT" ? adminId : null,
+        submittedById: input.status !== "DRAFT" ? schedulerId : null,
         graceUntil: input.graceUntil ?? null,
-        createdById: adminId,
+        createdById: schedulerId,
       },
     });
     if (input.setCurrent) {
@@ -5523,7 +6284,7 @@ async function seedTestScenarios() {
       data: {
         userId,
         policyDocumentId: policy.id,
-        grantedById: adminId,
+        grantedById: schedulerId,
         expiresAt: daysFromNowDate(expiresInDays),
         reason,
       },
@@ -5625,13 +6386,13 @@ async function seedTestScenarios() {
   // Signatures per worker
   //
   // Reserved user IDs (see file top):
-  //   ADMIN_WORKER  — has ADMIN role, workerType=EMPLOYEE
+  //   SCHEDULER  — has ADMIN role, workerType=EMPLOYEE
   //   EMPLOYEE      — pure worker
   //   CONTRACTOR    — pure worker, gets INSURANCE_CERT
-  //   TRAINEE       — pure worker, target of auto-grace demo
+  //   Trainee       — pure worker, target of auto-grace demo
   // ─────────────────────────────────────────────────────────────────────────
 
-  const ADMIN_WORKER_UID = "cmnry8iih000k5acx7hf27aay";
+  const SCHEDULER_UID = "cmnry8iih000k5acx7hf27aay";
   const CONTRACTOR_UID   = "cmnrylyaz000s5abyeyg77m4x";
   const EMPLOYEE_UID     = "cmnrz00fd002d5abyyr88byen";
   const TRAINEE_UID      = "cmnrzapcl003g5abybrzttuxs";
@@ -5639,7 +6400,7 @@ async function seedTestScenarios() {
   // Confirm the users exist before signing — otherwise a fresh user reseed
   // hasn't run yet and we should skip silently.
   const users = await prisma.user.findMany({
-    where: { id: { in: [ADMIN_WORKER_UID, CONTRACTOR_UID, EMPLOYEE_UID, TRAINEE_UID] } },
+    where: { id: { in: [SCHEDULER_UID, CONTRACTOR_UID, EMPLOYEE_UID, TRAINEE_UID] } },
     select: { id: true },
   });
   const knownIds = new Set(users.map((u) => u.id));
@@ -5653,13 +6414,13 @@ async function seedTestScenarios() {
   const sig30dAgo = daysAgoDate(30);
   const sig20dAgo = daysAgoDate(20);
 
-  // ADMIN_WORKER — compliant on everything, but has an active exception on
+  // SCHEDULER — compliant on everything, but has an active exception on
   // Handbook (super granted for orientation) so we can see the yellow badge
   // in the sign matrix.
-  await signAs({ userId: ADMIN_WORKER_UID, policyKey: "SAFETY_SOP", versionNumber: 1, signedAt: sig40dAgo, workerActionAtSign: "SIGN", typedName: "Ada Admin" });
-  await signAs({ userId: ADMIN_WORKER_UID, policyKey: "VEHICLE_POLICY", versionNumber: 1, signedAt: sig40dAgo, workerActionAtSign: "SIGN", typedName: "Ada Admin" });
-  await signAs({ userId: ADMIN_WORKER_UID, policyKey: "PHOTO_RELEASE", versionNumber: 1, signedAt: sig40dAgo, workerActionAtSign: "ACKNOWLEDGE" });
-  await grantException(ADMIN_WORKER_UID, "HANDBOOK", 14, "Orientation not yet complete — exception during ramp-up.");
+  await signAs({ userId: SCHEDULER_UID, policyKey: "SAFETY_SOP", versionNumber: 1, signedAt: sig40dAgo, workerActionAtSign: "SIGN", typedName: "Ada Admin" });
+  await signAs({ userId: SCHEDULER_UID, policyKey: "VEHICLE_POLICY", versionNumber: 1, signedAt: sig40dAgo, workerActionAtSign: "SIGN", typedName: "Ada Admin" });
+  await signAs({ userId: SCHEDULER_UID, policyKey: "PHOTO_RELEASE", versionNumber: 1, signedAt: sig40dAgo, workerActionAtSign: "ACKNOWLEDGE" });
+  await grantException(SCHEDULER_UID, "HANDBOOK", 14, "Orientation not yet complete — exception during ramp-up.");
 
   // CONTRACTOR — signed everything, but INSURANCE_CERT upload is still
   // PENDING_REVIEW. Exercises the "Uploads awaiting review" admin banner
@@ -5687,8 +6448,8 @@ async function seedTestScenarios() {
     },
   });
 
-  // TRAINEE — signed Safety+Handbook+Photo on the OLD v1 of Handbook. When
-  // TRAINEE next loads /me/policies, Handbook v2 (current) has grace that
+  // Trainee — signed Safety+Handbook+Photo on the OLD v1 of Handbook. When
+  // they next load /me/policies, Handbook v2 (current) has grace that
   // expired 3 days ago and no auto-grace exception exists yet → the auto-
   // grace helper creates one for 24h. This is the star of the auto-dormancy
   // demo.
@@ -5739,7 +6500,7 @@ async function seedTestScenarios() {
 
 /**
  * Dual-use vehicle fixtures — one active truck + owner + one worker
- * assignment so the Vehicles admin tab and the worker MileageStrip
+ * assignment so VehiclesTab and the MileageStrip
  * both render with real data on first load. Also generates a handful
  * of past MileageEntry rows so the log has content to view/approve.
  */
@@ -5762,7 +6523,7 @@ async function seedVehicleFixtures() {
 
   // Second truck — assigned only to MICHAEL_ID so the Start-mileage
   // vehicle picker on Jobs-Next renders multi-vehicle for him. Also
-  // gives the Vehicles admin tab a second row to look at.
+  // gives VehiclesTab a second row to look at.
   const secondTruck = await prisma.vehicle.create({
     data: {
       displayName: "Jacob's F-150",
@@ -5804,7 +6565,7 @@ async function seedVehicleFixtures() {
 
   // Backfill three past mileage sessions — one already approved, one
   // pending approval, one open (still driving). Exercises every row
-  // state in the admin log at a glance.
+  // state in the log at a glance.
   const now = new Date();
   const dayKey = (d: Date) => etFormatDate(d);
 
@@ -5852,10 +6613,10 @@ async function seedVehicleFixtures() {
   });
 
   // Companion PENDING-APPROVAL workday for Employee yesterday. Exists
-  // so the workday → mileage cascade is testable end-to-end: Super
-  // approves this workday in the Workdays tab and the pending mileage
-  // entry above auto-approves alongside via the cascade wired in
-  // apps/api/src/routes/admin.ts. The workday-fixture function
+  // so the workday → mileage cascade is testable end-to-end: a
+  // `time.manage` holder approves this workday in the Workdays tab and the
+  // pending mileage entry above auto-approves alongside via the cascade
+  // wired in apps/api/src/routes/time.ts. The workday-fixture function
   // deliberately left EMPLOYEE_ID at NOT_STARTED today; this adds a
   // separate row for yesterday, so today's Home-strip fixture is
   // undisturbed.
@@ -5903,7 +6664,7 @@ async function seedVehicleFixtures() {
 
   // Backfill enrichment — 10 additional past-30d approved sessions
   // spread across all three vehicles + all drivers, plus one extra
-  // pending entry per week. This populates the Super Insights strip
+  // pending entry per week. This populates the Insights strip
   // on the Vehicles tab: "Last 30d miles" gets ~250-400 realistic
   // miles, "Pending approvals" ticks past 1, "Fleet" + "Unassigned"
   // read as configured. Odometers are advanced monotonically so the
@@ -5954,7 +6715,7 @@ async function seedVehicleFixtures() {
 
 /**
  * Workday fixtures — one row per seed worker covering every UI state so the
- * Worker Home strip + dialogs can be eyeballed end-to-end without manual
+ * the Home workday strip + dialogs can be eyeballed end-to-end without manual
  * setup. Anchored on the actual current wall-clock so all the live
  * durations tick correctly in the strip.
  *
@@ -5964,13 +6725,13 @@ async function seedVehicleFixtures() {
  *                    the claimer. After tapping Start on that card, the
  *                    claimer-workday dialog fires; clicking "Start
  *                    workday & continue" then trips the team-workday
- *                    pre-check on Admin Worker.)
+ *                    pre-check on the Admin persona.)
  *   CONTRACTOR_ID  → PAUSED (started 4h ago, paused 30m ago, 12m prior pause)
  *   TRAINEE_ID     → COMPLETED (8h day with 30m lunch — today's edit window
  *                    is still open so the "Edit times" affordance fires)
- *   ADMIN_WORKER_ID → forgot-yesterday + today IN_PROGRESS (open row from
+ *   SCHEDULER_ID → forgot-yesterday + today IN_PROGRESS (open row from
  *                    yesterday surfaces the orange catch-up strip; the
- *                    today row started ~3h ago and gives the Admin Home
+ *                    today row started ~3h ago and gives the Home
  *                    Team Overview "Workdays in progress" panel a third
  *                    row alongside Michael + Contractor)
  *   MICHAEL_ID     → NOT_STARTED (no row today). The operator account
@@ -5985,9 +6746,9 @@ async function seedVehicleFixtures() {
  *
  *                    COST OF THIS CHOICE: the title-bar on-the-clock
  *                    bubble no longer opens in a ticking state for the
- *                    signed-in user, and Admin Home → Team Overview
+ *                    signed-in user, and Home → Team Overview
  *                    "Workdays in progress" drops from three rows to two
- *                    (CONTRACTOR paused + ADMIN_WORKER in progress).
+ *                    (CONTRACTOR paused + SCHEDULER in progress).
  *                    Start the workday to get both back.
  */
 async function seedWorkdayFixtures() {
@@ -6036,30 +6797,29 @@ async function seedWorkdayFixtures() {
     },
   });
 
-  // ── ADMIN_WORKER_ID: forgot-yesterday ───────────────────────────────
+  // ── SCHEDULER_ID: forgot-yesterday ───────────────────────────────
   // IN_PROGRESS row from yesterday, never ended. The Home strip surfaces
   // the orange "you forgot to end your workday" prompt with a "Set end
   // time" button that opens the catch-up dialog.
   await prisma.workerWorkday.create({
     data: {
-      userId: ADMIN_WORKER_ID,
+      userId: SCHEDULER_ID,
       workdayDate: yesterday,
       startedAt: new Date(now.getTime() - hrs(28)), // ~yesterday 8am-ish
     },
   });
 
-  // ── ADMIN_WORKER_ID: IN_PROGRESS today ─────────────────────────────
+  // ── SCHEDULER_ID: IN_PROGRESS today ─────────────────────────────
   // Fresh today workday started ~3h ago. Coexists with the
   // forgot-yesterday row above — realistic scenario for a worker who
   // clocked in this morning without addressing the still-open prior
-  // day. Populates the Admin Home Team Overview "Workdays in progress"
+  // day. Populates the Home Team Overview "Workdays in progress"
   // panel with a third distinct row (Michael IN_PROGRESS ~90m,
-  // Contractor PAUSED ~4h, Admin Worker IN_PROGRESS ~3h) so an admin
-  // testing can see multiple workers on the clock at once with
+  // Contractor PAUSED ~4h, Admin persona IN_PROGRESS ~3h) so testing can see multiple workers on the clock at once with
   // different durations.
   await prisma.workerWorkday.create({
     data: {
-      userId: ADMIN_WORKER_ID,
+      userId: SCHEDULER_ID,
       workdayDate: today,
       startedAt: new Date(now.getTime() - hrs(3)),
       totalPausedMs: mins(5), // one quick coffee break
@@ -6082,11 +6842,11 @@ async function seedWorkdayFixtures() {
   // an already-open session is what exercises the workflow's
   // `prior-open` step.
 
-  // ─── Super Workdays tab fixtures ──────────────────────────────────────
-  // Past-day rows for the Super approval surface. Two days back is well
+  // ─── Workdays tab fixtures ──────────────────────────────────────
+  // Past-day rows for the approval surface. Two days back is well
   // outside the 4 AM ET cutoff so the approval window is always open
   // regardless of when the seed runs. Each fixture exercises a different
-  // group in the Super tab: APPROVED, PENDING APPROVAL, NEEDS ENDING.
+  // group in the tab: APPROVED, PENDING APPROVAL, NEEDS ENDING.
   //
   // `daysAgo(n, hour)` returns a Date at hour HH:00 local-time, N calendar
   // days back — DST-safe via `.setDate()` per the existing seed pattern.
@@ -6136,12 +6896,12 @@ async function seedWorkdayFixtures() {
     },
   });
 
-  // ADMIN_WORKER_ID — NEEDS ENDING row (three days ago)
+  // SCHEDULER_ID — NEEDS ENDING row (three days ago)
   // Never ended. Exercises the unified Review dialog's "open" banner and
   // the "Set the end time below to close it before approving" flow.
   await prisma.workerWorkday.create({
     data: {
-      userId: ADMIN_WORKER_ID,
+      userId: SCHEDULER_ID,
       workdayDate: threeDaysAgoDate,
       startedAt: daysAgo(3, 8),
     },
@@ -6149,7 +6909,7 @@ async function seedWorkdayFixtures() {
 
   // MICHAEL_ID — APPROVED row (two days ago) approved by self.
   // Lets the "Approved by" line render for the seeded admin (self-approval
-  // is allowed since Michael is a Super; the audit log captures it).
+  // is allowed since Michael holds `time.manage`; the audit log captures it).
   await prisma.workerWorkday.create({
     data: {
       userId: MICHAEL_ID,
@@ -6173,7 +6933,7 @@ async function seedWorkdayFixtures() {
   // alongside the deliberately-anomalous rows above.
   //
   // Uses upsert so the per-state fixtures take precedence (won't
-  // overwrite an open IN_PROGRESS row for ADMIN_WORKER yesterday with
+  // overwrite an open IN_PROGRESS row for SCHEDULER yesterday with
   // a closed one here).
   console.log("    Workday backfill aligned with completed jobs...");
   const completedOccs = await prisma.jobOccurrence.findMany({
@@ -6232,7 +6992,7 @@ async function seedWorkdayFixtures() {
 
   // ─── Reverse pass: companion jobs for otherwise-bare workdays ────────
   //
-  // The state-only workday fixtures above (Super Workdays approval demo)
+  // The state-only workday fixtures above (the Workdays approval demo)
   // land on dates that don't necessarily have completed jobs for the same
   // worker. Left alone, that shows up as "workday with 0 jobs" on the
   // Approximate-Pay-Per-Hour card breakdown — the user flagged that as
@@ -6255,8 +7015,9 @@ async function seedWorkdayFixtures() {
     // ET day bounds — completedAt is a UTC instant; use etMidnight of
     // the workday and etMidnight of the next day as [start, end).
     // DST-safe via the canonical helpers.
-    const dayStart = etMidnight(w.workdayDate);
-    const dayEnd = etMidnight(etAddDays(w.workdayDate, 1));
+    const workday = toEtDateKey(w.workdayDate);
+    const dayStart = etMidnight(workday);
+    const dayEnd = etMidnight(etAddDays(workday, 1));
     const existingCount = await prisma.jobOccurrence.count({
       where: {
         completedAt: { gte: dayStart, lt: dayEnd },
@@ -6283,7 +7044,7 @@ async function seedWorkdayFixtures() {
       continue;
     }
 
-    const startAt = etInstantFromParts(w.workdayDate, "10:00");
+    const startAt = etInstantFromParts(workday, "10:00");
     const completedAt = new Date(startAt.getTime() + 45 * 60 * 1000);
     // Skip if this would land in the future (safety — some fixture
     // arithmetic can produce forward-drifted dates near DST edges).
@@ -6348,7 +7109,7 @@ async function computePromisedPayoutsForSeed(
     const normalized = (s.percent / totalPct) * 100;
     const gross = N * (normalized / 100);
     const wt = typeById.get(s.userId) ?? null;
-    const isEmp = wt === "EMPLOYEE" || wt === "TRAINEE";
+    const isEmp = isW2(wt);
     const ratePercent = isEmp ? employeeMargin : contractorFee;
     const fee = gross * (ratePercent / 100);
     return {
@@ -6389,7 +7150,7 @@ async function computePromisedPayoutsForSeed(
 // the caller can layer PENDING_PAYMENT scenarios on top (active variant)
 // or leave the dataset alone (clean variant).
 async function seedPaymentsBase() {
-  console.log("  Worker types in use: CONTRACTOR_ID=CONTRACTOR, EMPLOYEE_ID=EMPLOYEE, TRAINEE_ID=TRAINEE, ADMIN_WORKER_ID=EMPLOYEE");
+  console.log("  Worker types in use: CONTRACTOR_ID=CONTRACTOR, EMPLOYEE_ID=EMPLOYEE, TRAINEE_ID=EMPLOYEE (no field clearance), UNPAID_ID=UNPAID, SCHEDULER_ID=EMPLOYEE");
   // Ensure the Exports tab cadence setting exists even when this template is
   // run on a DB that hasn't had the default seed applied yet. Idempotent —
   // won't clobber an existing value the user has tuned.
@@ -6403,18 +7164,13 @@ async function seedPaymentsBase() {
   // See apps/api/src/lib/businessStartCutoff.ts.
   await prisma.setting.upsert({
     where: { key: "BUSINESS_START_DATE" },
-    create: { key: "BUSINESS_START_DATE", value: "2026-06-01", description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — Super can temporarily reveal pre-cutoff history via the page-level toggle.", updatedById: MICHAEL_ID },
-    update: { description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — Super can temporarily reveal pre-cutoff history via the page-level toggle." },
+    create: { key: "BUSINESS_START_DATE", value: "2026-06-01", description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — a `books.view` holder can temporarily reveal pre-cutoff history via the page-level toggle.", updatedById: MICHAEL_ID },
+    update: { description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — a `books.view` holder can temporarily reveal pre-cutoff history via the page-level toggle." },
   });
   await prisma.setting.upsert({
     where: { key: "BUSINESS_START_DATE_ENABLED" },
-    create: { key: "BUSINESS_START_DATE_ENABLED", value: "false", description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them).", updatedById: MICHAEL_ID },
-    update: { description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them)." },
-  });
-  await prisma.setting.upsert({
-    where: { key: "QB_INCLUDE_CONTRACT_LABOR" },
-    create: { key: "QB_INCLUDE_CONTRACT_LABOR", value: "true", description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payment splits. When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON.", updatedById: MICHAEL_ID },
-    update: { description: "When ON, qb-journal-expenses.csv emits Contract Labor rows for contractor payment splits. When OFF, the entire Contract Labor section is dropped — appropriate once Gusto's QuickBooks integration is configured to post contractor payments to QB directly. Default ON." },
+    create: { key: "BUSINESS_START_DATE_ENABLED", value: "false", description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (a `books.view` holder can transiently reveal them).", updatedById: MICHAEL_ID },
+    update: { description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (a `books.view` holder can transiently reveal them)." },
   });
   await prisma.setting.upsert({
     where: { key: "EQUIPMENT_BILLING_ENABLED" },
@@ -6546,12 +7302,12 @@ async function seedPaymentsBase() {
     { jobId: davisJob.id, daysOut: 0, hour: 14, assigneeUserId: CONTRACTOR_ID },
     { jobId: evansJob.id, daysOut: 0, hour: 16, assigneeUserId: CONTRACTOR_ID },
     { jobId: adamsJob.id, daysOut: 2, hour: 10, assigneeUserId: EMPLOYEE_ID },
-    { jobId: banksJob.id, daysOut: 3, hour: 8,  assigneeUserId: ADMIN_WORKER_ID },
+    { jobId: banksJob.id, daysOut: 3, hour: 8,  assigneeUserId: SCHEDULER_ID },
     { jobId: cohenJob.id, daysOut: 4, hour: 13, assigneeUserId: EMPLOYEE_ID },
     { jobId: davisJob.id, daysOut: 5, hour: 9,  assigneeUserId: CONTRACTOR_ID },
     { jobId: evansJob.id, daysOut: 8, hour: 9,  assigneeUserId: CONTRACTOR_ID },
     { jobId: adamsJob.id, daysOut: 9, hour: 10, assigneeUserId: EMPLOYEE_ID },
-    { jobId: banksJob.id, daysOut: 11, hour: 8, assigneeUserId: ADMIN_WORKER_ID },
+    { jobId: banksJob.id, daysOut: 11, hour: 8, assigneeUserId: SCHEDULER_ID },
     { jobId: cohenJob.id, daysOut: 12, hour: 13, assigneeUserId: EMPLOYEE_ID },
     { jobId: davisJob.id, daysOut: 14, hour: 9, assigneeUserId: CONTRACTOR_ID },
   ];
@@ -6651,7 +7407,7 @@ async function seedPaymentsBase() {
     const totalCost = Math.round(s.quantity * s.unitCost * 100) / 100;
     const created = await prisma.supply.create({
       data: {
-        createdById: ADMIN_WORKER_ID,
+        createdById: SCHEDULER_ID,
         name: s.name,
         unit: s.unit,
         category: s.category,
@@ -6662,7 +7418,7 @@ async function seedPaymentsBase() {
     });
     const be = await prisma.businessExpense.create({
       data: {
-        createdById: ADMIN_WORKER_ID,
+        createdById: SCHEDULER_ID,
         date: daysAgo(7, 10),
         cost: totalCost,
         description: `${s.name} × ${s.quantity} ${s.unit}`,
@@ -6678,7 +7434,7 @@ async function seedPaymentsBase() {
         totalCost,
         date: daysAgo(7, 10),
         businessExpenseId: be.id,
-        createdById: ADMIN_WORKER_ID,
+        createdById: SCHEDULER_ID,
       },
     });
     await prisma.supply.update({
@@ -6796,7 +7552,7 @@ async function seedPaymentsClean() {
 }
 
 // Active variant — clean base + 5 PENDING_PAYMENT scenarios already
-// queued in Pending Approvals. Use for testing the admin approval /
+// queued in Pending Approvals. Use for testing the approval /
 // adjust / reject / write-off paths and the per-worker reconciliation math.
 async function seedPaymentsActive() {
   console.log("  Creating ACTIVE payment-flow dataset (5 pending approvals)...");
@@ -7113,10 +7869,11 @@ async function seedBusinessStartCutoffFixtures() {
     include: { property: true },
   });
   if (someJob) {
+    const job = someJob;
     // Mirror what the production approval flow writes: per-worker breakdown
     // columns on PaymentSplit (grossAmount / ratePercent / feeAmount /
     // netAmount), and Payment-level totals for platformFeeAmount +
-    // businessMarginAmount. Without these the Admin Money summary aggregates
+    // businessMarginAmount. Without these the Money summary aggregates
     // to 0 and the Commission/Margin rows hide themselves — making dev look
     // visually different from prod even though the data is "valid".
     //
@@ -7128,7 +7885,7 @@ async function seedBusinessStartCutoffFixtures() {
 
     type SeedSplit = {
       userId: string;
-      workerType: "EMPLOYEE" | "TRAINEE" | "CONTRACTOR";
+      workerType: WorkerType;
       role: "primary" | "helper";
     };
 
@@ -7143,7 +7900,7 @@ async function seedBusinessStartCutoffFixtures() {
       const promisedPayouts = await computePromisedPayoutsForSeed(collectedAmount, 0, completionSplits);
       const occ = await prisma.jobOccurrence.create({
         data: {
-          jobId: someJob.id,
+          jobId: job.id,
           kind: "SINGLE_ADDRESS",
           startAt: when,
           endAt: addMinutes(when, 60),
@@ -7175,7 +7932,7 @@ async function seedBusinessStartCutoffFixtures() {
       // documented in memory/project_payment_math.md).
       const grossPer = (collectedAmount * splitPercent) / 100;
       const computed = splits.map((sp) => {
-        const isEmployeeClass = sp.workerType === "EMPLOYEE" || sp.workerType === "TRAINEE";
+        const isEmployeeClass = isW2(sp.workerType);
         const ratePercent = isEmployeeClass ? employeeMarginPct : contractorFeePct;
         const feeAmount = round2((grossPer * ratePercent) / 100);
         const netAmount = round2(grossPer - feeAmount);
@@ -7192,7 +7949,7 @@ async function seedBusinessStartCutoffFixtures() {
         .filter((c) => c.workerType === "CONTRACTOR")
         .reduce((s, c) => s + c.feeAmount, 0);
       const totalEmployeeMargin = computed
-        .filter((c) => c.workerType === "EMPLOYEE" || c.workerType === "TRAINEE")
+        .filter((c) => isW2(c.workerType))
         .reduce((s, c) => s + c.feeAmount, 0);
       const payment = await prisma.payment.create({
         data: {
@@ -7248,7 +8005,7 @@ async function seedBusinessStartCutoffFixtures() {
       { userId: CONTRACTOR_ID, workerType: "CONTRACTOR", role: "helper"  },
     ]);
     await createConfirmedPayment("PRE-older", PRE(35), [
-      { userId: ADMIN_WORKER_ID, workerType: "EMPLOYEE", role: "primary" },
+      { userId: SCHEDULER_ID, workerType: "EMPLOYEE", role: "primary" },
       { userId: EMPLOYEE_ID,     workerType: "EMPLOYEE", role: "helper"  },
     ]);
     await createConfirmedPayment("POST-today", POST(0), [
@@ -7256,7 +8013,7 @@ async function seedBusinessStartCutoffFixtures() {
       { userId: CONTRACTOR_ID, workerType: "CONTRACTOR", role: "helper"  },
     ]);
     await createConfirmedPayment("POST-today-admin", POST(0), [
-      { userId: ADMIN_WORKER_ID, workerType: "EMPLOYEE", role: "primary" },
+      { userId: SCHEDULER_ID, workerType: "EMPLOYEE", role: "primary" },
       { userId: EMPLOYEE_ID,     workerType: "EMPLOYEE", role: "helper"  },
     ]);
   }
@@ -7272,7 +8029,7 @@ async function seedBusinessStartCutoffFixtures() {
   console.log("    Pre-cutoff payments (visible when filter is OFF):");
   console.log("      • ~2 weeks ago — Employee + Contractor split");
   console.log("      • ~5 weeks ago — Admin Worker + Employee split");
-  console.log("    Flip the Super reveal toggle (Settings tab) to see ALL rows again.");
+  console.log("    Flip a caller with settings authority reveal toggle (Settings tab) to see ALL rows again.");
 }
 
 /**
@@ -7307,7 +8064,7 @@ async function assertPrimaryContactInvariant() {
   console.log(`✓ Primary-contact invariant holds across ${clients.length} client(s).`);
 
   // ── Approvable-queue invariant ──────────────────────────────────────
-  // Every unconfirmed Payment shows up in the admin's PENDING APPROVAL
+  // Every unconfirmed Payment shows up in the manager’s PENDING APPROVAL
   // queue, but approvePayment() rejects anything whose occurrence isn't
   // PENDING_PAYMENT ("Occurrence is not pending payment"). A fixture that
   // pairs an unconfirmed payment with a COMPLETED/CLOSED occurrence
@@ -7703,6 +8460,9 @@ async function assertPrimaryContactInvariant() {
     select: { id: true, startAt: true },
   });
   for (const occ of finishableToday) {
+    // The `startAt` range filter above means this cannot be null in practice,
+    // but the column is nullable and skipping costs nothing.
+    if (!occ.startAt) continue;
     const finishedAt = new Date(occ.startAt.getTime() + 90 * 60_000);
     await prisma.jobOccurrence.update({
       where: { id: occ.id },
@@ -7972,7 +8732,7 @@ async function main() {
   const templateArg = process.argv.find((a) => a.startsWith("--template="));
   const template = templateArg ? templateArg.slice("--template=".length) : "default";
 
-  console.log("Clearing database (preserving User, UserRole, Setting)...");
+  console.log("Clearing database (preserving User, UserCustomRole, Setting)...");
   await clearDatabase();
 
   if (resetOnly) {
@@ -8002,6 +8762,68 @@ async function main() {
   }
 
   await assertPrimaryContactInvariant();
+  await backfillPromisedPayouts();
+}
+
+/**
+ * EVERY COMPLETED OCCURRENCE CARRIES ITS PAYOUT SNAPSHOT.
+ *
+ * `JobOccurrence.promisedPayouts` is written by the completion path
+ * (`services/jobs.ts`) at the moment an occurrence is completed with
+ * splits — the two always travel together in the running app. The seed
+ * writes `completedAt` directly, so it produced a shape the app itself
+ * cannot: completed, awaiting payment, with assignees, and no snapshot.
+ *
+ * What that costs is not cosmetic. PaymentsTab projects a pending
+ * payment's decomposition from this snapshot; without it the payment
+ * falls through to the confirmed branch, where the stamped commission and
+ * margin are still null, and the WHOLE collected amount is booked as
+ * business revenue. Three such rows put $510 of invented margin into the
+ * Money summary and tripped its "Math check failed" badge — the identity
+ * check doing exactly its job, against data that should never have
+ * existed.
+ *
+ * A POST-PASS, not three fixes at the callsites: a fourth pending fixture
+ * added later would reintroduce it, and nothing would say so until the
+ * badge turned red again.
+ *
+ * It reuses the server's own `resolveWorkers` + `computeBreakdown` rather
+ * than hand-rolling numbers, so the snapshot matches what `approvePayment`
+ * will compute from the same occurrence.
+ */
+async function backfillPromisedPayouts() {
+  const rates = await loadRates(prisma);
+  const occs = await prisma.jobOccurrence.findMany({
+    where: { completedAt: { not: null } },
+    select: {
+      id: true,
+      price: true,
+      promisedPayouts: true,
+      completionSplits: true,
+      assignees: { select: { userId: true, role: true } },
+      addons: true,
+      invoiceCharges: { select: { cost: true } },
+    },
+  });
+  let filled = 0;
+  for (const o of occs) {
+    if (o.promisedPayouts != null) continue;
+    const workers = await resolveWorkers(prisma, o as any);
+    if (workers.length === 0) continue; // nobody to pay — nothing to promise
+    const expenses = o.invoiceCharges.reduce((s, c) => s + c.cost, 0);
+    const priceTotal = invoiceTotal({
+      price: o.price ?? 0,
+      addons: (o.addons ?? []) as any,
+      invoiceCharges: [{ cost: expenses }],
+    });
+    const promised = computeBreakdown(priceTotal, expenses, workers, rates);
+    await prisma.jobOccurrence.update({
+      where: { id: o.id },
+      data: { promisedPayouts: promised as any },
+    });
+    filled++;
+  }
+  console.log(`  ✓ promisedPayouts snapshot present on every completed occurrence (${filled} backfilled)`);
 }
 
 main()
@@ -8220,7 +9042,7 @@ Mow low and bag the clippings first so the seed reaches soil.
     data: { currentVersionId: g1.versions[0].id },
   });
 
-  // Pending — this is what puts a row in the Super review queue and a
+  // Pending — this is what puts a row in the review queue and a
   // count on the alert badge.
   await prisma.guide.create({
     data: {
@@ -8229,7 +9051,7 @@ Mow low and bag the clippings first so the seed reaches soil.
       summary: "How low to go, per species — and why scalping causes callbacks.",
       categoryKey: "lawn-care",
       tags: ["mowing", "heights"],
-      createdById: ADMIN_WORKER_ID,
+      createdById: SCHEDULER_ID,
       versions: {
         create: {
           versionNumber: 1,
@@ -8237,8 +9059,8 @@ Mow low and bag the clippings first so the seed reaches soil.
           contentDigest: digest(mowing),
           changeNote: "First draft for review",
           status: "PENDING_APPROVAL",
-          createdById: ADMIN_WORKER_ID,
-          submittedById: ADMIN_WORKER_ID,
+          createdById: SCHEDULER_ID,
+          submittedById: SCHEDULER_ID,
           submittedAt: new Date(),
         },
       },
@@ -8253,7 +9075,7 @@ Mow low and bag the clippings first so the seed reaches soil.
       summary: null,
       categoryKey: "equipment",
       tags: ["trimmer"],
-      createdById: ADMIN_WORKER_ID,
+      createdById: SCHEDULER_ID,
       versions: {
         create: {
           versionNumber: 1,
@@ -8261,7 +9083,7 @@ Mow low and bag the clippings first so the seed reaches soil.
           contentDigest: digest(trimmer),
           changeNote: "Initial draft",
           status: "DRAFT",
-          createdById: ADMIN_WORKER_ID,
+          createdById: SCHEDULER_ID,
         },
       },
     },
@@ -8299,7 +9121,7 @@ Mow low and bag the clippings first so the seed reaches soil.
     data: { currentVersionId: g2.versions[0].id },
   });
 
-  // Sent back by a Super — the REJECTED state, which is ours and not
+  // Sent back by a reviewer — the REJECTED state, which is ours and not
   // policies'. Without a fixture the author-facing rejection note and its
   // "edit to return to draft" path never get exercised.
   await prisma.guide.create({
@@ -8309,7 +9131,7 @@ Mow low and bag the clippings first so the seed reaches soil.
       summary: "Ryegrass over dormant Bermuda.",
       categoryKey: "lawn-care",
       tags: ["overseeding", "ryegrass"],
-      createdById: ADMIN_WORKER_ID,
+      createdById: SCHEDULER_ID,
       versions: {
         create: {
           versionNumber: 1,
@@ -8317,8 +9139,8 @@ Mow low and bag the clippings first so the seed reaches soil.
           contentDigest: digest(overseeding),
           changeNote: "First pass",
           status: "REJECTED",
-          createdById: ADMIN_WORKER_ID,
-          submittedById: ADMIN_WORKER_ID,
+          createdById: SCHEDULER_ID,
+          submittedById: SCHEDULER_ID,
           submittedAt: new Date(),
           rejectedById: MICHAEL_ID,
           rejectedAt: new Date(),
@@ -8767,25 +9589,37 @@ async function seedSupplyLifecycle() {
 
   // 1. CONSUMED — the crew used it. Stock actually leaves the shelf, and the
   //    charge stays on the client's invoice.
-  await supplies.addHold(ADMIN_WORKER_ID, consumedOcc.id, { supplyId: mulch.id, quantity: 6 });
+  // WHO performs what, and why it is two different people:
+  //
+  //   holds       SCHEDULER_ID — `supplies.hold`, day-to-day: reserving
+  //               stock against a visit.
+  //   catalog     MICHAEL_ID (the owner) — `supplies.manage`, because
+  //               purchases and stock adjustments change the per-unit cost
+  //               every FUTURE job is billed from. That is money out, not
+  //               scheduling.
+  //
+  // The seed used to do all of it as one persona, which worked only
+  // because both sat behind the same guard. Splitting the capability
+  // made the distinction real, and the seed had to follow.
+  await supplies.addHold(SCHEDULER_ID, SYSTEM_CALLER_CAN, consumedOcc.id, { supplyId: mulch.id, quantity: 6 });
   await consumeHoldsForOccurrence(consumedOcc.id);
 
   // 2. RELEASED — reserved, then the job was cancelled. Stock returns and the
   //    charge is dropped; the hold keeps the record that it happened.
-  await supplies.addHold(ADMIN_WORKER_ID, releasedOcc.id, { supplyId: bags.id, quantity: 4 });
+  await supplies.addHold(SCHEDULER_ID, SYSTEM_CALLER_CAN, releasedOcc.id, { supplyId: bags.id, quantity: 4 });
   await releaseHoldsForOccurrence(releasedOcc.id);
 
   // 3. ACTIVE, then adjusted UP and back DOWN through adjustHold — the +/-
   //    path on the charges dialog, which reprices the paired charge. Left
   //    ACTIVE so the dialog has a live one to drive.
-  const held = await supplies.addHold(ADMIN_WORKER_ID, activeOcc.id, { supplyId: blade.id, quantity: 1 });
-  await supplies.adjustHold(ADMIN_WORKER_ID, (held as any).id, 3);
-  await supplies.adjustHold(ADMIN_WORKER_ID, (held as any).id, 2);
+  const held = await supplies.addHold(SCHEDULER_ID, SYSTEM_CALLER_CAN, activeOcc.id, { supplyId: blade.id, quantity: 1 });
+  await supplies.adjustHold(SCHEDULER_ID, SYSTEM_CALLER_CAN, (held as any).id, 3);
+  await supplies.adjustHold(SCHEDULER_ID, SYSTEM_CALLER_CAN, (held as any).id, 2);
 
   // 4. A manual correction — a bag split open and was thrown away. Nothing
   //    else in the seed exercised SupplyAdjustment, so `onHand` could only
   //    ever be reconstructed from purchases and consumption.
-  await supplies.recordAdjustment(ADMIN_WORKER_ID, mulch.id, {
+  await supplies.recordAdjustment(MICHAEL_ID, SYSTEM_CALLER_CAN, mulch.id, {
     delta: -2,
     reason: "Two bags split in the truck",
   });
@@ -8797,14 +9631,16 @@ async function seedSupplyLifecycle() {
   // The RECEIPT TOTAL is what the service takes — per-unit cost is derived
   // from it, because the number on the receipt includes tax and any discount
   // and is the only figure that reconciles to a bank line.
-  await supplies.recordPurchase(ADMIN_WORKER_ID, mulch.id, {
+  await supplies.recordPurchase(MICHAEL_ID, SYSTEM_CALLER_CAN, mulch.id, {
     quantity: 20,
     // A SECOND LAYER AT A DIFFERENT PRICE. The first mulch purchase was
     // $4.00/bag; this restock is $4.60, so the catalog's average sits between
     // the two and moves toward $4.60 as the older bags are used. A fixture
     // where every purchase costs the same cannot exercise FIFO at all.
     totalCost: Math.round(20 * 4.6 * 100) / 100,
-    vendor: "Lowes",
+    // `vendor` is not a field on SupplyPurchaseInput — it was silently
+    // dropped. The fixture's intent survives in `notes`, which is.
+    notes: "Vendor: Lowes",
   });
   const receipt = await prisma.businessExpense.create({
     data: {
@@ -8821,7 +9657,7 @@ async function seedSupplyLifecycle() {
     },
   });
   for (const [supply, qty, unitPrice] of [[bags, 100, 0.72], [blade, 6, 34.5]] as const) {
-    await supplies.recordPurchase(ADMIN_WORKER_ID, supply.id, {
+    await supplies.recordPurchase(MICHAEL_ID, SYSTEM_CALLER_CAN, supply.id, {
       quantity: qty,
       totalCost: Math.round(qty * unitPrice * 100) / 100,
       businessExpenseId: receipt.id,

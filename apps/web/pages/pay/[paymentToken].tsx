@@ -179,7 +179,7 @@ function PaymentPageInner() {
   // Ref on the currently-selected method card so "Not yet — show me how"
   // can scroll back to the inline steps panel.
   const selectedCardRef = useRef<HTMLDivElement | null>(null);
-  // A signed-in worker (or admin/super) opening their own invoice link
+  // A signed-in worker opening their own invoice link
   // should not be able to "pay" on behalf of the client — that would
   // shortcut the actual payment received and queue an unverified
   // approval. We detect the worker role on /api/me and surface a clear
@@ -218,7 +218,7 @@ function PaymentPageInner() {
     };
   }, [token]);
 
-  // Detect a worker/admin/super Clerk session. /api/me returns the user's
+  // Detect staff Clerk session. /api/me returns the user's
   // roles when authenticated; a missing or unauthorized response means we
   // treat the visitor as the client.
   useEffect(() => {
@@ -234,18 +234,20 @@ function PaymentPageInner() {
         });
         if (!res.ok) { if (!cancelled) setIsWorkerSession(false); return; }
         const me: any = await res.json();
-        const roles: string[] = Array.isArray(me?.roles)
-          ? me.roles.map((r: any) => r?.role).filter(Boolean)
-          : [];
+        // Capabilities, not roles. This read was
+        // `me.roles.map((r) => r.role)`, and `me.roles` no longer exists —
+        // the array was always empty, so `isWorkerSession` was always false
+        // and a worker opening a client's pay link got the client's payment
+        // methods instead of the warning banner.
+        const caps: string[] = Array.isArray(me?.capabilities) ? me.capabilities : [];
         if (cancelled) return;
-        // Super is the owner role and overrides every other role — when
-        // present we DON'T treat this as a worker session, even if the
-        // same user also has WORKER/ADMIN rows. Worker + Admin without
-        // Super still get the warning banner instead of the methods list.
-        const isSuper = roles.includes("SUPER");
-        setIsWorkerSession(
-          !isSuper && (roles.includes("WORKER") || roles.includes("ADMIN")),
-        );
+        // `settings.manage` is the owner surface and overrides the rest —
+        // when held we DON'T treat this as a worker session, even though the
+        // same person also holds the schedule capabilities. Anyone who can
+        // see the schedule but doesn't run the business gets the warning
+        // banner instead of the methods list.
+        const runsBusiness = caps.includes("settings.manage");
+        setIsWorkerSession(!runsBusiness && caps.includes("schedule.view"));
       } catch {
         if (!cancelled) setIsWorkerSession(false);
       }
@@ -639,7 +641,7 @@ function PaymentPageInner() {
             TCPA/CAN-SPAM compliance (pay tokens can be forwarded,
             silent opt-in from a shared token creates unauthorized
             marketing-consent flips). Clients who want back in contact
-            the business, which uses the typed-APPROVE Super flow. */}
+            the business, which uses the typed-APPROVE flow. */}
         {/* App link — invites the client to sign in and see their history,
             upcoming visits, photos, and receipts (or just browse the
             public community feed without an account). Same nudge shown on
@@ -959,7 +961,7 @@ function SocialLinksRow({ links }: { links: SocialLink[] }) {
 
 /** Fullscreen photo viewer for the public payment page. Matches the
  *  OccurrencePhotos PhotoViewer behavior — keyboard arrows, swipe gestures,
- *  click-backdrop-to-close — without the worker-only delete/uploadedBy bits. */
+ *  click-backdrop-to-close — without the staff-side delete/uploadedBy bits. */
 
 // Season-aware brand icon resolver — mirrors BrandLabel.tsx so the pay
 // page uses the same seasonal swap (spring/summer vs. fall) as the rest

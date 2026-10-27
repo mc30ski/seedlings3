@@ -7,8 +7,9 @@
 // the surface, because an itemized invoice on a screen reads as a document,
 // and an operator who takes it for one will quote from it.
 //
-// ADMIN / SUPER ONLY, gated on the SELECTED role rather than the underlying
-// one — see the isAdmin/isSuper asymmetry at the top of JobsTab.
+// Gated on the capability rather than on the shell it was opened from
+// one — the crew may preview the invoice; only the crew-pay split needs
+// `money.view`.
 //
 // The lines come from the server's `buildInvoice`, the same function the pay
 // page renders. Rebuilding them here is how a preview starts showing a number
@@ -39,7 +40,7 @@ type Preview = {
   /** What the crew actually splits out of this invoice. Operator-only — never
    *  in the client's payload. Comes from the shared helper the payout engine
    *  agrees with, so the warning below quotes a real number. */
-  /** ADMIN-ONLY. Absent on the worker preview, which must not carry what the
+  /** `money.view`. Absent on the plain preview, which must not carry what the
    *  crew is paid — the same rule that keeps wages off the team roster. */
   crewPool?: number;
   /** What the crew wrote for the customer on this visit. */
@@ -57,7 +58,7 @@ export default function InvoicePreviewDialog({
   /** Occurrence to preview; null closes the dialog. */
   occurrenceId: string | null;
   onClose: () => void;
-  /** Admins and supers get the crew-pay breakdown and the admin endpoint;
+  /** Holders of `schedule.manage` and holders of `settings.manage` get the crew-pay breakdown and the endpoint;
    *  everyone else gets the client-facing invoice only. Defaults to the safe
    *  side, so a new callsite cannot leak pay by forgetting the prop. */
   canSeeCrewPay?: boolean;
@@ -72,9 +73,7 @@ export default function InvoicePreviewDialog({
     setError(null);
     setLoading(true);
     apiGet<Preview>(
-      canSeeCrewPay
-        ? `/api/admin/occurrences/${occurrenceId}/invoice-preview`
-        : `/api/occurrences/${occurrenceId}/invoice-preview`,
+      `/api/occurrences/${occurrenceId}/invoice-preview`,
     )
       .then(setData)
       .catch((err) => setError(getErrorMessage("Couldn't build the preview.", err)))
@@ -249,7 +248,7 @@ export default function InvoicePreviewDialog({
                       </Box>
                     )}
 
-                    {/* ADMIN-ONLY. The worker preview has no crew figure at
+                    {/* `money.view`. The plain preview has no crew figure at
                         all, so this whole block is absent rather than showing
                         a $0 split that would read as "the crew gets nothing". */}
                     {data.crewPool != null && (<>

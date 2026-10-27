@@ -1,154 +1,115 @@
 ---
 name: reference-tab-blend-pattern
-description: Canonical additive-scope prop pattern used across every blended role-aware tab. Read before touching any tab that renders differently for Worker / Admin / Super.
+description: Canonical capability-driven tab pattern. ONE tab per feature; what it renders comes from entitlements, never from a role or from which shell mounted it. Read before touching any tab.
 metadata: 
   node_type: memory
   type: reference
   originSessionId: d1686705-f7d7-47c4-8f20-2cd1389e185a
-  modified: 2026-08-21T19:06:52.035Z
+  modified: 2026-10-17T00:00:00.000Z
 ---
 
-# Additive-scope tab pattern
+# One tab per feature, built from entitlements
 
-Every role-aware tab in `apps/web/src/ui/tabs/` follows the same
-additive-scope pattern. **Gold-standard reference**: [InventoryTab.tsx](apps/web/src/ui/tabs/InventoryTab.tsx). Sister
-tabs on the same pattern: `ClientsTab`, `PropertiesTab`, `UsersTab`,
-`AdminGroupsTab`, `PaymentsTab`, `PricingTab`, `SuppliesTab`,
-`CollectionsTab`, `VehiclesTab`, `JobsTab` (partial), `HomeTab`.
+**This file described the opposite pattern until 2026-10-17.** It
+prescribed a `scope` of three role booleans, a `purpose` prop, three mounts
+per tab in the shell, and a "critical rule" about one role flag not falling
+back to another. All of it is
+deleted. Every identifier it named is gone from the codebase. If you are
+reading an older copy, discard it — it will walk you into rebuilding the
+thing that was removed.
 
-## Prop shape
+## The rule
 
-```ts
-type XxxTabProps = TabPropsType & {
-  /** Additive scope — capabilities ADD as you climb the ladder. */
-  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
-};
+There is **one tab per feature**. It decides what to show from the
+capabilities the signed-in person holds. It does not know, and must not
+ask, which shell or role the reader arrived through.
 
-export default function XxxTab({ me, purpose = "WORKER", scope }: XxxTabProps) {
-  const { isSuper: hasSuperRole, isAvail, forAdmin } = determineRoles(me, purpose);
+```tsx
+type XxxTabProps = TabPropsType & { scope?: Scope };   // Scope = { can }
 
-  // Effective scope: prefer the additive prop; fall back to a scope
-  // derived from `purpose` for any callsite still on the old shape.
-  const effScope = scope ?? {
-    isWorker: purpose === "WORKER",
-    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
-    isSuper: purpose === "SUPER",
-  };
-
-  // AUTHORITATIVE — scope prop drives visibility, NOT the role.
-  const showWorkerExtras = effScope.isWorker;
-  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
-  const showSuperExtras = effScope.isSuper && hasSuperRole;
-  // ... rest of tab
+export default function XxxTab({ me, scope }: XxxTabProps) {
+  const effScope = scope ?? { can: () => false };      // FAIL CLOSED
+  const canViewX   = effScope.can("x.view");
+  const canManageX = effScope.can("x.manage");
 }
 ```
 
-## THE CRITICAL RULE (bug fixed on Inventory, then propagated)
+`Scope` ([apps/web/src/lib/scope.ts](apps/web/src/lib/scope.ts)) has
+**one field**, `can`. G1 fails the build if a file declares the shape
+inline; G2 covers fail-closed defaults.
 
-**`showSuperExtras` must NOT fall back to `forAdmin ||`**. A user with
-both admin + super roles viewing the Admin top-tab must NOT see Super
-buttons — that's what the Super top-tab is for. The scope prop is
-authoritative. If you see `showSuperExtras = forAdmin || …` anywhere
-in a blended tab, that's the bug. The Inventory audit specifically
-fixed this class of leakage; JobsTab had a dead copy that was removed.
+## Name a flag for the capability, never for a role
 
-## Shell wiring — every mount site passes scope
+Binding `scope.can("supplies.view")` to a name like "show the staff extras"
+is still the bug, just quieter: the name claims a rank, so the next person
+hangs a control off it that actually needs `supplies.manage`. Name it
+`canViewSupplies` — after the capability it asked for, and nothing else.
+A confidently wrong name is worse than the honest role flag it replaced,
+because nothing about it reads as suspicious.
 
-In `apps/web/pages/index.tsx`, every mount of a blended tab passes
-`scope` in addition to any legacy `purpose` prop:
+Corollary: **never blanket-rename.** Converting one role flag to one
+capability across a file produced 23 sites in JobsTab where the name said
+`settings.manage` and the control needed `schedule.manage`. Convert site
+by site, each against
+[docs/features/permissions-ROUTE-MAP.md](docs/features/permissions-ROUTE-MAP.md).
 
-```tsx
-// Worker mount
-scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
-// Admin mount
-scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-// Super mount
-scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-```
+## Which capability? The one its own route is guarded on
 
-The shell computes `scopeIsWorker/scopeIsAdmin/scopeIsSuper` once (see
-pages/index.tsx L~171-173) from `topTab` + the user's underlying roles.
+A control's gate is the entitlement the endpoint it calls requires — read
+off the route map, not guessed. Mismatches found this way were real bugs:
+the wage field was gated "super" while `PATCH /users/:id` checks
+`payroll.manage`; three delete buttons said *"You must be someone with `settings.manage` Admin"*
+while `DELETE /jobs/:x` is `schedule.manage`. G15 enforces the agreement.
 
-## Persisted-state prefix convention
+## Which TABS exist is also a capability question
 
-Where a tab uses `usePersistedState` with role-scoped keys, the prefix
-keys off `showAdminExtras`, not raw `purpose`:
+[apps/web/src/lib/tabRequirements.ts](apps/web/src/lib/tabRequirements.ts)
+`TAB_REQUIREMENTS` maps each tab id to the entitlements that open it, with
+an `ALWAYS` sentinel for the two that need none. A tab with no entitlement
+for the active role does not render. There is one staff tab list
+(`StaffTabs`) and two shells, `client` and `staff`.
 
-```ts
-const pfx = showAdminExtras ? "aXxx" : "wXxx";
-```
+## Perspectives narrow; they never grant
 
-## Role-labeled action bands (card footers)
+A perspective is a named SUBSET of what someone already holds, offered
+only if they hold that role or one inheriting it. Picked in `RoleChip`,
+sent as `X-Perspective`, applied server-side — `/api/me` returns a
+NARROWED capability set. Because every tab reads that set, taking a
+perspective shrinks both the tab list and the contents of each tab.
 
-For tabs whose cards have per-role action buttons (Inventory does
-this), the footer splits into up to three visually-labeled bands:
+## Still true, carried over
 
-- **Worker band** — no leading badge; buttons stand alone. Under
-  view-as, prefixed with a cyan `Acting as <name>` chip instead.
-- **Admin band** — purple `Admin` badge lead.
-- **Super band** — orange `Super` + Zap-icon badge lead.
+- **Two gates for a sensitive figure.** The capability (may they see it)
+  AND a presence check on the field (did the server send it). A
+  server projection must narrow per kind — `fieldsFor` read
+  `admin ? ADMIN : ALL`, making "everything" the else-branch, which
+  silently handed `worker` a caller with `settings.manage` projection. Never let "everything"
+  be a fall-through default. See `docs/features/payroll.md`.
+- **View-as picker** lives inside the section it scopes, backed by
+  `usePersistedState<string[]>("xxxTab_viewAsIds", [])`, one id stored
+  via `slice(-1)`. Mutations route through the `*-for` endpoints with a
+  `{ userId }` body. The old role-prefixed URL and the
+  `superGuard`/`adminGuard` names are both GONE — paths are named for the
+  resource and each requires an entitlement. See
+  [[reference-capabilities-model]].
+- **Section framing**: Insights — orange Card.Root, `BarChart3` icon,
+  UPPERCASE title, no chip. Others — outlined Box, `borderWidth="1px"`,
+  `size={14}` icon + UPPERCASE title + optional count Badge + chevron.
+  Collapsible via a persisted `<pfx>_xxxCollapsed`; header `mb` → 0 when
+  closed.
+- **Icons**: Insights `BarChart3` · Team Usage `Users` · Your Usage
+  `User` · Collections `Package` · Equipment `LayoutGrid` · Client
+  Requests `Inbox`.
 
-Bands use `borderTopWidth="1px"`, `bg="blackAlpha.50"`, subtle
-divider. Reference: `CardActionBands` in InventoryTab and
-`ElevatedActionRow` in JobsTab.parts.
+## Dead — do not reintroduce
 
-## View-as picker convention
+The `purpose` prop · the surface-flag factory and its capability map ·
+every boolean named for worker, admin or super · every `show*Extras` flag ·
+per-role tab lists · the staff action bands · role-suffixed
+`explainerId` keys · role-suffixed persisted-state prefixes · `hasRole()`.
 
-Admin (and super) can select a worker to act on their behalf. Picker
-lives inside the specific section it scopes (e.g. the Equipment
-section — NOT at the tab level), backed by
-`usePersistedState<string[]>("xxxTab_viewAsIds", [])`. Store one id
-in the array (multi-select-shaped for reuse of `AdminViewAsSelector`,
-but `slice(-1)` on onChange so clicking a new worker replaces the
-old one).
+If you are about to write an identifier containing "admin", "super" or
+"worker" to mean "may do X", that is the thing this file exists to stop.
 
-Mutations under view-as route through `/api/super/*-for` endpoints
-with `{ userId }` body. Those endpoints were loosened from
-`superGuard` to `adminGuard` so admins can drive them via view-as.
-Sensitive worker-side pre-checks (e.g. compliance) are skipped under
-view-as — the server enforces on the picked worker.
-
-## Section framing convention (across tabs)
-
-- **Insights** (Super only, on Inventory / Home / Jobs / Collections
-  / Vehicles) — orange Card.Root: `bg="orange.50"`,
-  `borderColor="orange.200"`, header row has `BarChart3` icon +
-  UPPERCASE "INSIGHTS" text + chevron. NO chip badge on the header.
-- **Other sections** (Team Usage, Your Usage, Collections, Equipment,
-  etc.) — outlined Box: `borderWidth="1px" borderColor="gray.300"
-  borderRadius="md" p={3}`, mt={3}. Header row: `size={14}` icon +
-  UPPERCASE title + optional count Badge + chevron.
-- Sections are collapsible via a persisted `<pfx>_xxxCollapsed`
-  boolean. Header `mb` collapses to `0` when the section is closed so
-  a closed section reads as a single tight bar.
-
-## Common icons on section headers (established convention)
-
-- Insights → `BarChart3`
-- Team Usage → `Users`
-- Your Usage → `User`
-- Collections → `Package`
-- Equipment → `LayoutGrid`
-- Client Requests → `Inbox`
-
-## The server-payload variant of the same bug (2026-08-26)
-
-`showSuperExtras` is not only about buttons. Payroll's `operatorViewer`
-resolves the API viewer by **ROLE**, so Michael (SUPER + ADMIN + WORKER)
-receives a *super* payload on every tab — the server cannot know which tab
-is being rendered. Gating a super-only figure on "is the field present in
-the response?" therefore leaked employer cost onto the Admin tab.
-
-**Rule:** a super-only figure needs BOTH gates.
-
-- `showSuperExtras` — the SURFACE. Only the client knows the active tab.
-- a presence check on the field — the DATA. A genuine admin-only account
-  gets a payload without it, and rendering `$0.00` reads as a real zero
-  rather than "withheld".
-
-Neither substitutes for the other. And a role-based server projection must
-still narrow per kind: `fieldsFor` read `admin ? ADMIN : ALL`, which made
-"everything" the else-branch and silently gave `worker` the super
-projection. Never let "everything" be a fall-through default.
-
-See `docs/features/payroll.md` → "Employer cost — Super only".
+Related: [[reference-capabilities-model]], [[reference-tab-ordering]],
+[[feedback-names-carry-meaning]].

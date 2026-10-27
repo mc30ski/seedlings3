@@ -6,7 +6,7 @@ import { apiGet } from "@/src/lib/api";
 import { pricingJobTags } from "@/src/ui/components/JobTagPicker";
 
 /**
- * Shape of a single pricing entry as returned by /api/admin/pricing (or
+ * Shape of a single pricing entry as returned by /api/pricing (or
  * the worker-scoped /api/pricing mirror). Mirrors what each estimator
  * tool reads off `r.parsedValue` — extra fields on the JSON payload are
  * ignored. Legacy single-string `jobTag` is preserved so old un-migrated
@@ -51,7 +51,7 @@ export type PricingPickerResult = {
 
 /**
  * Generic "pick a base pricing entry" hook used by every estimator tool.
- * Loads /api/admin/pricing (or the supplied endpoint) once, filters down
+ * Loads /api/pricing (or the supplied endpoint) once, filters down
  * to entries whose only tag is the requested base tag, default-picks the
  * first, and exposes everything PricingPicker needs to render the
  * Select. The operator's deliberate pick survives re-fetches; the
@@ -66,10 +66,10 @@ export function usePricingPicker(args: {
   exclusiveTag: string;
   /** Fallback unit string when an entry's `unit` field is missing/empty. */
   fallbackUnit?: string;
-  /** Pricing API path. Defaults to /api/admin/pricing. */
+  /** Pricing API path. Defaults to /api/pricing. */
   endpoint?: string;
 }): PricingPickerResult {
-  const { exclusiveTag, fallbackUnit = "per visit", endpoint = "/api/admin/pricing" } = args;
+  const { exclusiveTag, fallbackUnit = "per visit", endpoint = "/api/pricing" } = args;
   const [allPricing, setAllPricing] = useState<PricingRow[]>([]);
   const [pricingLoaded, setPricingLoaded] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);

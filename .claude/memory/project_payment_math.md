@@ -52,11 +52,11 @@ At admin approval time:
 | `collected < promised` | Employees+trainees made whole. Contractors pro-rata the shortfall. | Absorbs the rest | `Payment.shortfallAmount` |
 | `collected == 0` (write-off) | Employees+trainees made whole. Contractors get $0. | Absorbs all of it | `Payment.shortfallAmount = promised` |
 
-Admin can adjust `collected` on approval if the reported amount doesn't match what actually hit the bank — info banner on the adjust dialog explains this.
+A holder of `money.approve` can adjust `collected` on approval if the reported amount doesn't match what actually hit the bank — info banner on the adjust dialog explains this.
 
 ## Why no Bad Debt Expense / Super Money Expense entry
 
-**Why:** On cash basis (which seedlings3 uses), revenue is only recognized when collected. Underpayment isn't a deductible bad debt — it's just lower revenue and proportionally higher labor cost. The employee top-up money is already labor expense (wages), not a separate bad-debt write-off. Booking it as a Super Money Expense would double-count it.
+**Why:** On cash basis (which seedlings3 uses), revenue is only recognized when collected. Underpayment isn't a deductible bad debt — it's just lower revenue and proportionally higher labor cost. The employee top-up money is already labor expense (wages), not a separate bad-debt write-off. Booking it as someone with `money.approve` Money Expense would double-count it.
 
 **How to apply:** `shortfallAmount` and `overageAmount` are internal reporting fields — surface them in admin reporting ("money lost to underpayment this quarter"), but never expose them as a separate accounting entry, P&L line, or tax-relevant expense. They're informational, not transactional.
 

@@ -52,7 +52,7 @@ A day with 0 jobs costs $0. The cap protects against high-volume days. After com
 - **Equipment edit dialog** ([dialogs/EquipmentDialog.tsx](apps/web/src/ui/dialogs/EquipmentDialog.tsx)) — "Equivalent Jobs / Day" input field with live preview of per-job rate.
 - **Equipment chip** — `shortBillingChip()` returns `"$X.XX/day"` for flat, or `"$Y.YY/job · max $X.XX/day"` for per-job. Used in `InventoryTab` cards (renamed from EquipmentTab in the 2026-08-21 refactor — see [[project-tab-refactor-2026-08-21]]), BeginWorkDayWorkflow, PlanWorkdayWorkflow, PaymentsTab worker money cards, and the reserve confirm dialog.
 - **Reserve / checkout copy** — `instructiveBillingText()` returns the full user-facing explanation. Shown in the reserve confirm dialog.
-- **Worker money tab equipment card** — renders `Checkout.rentalBreakdown` per-day lines below the chip so the worker can audit the charge ("Day 1: 4 jobs → $4.00 (capped). Day 2: 2 jobs → $2.00. Total: $6.00").
+- **`PaymentsTab` equipment card** — renders `Checkout.rentalBreakdown` per-day lines below the chip so the person being charged can audit it ("Day 1: 4 jobs → $4.00 (capped). Day 2: 2 jobs → $2.00. Total: $6.00").
 - **Operations equipment leaderboard** — "Jobs Billed" column shows `Σ rentalBreakdown.jobs` across the window. Null (rendered as "—") when the piece's recent rentals were all flat-daily. New chart metric option.
 
 ## Tests

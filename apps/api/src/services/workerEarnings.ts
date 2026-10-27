@@ -20,7 +20,7 @@
 //
 // The rule (mirrors the title bar's employee path exactly):
 //
-//   1. If the Payment is SKIPPED (Super "pretended it never happened") →
+//   1. If the Payment is SKIPPED ("pretended it never happened") →
 //      return 0. Guarantees every display agrees with the sentinel-filter
 //      aggregates so a skipped occurrence never contributes to any tile
 //      or bar.

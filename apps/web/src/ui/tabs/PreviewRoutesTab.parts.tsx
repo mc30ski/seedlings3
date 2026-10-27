@@ -6,15 +6,15 @@
 // the parent's state — they take props and callbacks.
 //
 // Right now this file holds:
-//   • AdminWorkerPicker    — inline "View as" worker picker, mounted
-//                             when scope.isAdmin. Empty = plan own
-//                             routes; picking a worker plans on their
-//                             behalf via the on-behalf endpoints.
+//   • WorkerPickerInline    — inline "View as" worker picker, mounted on
+//                             `people.view`. Empty = plan own routes;
+//                             picking a worker plans on their behalf via
+//                             the on-behalf endpoints.
 //   • SectionExpander      — a bordered collapsible section wrapper.
 //                             Used for "Advanced settings" and
 //                             "All available jobs" to keep the first
 //                             render uncluttered.
-//   • RoutesOperationsPanel — Super-only team-travel rollup (miles,
+//   • RoutesOperationsPanel — `routes.plan` team-travel rollup (miles,
 //                             drive time, top drivers, top vehicles)
 //                             mounted at the top of the tab.
 //
@@ -37,7 +37,6 @@ import {
   Gauge,
   ListChecks,
   MapPin,
-  RefreshCw,
   Route,
   Star,
   Truck,
@@ -49,7 +48,7 @@ import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/Inlin
 import MiniStatCard from "@/src/ui/components/MiniStatCard";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import {
-  ADMIN_PERIODS,
+  OTHER_PERIODS,
   buttonPeriodLabel,
   periodKey,
   periodTimeframe,
@@ -60,7 +59,7 @@ import {
 // ─── Admin "View as" picker ───────────────────────────────────────────────
 type Worker = { id: string; displayName?: string | null; email?: string | null };
 
-export function AdminWorkerPicker({
+export function WorkerPickerInline({
   selectedWorkerId,
   onChange,
 }: {
@@ -275,10 +274,10 @@ export function SectionExpander({
   );
 }
 
-// ─── Operations panel (super scope) ──────────────────────────────────────
-// Team travel rollup — pulls from GET /api/super/routes/operations which
+// ─── Operations panel (`reports.view`) ───────────────────────────────────
+// Team travel rollup — pulls from GET /api/routes/operations which
 // aggregates every closed MileageEntry in the picked period. Mounted at
-// the top of PreviewRoutesTab when scope.isSuper. Same period-cycle affordance
+// the top of PreviewRoutesTab on `reports.view`. Same period-cycle affordance
 // pattern as the HomeTab OperationsPanel (buttons live in the
 // expanded body; collapsed header stays MY-WORKDAY-height for visual
 // parity).
@@ -296,7 +295,7 @@ type RoutesOpsResponse = {
   topVehicles: Array<{ vehicleId: string; vehicleName: string; miles: number; entries: number }>;
 };
 
-const ROUTES_OPS_PERIODS: Period[] = ADMIN_PERIODS;
+const ROUTES_OPS_PERIODS: Period[] = OTHER_PERIODS;
 const DEFAULT_ROUTES_OPS_PERIOD: Period = { preset: "today", label: "today" };
 
 function periodToRange(p: Period): { from: string; to: string } {
@@ -342,7 +341,7 @@ export function RoutesOperationsPanel() {
     setLoading(true);
     try {
       const qs = new URLSearchParams({ from: range.from, to: range.to });
-      const d = await apiGet<RoutesOpsResponse>(`/api/super/routes/operations?${qs.toString()}`);
+      const d = await apiGet<RoutesOpsResponse>(`/api/routes/operations?${qs.toString()}`);
       setData(d);
     } catch (err) {
       publishInlineMessage({
@@ -371,7 +370,7 @@ export function RoutesOperationsPanel() {
     //
     // This shipped as "Operations" in the default grey, and the difference
     // was drift rather than design: it is the same thing as Home, Jobs,
-    // Inventory, Collections and Vehicles — a Super-only rollup of the
+    // Inventory, Collections and Vehicles — a `routes.plan` rollup of the
     // tab's own subject, deeper than the list beside it, with its own
     // timeframe. Home's Insights takes a timeframe and fetches
     // independently too, so nothing about this one was actually distinct.
@@ -385,7 +384,20 @@ export function RoutesOperationsPanel() {
       title="Insights"
       icon={BarChart3}
       variant="insights"
-      summarySlot={
+      // IN THE TITLE BAR, not on a row of its own. This drew its own
+      // button at the top of the body — a full-width row holding one
+      // 12px icon — while every other section passes `onRefresh` and
+      // gets it in the header. The old note said it was done that way to
+      // match a collapsed height, which stopped being a reason once the
+      // header gained the control for everybody.
+      onRefresh={() => void load()}
+      refreshing={loading}
+      // COLLAPSED ONLY. As `summarySlot` this showed in both states, so
+      // an expanded card printed "today · 2026-10-23 → 2026-10-23" in the
+      // header with a picker reading "today" directly beneath it — the
+      // same fact twice, one of them not editable. Collapsed it earns its
+      // place: the period is the one thing worth seeing without opening.
+      collapsedSummarySlot={
         <Text
           fontSize="xs"
           color="gray.fg"
@@ -399,21 +411,6 @@ export function RoutesOperationsPanel() {
       }
     >
       <VStack align="stretch" gap={3}>
-        {/* Period + refresh controls at the top of the expanded body
-            (not in the header, to match MY WORKDAY collapsed height). */}
-        <HStack justify="flex-end" gap={1}>
-
-          <IconButton
-            aria-label="Refresh routes operations"
-            size="xs"
-            variant="ghost"
-            onClick={() => void load()}
-            loading={loading}
-          >
-            <RefreshCw size={12} />
-          </IconButton>
-        </HStack>
-
         {/* Section 1 — Travel totals. */}
         <OpsSection title="Travel · This period" loading={loading && !data}>
           {data && (

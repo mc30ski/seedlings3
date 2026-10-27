@@ -109,7 +109,7 @@ export const sleep = (ms: number) =>
 // closed the display class of that bug. These brands close the compile-
 // time class for arithmetic + comparison + storage.
 //
-// Both brands compile to `string` at runtime — they're zero-cost lenses
+// Both brands compile to `string` at runtime — they're zero-cost wrappers
 // TypeScript uses to reject miscalls at build time. The brand strings
 // are structurally-typed and shared with `apps/api/src/lib/dates.ts` so
 // a key produced on the API is interchangeable with one produced on the

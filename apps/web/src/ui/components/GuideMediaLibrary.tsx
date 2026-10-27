@@ -7,8 +7,8 @@
 //
 // TWO RULES THIS UI EXISTS TO MAKE VISIBLE:
 //
-//   1. VIDEO IS SUPER-ONLY. Admins see every video and can reference any
-//      of them in a page; only a Super can add or remove one. Video is the
+//   1. VIDEO NEEDS `content.approve`. A writer sees every video and can reference any
+//      of them in a page; only someone with `settings.manage` can add or remove one. Video is the
 //      single asset class that can quietly become expensive, and the only
 //      one with a format trap worth concentrating in one uploader.
 //
@@ -42,10 +42,10 @@ import {
 } from "@/src/lib/guides";
 
 export default function GuideMediaLibrary({
-  showSuperExtras,
+  canApproveGuides,
   limits,
 }: {
-  showSuperExtras: boolean;
+  canApproveGuides: boolean;
   limits: MediaLimits | null;
 }) {
   const [assets, setAssets] = useState<GuideAsset[] | null>(null);
@@ -210,9 +210,9 @@ export default function GuideMediaLibrary({
             <Button size="xs" variant="outline" onClick={() => imageInput.current?.click()} loading={busy}>
               <ImageIcon size={12} /> Add image
             </Button>
-            {/* Super-only. Admins still SEE every video below and can
+            {/* `content.approve`. A writer still SEES every video below and can
                 reference one in a page — they just can't add or remove. */}
-            {showSuperExtras && (
+            {canApproveGuides && (
               <Button size="xs" variant="outline" onClick={() => videoInput.current?.click()} loading={busy}>
                 <Video size={12} /> Add video
               </Button>
@@ -222,9 +222,9 @@ export default function GuideMediaLibrary({
           {limits && (
             <Text fontSize="2xs" color="fg.muted">
               Images up to {fmtBytes(limits.imageMaxBytes)}
-              {showSuperExtras
+              {canApproveGuides
                 ? ` · video guideline ${fmtBytes(limits.videoMaxBytes)}, hard cap ${fmtBytes(limits.videoHardCeilingBytes)}`
-                : " · video is added by a Super"}
+                : " · video is added by an approver"}
             </Text>
           )}
 

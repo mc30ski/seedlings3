@@ -28,11 +28,19 @@ make sure the fourth doesn't ship.
 
 ## The rule
 
-**Every `GET /me/*` route registered with `workerGuard` must EITHER:**
+> **Updated 2026-10-13.** `workerGuard` and the `Role` enum are deleted. The
+> rule is unchanged in substance — it now reads in terms of the guards that
+> exist: `approvedUser` (or `requireApproved`) and a CAPABILITY check rather
+> than a role check. The enforcing gate scans for the same two things it
+> always did: a `viewAsUserId` param, or the allow-annotation.
+
+**Every `GET /me/*` route must EITHER:**
 
 - **Support view-as** — accept an optional `?viewAsUserId=<id>` query
-  param and, when present + the caller has ADMIN or SUPER role, return
-  the named worker's data instead of the caller's. Two blessed patterns:
+  param and, when present AND the caller passes a capability check
+  (`callerCan(req, "people.manage")`, or the narrower `time.manage` /
+  `payroll.view` checks the shared helpers apply), return the named
+  worker's data instead of the caller's. Two blessed patterns:
   the shared helper `resolveWorkdayTarget(req, { allowImpersonationFor: "read" })`
   used by the workday routes, or the inline pattern established by
   `/me/policies`. See examples below.
@@ -50,13 +58,13 @@ The build gate mechanically enforces one or the other. No third option.
 
 **Mutations (POST / PATCH / PUT / DELETE) on `/me/*` are separate.** For
 workday mutations, the `resolveWorkdayTarget(req, { allowImpersonationFor: "mutate" })`
-helper gates the impersonation to SUPER-only. For most other domains,
+helper gates the impersonation on `clients.view-as`. For most other domains,
 the rule of thumb is: mutations that alter a specific worker's record
-should live under `/admin/...` (typed as an admin action) rather than
+should live under the resource's own path (typed as someone with `people.manage` action) rather than
 `/me/*?viewAsUserId=`. Policies is a case in point: `/me/policies` reads
 support view-as, but the sign/acknowledge/upload endpoints are strictly
-self-service — an admin acting on another worker's compliance uses the
-`/admin/policies/*` routes (grant exception, upload on behalf, etc.).
+self-service — someone with `people.manage` acting on another worker's compliance uses the
+`/policies/*` routes (grant exception, `/policies/upload-on-behalf`, etc.).
 
 If you're adding a new mutation and it's not obviously covered by the
 existing pattern, check with the operator before extending the view-as
@@ -67,11 +75,11 @@ surface. The default is: reads support view-as, mutations don't.
 ### Pattern A — `resolveWorkdayTarget` helper (workday routes)
 
 Use this when there's already a helper in the file scope (see
-`apps/api/src/routes/worker.ts` around the workday cluster). Handles the
-role check and error 4xx uniformly:
+`apps/api/src/routes/time.ts` around the workday cluster). Handles the
+capability check and error 4xx uniformly:
 
 ```ts
-app.get("/me/workday/today", workerGuard, async (req: any) => {
+app.get("/me/workday/today", approvedUser, async (req: any) => {
   const { targetUserId } = await resolveWorkdayTarget(req, {
     allowImpersonationFor: "read",
   });
@@ -85,21 +93,25 @@ Preferred for one-off routes that don't share a helper. Copy the shape
 of `/me/policies`:
 
 ```ts
-app.get("/me/policies", workerGuard, async (req: any) => {
+app.get("/me/policies", approvedUser, async (req: any) => {
   const callerUid = await currentUserId(req);
   const { viewAsUserId } = (req.query || {}) as { viewAsUserId?: string };
   let targetUid = callerUid;
   if (viewAsUserId && viewAsUserId !== callerUid) {
-    const caller = await prisma.user.findUnique({
-      where: { id: callerUid },
-      include: { roles: true },
-    });
-    const isAdmin = caller?.roles.some(
-      (r: any) => r.role === "ADMIN" || r.role === "SUPER",
-    );
-    if (!isAdmin) {
+    // `callerCan(req, …)` — NOT a fresh DB read of the caller.
+    //
+    // This sample used to do `prisma.user.findUnique({ include: { roles } })`
+    // and test for "ADMIN" or "SUPER". Three things were wrong with it, and
+    // it was the documented pattern, so it propagated:
+    //   1. `user.roles` and the `Role` enum are deleted.
+    //   2. A fresh read hands a caller their REAL powers back, bypassing any
+    //      active perspective — the exact bug view-as exists to model.
+    //   3. A role is not a permission. Pick the entitlement that matches what
+    //      the route returns: `people.manage` for someone's personal data,
+    //      `schedule.manage` for their work.
+    if (!callerCan(req, "people.manage")) {
       throw app.httpErrors.forbidden(
-        "Admin or Super role required to view another worker's <thing>.",
+        "Viewing another worker's <thing> requires people authority.",
       );
     }
     targetUid = viewAsUserId;
@@ -143,7 +155,7 @@ auto-opening the sign wizard would fail.
 1. Fix the endpoint (Pattern A or B).
 2. Add an e2e spec that would have caught it — usually a view-as
    navigation + assert-on-rendered-copy pair. See
-   [`compliance-banner-view-as-admin.spec.ts`](../apps/web/tests/e2e/specs/compliance-banner-view-as-admin.spec.ts)
+   [`compliance-banner-view-as-owner.spec.ts`](../apps/web/tests/e2e/specs/compliance-banner-view-as-owner.spec.ts)
    for the shape.
 3. If the build gate should have caught it and didn't, tighten the
    scanner. See notes in the gate file.

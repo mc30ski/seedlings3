@@ -44,7 +44,7 @@ export type PaymentMethodConfig = {
   preferred: boolean;
 };
 
-export type PaymentContext = "CLIENT_REQUEST" | "ON_SITE" | "ADMIN";
+export type PaymentContext = "CLIENT_REQUEST" | "ON_SITE" | "BACK_OFFICE";
 
 const ALLOWED_KEYS = new Set([
   "key",
@@ -153,16 +153,25 @@ export async function loadPaymentMethods(client: typeof prisma | any = prisma): 
 }
 
 /**
- * Filter the taxonomy by context. ADMIN sees ALL active methods regardless
- * of context flags (the admin manual-recording surface mirrors what the
- * business actually accepts, not what's wired into a specific UI).
+ * Which payment methods does this SCREEN offer?
+ *
+ *   CLIENT_REQUEST — the client-facing invoice page; methods flagged
+ *                    `supportsClientRequest`.
+ *   ON_SITE        — taking payment at the property; `supportsOnSite`.
+ *   BACK_OFFICE    — the manual-recording surface, which offers EVERY
+ *                    active method because it mirrors what the business
+ *                    actually accepts rather than what one UI wires up.
+ *
+ * `BACK_OFFICE` names a SCREEN, not an authority — it says where the
+ * payment is being recorded, never who may record it. Nothing persists this
+ * value; it is an argument.
  */
 export function listActivePaymentMethods(
   methods: PaymentMethodConfig[],
   context: PaymentContext,
 ): PaymentMethodConfig[] {
   const active = methods.filter((m) => m.active);
-  if (context === "ADMIN") return active;
+  if (context === "BACK_OFFICE") return active;
   if (context === "CLIENT_REQUEST") return active.filter((m) => m.supportsClientRequest);
   return active.filter((m) => m.supportsOnSite);
 }

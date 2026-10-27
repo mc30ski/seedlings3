@@ -29,8 +29,8 @@ billed for it.
 | Model | `BusinessExpense` | `InvoiceCharge` |
 | What it is | real money off a bank/card statement | what the CLIENT is billed |
 | Tax | **is** the Schedule C deduction | creates **no** deduction, ever |
-| Who writes it | only `/admin/business-expenses/*` (Super) | the job surfaces (admin-only) |
-| Surface | Super → Money → Ledger | job card → **Add Charge** |
+| Who writes it | only `/business-expenses/*` (`books.manage`) | the job surfaces (`materials.charge`) |
+| Surface | Money → Ledger | job card → **Add Charge** |
 
 They reconcile **in aggregate only**. A $500 Lowe's receipt is one ledger row;
 the mulch off it lands on four different jobs. There is no row-to-row
@@ -256,11 +256,12 @@ says "Add" hides where removal lives.
 ## Permissions
 
 Every mutation — add, edit, delete, and pulling from inventory — is
-**admin-only**. A job line raises what the client is billed, so it is not a
-worker's call. The refusal says why; a bare "forbidden" reads as a bug.
+**`materials.charge`**. A job line raises what the client is billed, so it is not
+something every field caller may do. The refusal says why; a bare "forbidden"
+reads as a bug.
 
-Workers see a **read-only list**. The UI hides the buttons rather than letting
-someone click into a 403.
+Without `materials.charge` the list is **read-only**. The UI hides the buttons
+rather than letting someone click into a 403.
 
 ---
 
@@ -357,7 +358,7 @@ It may optionally point at one, as the many-to-one breadcrumb.
 ## The client-facing invoice
 
 `invoiceLines()` is the only place invoice lines are built. The pay page, the
-receipt and the admin preview all read it, so a line can never appear on one
+receipt and a caller with `schedule.manage` preview all read it, so a line can never appear on one
 and be missing from another — and the sum equals `invoiceTotal`, which the gate
 asserts rather than trusts.
 
@@ -388,8 +389,9 @@ safe.
 
 ## Invoice preview
 
-Admin/Super only, gated on the **selected** scope (`isAdmin || isSuper`), never
-`forAdmin ||` — that would light it up for a Super sitting on the Worker chip.
+Gated on `schedule.manage`, read from the PERSPECTIVE-NARROWED capability
+set — so taking a narrower perspective hides the business's take. It was
+a pair of role flags asking one question twice; both are deleted.
 
 Reads through `buildInvoice`, the same function the pay page uses, so it cannot
 show a number the client wouldn't get. It computes nothing of its own and
@@ -435,7 +437,7 @@ easy to nod along to and still misread a $350 total as $350 of work.
 The structural gates matter most:
 
 - **"only the Ledger writes the Ledger"** walks every source file and fails on
-  a ledger write outside `/admin/business-expenses/*`. Reviewing by memory
+  a ledger write outside `/business-expenses/*`. Reviewing by memory
   finds the sites someone thought of; this finds all of them.
 - **"a job line is an invoice charge, never an expense"** walks both apps and
   fails on the retired vocabulary, `pricingModel` and `LEGACY` included.

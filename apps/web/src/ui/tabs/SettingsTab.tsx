@@ -18,12 +18,12 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, DollarSign, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import { scopeFromMe } from "@/src/lib/roles";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import { useBusinessStartCutoff } from "@/src/lib/businessStartCutoff";
 import { emailKey, phoneKey } from "@/src/lib/comms";
 import { type TabPropsType } from "@/src/lib/types";
 import { fmtDateTime, fmtDateOpts, fmtDateLong } from "@/src/lib/dates";
-import { determineRoles } from "@/src/lib/roles";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   SETTING_SECTIONS,
@@ -32,7 +32,6 @@ import {
   resolveSettingSection,
 } from "@/src/lib/settingSections";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
-import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import {
   publishInlineMessage,
@@ -64,7 +63,7 @@ type PricingEntry = Setting & { parsedValue: PricingValue | null };
  *  editor with min/max/step bounds and matching client-side validation.
  *  `kind: "integer"` rejects decimals; `kind: "float"` accepts any finite
  *  number inside [min, max]. Add a new entry when introducing a numeric
- *  setting so admins can't save it as free text. */
+ *  setting so holders of `schedule.manage` can't save it as free text. */
 type NumericSettingConfig = {
   kind: "integer" | "float";
   min: number;
@@ -107,7 +106,7 @@ const NUMERIC_SETTINGS: Record<string, NumericSettingConfig> = {
 /** Setting keys whose value is a boolean toggle (stored as "true"/"false").
  *  Rendered as a two-state Off/On toggle in the editor, like the
  *  payment-comms-mode picker. Add a key here when introducing a yes/no
- *  setting so admins can't save it as free text. */
+ *  setting so holders of `schedule.manage` can't save it as free text. */
 const BOOLEAN_SETTINGS = new Set([
   "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL",
   "NOTIFY_CHANGE_REQUEST_VIA_SMS_EMAIL",
@@ -116,11 +115,6 @@ const BOOLEAN_SETTINGS = new Set([
   // Paired with BUSINESS_START_DATE (the cutoff itself). See
   // lib/businessStartCutoff.tsx (client) and apps/api/src/lib/businessStartCutoff.ts.
   "BUSINESS_START_DATE_ENABLED",
-  // When true, qb-journal-expenses.csv emits Contract Labor rows for
-  // contractor payments. When false (the recommended setting once
-  // Gusto's QB integration is configured), Gusto posts contractor
-  // payments to QB directly and the app's rows would be duplicative.
-  "QB_INCLUDE_CONTRACT_LABOR",
   // Master toggle for equipment billing. When OFF, all checkout
   // releases write rentalCost = 0 regardless of equipment dailyRate or
   // worker type. Lets the operator absorb equipment cost into the
@@ -129,7 +123,7 @@ const BOOLEAN_SETTINGS = new Set([
   "EQUIPMENT_BILLING_ENABLED",
   // Two-eyes enforcement on policy approve + publish. See
   // services/policies.ts approveVersion() for the check. Leave OFF while
-  // there is only one Super on the team.
+  // there is only one person at the top tier.
   "POLICY_STRICT_TWO_EYES",
   // Google Drive backup kill switches. Both wire the corresponding
   // cron endpoint to short-circuit when off; see services/clientBackup.ts
@@ -159,7 +153,16 @@ function validateNumericSetting(key: string, value: string): { ok: boolean; erro
 
 /** Convert a SNAKE_CASE setting key into a human-readable Title Case label.
  *  Used for both the card title and any toast that references a setting. */
+/** Keys whose mechanical title reads badly. `STAFF_DEFAULT_ROLE_ID`
+ *  becomes "Staff Default Role Id", and the operator does not care that
+ *  an id is how it is stored — they are choosing a role. */
+const SETTING_NAME_OVERRIDES: Record<string, string> = {
+  STAFF_DEFAULT_ROLE_ID: "Staff Default Role",
+};
+
 function prettySettingName(key: string): string {
+  const override = SETTING_NAME_OVERRIDES[key];
+  if (override) return override;
   return key
     .split("_")
     .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
@@ -1125,6 +1128,94 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
   );
 }
 
+/**
+ * Editor for a setting whose value is a plain array of strings.
+ *
+ * AREA_TIER_NAMES and MANAGER_TITLES are both that shape, and the generic
+ * path fell through to a raw JSON text box — so editing them meant typing
+ * brackets and quotes correctly, and one stray character saved a broken
+ * value. `PaymentFromOptionsEditor` looks similar but its rows are
+ * `{ label }` objects, not strings, so it cannot be reused here.
+ *
+ * Blank rows are dropped on save: an empty name is never a thing the
+ * operator meant, and keeping one would put an unnamed chip in a picker.
+ */
+function StringListEditor({ value, onChange, onSave, onCancel, saving, placeholder }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  placeholder: string;
+}) {
+  let items: string[] = [];
+  let parseError: string | null = null;
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) throw new Error("must be an array");
+    items = parsed.map((x: unknown) => String(x ?? ""));
+  } catch (e: any) {
+    parseError = e?.message ?? "invalid JSON";
+  }
+  const write = (next: string[]) => onChange(JSON.stringify(next));
+  if (parseError) {
+    return (
+      <VStack align="stretch" gap={2} w="full">
+        <Text fontSize="xs" color="red.fg">Value is malformed JSON: {parseError}</Text>
+        <Input size="sm" value={value} onChange={(e) => onChange(e.target.value)} />
+        <HStack gap={2}>
+          <Button size="sm" onClick={onSave} loading={saving}>Save</Button>
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+        </HStack>
+      </VStack>
+    );
+  }
+  return (
+    <VStack align="stretch" gap={2} w="full">
+      {items.map((item, idx) => (
+        <HStack key={idx} gap={2}>
+          <Input
+            size="sm"
+            value={item}
+            placeholder={placeholder}
+            onChange={(e) => {
+              const next = [...items];
+              next[idx] = e.target.value;
+              write(next);
+            }}
+          />
+          <Button
+            size="xs"
+            variant="ghost"
+            colorPalette="red"
+            onClick={() => write(items.filter((_, i) => i !== idx))}
+            aria-label={`Remove ${item || "entry"}`}
+          >
+            Remove
+          </Button>
+        </HStack>
+      ))}
+      <HStack gap={2}>
+        <Button size="xs" variant="outline" onClick={() => write([...items, ""])}>
+          Add
+        </Button>
+        <Box flex="1" />
+        <Button
+          size="sm"
+          onClick={() => {
+            write(items.map((i) => i.trim()).filter(Boolean));
+            onSave();
+          }}
+          loading={saving}
+        >
+          Save
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 function PaymentFromOptionsEditor({ value, onChange, onSave, onCancel, saving }: {
   value: string;
   onChange: (v: string) => void;
@@ -1890,7 +1981,7 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
  * BUSINESS_START_DATE_ENABLED / BUSINESS_START_DATE rows so the operator
  * can see at a glance:
  *   • whether the filter is currently active for THEIR session
- *   • whether they have the Super reveal toggle engaged
+ *   • whether they have the reveal toggle engaged
  *   • a one-click button to flip the reveal
  *
  * "Active for me" combines the global enabled flag with the per-session
@@ -1913,21 +2004,21 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
  *   • a "Rotate" button that opens a confirm dialog explaining the
  *     rotation's impact on already-sent promos
  *
- * The dedicated /super/promotions/rotate-hmac-secret endpoint is the
- * only way to change the value — the generic PATCH /admin/settings/:key
+ * The dedicated /promotions/rotate-hmac-secret endpoint is the
+ * only way to change the value — the generic PATCH /settings/:key
  * refuses this key (see PROTECTED_SETTING_KEYS on the server).
  */
 function PromoHmacSecretCard({
   setting,
-  isSuper,
+  canManageSettings,
 }: {
   setting: Setting;
-  isSuper: boolean;
+  canManageSettings: boolean;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rotatedAt, setRotatedAt] = useState<string | null>(null);
-  // Hidden by default. Super can click the eye to reveal the actual
+  // Hidden by default. `settings.manage` can click the eye to reveal the actual
   // secret (useful for cross-checking against an off-app record, or
   // pasting into a rotation-tracker tool). Value stays in the DOM only
   // while shown — hides again on next toggle. There's no auto-hide
@@ -1935,7 +2026,7 @@ function PromoHmacSecretCard({
   // away.
   const [showValue, setShowValue] = useState(false);
   // Track the freshly-rotated secret so the reveal reflects reality
-  // immediately after rotation (the parent hasn't re-fetched /admin/settings
+  // immediately after rotation (the parent hasn't re-fetched /settings
   // yet). Falls back to setting.value on regular render.
   const [freshValue, setFreshValue] = useState<string | null>(null);
   const displayValue = freshValue ?? setting.value ?? "";
@@ -1947,7 +2038,7 @@ function PromoHmacSecretCard({
     setBusy(true);
     try {
       const res = await apiPost<{ rotatedAt: string; secret?: string }>(
-        "/api/super/promotions/rotate-hmac-secret",
+        "/api/promotions/rotate-hmac-secret",
         {},
       );
       setRotatedAt(res.rotatedAt);
@@ -1992,7 +2083,7 @@ function PromoHmacSecretCard({
                 compromised or as part of a scheduled key-hygiene rotation.
               </Text>
             </VStack>
-            {isSuper && (
+            {canManageSettings && (
               <Button
                 size="xs"
                 variant="outline"
@@ -2006,9 +2097,9 @@ function PromoHmacSecretCard({
           </HStack>
           {/* Value display — masked by default, revealable via eye icon.
               Only rendered when we actually have a value (empty on first
-              load if auto-gen hasn't fired yet). Only Super sees the
+              load if auto-gen hasn't fired yet). Only `settings.manage` sees the
               reveal control since the value is a live secret. */}
-          {isSuper && displayValue && (
+          {canManageSettings && displayValue && (
             <HStack gap={2} align="center" mt={1} w="full">
               <Text
                 fontSize="xs"
@@ -2094,14 +2185,14 @@ function PromoHmacSecretCard({
   );
 }
 
-function BusinessStartStatusPanel({ isSuper }: { isSuper: boolean }) {
+function BusinessStartStatusPanel({ canManageSettings }: { canManageSettings: boolean }) {
   const { cutoff, reveal, setReveal } = useBusinessStartCutoff();
   const filterActive = cutoff !== null;
   // Three visual states. The OFF state reads as an INFORMATIONAL message
   // (blue) — nothing requires attention. The ACTIVE state is a WARNING-style
   // banner (amber) because pre-cutoff data is being hidden across the app.
   // Reveal-engaged is technically OFF but worth its own purple banner so
-  // the Super doesn't forget they're seeing pre-cutoff data via override.
+  // a caller with `settings.manage` doesn't forget they're seeing pre-cutoff data via override.
   const tone: "info" | "warn" | "reveal" = filterActive
     ? "warn"
     : reveal
@@ -2130,13 +2221,13 @@ function BusinessStartStatusPanel({ isSuper }: { isSuper: boolean }) {
         <VStack align="start" gap={0} flex="1" minW={0}>
           <Text fontSize="xs" fontWeight="semibold" color={toneColors.title}>
             {filterActive ? "Filter ACTIVE" : "Filter OFF"}
-            {reveal && !filterActive && " — Super reveal engaged"}
+            {reveal && !filterActive && " — Reveal engaged"}
           </Text>
           <Text fontSize="xs" color={toneColors.body}>
             {filterActive
               ? `Money rows from before ${fmtDateLong(cutoff!)} are hidden from every view and export.`
               : reveal
-                ? "Pre-cutoff history is visible because you have the Super reveal toggle on. Reload the page to revert."
+                ? "Pre-cutoff history is visible because you have the reveal toggle on. Reload the page to revert."
                 : "Every money view shows full history. Configure and turn on the filter below to engage cleanup."}
           </Text>
         </VStack>
@@ -2146,7 +2237,7 @@ function BusinessStartStatusPanel({ isSuper }: { isSuper: boolean }) {
 }
 
 /**
- * Session-only Super override. Renders OUTSIDE the persisted-setting card
+ * Session-only override. Renders OUTSIDE the persisted-setting card
  * list (above the section header in the section render loop) so its
  * transient nature is visually unmistakable: distinct dashed border,
  * purple accent ("transient" elsewhere in this app), explicit "SESSION
@@ -2242,9 +2333,13 @@ function jsonSyntaxError(value: string | null | undefined): string | null {
   }
 }
 
-export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
-  const { isAvail, isSuper: userIsSuper } = determineRoles(me, purpose);
-  const isSuper = userIsSuper && purpose === "SUPER";
+export default function SettingsTab({ me }: TabPropsType) {
+  // Capability answers for the help copy; this tab takes `me`, not `scope`.
+  const scope = scopeFromMe(me);
+  // One capability for the whole tab: `settings.manage`, which is also its
+  // row in TAB_REQUIREMENTS and the guard on every route it calls. It was
+  // two flags — `isAvail` and `canManageSettings` — that could not disagree.
+  const canManageSettings = scope.can("settings.manage");
 
   // BSD context refresh — saving BUSINESS_START_DATE_ENABLED or
   // BUSINESS_START_DATE changes the effective cutoff on the server, but
@@ -2259,6 +2354,25 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // The role list, for the STAFF_DEFAULT_ROLE_ID picker. Suspended roles
+  // are offered too: a setting may legitimately point at one while it is
+  // paused, and silently hiding it would make the current value look
+  // invalid. `roles.view` guards GET /roles — an operator editing settings
+  // may not hold it, in which case the picker is simply empty and the
+  // existing value is left alone.
+  const [roleOptions, setRoleOptions] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    apiGet<Array<{ id: string; name: string }>>("/api/roles")
+      .then((rs) => setRoleOptions(Array.isArray(rs) ? rs : []))
+      .catch(() => setRoleOptions([]));
+  }, []);
+  const roleCollection = useMemo(
+    () => createListCollection({
+      items: roleOptions.map((r) => ({ label: r.name, value: r.id })),
+    }),
+    [roleOptions],
+  );
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
   // Collapsed Settings-tab sections, persisted per admin. Stores section keys
   // that are collapsed; the first-visit default is all sections collapsed so
@@ -2306,8 +2420,8 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   async function load() {
     try {
       const [allSettings, pricing] = await Promise.all([
-        apiGet<Setting[]>("/api/admin/settings"),
-        apiGet<PricingEntry[]>("/api/admin/pricing"),
+        apiGet<Setting[]>("/api/settings"),
+        apiGet<PricingEntry[]>("/api/pricing"),
       ]);
       const SETTINGS_ORDER = [
         "CONTRACTOR_PLATFORM_FEE_PERCENT",
@@ -2322,6 +2436,8 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         "DOCUMENT_TYPES",
         "DOCUMENT_MAX_SIZE_MB",
         "TIMELINE_CATEGORIES",
+        "AREA_TIER_NAMES",
+        "MANAGER_TITLES",
         "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS",
         "SOCIAL_LINKS",
         "WEATHER_API_KEY",
@@ -2362,7 +2478,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
     }
     setSaving(true);
     try {
-      await apiPatch(`/api/admin/settings/${key}`, { value: editValue });
+      await apiPatch(`/api/settings/${key}`, { value: editValue });
       publishInlineMessage({ type: "SUCCESS", text: `${prettySettingName(key)} updated.` });
       // Invalidate the in-memory PAYMENT_METHODS label cache so subsequent
       // page navigations pick up the new labels without a hard refresh.
@@ -2400,7 +2516,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   async function saveSettingValue(key: string, value: string) {
     setSaving(true);
     try {
-      await apiPatch(`/api/admin/settings/${key}`, { value });
+      await apiPatch(`/api/settings/${key}`, { value });
       publishInlineMessage({ type: "SUCCESS", text: `${prettySettingName(key)} updated.` });
       if (key === "PAYMENT_METHODS") {
         const { invalidatePaymentMethodLabels } = await import("@/src/lib/usePaymentMethodLabels");
@@ -2468,10 +2584,10 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         amount: Number(pricingAmount),
       };
       if (pricingEditKey) {
-        await apiPatch(`/api/admin/pricing/${pricingEditKey}`, payload);
+        await apiPatch(`/api/pricing/${pricingEditKey}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Pricing updated." });
       } else {
-        await apiPost("/api/admin/pricing", payload);
+        await apiPost("/api/pricing", payload);
         publishInlineMessage({ type: "SUCCESS", text: "Pricing entry created." });
       }
       setPricingDialogOpen(false);
@@ -2484,7 +2600,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
 
   async function handlePricingDelete(key: string) {
     try {
-      await apiDelete(`/api/admin/pricing/${key}`);
+      await apiDelete(`/api/pricing/${key}`);
       publishInlineMessage({ type: "SUCCESS", text: "Pricing entry deleted." });
       await load();
     } catch (err) {
@@ -2500,15 +2616,14 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   // Rendering it in the gate branches too keeps it mounted from the first
   // paint. Closed, it renders nothing, so the loading view is unchanged.
   const tabHelp = (
-      <TabExplainer explainerId={`seedlings:settingsTab:guideOpen:${userIsSuper ? "super" : "admin"}`}>
+      <TabExplainer explainerId={`seedlings:settingsTab:guideOpen:${canManageSettings ? "super" : "admin"}`}>
         <ExplainerText>
           The numbers and switches the rest of the app runs on — fee and margin rates, payment
-          methods, expense categories, thresholds, feature toggles. Changing a value is{" "}
-          <Em>super-only</Em>; if something here looks wrong it is worth raising rather than
-          working around.
+          methods, expense categories, thresholds, feature toggles. If something here looks
+          wrong, it is worth raising rather than working around.
         </ExplainerText>
-        {userIsSuper && (
-          <RoleSection role="Super">
+        {canManageSettings && (
+          <CapabilitySection capability="settings.manage" scope={scope}>
             <ExplainerText>
               You can change any of them, and a change changes behaviour <Em>everywhere</Em>,
               usually immediately.
@@ -2518,12 +2633,21 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
               snapshotted when a job is priced and when a payment is approved, so past jobs
               keep the terms they were agreed under. What you change applies from here on.
             </ExplainerText>
-          </RoleSection>
+          </CapabilitySection>
         )}
       </TabExplainer>
   );
 
-  if (!isAvail) return <>{tabHelp}<UnavailableNotice /></>;
+  // NO EARLY REFUSAL. Holding `settings.view` without `settings.manage` is
+  // the READ-ONLY screen, not a locked door — every control below already
+  // asks `canManageSettings` for itself, and the explainer has a branch
+  // written for exactly this reader ("If something here looks wrong, it is
+  // worth raising rather than working around"). This return made that
+  // branch unreachable, so splitting the entitlement moved the refusal from
+  // the tab list into the tab body and changed nothing a person could see.
+  //
+  // The data is already theirs to read: `GET /settings` is an OWNERSHIP
+  // route, and all three routes on `settings.manage` are writes.
   if (loading) return <>{tabHelp}<LoadingCenter /></>;
 
   return (
@@ -2586,17 +2710,17 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           treatment so it can't be confused with a setting.
                           See lib/businessStartCutoff.tsx. */}
                       {section.key === "fresh_start" && (
-                        <BusinessStartStatusPanel isSuper={isSuper} />
+                        <BusinessStartStatusPanel canManageSettings={canManageSettings} />
                       )}
                       {items.map((s) => {
                         // Auto-managed secret with a dedicated Rotate button —
                         // rendered as a read-only card (no free-text input to
                         // misclick into a broken state). Server-side PATCH is
                         // also blocked for this key; rotation goes through
-                        // POST /super/promotions/rotate-hmac-secret. See
+                        // POST /promotions/rotate-hmac-secret. See
                         // services/settings.ts PROTECTED_SETTING_KEYS.
                         if (s.key === "PROMOTION_HMAC_SECRET") {
-                          return <PromoHmacSecretCard key={s.id} setting={s} isSuper={isSuper} />;
+                          return <PromoHmacSecretCard key={s.id} setting={s} canManageSettings={canManageSettings} />;
                         }
                         return (
               <Card.Root key={s.id} variant="outline">
@@ -2616,7 +2740,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           <Text fontSize="xs" color="fg.muted" overflowWrap="anywhere">{s.description}</Text>
                         )}
                       </VStack>
-                      {isSuper && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && !BOOLEAN_SETTINGS.has(s.key) && !DATE_SETTINGS.has(s.key) && (
+                      {canManageSettings && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && !BOOLEAN_SETTINGS.has(s.key) && !DATE_SETTINGS.has(s.key) && (
                         <Button size="xs" variant="outline" flexShrink={0} onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}>
                           Edit
                         </Button>
@@ -2626,7 +2750,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                     {s.key === "PAYROLL_PERIOD_CADENCE" ? (
                       // Three-state cadence selector — only WEEKLY, BIWEEKLY,
                       // or MONTHLY are valid. Free text would corrupt the
-                      // Exports tab period math. Super-only writes.
+                      // Exports tab period math. Writing needs `settings.manage`.
                       <HStack gap={2}>
                         {(["WEEKLY", "BIWEEKLY", "MONTHLY"] as const).map((v) => (
                           <Button
@@ -2635,7 +2759,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                             variant={s.value === v ? "solid" : "outline"}
                             colorPalette="blue"
                             loading={saving && s.value !== v}
-                            disabled={!isSuper || s.value === v}
+                            disabled={!canManageSettings || s.value === v}
                             onClick={() => void saveSettingValue(s.key, v)}
                           >
                             {v.charAt(0) + v.slice(1).toLowerCase()}
@@ -2644,14 +2768,14 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                       </HStack>
                     ) : s.key === "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" ? (
                       // Two-state toggle — the only valid values are SERVER
-                      // or CLAIMER, so no free-text input. Super-only writes.
+                      // or CLAIMER, so no free-text input. Writing needs `settings.manage`.
                       <HStack gap={2}>
                         <Button
                           size="xs"
                           variant={s.value === "SERVER" ? "solid" : "outline"}
                           colorPalette="blue"
                           loading={saving && s.value !== "SERVER"}
-                          disabled={!isSuper || s.value === "SERVER"}
+                          disabled={!canManageSettings || s.value === "SERVER"}
                           onClick={() => void saveSettingValue(s.key, "SERVER")}
                         >
                           Server
@@ -2661,7 +2785,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           variant={s.value === "CLAIMER" ? "solid" : "outline"}
                           colorPalette="purple"
                           loading={saving && s.value !== "CLAIMER"}
-                          disabled={!isSuper || s.value === "CLAIMER"}
+                          disabled={!canManageSettings || s.value === "CLAIMER"}
                           onClick={() => void saveSettingValue(s.key, "CLAIMER")}
                         >
                           Claimer
@@ -2669,7 +2793,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                       </HStack>
                     ) : DATE_SETTINGS.has(s.key) ? (
                       // Calendar date — stored as YYYY-MM-DD. Native input
-                      // for cross-browser parity. Super-only. Saves on
+                      // for cross-browser parity. `settings.manage`. Saves on
                       // `onChange` because that's when native date pickers
                       // fire on every platform (mobile pickers have no blur
                       // step) — using onBlur alone would let users pick a
@@ -2679,7 +2803,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           type="date"
                           size="sm"
                           value={s.value || ""}
-                          disabled={!isSuper || saving}
+                          disabled={!canManageSettings || saving}
                           onChange={(e) => {
                             const v = e.target.value.trim();
                             if (v && v !== s.value) {
@@ -2699,14 +2823,14 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         )}
                       </HStack>
                     ) : BOOLEAN_SETTINGS.has(s.key) ? (
-                      // Off/On toggle — value is "true"/"false". Super-only.
+                      // Off/On toggle — value is "true"/"false". `settings.manage`.
                       <HStack gap={2}>
                         <Button
                           size="xs"
                           variant={s.value !== "true" ? "solid" : "outline"}
                           colorPalette="gray"
                           loading={saving && s.value !== "false"}
-                          disabled={!isSuper || s.value !== "true"}
+                          disabled={!canManageSettings || s.value !== "true"}
                           onClick={() => void saveSettingValue(s.key, "false")}
                         >
                           Off
@@ -2716,7 +2840,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           variant={s.value === "true" ? "solid" : "outline"}
                           colorPalette="green"
                           loading={saving && s.value !== "true"}
-                          disabled={!isSuper || s.value === "true"}
+                          disabled={!canManageSettings || s.value === "true"}
                           onClick={() => void saveSettingValue(s.key, "true")}
                         >
                           On
@@ -2731,6 +2855,46 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         // Numeric keys: use a number input with bounds from
                         // NUMERIC_SETTINGS. inputMode hints the right mobile
                         // keyboard. handleSave is still the source of truth.
+                        // STAFF_DEFAULT_ROLE_ID holds a role ID — an opaque
+                        // cuid nobody should be asked to type or paste. A
+                        // free-text box here would make the setting
+                        // technically editable and practically not, which is
+                        // the same problem as hardcoding it one layer along.
+                        if (s.key === "STAFF_DEFAULT_ROLE_ID") {
+                          const current = roleOptions.find((r) => r.id === editValue);
+                          return (
+                            <HStack gap={2} w="full" align="start">
+                              <Box flex="1" maxW="320px">
+                                <Select.Root
+                                  collection={roleCollection}
+                                  value={editValue ? [editValue] : []}
+                                  onValueChange={(e) => setEditValue(e.value[0] ?? "")}
+                                  size="sm"
+                                  positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                                >
+                                  <Select.Control>
+                                    <Select.Trigger>
+                                      <Select.ValueText placeholder="No role — approve without granting one">
+                                        {current?.name}
+                                      </Select.ValueText>
+                                    </Select.Trigger>
+                                  </Select.Control>
+                                  <Select.Positioner>
+                                    <Select.Content>
+                                      {roleCollection.items.map((it) => (
+                                        <Select.Item key={it.value} item={it.value}>
+                                          <Select.ItemText>{it.label}</Select.ItemText>
+                                        </Select.Item>
+                                      ))}
+                                    </Select.Content>
+                                  </Select.Positioner>
+                                </Select.Root>
+                              </Box>
+                              <Button size="sm" onClick={() => handleSave(s.key)} loading={saving} disabled={editValue === s.value}>Save</Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingKey(null)} disabled={saving}>Cancel</Button>
+                            </HStack>
+                          );
+                        }
                         const numericCfg = NUMERIC_SETTINGS[s.key];
                         if (numericCfg) {
                           const valid = validateNumericSetting(s.key, editValue).ok;
@@ -2775,6 +2939,20 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         // both matter: see PauseReasonsEditor.
                         if (s.key === "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS") {
                           return <PauseReasonsEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
+                        }
+                        // Plain string arrays — a row per entry rather
+                        // than hand-edited JSON.
+                        if (s.key === "AREA_TIER_NAMES" || s.key === "MANAGER_TITLES") {
+                          return (
+                            <StringListEditor
+                              value={editValue}
+                              onChange={setEditValue}
+                              onSave={() => handleSave(s.key)}
+                              onCancel={() => setEditingKey(null)}
+                              saving={saving}
+                              placeholder={s.key === "AREA_TIER_NAMES" ? "e.g. District" : "e.g. Crew Lead"}
+                            />
+                          );
                         }
                         // Dedicated editor for PAYMENT_FROM_OPTIONS — flat
                         // list of preset labels for the Add Expense dialog.
@@ -2840,6 +3018,77 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                       })()
                     ) : (
                       (() => {
+                        // STAFF_DEFAULT_ROLE_ID stores a role id. Showing
+                        // the raw cuid tells the operator nothing and looks
+                        // like a bug — the value is meaningful, its
+                        // rendering was not. Name the role; keep the id as
+                        // the title attribute for anyone debugging.
+                        if (s.key === "STAFF_DEFAULT_ROLE_ID") {
+                          const role = roleOptions.find((r) => r.id === s.value);
+                          if (!s.value) {
+                            return (
+                              <Text fontSize="sm" color="fg.muted">
+                                No role — approving staff grants nothing.
+                              </Text>
+                            );
+                          }
+                          return role ? (
+                            <Badge
+                              size="sm"
+                              variant="solid"
+                              colorPalette="blue"
+                              px="2"
+                              borderRadius="full"
+                              fontSize="xs"
+                              title={s.value}
+                            >
+                              {role.name}
+                            </Badge>
+                          ) : (
+                            // The id points at no role we can see — deleted,
+                            // or the reader lacks `roles.view`. Say which
+                            // rather than printing a bare cuid.
+                            <Text fontSize="sm" color="fg.muted" title={s.value}>
+                              {roleOptions.length === 0
+                                ? "A role (needs permission to view roles)"
+                                : "Points at a role that no longer exists"}
+                            </Text>
+                          );
+                        }
+                        // AREA_TIER_NAMES / MANAGER_TITLES are plain string
+                        // arrays. The generic path printed the raw JSON,
+                        // brackets and quotes included, which reads as
+                        // something the operator broke.
+                        if (s.key === "AREA_TIER_NAMES" || s.key === "MANAGER_TITLES") {
+                          try {
+                            const items = JSON.parse(s.value || "[]");
+                            if (Array.isArray(items) && items.every((x) => typeof x === "string")) {
+                              return items.length === 0 ? (
+                                <Text fontSize="sm" color="fg.muted">None configured.</Text>
+                              ) : (
+                                <HStack gap={1} wrap="wrap">
+                                  {items.map((label: string) => (
+                                    <Badge
+                                      key={label}
+                                      size="sm"
+                                      variant="solid"
+                                      colorPalette="blue"
+                                      px="2"
+                                      borderRadius="full"
+                                      fontSize="xs"
+                                    >
+                                      {label}
+                                    </Badge>
+                                  ))}
+                                </HStack>
+                              );
+                            }
+                          } catch {
+                            // Malformed JSON falls through to the generic
+                            // renderer, which shows the raw text — the right
+                            // thing when the value needs fixing by hand.
+                          }
+                        }
                         // OUTGOING_COMMS_CC has a {emails,phones} shape and
                         // would render as "emails → [...]" in the generic
                         // path. Render emails + phones explicitly.
@@ -3030,7 +3279,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           return (
                             <HStack gap={1}>
                               <Text fontSize="md" fontWeight="medium">••••••••••••••••</Text>
-                              {isSuper && (
+                              {canManageSettings && (
                                 <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => setRevealedKeys((prev) => new Set([...prev, s.key]))} title="Show value">
                                   <Eye size={14} />
                                 </Button>
@@ -3087,12 +3336,12 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
               </Card.Root>
                         );
                       })}
-                      {/* Session-only Super reveal. Rendered AFTER the
+                      {/* Session-only reveal. Rendered AFTER the
                           persisted-setting cards with a dashed/purple
                           treatment so it can't be visually confused with
                           the controls above (those persist; this one
                           resets on reload). See BusinessStartRevealToggle. */}
-                      {section.key === "fresh_start" && isSuper && (
+                      {section.key === "fresh_start" && canManageSettings && (
                         <BusinessStartRevealToggle />
                       )}
                     </VStack>

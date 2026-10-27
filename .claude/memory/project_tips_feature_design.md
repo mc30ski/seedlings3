@@ -128,7 +128,7 @@ largest-remainder allocation, approve-dialog designation flow, payment
 card badge + breakdown, job-card tip badge, payroll Tips column + CSV,
 P&L routing, Income CSV, seed fixtures (one tipped payment + one pending
 overpayment), `docs/FINANCIAL_SYSTEM.md`, build-gate identity C, and e2e
-(`tips-admin.spec.ts`, `tips-worker.spec.ts`).
+(`tips-owner.spec.ts`, `tips-worker.spec.ts`).
 
 Two bugs found by testing, not reasoning:
 1. ~33% of production occurrences have no `promisedPayouts` snapshot; the

@@ -1,0 +1,10 @@
+{
+  "name": "@repo/permissions",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "dependencies": {
+    "@repo/money": "*"
+  }
+}

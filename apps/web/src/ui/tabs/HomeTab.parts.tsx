@@ -2,17 +2,17 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HomeTab.parts — pieces added on top of the baseline HomeTab layout
-// for the blended-role Home tab.
+// for the one-tab Home tab.
 //
 // Admin scope does NOT get a separate section here — the shipped
-// AdminViewAsSelector (re-exported from JobsTab.parts) is mounted
+// ViewAsSelector (re-exported from JobsTab.parts) is mounted
 // at the top of HomeTab and drives the SAME hero/tile/chart area
 // with aggregate / subset / single-worker data. That matches how the
-// shipped Admin → Work → Home tab works: default = All Workers
+// shipped Work → Home tab works: default = All Workers
 // aggregate, pick to narrow.
 //
-// This file only contains the Super-scope Operations rollup, which
-// mirrors OpsSummaryStrip in JobsTab — a Dashboard-wrapped
+// This file only contains a caller with `settings.manage`-scope Operations rollup, which
+// mirrors the Jobs tab's INSIGHTS body — a Dashboard-wrapped
 // stats-grid of the operations pulse (money, jobs, equipment,
 // team & clients).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,10 +29,10 @@ import { bizAddDays, bizToday, fmtDateKey, type EtDateKey } from "@/src/lib/date
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import MiniStatCard from "@/src/ui/components/MiniStatCard";
 import {
-  ADMIN_PERIODS,
+  OTHER_PERIODS,
   DEFAULT_PERIOD,
-  SUPER_PERIODS,
-  WORKER_PERIODS,
+  FULL_PERIODS,
+  OWN_PERIODS,
   periodKey,
   periodTimeframe,
   usePersistedPeriod,
@@ -44,7 +44,7 @@ import {
 
 // ─── Operations panel (super scope) ──────────────────────────────────────
 // Dashboard-collapsible operations rollup mounted at the top of the
-// Home tab when scope.isSuper. One period button drives every
+// Home tab on `reports.business`. One period button drives every
 // section (money / jobs / hourly-pay / equipment / team & clients).
 type OperationsResponse = {
   jobs: {
@@ -54,6 +54,12 @@ type OperationsResponse = {
     canceled: number;
     overdue: number;
     unclaimed: number;
+    // Added so the Jobs tab's rollup can be business-wide without losing
+    // the two statuses its old per-list strip showed. `completed` folds
+    // PENDING_PAYMENT in (the work is done); `pendingPayment` asks the
+    // separate money question, so the two overlap deliberately.
+    paused: number;
+    pendingPayment: number;
   };
   financial: {
     totalRevenue: number;
@@ -114,7 +120,7 @@ function fmtInt(n: number): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
-const DEFAULT_SUPER_PERIOD: Period = { preset: "today", label: "today" };
+const DEFAULT_FULL_PERIOD: Period = { preset: "today", label: "today" };
 
 export function OperationsPanel({
   onReady,
@@ -133,8 +139,8 @@ export function OperationsPanel({
 } = {}) {
   const [period, setPeriod] = usePersistedPeriod(
     "homeInsights_period",
-    SUPER_PERIODS,
-    DEFAULT_SUPER_PERIOD,
+    FULL_PERIODS,
+    DEFAULT_FULL_PERIOD,
   );
   const [data, setData] = useState<OperationsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -145,7 +151,7 @@ export function OperationsPanel({
     setLoading(true);
     try {
       const qs = new URLSearchParams({ from: range.from, to: range.to });
-      const d = await apiGet<OperationsResponse>(`/api/admin/operations?${qs.toString()}`);
+      const d = await apiGet<OperationsResponse>(`/api/operations?${qs.toString()}`);
       setData(d);
     } catch (err) {
       publishInlineMessage({
@@ -190,7 +196,7 @@ export function OperationsPanel({
       refresh: load,
       loading,
       summary: summaryNode,
-      timeframe: periodTimeframe(SUPER_PERIODS, period, setPeriod),
+      timeframe: periodTimeframe(FULL_PERIODS, period, setPeriod),
     });
   }, [onReady, load, loading, summaryNode, period]);
 
@@ -200,13 +206,13 @@ export function OperationsPanel({
   const periodCollection = useMemo(
     () =>
       createListCollection({
-        items: SUPER_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
+        items: FULL_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
       }),
     [],
   );
 
   // Renders bare content — the caller (HomeTab) wraps this in the
-  // orange Insights card so the Super visual language is consistent
+  // orange Insights card so the visual language is consistent
   // across tabs (matches JobsTab + InventoryTab Insights sections).
   return (
     <VStack align="stretch" gap={3}>
@@ -441,11 +447,7 @@ export function OperationsPanel({
               />
               <MiniStatCard
                 label="Employees"
-                value={fmtInt(
-                  (data.team.workersByTypeInWindow["EMPLOYEE"] ?? 0) +
-                    (data.team.workersByTypeInWindow["TRAINEE"] ?? 0),
-                )}
-                hint="+ trainees"
+                value={fmtInt(data.team.workersByTypeInWindow["EMPLOYEE"] ?? 0)}
                 color="cyan"
                 icon={Users}
               />
@@ -542,7 +544,7 @@ function OpsSection({
 // summarising THEIR driving on it over the section's timeframe.
 //
 // Scoped to the driver, not the vehicle: two workers can share the crew
-// van, and "how far did the van go" is the fleet question the Super
+// van, and "how far did the van go" is the fleet question a caller with `settings.manage`
 // Vehicles tab answers. This section answers "how far did I take it".
 //
 // Self-hiding: a worker with no assigned vehicle gets nothing at all —
@@ -552,7 +554,7 @@ export function MyVehiclesSection({
   viewAsUserId,
   onReady,
 }: {
-  /** Set when an admin has the Home worker picker on ONE worker. The
+  /** Set when someone with `schedule.manage` has the Home worker picker on ONE worker. The
    *  endpoint is view-as aware, so the rows belong to that worker. */
   viewAsUserId?: string | null;
   onReady?: (api: {
@@ -565,10 +567,11 @@ export function MyVehiclesSection({
     hasVehicles: boolean;
   }) => void;
 } = {}) {
-  const isAdminView = !!viewAsUserId;
+  // Whose card is this — mine, or somebody else's? Not a rank.
+  const isViewingOther = !!viewAsUserId;
   // Same split as the pay card: a worker gets the short list ("how am I
-  // doing lately"), an admin inspecting one worker gets the long one.
-  const periods = isAdminView ? ADMIN_PERIODS : WORKER_PERIODS;
+  // doing lately"), someone with `schedule.manage` inspecting one worker gets the long one.
+  const periods = isViewingOther ? OTHER_PERIODS : OWN_PERIODS;
   const [period, setPeriod] = usePersistedPeriod(
     "homeMyVehicles_period",
     periods,

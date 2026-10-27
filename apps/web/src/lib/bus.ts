@@ -3,7 +3,13 @@ import { EventTypes } from "@/src/lib/types";
 export function openEventSearch(
   eventName: EventTypes,
   q: string,
-  forAdmin: boolean,
+  // A boolean sat here, third. It meant "open the staff build of
+  // the destination tab", because every tab had a worker build and someone with `schedule.manage`
+  // build and a search result had to be routed to the right one. There is
+  // one build now, so every caller was passing a flag the handler either
+  // ignored or branched on into two identical bodies. Removed rather than
+  // left dead: a parameter named for a deleted role is how the next person
+  // concludes the roles still exist.
   entityId?: string,
   // Optional date anchor — used by the Payments → Jobs handoff to narrow
   // the JobsTab date range around the occurrence's startAt so the
@@ -12,13 +18,16 @@ export function openEventSearch(
   anchorAt?: string | null,
 ) {
   window.dispatchEvent(
-    new CustomEvent(`open:${eventName}`, { detail: { q, forAdmin, entityId, anchorAt } })
+    new CustomEvent(`open:${eventName}`, { detail: { q, entityId, anchorAt } })
   );
 }
 
-export function navigateToProfile(userId: string, forAdmin: boolean) {
+/** `otherUser` — is this somebody else's profile, rather than your own?
+ *  It was named for the caller's role instead of for the fact the
+ *  handler needs; the handler now pairs it with `people.view`. */
+export function navigateToProfile(userId: string, otherUser: boolean) {
   window.dispatchEvent(
-    new CustomEvent("navigate:profile", { detail: { userId, forAdmin } })
+    new CustomEvent("navigate:profile", { detail: { userId, otherUser } })
   );
 }
 
@@ -32,12 +41,12 @@ export function bumpTitleBarEarnings() {
   window.dispatchEvent(new CustomEvent("seedlings:earnings-changed"));
 }
 
-// Signals the Admin Money tab to re-fetch its full payments list +
-// pending approvals queue. Fire from any admin action that mutates a
+// Signals the Money tab to re-fetch its full payments list + pending
+// approvals queue. Fire from any action that mutates a
 // Payment row (approve, adjust, reject, write-off, edit/delete).
-export function bumpAdminPayments() {
+export function bumpPayments() {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent("seedlings:admin-payments-changed"));
+  window.dispatchEvent(new CustomEvent("seedlings:payments-changed"));
 }
 
 // Signals the WorkdayStrip (and any other listener) to re-fetch
@@ -65,7 +74,7 @@ export function bumpWorkday() {
  *   "start" — clocked in with a vehicle assigned and no session open.
  *   "stop"  — clocked out with a session still running.
  *
- * Never fired for an admin acting as someone else: the mileage
+ * Never fired for someone with `schedule.manage` acting as someone else: the mileage
  * endpoints are self-only server-side (driverUserId === caller), so
  * the prompt would offer an action the caller cannot take.
  */

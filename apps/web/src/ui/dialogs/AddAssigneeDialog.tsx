@@ -1,4 +1,5 @@
 "use client";
+import type { WorkerType } from "@repo/money";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -24,14 +25,28 @@ import {
 } from "@/src/ui/components/DialogErrorAlert";
 import TeamMemberList, { type TeamMember } from "@/src/ui/components/TeamMemberList";
 
-type WorkerLite = { id: string; displayName?: string | null; email?: string | null };
+type WorkerLite = {
+  id: string;
+  displayName?: string | null;
+  email?: string | null;
+  /** Needed by TeamMemberList: only someone on payroll may hold a paid seat.
+   *  Omitting it reads as "unknown" and silently re-enables the control. */
+  workerType?: WorkerType | null;
+};
 type GroupBrief = { id: string; name: string; claimer: { id: string; displayName?: string | null; email?: string | null }; members: { userId: string }[] };
 
 type Assignee = {
   userId: string;
   assignedById?: string | null;
   role?: string | null;
-  user: { id: string; displayName?: string | null; email?: string | null };
+  user: {
+    id: string;
+    displayName?: string | null;
+    email?: string | null;
+    /** Needed by TeamMemberList (G33): only a person on payroll may hold a
+     *  paid seat. Absent reads as "unknown", which re-enables the control. */
+    workerType?: WorkerType | null;
+  };
 };
 
 type Props = {
@@ -43,18 +58,18 @@ type Props = {
   /** Group currently attached to the occurrence (if any). */
   assignedGroup?: { id: string; name: string } | null;
   onChanged?: () => void;
-  isAdmin?: boolean;
+  canManageSchedule?: boolean;
   /** When true, the current user is the claimer and can reassign roles */
   isClaimer?: boolean;
 };
 
-export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, myId, currentAssignees, assignedGroup, onChanged, isAdmin, isClaimer }: Props) {
+export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, myId, currentAssignees, assignedGroup, onChanged, canManageSchedule, isClaimer }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
   const [busyId, setBusyId] = useState("");
   const [addBusy, setAddBusy] = useState(false);
-  // Group attach UI (admin only). Either-or: an occurrence can have a group
+  // Group attach UI (`crews.manage`). Either-or: an occurrence can have a group
   // attached OR individuals, never both. When `assignedGroup` is set, the
   // dialog hides the individual-add controls and surfaces a "Detach group"
   // button instead.
@@ -87,9 +102,9 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
         const list = await apiGet<WorkerLite[]>("/api/workers");
         setWorkers(Array.isArray(list) ? list : []);
       } catch { setWorkers([]); }
-      if (isAdmin) {
+      if (canManageSchedule) {
         try {
-          const gs = await apiGet<GroupBrief[]>("/api/admin/groups");
+          const gs = await apiGet<GroupBrief[]>("/api/groups");
           setGroups(Array.isArray(gs) ? gs : []);
         } catch { setGroups([]); }
       }
@@ -101,7 +116,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
     dlgErr.clear();
     setGroupBusy(true);
     try {
-      await apiPost(`/api/admin/occurrences/${occurrenceId}/attach-group`, { groupId: pickGroupId });
+      await apiPost(`/api/occurrences/${occurrenceId}/attach-group`, { groupId: pickGroupId });
       publishInlineMessage({ type: "SUCCESS", text: "Group attached." });
       onChanged?.();
       onOpenChange(false);
@@ -116,7 +131,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
     dlgErr.clear();
     setGroupBusy(true);
     try {
-      await apiPost(`/api/admin/occurrences/${occurrenceId}/detach-group`, {});
+      await apiPost(`/api/occurrences/${occurrenceId}/detach-group`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Group detached." });
       onChanged?.();
       onOpenChange(false);
@@ -132,16 +147,19 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
     setAddBusy(true);
     try {
       for (const userId of userIds) {
-        const endpoint = isAdmin
-          ? `/api/admin/occurrences/${occurrenceId}/add-assignee`
-          : `/api/occurrences/${occurrenceId}/add-assignee`;
+        const endpoint = `/api/occurrences/${occurrenceId}/add-assignee`;
         await apiPost(endpoint, { userId, role });
         const worker = workers.find((w) => w.id === userId);
         if (worker) {
           setMembers((prev) => [...prev, {
             userId,
             role,
-            user: { id: userId, displayName: worker.displayName, email: worker.email },
+            user: {
+              id: userId,
+              displayName: worker.displayName,
+              email: worker.email,
+              workerType: worker.workerType,
+            },
           }]);
         }
       }
@@ -156,9 +174,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
     dlgErr.clear();
     setBusyId(userId);
     try {
-      const endpoint = isAdmin
-        ? `/api/admin/occurrences/${occurrenceId}/assignees/${userId}`
-        : `/api/occurrences/${occurrenceId}/assignees/${userId}`;
+      const endpoint = `/api/occurrences/${occurrenceId}/assignees/${userId}`;
       await apiDelete(endpoint);
       setMembers((prev) => prev.filter((m) => m.userId !== userId));
       publishInlineMessage({ type: "SUCCESS", text: "Team member removed." });
@@ -177,13 +193,11 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
   }
 
   async function handleMakeClaimer(userId: string) {
-    if (!isAdmin && !isClaimer) return;
+    if (!canManageSchedule && !isClaimer) return;
     dlgErr.clear();
     setBusyId(userId);
     try {
-      const endpoint = isAdmin
-        ? `/api/admin/occurrences/${occurrenceId}/reassign-claimer`
-        : `/api/occurrences/${occurrenceId}/reassign-claimer`;
+      const endpoint = `/api/occurrences/${occurrenceId}/reassign-claimer`;
       await apiPost(endpoint, { userId });
       setMembers((prev) => prev.map((m) => ({
         ...m,
@@ -198,14 +212,12 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
   }
 
   async function handleToggleRole(userId: string, currentRole: string | null) {
-    if (!isAdmin && !isClaimer) return;
+    if (!canManageSchedule && !isClaimer) return;
     const newRole = currentRole === "observer" ? null : "observer";
     dlgErr.clear();
     setBusyId(userId);
     try {
-      const endpoint = isAdmin
-        ? `/api/admin/occurrences/${occurrenceId}/assignees/${userId}/role`
-        : `/api/occurrences/${occurrenceId}/assignees/${userId}/role`;
+      const endpoint = `/api/occurrences/${occurrenceId}/assignees/${userId}/role`;
       await apiPatch(endpoint, { role: newRole ?? undefined });
       setMembers((prev) => prev.map((m) => {
         if (m.userId !== userId) return m;
@@ -235,7 +247,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
               <Dialog.Title>Manage Team</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
-              {isAdmin && assignedGroup && (
+              {canManageSchedule && assignedGroup && (
                 <Box mb={3} p={2} bg="purple.faint" borderWidth="1px" borderColor="purple.emphasized" rounded="md">
                   <HStack justify="space-between" gap={2} wrap="wrap">
                     <VStack align="start" gap={0}>
@@ -252,7 +264,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
                   </HStack>
                 </Box>
               )}
-              {isAdmin && !assignedGroup && members.length === 0 && groups.length > 0 && (
+              {canManageSchedule && !assignedGroup && members.length === 0 && groups.length > 0 && (
                 <Box mb={3} p={2} bg="purple.faint" borderWidth="1px" borderColor="purple.emphasized" rounded="md">
                   <Text fontSize="xs" fontWeight="semibold" color="purple.fg" mb={1}>
                     Or assign a group
@@ -299,11 +311,11 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
                   addBusy={addBusy}
                   onAdd={handleAdd}
                   onRemove={handleRemove}
-                  onToggleRole={(isAdmin || isClaimer) ? handleToggleRole : undefined}
-                  onMakeClaimer={(isAdmin || isClaimer) ? handleMakeClaimer : undefined}
-                  showRoleControls={!!(isAdmin || isClaimer)}
-                  showMakeClaimer={!!(isAdmin || isClaimer)}
-                  allowRemoveClaimer={!!isAdmin}
+                  onToggleRole={(canManageSchedule || isClaimer) ? handleToggleRole : undefined}
+                  onMakeClaimer={(canManageSchedule || isClaimer) ? handleMakeClaimer : undefined}
+                  showRoleControls={!!(canManageSchedule || isClaimer)}
+                  showMakeClaimer={!!(canManageSchedule || isClaimer)}
+                  allowRemoveClaimer={!!canManageSchedule}
                   myId={myId}
                   onLeave={handleLeave}
                 />

@@ -187,7 +187,7 @@ function SignInForm() {
         (f: any) => f.strategy === "password",
       );
       if (!emailFactor && !hasPasswordFactor) {
-        throw new Error("No supported sign-in method on this account. Contact the admin.");
+        throw new Error("No supported sign-in method on this account. Please contact us.");
       }
       setMode("signin");
       // Cache the email-code factor id so the password step's
@@ -257,7 +257,7 @@ function SignInForm() {
         // gate is configured in the Clerk dashboard.
         setError(
           `Sign-in needs an extra step that isn't configured here (status: ${result.status}). ` +
-            `Contact an admin.`,
+            `Contact someone with schedule authority.`,
         );
       } else if (mode === "signup") {
         const result = await signUp!.attemptEmailAddressVerification({
@@ -313,7 +313,7 @@ function SignInForm() {
               : "";
         setError(
           `Sign-up needs more information than this page collects (status: ${result.status}). ${detail}` +
-            `Contact the admin.`,
+            `Contact a caller with schedule authority.`,
         );
       }
     } catch (err: any) {
@@ -410,8 +410,8 @@ function SignInForm() {
       const missingFields: string[] = (updated as any).missingFields ?? [];
       setError(
         missingFields.length > 0
-          ? `Still missing: ${missingFields.join(", ")}. Contact the admin.`
-          : `Sign-up didn't complete (status: ${updated.status}). Contact the admin.`,
+          ? `Still missing: ${missingFields.join(", ")}. Contact a caller with schedule authority.`
+          : `Sign-up didn't complete (status: ${updated.status}). Contact a caller with schedule authority.`,
       );
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't finalize signup.");

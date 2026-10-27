@@ -1,11 +1,11 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SUPER -> SYSTEM -> DISPLAYS
+// SYSTEM -> DISPLAYS
 //
 // Pair a wall screen, see whether it is alive, change what it shows, kill it.
 //
-// Super-only throughout. Pairing a device that then reads live job and worker
+// `displays.manage` throughout. Pairing a device that then reads live job and worker
 // data with NO user session is a security-boundary action, the same tier as
 // approving a user or publishing a policy.
 //
@@ -58,7 +58,7 @@ type DisplayRow = {
 type PendingRow = {
   id: string;
   // No `code` — the server deliberately does not send it. See the comment on
-  // the pending payload in routes/admin.ts.
+  // the pending payload in routes/displays.ts.
   requestedIp: string | null;
   requestedUserAgent: string | null;
   expiresAt: string;
@@ -108,7 +108,7 @@ export default function DisplaysTab() {
     if (opts.manual) setRefreshing(true);
     const startedAt = Date.now();
     try {
-      const d = await apiGet<{ displays: DisplayRow[]; pending: PendingRow[] }>("/api/super/displays");
+      const d = await apiGet<{ displays: DisplayRow[]; pending: PendingRow[] }>("/api/displays");
       setDisplays(d.displays ?? []);
       setPending(d.pending ?? []);
       setLoadedAt(Date.now());
@@ -129,7 +129,7 @@ export default function DisplaysTab() {
 
   useEffect(() => {
     // FETCH ONCE. This tab does not poll — /display is the only page that
-    // should, and only once it is paired. An admin screen quietly re-hitting
+    // should, and only once it is paired. the screen quietly re-hitting
     // the API every fifteen seconds is exactly the traffic that principle
     // exists to avoid.
     //
@@ -170,7 +170,7 @@ export default function DisplaysTab() {
     replace: DisplayRow | null;
   }): Promise<boolean> {
     try {
-      await apiPost("/api/super/displays/approve", {
+      await apiPost("/api/displays/approve", {
         code: args.code.replace(/\D/g, ""),
         name: args.name.trim(),
         mode: args.mode,
@@ -232,7 +232,7 @@ export default function DisplaysTab() {
 
   async function setDisplayMode(row: DisplayRow, next: "PUBLIC" | "PRIVATE") {
     try {
-      await apiPatch(`/api/super/displays/${row.id}`, { mode: next });
+      await apiPatch(`/api/displays/${row.id}`, { mode: next });
       publishInlineMessage({
         type: "SUCCESS",
         text: `${row.name} switched to ${next === "PRIVATE" ? "private" : "public"}. It changes over on its next refresh.`,
@@ -245,7 +245,7 @@ export default function DisplaysTab() {
 
   async function revoke(row: DisplayRow) {
     try {
-      await apiPost(`/api/super/displays/${row.id}/revoke`, {});
+      await apiPost(`/api/displays/${row.id}/revoke`, {});
       publishInlineMessage({
         type: "SUCCESS",
         text: `${row.name} disconnected. It drops back to a pairing code on its next refresh.`,

@@ -50,7 +50,7 @@ test.describe("Deep: forcesResign publishes a v2", () => {
       keyPrefix: "E2E_FORCE_RESIGN",
       title: "E2E ForceResign",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     // Worker signs v1.
     await signPolicyDirect(prisma, {
@@ -74,10 +74,10 @@ test.describe("Deep: forcesResign publishes a v2", () => {
         contentMarkdown: v2Content,
         contentDigest: v2Digest,
         changeNote: "Rewritten",
-        createdById: USERS.super,
-        submittedById: USERS.super,
-        approvedById: USERS.super,
-        publishedById: USERS.super,
+        createdById: USERS.owner,
+        submittedById: USERS.owner,
+        approvedById: USERS.owner,
+        publishedById: USERS.owner,
         submittedAt: new Date(),
         approvedAt: new Date(),
         publishedAt: new Date(),
@@ -103,9 +103,9 @@ test.describe("Deep: Content digest drift", () => {
       keyPrefix: "E2E_DIGEST_DRIFT",
       title: "E2E DigestDrift",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
-    // Signature with a WRONG digest — as if the admin edited the version
+    // Signature with a WRONG digest — as if a caller with `compliance.manage` edited the version
     // content after the worker signed. This is one way "stale" can happen.
     await signPolicyDirect(prisma, {
       userId: USERS.employee,
@@ -135,7 +135,7 @@ test.describe("Deep: Multi-sign flow (sign N-1)", () => {
           keyPrefix: `E2E_MULTI_${i}`,
           title: `E2E Multi ${i}`,
           enforcement: "BLOCK",
-          createdByUserId: USERS.super,
+          createdByUserId: USERS.owner,
         }),
       );
     }
@@ -176,14 +176,14 @@ test.describe("Deep: Expired exception re-shows banner", () => {
       keyPrefix: "E2E_EXPIRED_EXC",
       title: "E2E Expired Exception",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     // Grant an ALREADY-EXPIRED exception.
     await prisma.policyException.create({
       data: {
         userId: USERS.employee,
         policyDocumentId: scratch.policyId,
-        grantedById: USERS.super,
+        grantedById: USERS.owner,
         reason: "E2E expired",
         expiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
       },
@@ -201,17 +201,17 @@ test.describe("Deep: Revoked exception re-shows banner", () => {
       keyPrefix: "E2E_REVOKED_EXC",
       title: "E2E Revoked Exception",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await prisma.policyException.create({
       data: {
         userId: USERS.employee,
         policyDocumentId: scratch.policyId,
-        grantedById: USERS.super,
+        grantedById: USERS.owner,
         reason: "E2E revoked",
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         revokedAt: new Date(Date.now() - 60_000),
-        revokedById: USERS.super,
+        revokedById: USERS.owner,
         revokedReason: "test-revoke",
       },
     });
@@ -228,7 +228,7 @@ test.describe("Deep: Revoked signature re-shows banner", () => {
       keyPrefix: "E2E_REVOKED_SIG",
       title: "E2E Revoked Sig",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     // Signed then revoked.
     const sig = await signPolicyDirect(prisma, {
@@ -240,7 +240,7 @@ test.describe("Deep: Revoked signature re-shows banner", () => {
       where: { id: sig.id },
       data: {
         revokedAt: new Date(),
-        revokedById: USERS.super,
+        revokedById: USERS.owner,
         revokedReason: "test-revoke",
       },
     });
@@ -257,7 +257,7 @@ test.describe("Deep: Singular vs plural copy", () => {
       keyPrefix: "E2E_SINGULAR",
       title: "E2E Singular",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await gotoWorkerHome(page);
     const banner = page.locator(bannerSel);
@@ -273,7 +273,7 @@ test.describe("Deep: Singular vs plural copy", () => {
       keyPrefix: "E2E_SINGULAR_WARN",
       title: "E2E Singular WARN",
       enforcement: "WARN",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await gotoWorkerHome(page);
     const banner = page.locator(bannerSel);
@@ -291,7 +291,7 @@ test.describe("Deep: Very long policy title doesn't break layout", () => {
       keyPrefix: "E2E_LONG_TITLE",
       title: longTitle,
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await gotoWorkerHome(page);
     const banner = page.locator(bannerSel);
@@ -314,7 +314,7 @@ test.describe("Deep: Only one banner ever", () => {
         keyPrefix: `E2E_ONE_${i}`,
         title: `E2E Only One ${i}`,
         enforcement: i % 2 === 0 ? "BLOCK" : "WARN",
-        createdByUserId: USERS.super,
+        createdByUserId: USERS.owner,
       });
     }
     await gotoWorkerHome(page);
@@ -329,7 +329,7 @@ test.describe("Deep: Buttons palette matches severity", () => {
       keyPrefix: "E2E_BUTTON_RED",
       title: "E2E Button Red",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await gotoWorkerHome(page);
     const signBtn = page.locator(bannerSel).getByRole("button", { name: /Sign now/i });
@@ -351,19 +351,25 @@ test.describe("Deep: Buttons palette matches severity", () => {
   });
 });
 
-test.describe("Deep: Banner absent on non-worker pages", () => {
+test.describe("Deep: Banner absent on pages outside the staff shell", () => {
   test("compliance banner does NOT render when navigated to Equipment tab", async ({ page }) => {
     await clearAll();
     await createScratchPolicy(prisma, {
       keyPrefix: "E2E_EQUIPMENT",
       title: "E2E Equipment Banner Guard",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
     await page.goto("/");
     await page.evaluate(() => {
-      localStorage.setItem("seedlings_topTab", JSON.stringify("worker"));
-      localStorage.setItem("seedlings_workerTab", JSON.stringify("equipment"));
+      localStorage.setItem("seedlings_topTab", JSON.stringify("staff"));
+      // Also stamp the first-open marker: without it the "auto-show Home
+      // on the first open of the ET day" effect in pages/index.tsx fires
+      // on the reload below and discards the tab stamped here. It is
+      // suppressed after 22:00 ET, so a spec missing this passes at
+      // night and fails in the afternoon.
+      localStorage.setItem("seedlings_lastAppOpenedAt", new Date().toISOString());
+      localStorage.setItem("seedlings_staffTab", JSON.stringify("equipment"));
     });
     await page.goto("/");
     await page.waitForLoadState("networkidle");

@@ -87,7 +87,7 @@ const prisma = new PrismaClient({ adapter });
     FROM pg_locks l
     LEFT JOIN pg_class c ON c.oid = l.relation
     LEFT JOIN pg_stat_activity a ON a.pid = l.pid
-    WHERE c.relname IN ('User', 'UserRole', 'AuditEvent', 'PushSubscription')
+    WHERE c.relname IN ('User', 'UserCustomRole', 'AuditEvent', 'PushSubscription')
        OR l.locktype = 'transactionid'
   `;
   if (locks.length === 0) console.log("  (none)");

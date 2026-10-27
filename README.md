@@ -4,7 +4,6 @@ Monorepo managed with Turborepo.
 
 - **Web**: Next.js + Chakra UI (deployed on Vercel)
 - **API**: Fastify (TypeScript) + Prisma + Neon (deployed on Vercel using Serverless Functions)
-- **Mobile**: Expo (React Native) + React Native Paper
 
 ## Quickstart
 
@@ -15,7 +14,6 @@ npm run dev
 
 - Web: `apps/web` on http://localhost:3000
 - API: `apps/api` on http://localhost:8080
-- Mobile: `apps/mobile` via `npx expo start` (or `npm run dev` inside `apps/mobile`)
 
 ---
 
@@ -60,15 +58,15 @@ Complete list of external services the app integrates with. Detailed setup for e
 
 ### Weather
 
-- **OpenWeather** — current weather + forecast at `api.openweathermap.org` (`OPENWEATHER_API_KEY`), called from `apps/api/src/routes/worker.ts`.
+- **OpenWeather** — current weather + forecast at `api.openweathermap.org` (`OPENWEATHER_API_KEY`), called from `apps/api/src/routes/weather.ts`.
 
 ### IP Geolocation
 
-- **ip-api.com** — keyless fallback for locating a worker if no GPS, called from `apps/api/src/routes/worker.ts`.
+- **ip-api.com** — keyless fallback for locating someone if no GPS, called from `apps/api/src/routes/weather.ts`.
 
 ### Barcode / UPC Lookup
 
-- **UPCitemDB** — public UPC → product lookup at `api.upcitemdb.com`, called from `apps/api/src/routes/admin.ts` (supplies barcode scan).
+- **UPCitemDB** — public UPC → product lookup at `api.upcitemdb.com`, called from `apps/api/src/routes/supplies.ts` (barcode scan).
 
 ### Push Notifications
 
@@ -78,12 +76,13 @@ Complete list of external services the app integrates with. Detailed setup for e
 
 - **Anthropic** — Claude via `@anthropic-ai/sdk`, `ANTHROPIC_API_KEY`. Used for AI-generated estimates and route suggestions (see [AI Features](#ai-features)).
 
-### Long-term Backup (planned — no code yet)
+### Long-term Backup
 
-- **Google Drive** — one-way backup of `CompanyDocument` records into a folder in `admin@seedlingslawncare.com`'s Drive. Auth is OAuth 2.0 as the admin user (long-lived refresh token) — NOT a service account. **Not yet implemented in code; Google Cloud setup in progress.**
+- **Google Drive** — one-way backup of `CompanyDocument` records into a folder in `admin@seedlingslawncare.com`'s Drive. Auth is OAuth 2.0 against a normal Google account holding a long-lived refresh token — NOT a service account. **Built:** [`apps/api/src/lib/driveClient.ts`](apps/api/src/lib/driveClient.ts) (dependency-free `fetch` wrapper), [`documentSyncQueue.ts`](apps/api/src/services/documentSyncQueue.ts) and [`documentSyncWorker.ts`](apps/api/src/services/documentSyncWorker.ts), drained by `/cron/document-sync`.
   - Google Cloud project: `seedlings-documents-backup`
   - OAuth scope: `https://www.googleapis.com/auth/drive` (full Drive access — needed because we point the app at a pre-existing folder)
-  - Planned env: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_DRIVE_ROOT_FOLDER_ID` (different value per environment). Sync will be gated by a `DOCUMENT_SYNC_ENABLED` Setting row (off by default in dev).
+  - Env: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN` (issued once via [`apps/api/scripts/oauth-drive-consent.ts`](apps/api/scripts/oauth-drive-consent.ts)), `GOOGLE_DRIVE_ROOT_FOLDER_ID` (different value per environment). Every Drive call first exchanges the refresh token for a 1-hour access token, cached in-process for the worker run. Sync is gated by a `DOCUMENT_SYNC_ENABLED` Setting row (off by default in dev).
+  - A separate nightly client backup reuses the same wrapper and root folder, gated independently by `CLIENT_BACKUP_ENABLED` (`/cron/client-backup`).
   - Full spec: [`docs/features/documents-gdrive-backup.md`](docs/features/documents-gdrive-backup.md).
 
 > **Not integrated:** no payment processor (Stripe/Square/etc.) — payments are recorded manually after the client pays. No third-party error/observability SaaS (Sentry, Datadog, PostHog).
@@ -204,7 +203,7 @@ Photos, documents, receipts, promotion images, and education-guide media are sto
   - Bucket names follow the feature noun and do NOT have to match the variable name (`R2_PROMOTION_IMAGES_BUCKET_NAME` → `seedlings-promotions`).
 - **Lifecycle rules**: photo buckets auto-delete objects after their configured retention window; document, receipt, promotion + guide buckets have NO lifecycle rules.
 - **API token**: created in Cloudflare dashboard → R2 → Manage R2 API Tokens → Object Read & Write. **It is scoped to an explicit bucket list** — adding a bucket without re-scoping the token fails every upload with `AccessDenied`. The key and secret do not change when you re-scope.
-- **CORS**: every bucket needs a CORS policy allowing `PUT` from the app origins, because browsers upload straight to R2. `npx tsx scripts/_r2-check-cors.ts` lists what each bucket has (it needs an admin-scoped token to read the config; an Object Read & Write token returns `AccessDenied`).
+- **CORS**: every bucket needs a CORS policy allowing `PUT` from the app origins, because browsers upload straight to R2. `npx tsx scripts/_r2-check-cors.ts` lists what each bucket has (it needs someone with `schedule.manage`-scoped token to read the config; an Object Read & Write token returns `AccessDenied`).
 
 ### Environment Variables
 
@@ -293,24 +292,24 @@ The app has grown well beyond its MVP scope. High-level tour of what's shipped, 
 
 ### CRM
 
-- **Clients / Contacts / Properties** — admin CRUD. `Client` (types: individual, household, organization, community) → many `ClientContact`s (with roles and `isPrimary`), many `Property`s (kinds: single vs aggregate site; supports `pointOfContactId` routing to a specific contact). Post-MVP `PropertyUnit` schema exists but is unused.
-- **Client View-As** — Super-only read-only impersonation of a specific `ClientContact` for support/debugging. Wire uses an `x-impersonate-client-contact` header; every `GET /me/*` route is either view-as-aware or explicitly annotated. Spec: [`docs/features/client-view-as.md`](docs/features/client-view-as.md). Plugin: [`apps/api/src/plugins/clientImpersonation.ts`](apps/api/src/plugins/clientImpersonation.ts).
+- **Clients / Contacts / Properties** — CRUD under `clients.manage`. `Client` (types: individual, household, organization, community) → many `ClientContact`s (with roles and `isPrimary`), many `Property`s (kinds: single vs aggregate site; supports `pointOfContactId` routing to a specific contact). Post-MVP `PropertyUnit` schema exists but is unused.
+- **Client View-As** — read-only impersonation of a specific `ClientContact` for support/debugging, gated on `clients.view-as`. Wire uses an `x-impersonate-client-contact` header; every `GET /me/*` route is either view-as-aware or explicitly annotated. Spec: [`docs/features/client-view-as.md`](docs/features/client-view-as.md). Plugin: [`apps/api/src/plugins/clientImpersonation.ts`](apps/api/src/plugins/clientImpersonation.ts).
 
 ### Jobs & scheduling
 
 - **Job / JobSchedule / JobOccurrence** — three-layer model. `Job` is the standing agreement (kind: ENTIRE_SITE vs SINGLE_ADDRESS; status: PROPOSED → ACCEPTED). `JobSchedule` is the auto-renew toggle + cadence. `JobOccurrence` is a real dated instance with its own lifecycle (SCHEDULED → IN_PROGRESS → COMPLETED → CLOSED) and its own kind/assignees (copied from the Job at creation, then editable).
-- **Assignments** — two-layered: `JobAssigneeDefault` (usually these workers) → `JobOccurrenceAssignee` (this specific visit). Only WORKER-role users can be assigned. `Group`/`GroupMember` supports crew-based assignment.
+- **Assignments** — two-layered: `JobAssigneeDefault` (usually these workers) → `JobOccurrenceAssignee` (this specific visit). Assignment is **not** gated on a role (the `Role` enum is deleted): an occurrence is UNCLAIMED or has exactly one claimer, and only a PAID person (EMPLOYEE or CONTRACTOR) may hold a non-observer seat — an UNPAID helper can only observe. Both are enforced by `enforceAssigneeInvariants`. `Group`/`GroupMember` supports crew-based assignment.
 - **Occurrence add-ons** — `OccurrenceAddon`, `OccurrenceInstruction`, `OccurrenceChangeRequest`, `OccurrenceComment`, `PinnedOccurrence`, `LikedOccurrence`.
 - **Route optimization** — [`apps/api/src/lib/routing/`](apps/api/src/lib/routing/) provides a `RoutingProvider` interface; Mapbox is the only current implementation. `/api/preview/route-suggestions` combines Mapbox distances + Claude for human-readable suggestions.
 
 ### Workdays, mileage, vehicles
 
-- **WorkerWorkday** — one row per worker per day (`workdayDate`, `startedAt`, `pausedAt`, `endedAt`, `totalPausedMs`). Approval window is admin-controlled. Services: [`apps/api/src/services/workdays.ts`](apps/api/src/services/workdays.ts).
+- **WorkerWorkday** — one row per worker per day (`workdayDate`, `startedAt`, `pausedAt`, `endedAt`, `totalPausedMs`). Approval window is set in Settings (`settings.manage`); approving is `time.approve`. Services: [`apps/api/src/services/workdays.ts`](apps/api/src/services/workdays.ts).
 - **Vehicle / VehicleAssignment / MileageEntry** — per-driver mileage sessions with start/end odometer, ET-anchored `entryDate` (TEXT column, YYYY-MM-DD). Approval mirrors workdays.
 
 ### Payments, expenses, taxes
 
-- **Payment / PaymentSplit** — per-occurrence payment collection; splits distribute revenue to workers (employees/trainees made whole on underpay, contractors pro-rata). Spec: [`docs/FINANCIAL_SYSTEM.md`](docs/FINANCIAL_SYSTEM.md). Invariants locked by [`apps/api/src/services/payments-build-gate.test.ts`](apps/api/src/services/payments-build-gate.test.ts).
+- **Payment / PaymentSplit** — per-occurrence payment collection; splits distribute revenue to workers (employees made whole on underpay, contractors pro-rata). Spec: [`docs/FINANCIAL_SYSTEM.md`](docs/FINANCIAL_SYSTEM.md). Invariants locked by [`apps/api/src/services/payments-build-gate.test.ts`](apps/api/src/services/payments-build-gate.test.ts).
 - **BusinessExpense** — freestanding + job-paired + supply-paired variants. Recurring rows (WEEKLY/MONTHLY/QUARTERLY/ANNUALLY) surface in the "Due to Record" panel with `recurrenceSeriesId` welding the series together across label drift.
 - **Business Start Date filter** — non-destructive money cleanup: when the setting is on, pre-cutoff `Payment`/`Expense`/`Checkout`/`AuditEvent` rows hide from every view and export. Helpers: [`apps/api/src/lib/businessStartCutoff.ts`](apps/api/src/lib/businessStartCutoff.ts).
 - **QuickBooks / tax exports** — [`apps/api/src/services/exports.ts`](apps/api/src/services/exports.ts) generates Schedule C-aware exports. Cash-basis only; shortfall/overage/margin fields are operator-dashboard only, never tax line items. Invariant enforced in the payments build gate.
@@ -324,7 +323,7 @@ The app has grown well beyond its MVP scope. High-level tour of what's shipped, 
 ### Compliance
 
 - **PolicyDocument** — policy documents with versions, enforcement levels (BLOCK/WARN/INFO), targeted worker types, and required actions (SIGN / SIGN_AND_UPLOAD / ACKNOWLEDGE / NONE).
-- **PolicySignature** — immutable revoke-and-replace signatures with content digest pinning + admin-on-behalf audit.
+- **PolicySignature** — immutable revoke-and-replace signatures with content digest pinning + on-behalf audit.
 - **PolicyException** — time-bounded excuses per user × policy. Full spec: [`docs/features/compliance.md`](docs/features/compliance.md). Enforced by [`apps/api/src/services/policies-build-gate.test.ts`](apps/api/src/services/policies-build-gate.test.ts).
 
 ### Documents
@@ -400,7 +399,6 @@ Push notifications go through the `web-push` library and each browser's push ser
 | `CRON_SECRET`               | Shared secret required in the `Authorization: Bearer` header for `/api/cron/*` routes; set the same value in Vercel |
 | `WEB_ORIGIN`                | Comma-separated allow-list of exact origins for CORS (e.g. `https://seedlings.team,http://localhost:3000`)          |
 | `WEB_ORIGIN_REGEX`          | Optional regex for wildcard preview URLs (`^https://seedlings3-web-git-.*\.vercel\.app$`)                           |
-| `ADMIN_BOOTSTRAP_EMAILS`    | Comma-separated emails automatically granted ADMIN role on first sign-in (bootstrap mechanism only)                 |
 | `PAYMENT_REQUEST_BASE_URL`  | Public URL used to construct client-facing payment request links (defaults to production domain when unset)         |
 
 ### AI Features
@@ -412,11 +410,11 @@ Push notifications go through the `web-push` library and each browser's push ser
 - Provider is abstracted: see `apps/api/src/lib/routing/` — add new providers by implementing `RoutingProvider` interface in `types.ts` and registering in `index.ts`
 - UI dropdown for provider selection (currently only Mapbox)
 
-**Estimate Generation** (`/api/admin/occurrences/:occurrenceId/generate-estimate`):
+**Estimate Generation** (`/api/occurrences/:occurrenceId/generate-estimate`):
 
 - Uses Claude to generate client-facing estimates with a 20% business margin
 - Returns both an internal cost breakdown and a client message
-- Triggered by "Generate Estimate" button on admin Jobs tab for estimate occurrences
+- Triggered by the "Generate Estimate" button on the Jobs tab for estimate occurrences
 
 ### Domain
 
@@ -483,10 +481,9 @@ For production deployment, add these to the **API** project (Vercel → Project 
 DATABASE_URL=<your Neon production connection string>
 CLERK_SECRET_KEY=<your Clerk secret key>
 
-# CORS + admin bootstrap
+# CORS
 WEB_ORIGIN=https://seedlings.team,https://seedlingslawncare.com
 WEB_ORIGIN_REGEX=^https://seedlings3-web-git-.*\.vercel\.app$
-ADMIN_BOOTSTRAP_EMAILS=<comma-separated emails to auto-grant ADMIN on first sign-in>
 
 # R2 (7 buckets — prod names; dev uses the same names with a -dev suffix)
 R2_ACCESS_KEY_ID=<your Cloudflare R2 access key>

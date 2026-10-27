@@ -13,8 +13,8 @@ import { gotoWorkerHome } from "../helpers/nav";
 async function gotoJobs(page: import("@playwright/test").Page) {
   await gotoWorkerHome(page);
   await page.evaluate(() => {
-    localStorage.setItem("seedlings_workerTab", JSON.stringify("jobs"));
-    localStorage.setItem("seedlings_workerCategory", JSON.stringify("Work"));
+    localStorage.setItem("seedlings_staffTab", JSON.stringify("jobs"));
+    localStorage.setItem("seedlings_staffCategory", JSON.stringify("Work"));
   });
   await page.goto("/");
   await page.waitForLoadState("networkidle");

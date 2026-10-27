@@ -73,8 +73,8 @@ describe("proxy link-wrapper build gate", () => {
     for (const path of [
       "api/me",
       "api/me/policies",
-      "api/admin/users",
-      "api/super/promotions",
+      "api/users",
+      "api/promotions",
       "api/public/branding",
       "api/public/feed",
       "api/public/stats",

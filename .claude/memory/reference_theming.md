@@ -19,7 +19,7 @@ Run before merging anything that touches UI colour:
 
 ```bash
 cd apps/api && npm run test:build-gate          # ~1s, catches the static defects
-cd apps/web && THEME_SWEEP=1 npx playwright test --project=super \
+cd apps/web && THEME_SWEEP=1 npx playwright test --project=owner \
   theme-contrast-sweep --workers=1              # ~47 min, measures every element
 ```
 

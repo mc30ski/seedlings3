@@ -3,7 +3,7 @@
 //
 // Called by:
 //   - Daily cron (/api/cron/document-sync)
-//   - Super-only Force Sync endpoint
+//   - the Force Sync endpoint (`documents.manage`)
 //   - (Future) Backfill script
 //
 // Task types (see documentSyncQueue.ts for enqueue helpers):
@@ -406,7 +406,7 @@ async function syncMetadata(documentId: string): Promise<TaskOutcome> {
       title: doc.title,
       description: doc.description,
       expiresAt: doc.expiresAt,
-      adminHidden: doc.adminHidden,
+      restricted: doc.restricted,
       archivedAt: doc.archivedAt,
       currentVersionId: doc.currentVersionId,
       createdAt: doc.createdAt,

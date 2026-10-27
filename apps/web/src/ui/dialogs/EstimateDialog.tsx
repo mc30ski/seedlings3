@@ -169,8 +169,8 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
     (async () => {
       try {
         const [workerList, jobList] = await Promise.all([
-          apiGet<WorkerLite[]>("/api/admin/users?role=WORKER&approved=true"),
-          apiGet<JobListItem[]>("/api/admin/jobs?status=ALL"),
+          apiGet<WorkerLite[]>("/api/users?role=WORKER&approved=true"),
+          apiGet<JobListItem[]>("/api/jobs?status=ALL"),
         ]);
         setWorkers(Array.isArray(workerList) ? workerList : []);
         setJobs(Array.isArray(jobList) ? jobList : []);
@@ -304,7 +304,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
         await apiPatch(`/api/light-estimates/${editEstimate!.id}`, body);
         publishInlineMessage({ type: "SUCCESS", text: "Estimate updated." });
       } else {
-        await apiPost("/api/admin/light-estimates", body);
+        await apiPost("/api/light-estimates", body);
         publishInlineMessage({ type: "SUCCESS", text: "Estimate created." });
       }
       reset();

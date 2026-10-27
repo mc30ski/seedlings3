@@ -26,6 +26,7 @@ import {
   Badge, Box, HStack, IconButton, Select, Spinner, Text, VStack, createListCollection,
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, LayoutDashboard, RefreshCw } from "lucide-react";
+import { getAreaLensName, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
 import type { LucideIcon } from "lucide-react";
 import {
   GlowContext,
@@ -62,6 +63,7 @@ export function Dashboard({
   headerAction,
   defaultOpen = true,
   variant = "default",
+  insightsScope = "period",
 }: {
   /** Required — each usage needs its own key so pages don't share
    *  collapse state. Convention: "seedlings:<page>:dashboardOpen". */
@@ -170,6 +172,18 @@ export function Dashboard({
    *  Requests). "hero" = emerald + left accent stripe + elevation —
    *  used for MY DASHBOARD so it stands apart from every other
    *  section on the page. */
+  /**
+   * What the INSIGHTS note claims the numbers cover. Ignored unless
+   * `variant === "insights"`.
+   *
+   * NOT derived from the `timeframe` prop: Inventory's Insights keeps its
+   * window control (From/To plus a preset filler) in its own body, so
+   * "has no header picker" and "has no window" are different facts, and
+   * guessing one from the other labelled a windowed card as a snapshot.
+   * Collections is the genuine snapshot — it rolls up kit state as it is
+   * right now, with no period to select.
+   */
+  insightsScope?: "period" | "current";
   variant?:
     | "default"
     | "hero"
@@ -181,6 +195,16 @@ export function Dashboard({
     | "attention";
 }) {
   const [open, setOpen] = useState<boolean>(defaultOpen);
+  // The active area lens, for the INSIGHTS note below. Read in an effect
+  // rather than during render: it comes from localStorage, which does not
+  // exist on the server, so reading it inline would hydrate the wrong text.
+  const [lensName, setLensName] = useState<string | null>(null);
+  useEffect(() => {
+    const read = () => setLensName(getAreaLensName());
+    read();
+    window.addEventListener(AREA_LENS_CHANGED_EVENT, read);
+    return () => window.removeEventListener(AREA_LENS_CHANGED_EVENT, read);
+  }, []);
   useEffect(() => {
     try {
       const v = localStorage.getItem(storageKey);
@@ -533,7 +557,12 @@ export function Dashboard({
           return <RedCountBadge>{displayCount}</RedCountBadge>;
         })()}
         {(summarySlot || (!open && collapsedSummarySlot)) && (
-          <Box flex="1" minW={0} overflow="hidden">
+          // RESERVE THE REFRESH BUTTON'S SPACE. That control is absolutely
+          // positioned against the header's right edge, so a summary that
+          // fills the row renders underneath it — text and icon drawn on
+          // top of each other. `headerAction` already pads for this; the
+          // summary did not, and nothing showed it until a card had both.
+          <Box flex="1" minW={0} overflow="hidden" pr={onRefresh && open ? 6 : 0}>
             {summarySlot}
             {!open && collapsedSummarySlot}
           </Box>
@@ -665,10 +694,50 @@ export function Dashboard({
             visibility={busy ? "hidden" : undefined}
             aria-hidden={busy || undefined}
           >
-            {(timeframe || timeframeSlot) && (
+            {(timeframe || timeframeSlot || variant === "insights") && (
               // flexShrink={0} on the wrapper — Select.Root stretches to
               // fill a flex row otherwise, which strands anything beside it.
-              <HStack justify="flex-end" gap={2} wrap="wrap" align="center">
+              //
+              // ON AN INSIGHTS CARD THE NOTE SHARES THIS ROW. It used to
+              // sit on its own line directly beneath, so the card opened
+              // with two full-width rows of chrome before any number. The
+              // note is short and the picker is narrow; together they fit
+              // one row, and `justify` switches to space-between so the
+              // picker stays hard right where it was.
+              <HStack
+                justify={variant === "insights" ? "space-between" : "flex-end"}
+                gap={2}
+                wrap="wrap"
+                align="center"
+              >
+                {variant === "insights" && (
+                  <Box
+                    flex="1"
+                    minW="240px"
+                    p={3}
+                    bg="orange.faint"
+                    borderWidth="1px"
+                    borderColor="orange.emphasized"
+                    borderLeftWidth="4px"
+                    rounded="md"
+                  >
+                    <Text fontSize="sm" color="orange.fg">
+                      {/* THE NOTE HAS TO KNOW ABOUT THE LENS. It read
+                          "the whole company" unconditionally, which is a
+                          plain untruth with a district lens in force — and
+                          the untruth is the dangerous direction: a reader
+                          takes Durham's numbers for the company's and
+                          concludes the month was bad. */}
+                      {lensName
+                        ? insightsScope === "current"
+                          ? `${lensName} only — as it stands right now.`
+                          : `${lensName} only — over the selected period.`
+                        : insightsScope === "current"
+                          ? "Business-wide — the whole company, as it stands right now."
+                          : "Business-wide — the whole company over the selected period."}
+                    </Text>
+                  </Box>
+                )}
                 {timeframe && (
                 <Box flexShrink={0}>
                   <Select.Root
@@ -682,7 +751,18 @@ export function Dashboard({
                     positioning={{ strategy: "fixed", hideWhenDetached: true }}
                   >
                     <Select.Control>
-                      <Select.Trigger w="auto" minW="150px" px="2">
+                      {/* On an INSIGHTS card the trigger sits directly
+                          beside the orange note and shared its row, so
+                          the default grey border read as a stray control
+                          rather than part of the pair. Matching the note's
+                          border is the whole point of putting them on one
+                          line. Other variants keep the default. */}
+                      <Select.Trigger
+                        w="auto"
+                        minW="150px"
+                        px="2"
+                        borderColor={variant === "insights" ? "orange.emphasized" : undefined}
+                      >
                         <Select.ValueText placeholder="Timeframe" />
                         <Select.Indicator />
                       </Select.Trigger>
@@ -702,6 +782,11 @@ export function Dashboard({
                 {timeframeSlot}
               </HStack>
             )}
+            {/* The INSIGHTS note shares the timeframe row above — see the
+                comment there. It lives in this component rather than in
+                each tab because `insights` is one identity app-wide, so a
+                seventh card gets it for free and cannot quietly mean
+                something narrower. */}
             {children}
           </VStack>
         </Box>

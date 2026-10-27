@@ -16,8 +16,8 @@ test("header chip and Profile picker stay in step, and the choice persists", asy
   await page.goto("/");
   await page.evaluate(() => {
     localStorage.setItem("seedlings_theme", "original");
-    localStorage.setItem("seedlings_topTab", JSON.stringify("worker"));
-    localStorage.setItem("seedlings_workerTab", JSON.stringify("profile"));
+    localStorage.setItem("seedlings_topTab", JSON.stringify("staff"));
+    localStorage.setItem("seedlings_staffTab", JSON.stringify("profile"));
     localStorage.setItem("seedlings_lastAppOpenedAt", new Date().toISOString());
   });
   await page.goto("/");

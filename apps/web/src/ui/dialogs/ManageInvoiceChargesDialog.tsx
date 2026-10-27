@@ -222,16 +222,16 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   occurrenceId: string;
   /** Use admin endpoints */
-  isAdmin?: boolean;
-  /** Whether to offer the ledger-link picker. Separate from `isAdmin`, which
-   *  means "this is the ADMIN VIEW" and selects the endpoint set.
+  canManageSchedule?: boolean;
+  /** Whether to offer the ledger-link picker. Separate from `canManageSchedule`, which
+   *  means "this is the editable view" and selects the endpoint set.
    *
-   *  Those are not the same question. An admin who claims their own job works
-   *  it from the Worker view, where `isAdmin` is false — so the picker
+   *  Those are not the same question. Someone with `schedule.manage` who claims their own job works
+   *  it from the Self-scoped view, where `canManageSchedule` is false — so the picker
    *  vanished on exactly the surface where the charge was entered. The link
    *  is the least consequential thing in this dialog (it changes no amount
    *  anywhere), so it follows the user's ROLE, not the chip they're on.
-   *  Defaults to `isAdmin` for callers that don't distinguish. */
+   *  Defaults to `canManageSchedule` for callers that don't distinguish. */
   canLinkLedger?: boolean;
   /** Hide the "From inventory" toggle. Set true for workflows that don't
    *  carry physical supply consumption (events, followups, announcements). */
@@ -251,7 +251,7 @@ export default function ManageInvoiceChargesDialog({
   open,
   onOpenChange,
   occurrenceId,
-  isAdmin,
+  canManageSchedule,
   canLinkLedger,
   disableInventory = false,
   privileges = { canPullInventory: true, canChargeBusinessExpenses: true },
@@ -260,11 +260,11 @@ export default function ManageInvoiceChargesDialog({
   onChanged,
 }: Props) {
   const canInventory = privileges.canPullInventory && !disableInventory;
-  // Every mutation is admin-only on the server. Workers get a read-only list
+  // Every mutation needs `materials.charge` on the server. Without it the list is read-only
   // rather than buttons that 403.
   const canCharge = privileges.canChargeBusinessExpenses;
-  // Both ledger endpoints are adminGuard'd, so this must track the role.
-  const canLink = canLinkLedger ?? !!isAdmin;
+  // Both ledger endpoints require `materials.charge`, so this must track it.
+  const canLink = canLinkLedger ?? !!canManageSchedule;
   const [charges, setCharges] = useState<InvoiceCharge[]>([]);
   const [loading, setLoading] = useState(false);
   const [holdBusy, setHoldBusy] = useState(false);
@@ -338,12 +338,8 @@ export default function ManageInvoiceChargesDialog({
   const [editActualCost, setEditActualCost] = useState("");
   const dlgErr = useDialogError();
 
-  const chargesEndpoint = isAdmin
-    ? `/api/admin/occurrences/${occurrenceId}/invoice-charges`
-    : `/api/occurrences/${occurrenceId}/invoice-charges`;
-  const holdsEndpoint = isAdmin
-    ? `/api/admin/occurrences/${occurrenceId}/supply-holds`
-    : `/api/occurrences/${occurrenceId}/supply-holds`;
+  const chargesEndpoint = `/api/occurrences/${occurrenceId}/invoice-charges`;
+  const holdsEndpoint = `/api/occurrences/${occurrenceId}/supply-holds`;
 
   const supplyCollection = useMemo(
     () =>
@@ -411,7 +407,7 @@ export default function ManageInvoiceChargesDialog({
     setLedgerQuery("");
     setLedgerBusy(true);
     try {
-      setLedgerCharges(await apiGet<LedgerCharge[]>("/api/admin/ledger-charges"));
+      setLedgerCharges(await apiGet<LedgerCharge[]>("/api/ledger-charges"));
     } catch (err) {
       dlgErr.setError(getErrorMessage("Couldn't load ledger charges.", err));
     } finally {
@@ -435,7 +431,7 @@ export default function ManageInvoiceChargesDialog({
       const seq = ++ledgerSeq.current;
       try {
         const rows = await apiGet<LedgerCharge[]>(
-          `/api/admin/ledger-charges?q=${encodeURIComponent(q)}`,
+          `/api/ledger-charges?q=${encodeURIComponent(q)}`,
         );
         if (seq === ledgerSeq.current) setLedgerCharges(rows);
       } catch { /* keep the last list rather than emptying it mid-type */ }
@@ -446,7 +442,7 @@ export default function ManageInvoiceChargesDialog({
   async function setLedgerLink(invoiceChargeId: string, businessExpenseId: string | null) {
     try {
       const updated = await apiPatch<InvoiceCharge>(
-        `/api/admin/invoice-charges/${invoiceChargeId}/ledger-link`,
+        `/api/invoice-charges/${invoiceChargeId}/ledger-link`,
         { businessExpenseId },
       );
       setCharges((prev) => prev.map((e) => (e.id === invoiceChargeId ? { ...e, ...updated } : e)));
@@ -530,7 +526,7 @@ export default function ManageInvoiceChargesDialog({
   async function handleDelete(id: string) {
     dlgErr.clear();
     try {
-      const endpoint = isAdmin ? `/api/admin/invoice-charges/${id}` : `/api/invoice-charges/${id}`;
+      const endpoint = `/api/invoice-charges/${id}`;
       await apiDelete(endpoint);
       setCharges((prev) => prev.filter((e) => e.id !== id));
       onChanged?.();
@@ -549,9 +545,7 @@ export default function ManageInvoiceChargesDialog({
     dlgErr.clear();
     setHoldBusy(true);
     try {
-      const endpoint = isAdmin
-        ? `/api/admin/supply-holds/${holdId}`
-        : `/api/supply-holds/${holdId}`;
+      const endpoint = `/api/supply-holds/${holdId}`;
       await apiPatch(endpoint, { quantity: newQty });
       const [refreshed, freshSupplies] = await Promise.all([
         apiGet<InvoiceCharge[]>(chargesEndpoint),
@@ -614,9 +608,7 @@ export default function ManageInvoiceChargesDialog({
     if (isNaN(cost) || cost <= 0 || !editDesc.trim()) return;
     dlgErr.clear();
     try {
-      const endpoint = isAdmin
-        ? `/api/admin/invoice-charges/${editingId}`
-        : `/api/invoice-charges/${editingId}`;
+      const endpoint = `/api/invoice-charges/${editingId}`;
       const updated = await apiPatch<InvoiceCharge>(endpoint, {
         // ALWAYS SENT, inventory-backed or not.
         //
@@ -715,7 +707,7 @@ export default function ManageInvoiceChargesDialog({
                       Extra costs billed to the client on this job, on top of the labor
                       price. They don&rsquo;t come out of your pay &mdash; your share
                       comes from the labor and services on the job.
-                      Only an admin can add or change them.
+                      You need charge authority to add or change them.
                     </Text>
                   )}
                 </Box>
@@ -778,7 +770,7 @@ export default function ManageInvoiceChargesDialog({
                               {/* Without this, "what we paid" is write-only —
                                   no way to tell a recorded cost from a
                                   forgotten one, nor to check the margin the
-                                  form promises. ADMIN-ONLY. */}
+                                  form promises. `materials.charge`. */}
                               {canCharge && (
                                 <Text fontSize="2xs" color="fg.muted">
                                   {exp.actualCost != null ? (
@@ -858,7 +850,7 @@ export default function ManageInvoiceChargesDialog({
                               </Button>
                             )}
                             {/* Removing a line lowers what the client owes, so
-                                it is admin-only on the server. Hide it rather
+                                it needs `materials.charge` on the server. Hide it rather
                                 than let a worker click into a 403. */}
                             {canCharge && (
                               <Button
@@ -980,14 +972,14 @@ export default function ManageInvoiceChargesDialog({
                   {addMode === null ? null : addMode === "custom" && !canCharge ? (
                     <Box p={2} bg="yellow.faint" borderWidth="1px" borderLeftWidth="3px" borderColor="yellow.emphasized" borderRadius="md">
                       <Text fontSize="xs" color="yellow.fg">
-                        Only an admin can add a charge to an invoice — it changes what the
+                        Only someone with schedule authority can add a charge to an invoice — it changes what the
                         client is billed. Ask one to add it for you.
                       </Text>
                     </Box>
                   ) : addMode === "inventory" && !canInventory ? (
                     <Box p={2} bg="yellow.faint" borderWidth="1px" borderLeftWidth="3px" borderColor="yellow.emphasized" borderRadius="md">
                       <Text fontSize="xs" color="yellow.fg">
-                        Only an admin can put supplies on an invoice
+                        Only someone with schedule authority can put supplies on an invoice
                         {disableInventory ? ", and this kind of job doesn't carry them" : ""} —
                         it changes what the client is billed.
                       </Text>

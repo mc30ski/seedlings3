@@ -14,7 +14,7 @@ export async function doAction<T extends { id: string }>(
 ) {
   try {
     const updated = await apiPost<T>(
-      `/api/admin/${domain}/${item.id}/${action}`,
+      `/api/${domain}/${item.id}/${action}`,
       {}
     );
     if (!updated) throw Error("Server did not return results.");
@@ -39,7 +39,7 @@ export async function doDelete(
   refresh: () => Promise<void>
 ) {
   try {
-    const success = await apiDelete(`/api/admin/${domain}/${id}`);
+    const success = await apiDelete(`/api/${domain}/${id}`);
     if (!success) throw Error("Server did not return success.");
     await refresh();
     publishInlineMessage({

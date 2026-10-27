@@ -1,3 +1,4 @@
+import type { Scope } from "@/src/lib/scope";
 import { useEffect, useMemo, useState, Fragment } from "react";
 import {
   Box,
@@ -25,7 +26,17 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 //TODO:
-export type TabRolePropType = { role: "worker" | "admin" };
+/**
+ * What the caller may do. This was `{ role: "worker" | "admin" }`, and the
+ * component opened with `if (role !== "admin") return <UnavailableNotice/>`
+ * — a hardcoded role gate. index.tsx passed the literal `role="admin"`, so
+ * the check could never fail and was doing nothing except keeping a deleted
+ * role alive in the signature.
+ *
+ * The tab's own row in TAB_REQUIREMENTS is `audit.view`, which is also the
+ * guard on the routes it reads. Absent scope fails closed.
+ */
+export type TabRolePropType = { scope?: Scope };
 
 type AuditItem = {
   id: string;
@@ -72,8 +83,8 @@ function Trunc({
   );
 }
 
-export default function HistoryTab({ role = "worker" }: TabRolePropType) {
-  if (role !== "admin") return <UnavailableNotice />;
+export default function HistoryTab({ scope }: TabRolePropType) {
+  if (!scope?.can("audit.view")) return <UnavailableNotice />;
 
   const [items, setItems] = useState<AuditItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -112,7 +123,7 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
 
   async function loadLookups() {
     try {
-      const users = await apiGet<UserRow[]>(`/api/admin/users`);
+      const users = await apiGet<UserRow[]>(`/api/users`);
       const uIndex: Record<string, string> = {};
       for (const u of users) uIndex[u.id] = u.email ?? "";
       setUserMap(uIndex);
@@ -140,7 +151,7 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
       if (toParam) params.set("to", toParam);
 
       const res = await apiGet<AuditResp>(
-        `/api/admin/audit?${params.toString()}`
+        `/api/audit?${params.toString()}`
       );
       setTotal(res.total);
       setItems((prev) => (reset ? res.items : [...prev, ...res.items]));

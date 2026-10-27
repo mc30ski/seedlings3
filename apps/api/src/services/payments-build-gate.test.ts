@@ -25,7 +25,8 @@
 //      - Single-worker 100% job: all the net pool flows to that one worker
 //
 //   B. Worker-classification policy:
-//      - EMPLOYEE and TRAINEE share the employee-margin rate
+//      - EMPLOYEE takes the margin, CONTRACTOR the fee, and neither
+//        UNPAID nor an untyped worker resolves to a rate at all
 //      - CONTRACTOR and null workerType share the contractor-fee rate
 //      - On client underpayment: employees are made whole; contractors take
 //        the loss pro-rata
@@ -63,13 +64,13 @@
 //
 // SEE ALSO
 //   - apps/api/src/services/payments.test.ts (scenario-level coverage)
-//   - apps/api/src/services/exports.test.ts (tax-export format integrity)
+//   - the "tax export source-of-truth" block in THIS file (export integrity)
 //   - .claude memory: project_payment_math,
 //     project_tax_export_integrity
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import type { WorkerType } from "@prisma/client";
 import {
@@ -79,6 +80,7 @@ import {
 } from "./payments";
 import { computeMyOccurrenceNet } from "./workerEarnings";
 import { foldPunctuationForMailto } from "./paymentRequests";
+import { classify, isFeeable, isPaid, isW2 } from "@repo/money";
 
 // Pin to the production-default rates so this file's assertions don't
 // silently slide if someone tunes the seed. Tests that vary rates do so
@@ -109,13 +111,8 @@ function makePrng(seed: number) {
 function randomWorkers(
   rand: () => number,
   count: number,
-): Array<{ userId: string; workerType: WorkerType | null; splitPercent: number }> {
-  const types: (WorkerType | null)[] = [
-    "EMPLOYEE",
-    "TRAINEE",
-    "CONTRACTOR",
-    null,
-  ];
+): Array<{ userId: string; workerType: WorkerType; splitPercent: number }> {
+  const types: WorkerType[] = ["EMPLOYEE", "CONTRACTOR"];
   // Random integer percentages summing to 100 (the production validator
   // requires whole numbers).
   const raw = Array.from({ length: count }, () => Math.max(1, Math.floor(rand() * 50) + 1));
@@ -269,32 +266,73 @@ describe("[build-gate] computeBreakdown conservation laws", () => {
 // B. Worker-classification policy
 // ──────────────────────────────────────────────────────────────────────────
 describe("[build-gate] worker-classification policy", () => {
-  it("EMPLOYEE and TRAINEE share the employee margin rate", () => {
+  it("EMPLOYEE takes the margin, CONTRACTOR takes the fee", () => {
     const rows = computeBreakdown(
       200,
       0,
-      [W("e1", "EMPLOYEE", 50), W("t1", "TRAINEE", 50)],
+      [W("e1", "EMPLOYEE", 50), W("c1", "CONTRACTOR", 50)],
       PRODUCTION_RATES,
     );
-    const emp = rows.find((r) => r.userId === "e1")!;
-    const trn = rows.find((r) => r.userId === "t1")!;
-    expect(emp.ratePercent).toBe(30);
-    expect(trn.ratePercent).toBe(30);
-    expect(emp.net).toBeCloseTo(trn.net, 2);
+    expect(rows.find((r) => r.userId === "e1")!.ratePercent).toBe(
+      PRODUCTION_RATES.employeeMarginPercent,
+    );
+    expect(rows.find((r) => r.userId === "c1")!.ratePercent).toBe(
+      PRODUCTION_RATES.contractorFeePercent,
+    );
   });
 
-  it("CONTRACTOR and null workerType share the contractor fee rate", () => {
-    const rows = computeBreakdown(
-      200,
-      0,
-      [W("c1", "CONTRACTOR", 50), W("u1", null, 50)],
-      PRODUCTION_RATES,
-    );
-    const con = rows.find((r) => r.userId === "c1")!;
-    const unc = rows.find((r) => r.userId === "u1")!;
-    expect(con.ratePercent).toBe(20);
-    expect(unc.ratePercent).toBe(20);
-    expect(con.net).toBeCloseTo(unc.net, 2);
+  // The invariant that replaces the old rate-parity rule, and the reason the
+  // worker-class predicates are positive rather than negated.
+  //
+  // The old form was `isFeeable = workerType !== "EMPLOYEE"`, which reads the
+  // question as binary. Under it, UNPAID — a family member or observer with
+  // app access and no place in payroll — lands in the contractor-fee branch
+  // and is charged a share of fees, discovered at tax time if at all. So
+  // neither non-paid class may resolve to a rate AT ALL: refusing loudly is
+  // the only safe answer, because every silent default is somebody's wrong
+  // 1099.
+  it("UNPAID reaches neither rate branch — it is refused, not defaulted", () => {
+    expect(() =>
+      computeBreakdown(200, 0, [W("u1", "UNPAID", 100)], PRODUCTION_RATES),
+    ).toThrow(/UNPAID/);
+    expect(isFeeable("UNPAID")).toBe(false);
+    expect(isW2("UNPAID")).toBe(false);
+    expect(isPaid("UNPAID")).toBe(false);
+  });
+
+  it("an untyped worker is refused rather than charged a contractor fee", () => {
+    // What the pre-rework code did: null fell through `isEmployeeClass`'s
+    // negation into the fee branch, so a worker nobody had classified yet was
+    // charged a contractor fee on every split.
+    expect(() =>
+      computeBreakdown(200, 0, [W("x1", null, 100)], PRODUCTION_RATES),
+    ).toThrow(/no worker type/);
+  });
+
+  it("classify is exhaustive — a new worker type cannot resolve silently", () => {
+    expect(classify("EMPLOYEE")).toBe("w2");
+    expect(classify("CONTRACTOR")).toBe("contractor");
+    expect(classify("UNPAID")).toBe("unpaid");
+    expect(classify(null)).toBe("unclassified");
+    expect(() => classify("MYSTERY" as never)).toThrow(/Unhandled worker type/);
+  });
+
+  // POLICY REVERSAL, deliberate. This test previously asserted that CONTRACTOR
+  // and an untyped worker "share the contractor fee rate" — the old rateFor
+  // was `isEmployeeClass(wt) ? margin : fee`, so anyone not an employee,
+  // INCLUDING someone nobody had classified yet, was charged the fee.
+  //
+  // That is not a rate rule, it is a negation with a default. It is also how
+  // an UNPAID family member would have been charged a contractor fee the
+  // moment that worker type existed. An unclassified worker now REFUSES to
+  // price rather than guessing, and nothing may be inferred from "not an
+  // employee". See docs/FINANCIAL_SYSTEM.md.
+  it("an untyped worker does NOT share the contractor fee — it refuses", () => {
+    const con = computeBreakdown(200, 0, [W("c1", "CONTRACTOR", 100)], PRODUCTION_RATES);
+    expect(con[0].ratePercent).toBe(PRODUCTION_RATES.contractorFeePercent);
+    expect(() =>
+      computeBreakdown(200, 0, [W("u1", null, 100)], PRODUCTION_RATES),
+    ).toThrow(/no worker type/);
   });
 
   it("client underpay: employees made whole, contractors take pro-rata loss", () => {
@@ -402,26 +440,26 @@ describe("[build-gate] payment-row aggregate identity", () => {
   // Independent round2() calls WOULD drift here (two workers at 50% of a
   // penny both round up), which is why the allocator uses largest-remainder.
   it("tip designation: balances EXACTLY, not just within a penny", () => {
-    const workers = [W("e1", "EMPLOYEE", 80), W("t1", "TRAINEE", 20)];
+    const workers = [W("e1", "EMPLOYEE", 80), W("c1", "CONTRACTOR", 20)];
     const tip = {
       amount: 20,
       businessPercent: 0,
       workerPercents: [
         { userId: "e1", percent: 80 },
-        { userId: "t1", percent: 20 },
+        { userId: "c1", percent: 20 },
       ],
     };
     expect(drift(120, 0, workers, tip)).toBe(0);
   });
 
   it("tip with awkward percentages balances exactly", () => {
-    const workers = [W("e1", "EMPLOYEE", 50), W("t1", "TRAINEE", 50)];
+    const workers = [W("e1", "EMPLOYEE", 50), W("c1", "CONTRACTOR", 50)];
     const tip = {
       amount: 10,
       businessPercent: 33.33,
       workerPercents: [
         { userId: "e1", percent: 33.33 },
-        { userId: "t1", percent: 33.34 },
+        { userId: "c1", percent: 33.34 },
       ],
     };
     expect(drift(110, 0, workers, tip)).toBe(0);
@@ -528,7 +566,7 @@ describe("[build-gate] tax export source-of-truth", () => {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// F. Skipped payments (Super-only "pretend it never happened")
+// F. Skipped payments (`money.approve` — "pretend it never happened")
 //
 // A Payment with `skippedAt` set MUST contribute ZERO to every aggregate
 // or export: income, payroll, 1099, business margin, platform fee, P&L.
@@ -602,7 +640,7 @@ describe("[build-gate] skipped payments", () => {
   it("skipped payments do NOT affect business margin / platform fee aggregation", () => {
     // Skipped payments are also excluded from the Accounting tab's
     // margin/fee tiles. Test the JS reducer pattern used in
-    // /admin/business-expenses/vs-revenue and Accounting queries.
+    // /business-expenses/vs-revenue and Accounting queries.
     type Row = {
       confirmed: boolean;
       writtenOff: boolean;
@@ -678,8 +716,8 @@ describe("[build-gate] write-off wages base", () => {
     // write-off rows can't inflate Contract Labor — it only picks up
     // employee wages.
     type Payment = { confirmed: boolean; writtenOff: boolean; skippedAt: Date | null; splits: Split[] };
-    type Split = { amount: number; workerType: string | null };
-    const isEmployeeClass = (t: string | null) => t === "EMPLOYEE" || t === "TRAINEE";
+    type Split = { amount: number; workerType: WorkerType | null };
+    const isEmployeeClass = (t: WorkerType | null) => isW2(t);
     const rows: Payment[] = [
       // Approved with $80 employee net + $20 contractor share.
       { confirmed: true, writtenOff: false, skippedAt: null, splits: [
@@ -716,8 +754,8 @@ describe("[build-gate] write-off wages base", () => {
     // base is undercounted by write-offs, so is the tax estimate.
     // Verify the two bases match.
     type Payment = { confirmed: boolean; writtenOff: boolean; skippedAt: Date | null; splits: Split[] };
-    type Split = { amount: number; workerType: string | null };
-    const isEmployeeClass = (t: string | null) => t === "EMPLOYEE" || t === "TRAINEE";
+    type Split = { amount: number; workerType: WorkerType | null };
+    const isEmployeeClass = (t: WorkerType | null) => isW2(t);
     const rows: Payment[] = [
       { confirmed: true, writtenOff: false, skippedAt: null, splits: [{ amount: 500, workerType: "EMPLOYEE" }] },
       { confirmed: true, writtenOff: true,  skippedAt: null, splits: [{ amount: 200, workerType: "EMPLOYEE" }] },
@@ -794,7 +832,7 @@ describe("[build-gate] write-off wages base", () => {
     // Confirm the shape passes the "wages base includes write-offs"
     // predicate — employee $60 counts, contractor $0 doesn't move any
     // aggregate.
-    const isEmployeeClass = (t: string) => t === "EMPLOYEE" || t === "TRAINEE";
+    const isEmployeeClass = (t: string) => isW2(t as WorkerType);
     const wagesFromWriteOff = fromOutstanding.splits
       .filter((sp) => isEmployeeClass(sp.workerType))
       .reduce((s, sp) => s + sp.amount, 0);
@@ -1121,6 +1159,32 @@ describe("payments build gate — adjustOccurrencePrice keeps the promise honest
     expect(dataBlock).toMatch(/promisedPayouts: promised as any/);
   });
 
+  it("the seed leaves no completed occurrence without its payout snapshot", () => {
+    // THE SEED WRITES `completedAt` DIRECTLY, so it can produce a shape the
+    // completion path above never produces: completed, awaiting payment,
+    // assignees attached, and no `promisedPayouts`. PaymentsTab then cannot
+    // project the pending payment, falls through to the confirmed branch
+    // where the stamped commission and margin are still null, and books the
+    // entire collected amount as business revenue. Three such fixtures put
+    // $510 of invented margin into the Money summary and tripped its
+    // "Math check failed" badge.
+    //
+    // `main()` must run the backfill, and the backfill must use the
+    // server's own resolver and breakdown rather than hand-rolled numbers —
+    // a seed that computes payouts its own way is a second copy of the pay
+    // rule that can drift from the one approval uses.
+    const seed = readFileSync(join(__dirname, "../../prisma/seed.ts"), "utf8");
+    expect(seed, "main() must run the promisedPayouts backfill")
+      .toMatch(/await backfillPromisedPayouts\(\)/);
+    const fnAt = seed.indexOf("async function backfillPromisedPayouts");
+    expect(fnAt, "backfillPromisedPayouts must exist").toBeGreaterThan(-1);
+    const body = seed.slice(fnAt, seed.indexOf("\n}", fnAt));
+    expect(body, "the backfill must reuse the server's split resolver")
+      .toMatch(/resolveWorkers\(/);
+    expect(body, "the backfill must reuse the canonical payout math")
+      .toMatch(/computeBreakdown\(/);
+  });
+
   it("the snapshot is built from the INVOICE, not from labor", () => {
     // computeBreakdown computes N = collected − charges, so it must be fed
     // what the client is billed. Feeding it labor-only and then subtracting
@@ -1141,31 +1205,33 @@ describe("payments build gate — the re-price control is reachable", () => {
     join(__dirname, "../../../../apps/web/src/ui/tabs/JobsTab.tsx"), "utf8",
   );
 
-  it("sits on the ADMIN row — the lowest role that can use it", () => {
+  it("sits on the row — the lowest role that can use it", () => {
     // It was first placed next to the price badge, in one of two blocks that
     // render a price, so on the card the operator was actually looking at it
     // never appeared. It then sat in the everyday action row, which reads
-    // wrong: a button only an admin can press should not be beside Manage
+    // wrong: a button only someone with `money.view` can press should not be beside Manage
     // Team, which any assignee can use.
     //
     // A button belongs on the LOWEST role row that applies to it. Add Service
     // stays in the everyday row (a claimer can use it); Adjust Price does not.
-    const extras = TAB.indexOf("adminExtras={");
-    expect(extras, "the card must hand admin-only buttons to the Admin row")
+    const extras = TAB.indexOf("elevatedExtras={");
+    expect(extras, "the card must hand elevated buttons to the elevated row")
       .toBeGreaterThan(-1);
-    // The whole prop, not a fixed window — the Admin row grows as buttons
+    // The whole prop, not a fixed window — the row grows as buttons
     // move onto it, and a fixed slice silently stops covering the tail.
     const block = TAB.slice(extras, TAB.indexOf("\n                />", extras));
     expect(block).toMatch(/Adjust Price/);
   });
 
   it("is hidden once a payment exists, so it is never a dead end", () => {
-    const start = TAB.indexOf("adminExtras={");
+    const start = TAB.indexOf("elevatedExtras={");
     const block = TAB.slice(start, TAB.indexOf("\n                />", start));
-    // Still gated on no-payment and still admin-only — the gate moved onto
-    // the Admin row, it did not loosen.
+    // Still gated on no-payment and still gated on schedule authority — the
+    // gate moved onto the row, it did not loosen. The pattern was
+    // a pair of role flags; both are deleted, and the capability they
+    // were standing in for is `schedule.manage`.
     expect(block).toMatch(/!occ\.payment/);
-    expect(block).toMatch(/\(isAdmin \|\| isSuper\)/);
+    expect(block).toMatch(/\bcanManageSchedule\b/);
   });
 });
 
@@ -1464,5 +1530,252 @@ describe("[build-gate] the invoice is never re-derived by hand", () => {
     expect(API, "the API must not redefine invoiceTotal")
       .not.toMatch(/export function invoiceTotal\(/);
     expect(API, "it re-exports the shared one").toMatch(/from "@repo\/money"/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G30 — WORKER CLASS IS DECIDED IN ONE PLACE, AND NEVER BY NEGATION.
+//
+// This gate exists because the comment at the top of
+// packages/money/workerClass.ts claimed it already did. It did not: G30 was
+// written into docs/features/permissions-BUILD.md and never implemented, so
+// the only thing enforcing "no workerType comparison outside this file" was a
+// sentence saying it was enforced.
+//
+// SCOPE IS DELIBERATELY NARROW — to the files where a worker-class decision
+// changes a NUMBER. A first draft scanned every source file and flagged
+// forty-odd badge palettes, label switches and explainer-copy branches. All
+// of those are fine, and a gate that reports forty fine things is a gate
+// somebody turns off. Comparing worker type to pick a chip colour is not the
+// bug; comparing it to pick a RATE is.
+//
+// What it catches, in order of what it costs:
+//
+//   1. A pay-class predicate used by NEGATION. `!isW2(x)` reads as "therefore
+//      a contractor", but it is also false for UNPAID and for an untyped
+//      worker, so both land in the fee branch. This single shape charged an
+//      unclassified worker a contractor fee on every split, and would have
+//      charged an unpaid family member one too.
+//   2. A worker-type STRING comparison in a money file. Those are what
+//      survived that removal — they compare strings, so they kept
+//      compiling while testing for a value the database had dropped.
+//   3. A second implementation of the rate rule. `=== "CONTRACTOR" ? fee :
+//      margin` in a route is a private copy of the thing this package owns,
+//      and it gave UNPAID the employee margin.
+//
+// Exemptions are per-line and must say why: `// worker-class-allow: <reason>`.
+// The legacy re-derivation path in payments.ts is the real one — it
+// reproduces how a stored row was PRICED AT THE TIME, which was by the old
+// negation, so it has to keep it.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("[build-gate] G30 — one worker-class decision, never a negation", () => {
+  const ROOT = join(__dirname, "..", "..", "..", "..");
+
+  /** Files where a worker-class decision moves money. */
+  const MONEY_FILES = [
+    "packages/money/payoutMath.ts",
+    "packages/money/forecastModel.ts",
+    "packages/money/jobPricing.ts",
+    "apps/api/src/services/payments.ts",
+    "apps/api/src/services/paymentRequests.ts",
+    "apps/api/src/services/reconcileWorkers.ts",
+    "apps/api/src/services/pnlReport.ts",
+    "apps/api/src/services/exports.ts",
+    "apps/api/src/services/forecast.ts",
+    "apps/api/src/services/equipment.ts",
+    "apps/api/src/services/workerEarnings.ts",
+    "apps/api/src/services/payrollTaxEstimates.ts",
+    "apps/api/src/routes/payroll.ts",
+    "apps/api/src/routes/occurrences.ts",
+    "apps/api/src/routes/money.ts",
+    "apps/web/src/lib/paymentMath.ts",
+    "apps/web/src/ui/dialogs/AcceptPaymentDialog.tsx",
+    "apps/web/src/ui/dialogs/ClaimAgreementDialog.tsx",
+    // THE TABS THAT RENDER PAY, added 2026-10-25. The roster held the
+    // services and two dialogs, so the screens where a worker reads what
+    // they were paid were never scanned — PaymentsTab carried three
+    // `!isEmployeeClass` decisions, which is the banned shape wearing a
+    // local name. A file that decides what a pay class is TOLD belongs
+    // here as much as one that decides what it is PAID: the second is
+    // wrong money, the first is a wrong promise about money.
+    "apps/web/src/ui/tabs/PaymentsTab.tsx",
+    "apps/web/src/ui/tabs/PayrollTab.tsx",
+    "apps/web/src/ui/components/WorkerHourlyPayCard.tsx",
+  ];
+
+  const loaded = MONEY_FILES.map((rel) => {
+    let body: string | null = null;
+    try {
+      body = readFileSync(join(ROOT, rel), "utf8");
+    } catch {
+      body = null;
+    }
+    return { rel, body };
+  });
+
+  it("every money file in the roster exists (a renamed file must not drop out)", () => {
+    // The failure this gate is most exposed to: a file moves, the read fails,
+    // and every assertion below passes because there is nothing to scan.
+    expect(
+      loaded.filter((f) => f.body === null).map((f) => f.rel),
+      "a rostered money file is missing — update the roster deliberately, " +
+        "because a stale entry silently shrinks this gate to nothing",
+    ).toEqual([]);
+  });
+
+  /**
+   * A line is skipped when it is itself a comment, or when the comment block
+   * directly above it carries the marker. The lookback spans the whole
+   * contiguous comment block rather than one line, because an exemption worth
+   * granting is an exemption worth explaining, and the explanation does not
+   * fit on one line.
+   */
+  function exempt(lines: string[], i: number): boolean {
+    if (/worker-class-allow:/.test(lines[i])) return true;
+    for (let k = i - 1; k >= 0; k--) {
+      const line = lines[k];
+      if (!/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)) return false;
+      if (/worker-class-allow:/.test(line)) return true;
+    }
+    return false;
+  }
+
+  function scan(test: (line: string) => boolean): string[] {
+    const out: string[] = [];
+    for (const { rel, body } of loaded) {
+      if (!body) continue;
+      const lines = body.split("\n");
+      lines.forEach((line, i) => {
+        if (/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)) return;
+        if (exempt(lines, i)) return;
+        if (test(line)) out.push(`${rel}:${i + 1}  ${line.trim()}`);
+      });
+    }
+    return out;
+  }
+
+  it("no money decision is made by negating a pay-class predicate", () => {
+    expect(
+      // `\b` RATHER THAN `\s*\(`: the original required a call, so it
+      // caught `!isW2(x)` and `!isEmployeeClass(x)` but walked straight
+      // past `const isEmployeeClass = isW2(wt)` followed by
+      // `!isEmployeeClass &&`. Same decision, same bug, no parenthesis.
+      // `isFeeable` and `isUnpaid` are listed for the same reason the
+      // others are — negating any of the five asserts a class by
+      // elimination, and there are four classes counting "none set".
+      scan((l) => /![\s(]*(isW2|isEmployeeClass|isPaid|isFeeable|isUnpaid)\b/.test(l)),
+      "`!isW2(x)` reads as 'therefore a contractor', but it is false for " +
+        "UNPAID and for an untyped worker too, so both land in the fee " +
+        "branch. Ask `isFeeable(x)` — true only for an actual contractor. A " +
+        "callsite that must reproduce the OLD pricing rule marks itself " +
+        "`// worker-class-allow: <reason>`.",
+    ).toEqual([]);
+  });
+
+  it("no money file compares workerType to a string", () => {
+    expect(
+      scan((l) => /\bworkerType\s*[!=]==\s*["']/.test(l)),
+      "A string comparison against workerType keeps compiling after the enum " +
+        "changes, so it goes on testing for a value the database has dropped. " +
+        "That is how `=== \"TRAINEE\"` silently turned a redaction into a " +
+        "no-op. Ask classify() / isW2() / isFeeable().",
+    ).toEqual([]);
+  });
+
+  it("nobody reimplements the rate rule", () => {
+    // `? someFee : someMargin` is a private copy of rateFor, and a two-way
+    // ternary cannot express four pay classes.
+    expect(
+      scan((l) => /\?[^?:]*(Fee|fee)[^?:]*:[^?:]*(Margin|margin)/.test(l) ||
+                  /\?[^?:]*(Margin|margin)[^?:]*:[^?:]*(Fee|fee)/.test(l)),
+      "This picks a rate with a two-way ternary, which is a second copy of " +
+        "the rule @repo/money owns and cannot express UNPAID or unclassified. " +
+        "Call `rateFor`, or switch on `classify` if a projection must not throw.",
+    ).toEqual([]);
+  });
+
+  it("the canonical module really is exhaustive", () => {
+    // The `never` check is what makes a fourth worker type a compile error
+    // rather than a silent default. Without it nothing above holds.
+    const canonical = readFileSync(join(ROOT, "packages/money/workerClass.ts"), "utf8");
+    expect(canonical).toMatch(/const exhaustive: never = workerType/);
+    expect(canonical).toMatch(/switch \(workerType\)/);
+    // And rateFor must refuse rather than default.
+    expect(canonical).toMatch(/case "unpaid":[\s\S]{0,200}throw new Error/);
+    expect(canonical).toMatch(/case "unclassified":[\s\S]{0,200}throw new Error/);
+  });
+});
+
+describe("the Request Payment kill switch is enforced on the SERVER", () => {
+  // IT WAS NOT, FOR ITS WHOLE LIFE. `REQUEST_PAYMENT_FROM_CLIENT_ENABLED`
+  // was read only by AcceptPaymentDialog, which hid the button. No route
+  // consulted it, so the "off" position hid a control and stopped nothing:
+  // a direct call still sent, and so did the automatic send on completion.
+  // A switch you flip because something is going wrong has to actually
+  // stop it.
+  //
+  // Minting the token counts as requesting payment — it is what resolves
+  // the unauthenticated /public/pay/:token page, and in CLAIMER mode the
+  // worker's own device sends that link. So both the send and the mint are
+  // gated.
+  const ROOT = join(__dirname, "..", "..", "..", "..");
+  const ROUTES = join(ROOT, "apps/api/src/routes");
+
+  it("every handler that sends or mints a payment request checks the switch", () => {
+    const offenders: string[] = [];
+    for (const file of readdirSync(ROUTES).filter((f) => f.endsWith(".ts"))) {
+      const src = readFileSync(join(ROUTES, file), "utf8");
+      // Split on route declarations so each handler is examined alone.
+      const parts = src.split(/\n  app\.(?=get|post|patch|put|delete)/);
+      for (const part of parts.slice(1)) {
+        const sends =
+          /\.sendForOccurrence\(/.test(part) ||
+          /\.generateTokenForOccurrence\(/.test(part);
+        if (!sends) continue;
+        if (/[Rr]equestPaymentAllowed\(/.test(part)) continue;
+        const decl = part.split("\n")[0].slice(0, 90);
+        offenders.push(`${file} — app.${decl}`);
+      }
+    }
+    expect(
+      offenders,
+      "This handler sends a payment request, or mints the token that IS one, " +
+        "without asking `requestPaymentAllowed` / `assertRequestPaymentAllowed`. " +
+        "The setting is a kill switch, not a UI hint — enforce it here, not " +
+        "only in the dialog. Use the assert form for an explicit Request " +
+        "Payment action, and the boolean form where the request is automatic " +
+        "and must simply be skipped (completing a visit must never fail " +
+        "because the switch is off).",
+    ).toEqual([]);
+  });
+
+  it("the switch fails CLOSED when the Setting row is missing", () => {
+    // A kill switch whose absence reads as "on" is not a kill switch.
+    const svc = readFileSync(
+      join(ROOT, "apps/api/src/services/paymentRequests.ts"), "utf8",
+    );
+    const fn = svc.slice(svc.indexOf("export async function requestPaymentAllowed"));
+    expect(
+      fn.slice(0, fn.indexOf("\n}")),
+      "requestPaymentAllowed must compare the stored value to \"true\", so an " +
+        "absent or malformed row resolves to DISABLED.",
+    ).toMatch(/=== "true"/);
+  });
+
+  it("the only bypass is schedule.manage", () => {
+    const svc = readFileSync(
+      join(ROOT, "apps/api/src/services/paymentRequests.ts"), "utf8",
+    );
+    const fn = svc.slice(
+      svc.indexOf("export async function requestPaymentAllowed"),
+    );
+    const body = fn.slice(0, fn.indexOf("\n}"));
+    const caps = [...body.matchAll(/callerCan\("([a-z.\-]+)"\)/g)].map((m) => m[1]);
+    expect(
+      caps,
+      "The dialog bypasses the switch for `schedule.manage` (its `isOperator` " +
+        "prop). The server must bypass for exactly the same capability and no " +
+        "other, or the two disagree about who the switch applies to.",
+    ).toEqual(["schedule.manage"]);
   });
 });

@@ -1,10 +1,10 @@
 "use client";
 
-// Per-contact Clerk-link controls used on the admin Clients tab. Shows either:
+// Per-contact Clerk-link controls used on the Clients tab. Shows either:
 //   - a green "Linked" chip with an unlink (✕) action (when contact.clerkUserId
 //     is set), or
 //   - an "Link Clerk account" button that opens a picker of phantom Clerk
-//     accounts (`/admin/clients/unlinked-accounts`), pre-sorted by email
+//     accounts (`/clients/unlinked-accounts`), pre-sorted by email
 //     similarity to this contact's email.
 //
 // Both paths go through ConfirmDialog so accidental taps on a mobile screen
@@ -64,7 +64,7 @@ export default function ClientContactLinkActions({
   async function performUnlink() {
     setBusy(true);
     try {
-      await apiDelete(`/api/admin/client-contacts/${contact.id}/link-clerk`);
+      await apiDelete(`/api/client-contacts/${contact.id}/link-clerk`);
       publishInlineMessage({ type: "SUCCESS", text: "Clerk account unlinked." });
       onChanged?.();
     } catch (err) {
@@ -154,7 +154,7 @@ function ClerkUserPickerDialog({
   useEffect(() => {
     setLoading(true);
     const qs = contact.email ? `?nearEmail=${encodeURIComponent(contact.email)}` : "";
-    apiGet<ClerkUser[]>(`/api/admin/clients/unlinked-accounts${qs}`)
+    apiGet<ClerkUser[]>(`/api/clients/unlinked-accounts${qs}`)
       .then((list) => setUsers(Array.isArray(list) ? list : []))
       .catch((err) => {
         publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load Clerk accounts.", err) });
@@ -175,7 +175,7 @@ function ClerkUserPickerDialog({
   async function performLink(u: ClerkUser) {
     setLinking(true);
     try {
-      await apiPost(`/api/admin/client-contacts/${contact.id}/link-clerk`, {
+      await apiPost(`/api/client-contacts/${contact.id}/link-clerk`, {
         clerkUserId: u.clerkUserId,
       });
       publishInlineMessage({

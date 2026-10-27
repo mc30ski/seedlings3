@@ -1,0 +1,13 @@
+-- Rename JobOccurrence.isAdminOnly -> mustBeAssigned.
+--
+-- WRITTEN BY HAND, as a RENAME. `prisma migrate dev` cannot tell a rename
+-- from a delete-plus-add and would have emitted DROP COLUMN + ADD COLUMN,
+-- silently resetting every flagged visit to false.
+--
+-- The column is an ASSIGNMENT rule — "this visit cannot be self-claimed,
+-- somebody with schedule.manage has to assign it" — not a visibility rule.
+-- The old name read as "only admins can SEE it" and was acted on that way
+-- once already: a client-visibility audit filtered /client/jobs and
+-- /client/upcoming on it, and legitimate completed jobs stopped showing to
+-- clients in production.
+ALTER TABLE "JobOccurrence" RENAME COLUMN "isAdminOnly" TO "mustBeAssigned";

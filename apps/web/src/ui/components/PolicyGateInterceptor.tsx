@@ -199,7 +199,7 @@ export default function PolicyGateInterceptor() {
               <Dialog.Body>
                 <Text fontSize="sm" mb={3}>
                   You've completed your part on {awaitingPanelRows.length === 1 ? "this policy" : "these policies"} —
-                  an admin needs to review the upload before you can proceed with this action.
+                  someone with compliance authority needs to review the upload before you can proceed with this action.
                 </Text>
                 <VStack align="stretch" gap={2}>
                   {awaitingPanelRows.map((row) => {

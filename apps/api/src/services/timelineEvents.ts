@@ -59,7 +59,7 @@ export type UpcomingRow =
       anchorDate: Date;
       lastCompletedAt: Date | null;
       archivedAt: Date | null;
-      adminHidden: boolean;
+      restricted: boolean;
       nextDate: Date;
     }
   | {
@@ -67,7 +67,7 @@ export type UpcomingRow =
       documentId: string;
       title: string;
       type: string;
-      adminHidden: boolean;
+      restricted: boolean;
       nextDate: Date;
     };
 
@@ -97,9 +97,9 @@ function urgencyOf(
 }
 
 export const timelineEvents = {
-  async list(params: { adminHiddenVisible: boolean; archived?: boolean }) {
+  async list(params: { restrictedVisible: boolean; archived?: boolean }) {
     const where: Prisma.TimelineEventWhereInput = {
-      ...(params.adminHiddenVisible ? {} : { adminHidden: false }),
+      ...(params.restrictedVisible ? {} : { restricted: false }),
       ...(params.archived ? { archivedAt: { not: null } } : { archivedAt: null }),
     };
     const rows = await prisma.timelineEvent.findMany({
@@ -112,7 +112,7 @@ export const timelineEvents = {
     return rows.map((r) => ({ ...r, nextDate: r.nextDueDate ?? null }));
   },
 
-  async get(id: string, opts: { adminHiddenVisible: boolean }) {
+  async get(id: string, opts: { restrictedVisible: boolean }) {
     const ev = await prisma.timelineEvent.findUnique({
       where: { id },
       include: {
@@ -120,7 +120,7 @@ export const timelineEvents = {
       },
     });
     if (!ev) throw new ServiceError("NOT_FOUND", "Event not found.", 404);
-    if (!opts.adminHiddenVisible && ev.adminHidden) {
+    if (!opts.restrictedVisible && ev.restricted) {
       throw new ServiceError("NOT_FOUND", "Event not found.", 404);
     }
     return { ...ev, nextDate: ev.nextDueDate ?? null };
@@ -143,7 +143,7 @@ export const timelineEvents = {
    *   • Neither — the default upcoming view (current behavior).
    */
   async listUpcoming(params: {
-    adminHiddenVisible: boolean;
+    restrictedVisible: boolean;
     includeDocs?: boolean;
     includePast?: boolean;
     archived?: boolean;
@@ -160,7 +160,7 @@ export const timelineEvents = {
         where: {
           archivedAt: null,
           lastCompletedAt: { not: null, gte: since },
-          ...(params.adminHiddenVisible ? {} : { adminHidden: false }),
+          ...(params.restrictedVisible ? {} : { restricted: false }),
         },
         orderBy: { lastCompletedAt: "desc" },
       });
@@ -174,7 +174,7 @@ export const timelineEvents = {
         anchorDate: ev.anchorDate,
         lastCompletedAt: ev.lastCompletedAt,
         archivedAt: ev.archivedAt,
-        adminHidden: ev.adminHidden,
+        restricted: ev.restricted,
         // Render under the lastCompletedAt date in the UI — that's the
         // anchor the operator is reviewing for this view. Mirrors the
         // existing nextDate typing (Date in code, ISO string on the wire
@@ -187,7 +187,7 @@ export const timelineEvents = {
         ...(params.archived
           ? { archivedAt: { not: null } }
           : { archivedAt: null, nextDueDate: { not: null } }),
-        ...(params.adminHiddenVisible ? {} : { adminHidden: false }),
+        ...(params.restrictedVisible ? {} : { restricted: false }),
       },
     });
     const eventRows: UpcomingRow[] = [];
@@ -207,7 +207,7 @@ export const timelineEvents = {
         anchorDate: ev.anchorDate,
         lastCompletedAt: ev.lastCompletedAt,
         archivedAt: ev.archivedAt,
-        adminHidden: ev.adminHidden,
+        restricted: ev.restricted,
         nextDate: next,
       });
     }
@@ -219,13 +219,13 @@ export const timelineEvents = {
         where: {
           archivedAt: null,
           expiresAt: params.includePast ? { not: null } : { not: null },
-          ...(params.adminHiddenVisible ? {} : { adminHidden: false }),
+          ...(params.restrictedVisible ? {} : { restricted: false }),
         },
         select: {
           id: true,
           title: true,
           type: true,
-          adminHidden: true,
+          restricted: true,
           expiresAt: true,
         },
       });
@@ -236,7 +236,7 @@ export const timelineEvents = {
           documentId: d.id,
           title: d.title,
           type: d.type,
-          adminHidden: d.adminHidden,
+          restricted: d.restricted,
           nextDate: d.expiresAt!,
         }));
     }
@@ -246,9 +246,9 @@ export const timelineEvents = {
     );
   },
 
-  async upcomingCounts(params: { adminHiddenVisible: boolean }) {
+  async upcomingCounts(params: { restrictedVisible: boolean }) {
     const rows = await this.listUpcoming({
-      adminHiddenVisible: params.adminHiddenVisible,
+      restrictedVisible: params.restrictedVisible,
       includeDocs: true,
     });
     const now = new Date();
@@ -279,7 +279,7 @@ export const timelineEvents = {
       category?: string | null;
       rrule?: string | null;
       anchorDate: string;
-      adminHidden?: boolean;
+      restricted?: boolean;
     },
   ) {
     if (!payload.title?.trim()) throw new ServiceError("INVALID", "title is required.", 400);
@@ -305,7 +305,7 @@ export const timelineEvents = {
           // date the event renders as overdue immediately — that's intended;
           // they explicitly chose that date.
           nextDueDate: anchor,
-          adminHidden: !!payload.adminHidden,
+          restricted: !!payload.restricted,
           createdById: currentUserId,
         },
       });
@@ -325,7 +325,7 @@ export const timelineEvents = {
       category?: string | null;
       rrule?: string | null;
       anchorDate?: string;
-      adminHidden?: boolean;
+      restricted?: boolean;
     },
   ) {
     return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -349,7 +349,7 @@ export const timelineEvents = {
           data.nextDueDate = newAnchor;
         }
       }
-      if (patch.adminHidden !== undefined) data.adminHidden = !!patch.adminHidden;
+      if (patch.restricted !== undefined) data.restricted = !!patch.restricted;
 
       // Validate RRULE against the new (or existing) anchor.
       const finalAnchor = data.anchorDate instanceof Date ? data.anchorDate : existing.anchorDate;

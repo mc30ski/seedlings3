@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { CalendarArrowUp, AlertCircle, AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Inbox, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Repeat, Star, Tag, X } from "lucide-react";
+import { CalendarArrowUp, AlertCircle, AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Inbox, Layers, LayoutList, Link2, MapPin, Maximize2, MessageCircle, Plus, RefreshCw, Repeat, Star, Tag, X } from "lucide-react";
 import ChangeRequestsPanel from "@/src/ui/components/ChangeRequestsPanel";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
@@ -25,7 +25,7 @@ import { normalizeReceiptNumber } from "@/src/lib/receiptNumber";
 import { getLocation } from "@/src/lib/geo";
 import { fmtDate, fmtDateTime, bizDateKey, bizYesterday, bizToday, bizAddDays } from "@/src/lib/dates";
 import { prettyStatus, clientLabel, jobTypeLabel } from "@/src/lib/labels";
-import { determineRoles } from "@/src/lib/roles";
+import { scopeFromMe } from "@/src/lib/roles";
 import { jobStatusColor, occurrenceStatusColor } from "@/src/lib/statusColors";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import {
@@ -64,7 +64,7 @@ import ManageAddonsDialog from "@/src/ui/dialogs/ManageAddonsDialog";
 import EstimateDialog from "@/src/ui/dialogs/EstimateDialog";
 import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
+import { parseInternalTags, internalTagLabel, internalTagColor } from "@/src/ui/components/InternalTagPicker";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
 import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 import OccurrenceInstructions from "@/src/ui/components/OccurrenceInstructions";
@@ -84,7 +84,8 @@ import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 import { Dashboard } from "@/src/ui/components/Dashboard";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
+import { isW2 } from "@repo/money";
 
 // `localDate` removed — use `bizDateKey` directly.
 
@@ -109,7 +110,6 @@ const quickDateItemsBase = [
 
 export default function ServicesTab({
   me,
-  purpose = "ADMIN",
   streamReviewOccId = null,
   streamReviewNonce = 0,
 }: TabPropsType & {
@@ -132,10 +132,19 @@ export default function ServicesTab({
     { refresh: () => void; loading: boolean; count: number } | null
   >(null);
 
-  const { isAvail, forAdmin, isSuper, isAdmin } = determineRoles(me, purpose);
-  // Pausing a stream stops work someone else is scheduled for, and a worker
-  // has no view of that consequence — admin/super only.
-  const canManageStreams = !!(isAdmin || isSuper);
+  // Capability answers; this tab takes `me`, not `scope`.
+  const scope = scopeFromMe(me);
+  // TWO CAPABILITIES, NOT FOUR ROLE FLAGS. The four flags this replaced
+  // decided between them which controls existed, and the strictest of them
+  // gated the two delete buttons — which the server guards on
+  // `schedule.manage` (see the route map). The screen was stricter than the
+  // API and said so in copy that named a role: "Deleting needs schedule
+  // authority."
+  const canViewSchedule = scope.can("schedule.view");
+  const canManageSchedule = scope.can("schedule.manage");
+  // Pausing a stream stops work someone else is scheduled for, and whoever
+  // cannot manage the schedule has no view of that consequence.
+  const canManageStreams = canManageSchedule;
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -216,10 +225,10 @@ export default function ServicesTab({
 
   const quickDateItems = useMemo(
     () =>
-      forAdmin
+      canManageSchedule
         ? [...quickDateItemsBase, { label: "All time", value: "all" }]
         : quickDateItemsBase,
-    [forAdmin]
+    [canManageSchedule]
   );
   const quickDateCollection = useMemo(
     () => createListCollection({ items: quickDateItems }),
@@ -381,7 +390,7 @@ export default function ServicesTab({
   const [editOccurrenceDialogOpen, setEditOccurrenceDialogOpen] = useState(false);
   const [editingOccurrence, setEditingOccurrence] = useState<JobOccurrenceFull | null>(null);
   const [editOccurrenceJobId, setEditOccurrenceJobId] = useState<string>("");
-  // Add-on dialog state. Mirrors JobsTab so admins can add/remove add-ons
+  // Add-on dialog state. Mirrors JobsTab so holders of `schedule.manage` can add/remove add-ons
   // inline from the Services occurrence list without the full Edit dialog.
   const [addAddonOccId, setAddAddonOccId] = useState<string | null>(null);
   const [addAddonJobId, setAddAddonJobId] = useState<string | null>(null);
@@ -463,7 +472,7 @@ export default function ServicesTab({
   async function load(displayLoading = true) {
     setLoading(displayLoading);
     try {
-      const list = await apiGet<JobListItem[]>("/api/admin/jobs?status=ALL");
+      const list = await apiGet<JobListItem[]>("/api/jobs?status=ALL");
       setItems(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({
@@ -494,7 +503,7 @@ export default function ServicesTab({
   //     occurrence's parent job, then highlight + scroll to the card.
   // Filter (pausedRepeatingOnly) is turned on either way so expanded
   // jobs don't overflow with unrelated occurrences. Backing data
-  // source is /api/admin/stream-pauses/reminders.
+  // source is /api/stream-pauses/reminders.
   // Receipt-number pattern detector on the search box. When the user
   // pastes/types a valid SL-XXXXXXXX (case-insensitive, prefix
   // optional), we hit the lookup endpoint and jump to the matching
@@ -505,6 +514,11 @@ export default function ServicesTab({
   useEffect(() => {
     const canonical = normalizeReceiptNumber(q);
     if (!canonical) return;
+    // `books.view`, same as the twin of this lookup in JobsTab — the
+    // company's books, which `schedule.manage` does not imply. The refusal
+    // was invisible because a receipt search that finds nothing and a
+    // receipt search that is refused look identical from here.
+    if (!scope.can("books.view")) return;
     let cancelled = false;
     (async () => {
       try {
@@ -512,7 +526,7 @@ export default function ServicesTab({
           receipt: {
             occurrence: { id: string; job: { id: string } | null } | null;
           };
-        }>(`/api/admin/receipts/lookup?number=${encodeURIComponent(canonical)}`);
+        }>(`/api/receipts/lookup?number=${encodeURIComponent(canonical)}`);
         if (cancelled) return;
         const occId = res.receipt?.occurrence?.id;
         const jobId = res.receipt?.occurrence?.job?.id;
@@ -551,7 +565,7 @@ export default function ServicesTab({
       setPausedRepeatingOnly(true);
       try {
         const rows = await apiGet<Array<{ id: string; job: { id: string } | null }>>(
-          "/api/admin/stream-pauses/reminders",
+          "/api/stream-pauses/reminders",
         );
         if (!rows?.length) {
           setReviewTargetJobIds(new Set());
@@ -597,7 +611,7 @@ export default function ServicesTab({
 
   useEffect(() => {
     void load();
-    apiGet<any[]>("/api/admin/settings")
+    apiGet<any[]>("/api/settings")
       .then((list) => {
         if (!Array.isArray(list)) return;
         const c = list.find((r: any) => r.key === "CONTRACTOR_PLATFORM_FEE_PERCENT");
@@ -750,7 +764,7 @@ export default function ServicesTab({
     if (!force && (jobDetails[jobId] || detailLoading[jobId])) return;
     setDetailLoading((prev) => ({ ...prev, [jobId]: true }));
     try {
-      const detail = await apiGet<JobDetail>(`/api/admin/jobs/${jobId}`);
+      const detail = await apiGet<JobDetail>(`/api/jobs/${jobId}`);
       setJobDetails((prev) => ({ ...prev, [jobId]: detail }));
     } catch (err) {
       publishInlineMessage({
@@ -826,7 +840,7 @@ export default function ServicesTab({
       colorPalette: "green",
       onConfirm: async () => {
         try {
-          await apiPost(`/api/admin/jobs/${job.id}/unarchive`, {});
+          await apiPost(`/api/jobs/${job.id}/unarchive`, {});
           await load(false);
           publishInlineMessage({ type: "SUCCESS", text: "Service unarchived. Next visit generated." });
         } catch (err) {
@@ -838,7 +852,7 @@ export default function ServicesTab({
 
   async function patchJobStatus(job: JobListItem, newStatus: string) {
     try {
-      await apiPatch(`/api/admin/jobs/${job.id}`, { status: newStatus });
+      await apiPatch(`/api/jobs/${job.id}`, { status: newStatus });
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
@@ -867,7 +881,7 @@ export default function ServicesTab({
           else { payload.completeLat = loc.lat; payload.completeLng = loc.lng; }
         }
       }
-      await apiPatch(`/api/admin/occurrences/${occurrenceId}`, payload);
+      await apiPatch(`/api/occurrences/${occurrenceId}`, payload);
       void loadDetail(jobId, true);
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
@@ -882,7 +896,7 @@ export default function ServicesTab({
 
   async function toggleTentative(occurrenceId: string, jobId: string, currentlyTentative: boolean) {
     try {
-      await apiPatch(`/api/admin/occurrences/${occurrenceId}`, { isTentative: !currentlyTentative });
+      await apiPatch(`/api/occurrences/${occurrenceId}`, { isTentative: !currentlyTentative });
       void loadDetail(jobId, true);
       publishInlineMessage({
         type: "SUCCESS",
@@ -898,7 +912,7 @@ export default function ServicesTab({
 
   async function deleteJob(jobId: string) {
     try {
-      await apiDelete(`/api/admin/jobs/${jobId}`);
+      await apiDelete(`/api/jobs/${jobId}`);
       await load(false);
       publishInlineMessage({ type: "SUCCESS", text: "Job deleted." });
     } catch (err) {
@@ -914,7 +928,7 @@ export default function ServicesTab({
     let detail = jobDetails[job.id];
     if (!detail) {
       try {
-        detail = await apiGet<JobDetail>(`/api/admin/jobs/${job.id}`);
+        detail = await apiGet<JobDetail>(`/api/jobs/${job.id}`);
         setJobDetails((prev) => ({ ...prev, [job.id]: detail! }));
       } catch {
         // proceed without detail; API will guard server-side
@@ -923,27 +937,27 @@ export default function ServicesTab({
 
     const occurrenceCount = detail?.occurrences.length ?? 0;
     const hasOccurrences = occurrenceCount > 0;
-    const superRequired = !isSuper;
+    const cannotDelete = !canManageSchedule;
 
     setToDelete({
       deleteType: "archived-job",
       id: job.id,
       title: "Delete job?",
       summary: job.property?.displayName ?? job.id,
-      disabled: hasOccurrences || superRequired,
+      disabled: hasOccurrences || cannotDelete,
       details: hasOccurrences ? (
         <Text color="red.fg">
           This job has {occurrenceCount} occurrence{occurrenceCount !== 1 ? "s" : ""}. Delete all job occurrences before deleting the job.
         </Text>
-      ) : superRequired ? (
-        <Text color="red.fg">You must be a Super Admin to delete.</Text>
+      ) : cannotDelete ? (
+        <Text color="red.fg">Deleting needs schedule authority.</Text>
       ) : undefined,
     });
   }
 
   async function archiveJob(jobId: string) {
     try {
-      await apiPost(`/api/admin/jobs/${jobId}/archive`);
+      await apiPost(`/api/jobs/${jobId}/archive`);
       await load(false);
       publishInlineMessage({ type: "SUCCESS", text: "Job archived." });
     } catch (err) {
@@ -953,7 +967,7 @@ export default function ServicesTab({
 
   async function deleteOccurrence(occurrenceId: string, jobId: string) {
     try {
-      await apiDelete(`/api/admin/occurrences/${occurrenceId}`);
+      await apiDelete(`/api/occurrences/${occurrenceId}`);
       void loadDetail(jobId, true);
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence deleted." });
@@ -967,7 +981,7 @@ export default function ServicesTab({
 
   async function archiveOccurrence(occurrenceId: string, jobId: string) {
     try {
-      await apiPost(`/api/admin/occurrences/${occurrenceId}/archive`);
+      await apiPost(`/api/occurrences/${occurrenceId}/archive`);
       void loadDetail(jobId, true);
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence archived." });
@@ -1057,7 +1071,7 @@ export default function ServicesTab({
   // paint. Closed, it renders nothing, so the loading view is unchanged.
   const tabHelp = (
         <TabExplainer
-          explainerId={`seedlings:servicesTab:guideOpen:${isSuper ? "super" : "admin"}`}
+          explainerId="seedlings:servicesTab:guideOpen"
         >
           <ExplainerText>
             The recurring services themselves — the job behind the visits. A service carries
@@ -1084,28 +1098,28 @@ export default function ServicesTab({
           </ExplainerText>
           <ExplainerText>
             The client change-request queue at the top is where reschedule and skip requests
-            land. Deleting an archived service or visit outright is <Em>super-only</Em>.
+            land.
           </ExplainerText>
-          {isSuper && (
-            <RoleSection role="Super">
+          {canManageSchedule && (
+            <CapabilitySection capability="schedule.manage" scope={scope}>
               <ExplainerText>
                 You get that Delete on an archived service or visit — and a service will not
                 delete while it still has visits attached.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
         </TabExplainer>
   );
 
-  if (!isAvail) return <>{tabHelp}<UnavailableNotice /></>;
+  if (!canViewSchedule) return <>{tabHelp}<UnavailableNotice /></>;
   if (loading && items.length === 0) return <>{tabHelp}<LoadingCenter /></>;
 
   return (
     <Box w="full">
-      {/* Role-tailored orientation. Services is admin+super only — no
+      {/* Orientation tailored to the reader. Services needs `schedule.view` — no
           worker branch exists because the tab is not mounted for them. */}
         {tabHelp}
-      {forAdmin && (
+      {canManageSchedule && (
         <Box mb={3}>
           <Dashboard
             storageKey="seedlings:servicesTab:changeRequestsOpen"
@@ -1117,7 +1131,7 @@ export default function ServicesTab({
             onRefresh={changeReqApi?.refresh}
             refreshing={!!changeReqApi?.loading}
           >
-            <ChangeRequestsPanel bare onReady={setChangeReqApi} />
+            <ChangeRequestsPanel bare scope={scope} onReady={setChangeReqApi} />
           </Dashboard>
         </Box>
       )}
@@ -1147,7 +1161,7 @@ export default function ServicesTab({
         >
           <Filter size={14} />
         </Button>
-        {forAdmin && (
+        {canManageSchedule && (
           <Button
             size="sm"
             px="2"
@@ -1818,14 +1832,14 @@ export default function ServicesTab({
                     {(job.property?.client as any)?.isVip && (job.property?.client as any)?.vipReason && (
                       <Text fontSize="xs" color="yellow.fg" fontWeight="medium">VIP: {(job.property?.client as any).vipReason}</Text>
                     )}
-                    {forAdmin && (() => {
-                      const tags = parseAdminTags((job.property?.client as any)?.adminTags);
+                    {canManageSchedule && (() => {
+                      const tags = parseInternalTags((job.property?.client as any)?.internalTags);
                       if (tags.length === 0) return null;
                       return (
                         <Box display="flex" gap="4px" flexWrap="wrap">
                           {tags.map((tag: string) => (
-                            <Badge key={tag} colorPalette={adminTagColor(tag)} variant="solid" fontSize="xs" px="2" borderRadius="full">
-                              ⚠ {adminTagLabel(tag)}
+                            <Badge key={tag} colorPalette={internalTagColor(tag)} variant="solid" fontSize="xs" px="2" borderRadius="full">
+                              ⚠ {internalTagLabel(tag)}
                             </Badge>
                           ))}
                         </Box>
@@ -1842,7 +1856,7 @@ export default function ServicesTab({
                             openEventSearch(
                               "jobsTabToPropertiesTabSearch",
                               job.property?.displayName ?? "",
-                              forAdmin,
+                              
                               job.property?.id,
                             )
                           }
@@ -1855,7 +1869,7 @@ export default function ServicesTab({
                             openEventSearch(
                               "jobsTabToClientsTabSearch",
                               job.property?.client?.displayName ?? "",
-                              forAdmin,
+                              
                               job.property?.client?.id,
                             )
                           }
@@ -1873,9 +1887,18 @@ export default function ServicesTab({
                   />
                 </HStack>
                 {(job.property?.street1 || job.property?.city) && (
-                  <Box mt="1" fontSize="sm">
+                  // Address and territory on ONE row — see the same block
+                  // in JobsTab for why this is an HStack rather than a
+                  // span trailing the link.
+                  <HStack mt="1" fontSize="sm" gap={2} align="center" wrap="wrap">
                     <MapLink address={[job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ")} />
-                  </Box>
+                    {(job.property as any)?.area?.name && (
+                      <Badge size="sm" variant="subtle" colorPalette="purple" flexShrink={0} display="inline-flex" alignItems="center" gap="1">
+                        <MapPin size={10} />
+                        {(job.property as any).area.name}
+                      </Badge>
+                    )}
+                  </HStack>
                 )}
               </Card.Header>
 
@@ -1964,7 +1987,7 @@ export default function ServicesTab({
                               {i > 0 && ", "}
                               <span
                                 style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, true); }}
                               >
                                 {a.user?.displayName ?? a.user?.email ?? a.userId}
                               </span>
@@ -1983,7 +2006,7 @@ export default function ServicesTab({
                     </Box>
                   )}
                 </VStack>
-                {forAdmin && (
+                {canManageSchedule && (
                   <HStack gap={2} wrap="wrap" mt={2}>
                     <StatusButton
                       id="job-edit"
@@ -2227,7 +2250,7 @@ export default function ServicesTab({
                                       // occurrence lives, not just that
                                       // *something* was created.
                                       const result = await apiPost<{ ok: boolean; nextOccurrence?: { startAt?: string | null } | null }>(
-                                        `/api/admin/occurrences/${occ.id}/force-next`,
+                                        `/api/occurrences/${occ.id}/force-next`,
                                         {},
                                       );
                                       const when = result?.nextOccurrence?.startAt
@@ -2273,8 +2296,8 @@ export default function ServicesTab({
                               <Text fontSize="xs" color="orange.fg" fontWeight="medium">
                                 {occ.isTentative
                                   ? "Unclaimed — tentative, awaiting admin confirmation"
-                                  : (occ as any).isAdminOnly
-                                  ? "Unclaimed — administered, must be assigned by an admin"
+                                  : (occ as any).mustBeAssigned
+                                  ? "Unclaimed — must be assigned, not claimed"
                                   : "Unclaimed — available to claim"}
                               </Text>
                             ) : (
@@ -2290,7 +2313,7 @@ export default function ServicesTab({
                                     >
                                       <span
                                         style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                                        onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                                        onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, true); }}
                                       >
                                         {a.user.displayName ?? a.user.email ?? a.userId}
                                       </span>
@@ -2367,7 +2390,7 @@ export default function ServicesTab({
                                   <VStack align="start" gap={0.5}>
                                     {assignees.map((a: any) => {
                                       const t = a.user?.workerType;
-                                      const isEmp = t === "EMPLOYEE" || t === "TRAINEE";
+                                      const isEmp = isW2(t);
                                       const rate = isEmp ? marginPercent : commissionPercent;
                                       const fee = Math.round(sharePerWorker * rate) / 100;
                                       const payout = Math.max(0, Math.round((sharePerWorker - fee) * 100) / 100);
@@ -2377,7 +2400,7 @@ export default function ServicesTab({
                                           <Text color="fg.muted">
                                             <span
                                               style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                                              onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                                              onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, true); }}
                                             >
                                               {a.user?.displayName ?? a.user?.email ?? a.userId}
                                             </span>:
@@ -2714,7 +2737,7 @@ export default function ServicesTab({
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           window.sessionStorage.setItem("equipmentKindFilter", s.equipmentKind);
-                                          openEventSearch("jobsToEquipmentKindFilter", " ", true, s.equipmentKind);
+                                          openEventSearch("jobsToEquipmentKindFilter", " ", s.equipmentKind);
                                         }}
                                       >
                                         {s.label} →
@@ -2738,7 +2761,7 @@ export default function ServicesTab({
                             {(occ as any)._count?.photos > 0 && (
                               <OccurrencePhotos
                                 occurrenceId={occ.id}
-                                isAdmin={forAdmin}
+                                canManageSchedule={canManageSchedule}
                                 photoCount={(occ as any)._count?.photos ?? 0}
                               />
                             )}
@@ -2787,7 +2810,7 @@ export default function ServicesTab({
                                             {c.author.id === me?.id && (
                                               <Button size="xs" variant="ghost" onClick={() => setCommentEditing({ id: c.id, body: c.body })}>Edit</Button>
                                             )}
-                                            {(c.author.id === me?.id || forAdmin) && (
+                                            {(c.author.id === me?.id || canManageSchedule) && (
                                               <Button size="xs" variant="ghost" colorPalette="red" disabled={commentBusy} onClick={() => void deleteComment(c.id, occ.id)}>Delete</Button>
                                             )}
                                           </HStack>
@@ -2865,7 +2888,7 @@ export default function ServicesTab({
                             {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
                               <StatusBadge status="One-off" palette="cyan" variant="solid" />
                             )}
-                            {(occ as any).isAdminOnly && (
+                            {(occ as any).mustBeAssigned && (
                               <StatusBadge status="Administered" palette="red" variant="outline" />
                             )}
                             {occ.linkGroupId && (
@@ -2882,7 +2905,7 @@ export default function ServicesTab({
                         </VStack>
 
 
-                        {forAdmin && (
+                        {canManageSchedule && (
                           <HStack gap={2} mt={2} wrap="wrap">
                             <Button
                               size="xs"
@@ -2892,7 +2915,7 @@ export default function ServicesTab({
                                 openEventSearch(
                                   "servicesTabToJobsTabSearch",
                                   "",
-                                  true,
+                                  
                                   `${occ.id}|${occ.startAt ?? ""}`,
                                 )
                               }
@@ -2929,7 +2952,7 @@ export default function ServicesTab({
                                   inputOptional: true,
                                   onConfirm: async (comment: string) => {
                                     try {
-                                      const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/admin/occurrences/${occ.id}/accept-proposal`, { comment: comment || undefined });
+                                      const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/occurrences/${occ.id}/accept-proposal`, { comment: comment || undefined });
                                       publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
                                       void loadDetail(job.id, true);
                                       // Prompt to create occurrence
@@ -2972,7 +2995,7 @@ export default function ServicesTab({
                                   inputOptional: true,
                                   onConfirm: async (reason: string) => {
                                     try {
-                                      await apiPost(`/api/admin/occurrences/${occ.id}/reject-proposal`, { reason: reason || undefined });
+                                      await apiPost(`/api/occurrences/${occ.id}/reject-proposal`, { reason: reason || undefined });
                                       publishInlineMessage({ type: "SUCCESS", text: "Estimate rejected." });
                                       void loadDetail(job.id, true);
                                     } catch (err: any) {
@@ -3000,7 +3023,7 @@ export default function ServicesTab({
                             )}
                             {/* Manage Team — usable in any state except CLOSED
                                 / ARCHIVED. The PENDING_PAYMENT case is admin/
-                                super only and only when no Payment row exists
+                                `schedule.manage`, and only when no Payment row exists
                                 (operator must reject/revert the payment first
                                 if there is one). Used to correct the as-built
                                 team when a listed worker didn't actually work
@@ -3009,7 +3032,7 @@ export default function ServicesTab({
                                 regenerates them against the new team. */}
                             {occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
                               occ.status !== "PENDING_PAYMENT"
-                              || (forAdmin && (isSuper || isAdmin) && !occ.payment)
+                              || (canManageSchedule && !occ.payment)
                             ) && (
                               <StatusButton
                                 id="occ-assignees"
@@ -3051,7 +3074,7 @@ export default function ServicesTab({
                                   busyId={statusButtonBusyId}
                                   setBusyId={setStatusButtonBusyId}
                                 />
-                                {/* Edit Services — admin-only entry on this
+                                {/* Edit Services — `schedule.manage` entry on this
                                     tab; matches the worker JobsTab affordance.
                                     Adds AND removes: this dialog is the only
                                     surface that takes a service off a visit.
@@ -3111,7 +3134,7 @@ export default function ServicesTab({
                                 label={occ.linkGroupId ? "Unlink" : "Link"}
                                 onClick={async () => {
                                   if (occ.linkGroupId) {
-                                    await apiPost(`/api/admin/occurrences/${occ.id}/unlink`);
+                                    await apiPost(`/api/occurrences/${occ.id}/unlink`);
                                     publishInlineMessage({ type: "SUCCESS", text: "Occurrence unlinked." });
                                     void loadDetail(job.id, true);
                                   } else {
@@ -3287,9 +3310,9 @@ export default function ServicesTab({
                                   id: occ.id,
                                   title: "Delete occurrence?",
                                   summary: `Occurrence on ${dateLabel}`,
-                                  disabled: !isSuper,
-                                  details: !isSuper ? (
-                                    <Text color="red.fg">You must be a Super Admin to delete.</Text>
+                                  disabled: !canManageSchedule,
+                                  details: !canManageSchedule ? (
+                                    <Text color="red.fg">Deleting needs schedule authority.</Text>
                                   ) : undefined,
                                 });
                               }}
@@ -3311,7 +3334,7 @@ export default function ServicesTab({
       </VStack>
       </Box>
 
-      {forAdmin && (
+      {canManageSchedule && (
         <JobDialog
           open={jobDialogOpen}
           onOpenChange={setJobDialogOpen}
@@ -3333,7 +3356,7 @@ export default function ServicesTab({
         />
       )}
 
-      {forAdmin && (
+      {canManageSchedule && (
         <ConfirmDialog
           open={promptOccurrenceOpen}
           title="Create First Occurrence?"
@@ -3347,7 +3370,7 @@ export default function ServicesTab({
         />
       )}
 
-      {forAdmin && (
+      {canManageSchedule && (
         <OccurrenceDialog
           open={occurrenceDialogOpen}
           onOpenChange={setOccurrenceDialogOpen}
@@ -3356,7 +3379,7 @@ export default function ServicesTab({
           defaultNotes={occurrenceDefaultNotes}
           defaultPrice={occurrenceDefaultPrice}
           defaultEstimatedMinutes={occurrenceDefaultEstMins}
-          isAdmin={forAdmin}
+          canManageSchedule={canManageSchedule}
           showOneOff={occurrenceJobHasFrequency}
           jobFrequencyDays={occurrenceJobFreqDays}
           defaultAssignees={occurrenceDefaultAssignees}
@@ -3376,7 +3399,7 @@ export default function ServicesTab({
         />
       )}
 
-      {forAdmin && editingOccurrence && (
+      {canManageSchedule && editingOccurrence && (
         <OccurrenceDialog
           open={editOccurrenceDialogOpen}
           onOpenChange={(open) => {
@@ -3395,7 +3418,7 @@ export default function ServicesTab({
           defaultEstimatedMinutes={editingOccurrence.estimatedMinutes}
           defaultStartedAt={editingOccurrence.startedAt}
           defaultCompletedAt={editingOccurrence.completedAt}
-          defaultIsAdminOnly={(editingOccurrence as any).isAdminOnly}
+          defaultMustBeAssigned={(editingOccurrence as any).mustBeAssigned}
           defaultJobType={(editingOccurrence as any).jobType}
           defaultJobTags={(() => { const raw = (editingOccurrence as any).jobTags; if (!raw) return null; if (Array.isArray(raw)) return raw; try { return JSON.parse(raw); } catch { return null; } })()}
           defaultWorkflow={editingOccurrence.workflow}
@@ -3407,7 +3430,7 @@ export default function ServicesTab({
           defaultEstimateAddress={(editingOccurrence as any).estimateAddress ?? null}
           defaultProposalAmount={(editingOccurrence as any).proposalAmount ?? null}
           defaultProposalNotes={(editingOccurrence as any).proposalNotes ?? null}
-          isAdmin={forAdmin}
+          canManageSchedule={canManageSchedule}
           jobFrequencyDays={editOccurrenceJobId ? (items.find((j) => j.id === editOccurrenceJobId) as any)?.frequencyDays ?? null : null}
           jobTagsConfig={serviceTypes}
           onSaved={() => {
@@ -3431,7 +3454,7 @@ export default function ServicesTab({
         }}
       />
 
-      {forAdmin && (
+      {canManageSchedule && (
         <AssigneeDialog
           open={assigneeDialogOpen}
           onOpenChange={setAssigneeDialogOpen}
@@ -3461,7 +3484,8 @@ export default function ServicesTab({
         occurrenceId={addAddonOccId}
         onClose={() => { setAddAddonOccId(null); setAddAddonJobId(null); }}
         serviceTypes={serviceTypes}
-        forAdmin
+        // Was a bare `canManageSchedule` — true for anybody who reached the dialog.
+        canManageSchedule={scope.can("schedule.manage")}
         // Adding a service changes what the client owes — warn when a
         // request is already outstanding, same as the job card does.
         sentInvoiceAmount={(() => {
@@ -3472,7 +3496,7 @@ export default function ServicesTab({
           return outstandingInvoiceAmount(occ, occ ? totalPrice(occ) : null);
         })()}
         // Services can be added AND removed here — this dialog is the only
-        // surface that removes one. Admin-only tab, so the gate is just
+        // surface that removes one. The whole tab needs `schedule.view`, so the gate is just
         // "is the visit still editable".
         addons={(() => {
           if (!addAddonJobId || !addAddonOccId) return null;
@@ -3529,7 +3553,7 @@ export default function ServicesTab({
             setAcceptPaymentOpen(o);
             if (!o) setAcceptPaymentOcc(null);
           }}
-          endpoint={`/api/admin/occurrences/${acceptPaymentOcc.id}/accept-payment`}
+          endpoint={`/api/occurrences/${acceptPaymentOcc.id}/accept-payment`}
           occurrenceId={acceptPaymentOcc.id}
           // The FULL invoice, materials included — this pre-fills the amount
           // field, and defaulting to work-only quietly under-collects.
@@ -3546,7 +3570,7 @@ export default function ServicesTab({
             workerType: a.user?.workerType,
             isClaimer: a.assignedById === a.userId,
           }))}
-          isOperator={isAdmin || isSuper}
+          isOperator={canManageSchedule}
           onAccepted={(_result) => {
             // The accept-payment endpoint calls createPayment, which
             // INTENTIONALLY does NOT auto-create the next occurrence —
@@ -3576,7 +3600,7 @@ export default function ServicesTab({
           }
         }}
         occurrenceId={chargeDialogOccId ?? ""}
-        isAdmin
+        canManageSchedule
         sentInvoiceAmount={(() => {
           if (!chargeDialogJobId || !chargeDialogOccId) return null;
           const occ = jobDetails[chargeDialogJobId]?.occurrences?.find(
@@ -3651,7 +3675,7 @@ export default function ServicesTab({
                         onClick={async () => {
                           try {
                             const result = await apiPost<{ linkGroupId: string; _linkedUpdated?: string[] }>(
-                              `/api/admin/occurrences/${linkPickerOccId}/link`,
+                              `/api/occurrences/${linkPickerOccId}/link`,
                               { targetOccurrenceId: o.id }
                             );
                             let msg = "Occurrences linked.";
@@ -3717,13 +3741,18 @@ export default function ServicesTab({
                 <Dialog.Title>Manage Guidance</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
+                {/* `canEdit` is READ here, not asserted. It was a bare
+                    `canEdit`, true for anybody who reached this dialog —
+                    correct only because the button that opens it sits in a
+                    `canManageSchedule` block ~800 lines up. Same behaviour
+                    today, and still right if that block ever moves. */}
                 {guidanceOcc && (
                   <OccurrenceInstructions
                     occurrenceId={guidanceOcc.occId}
                     count={guidanceOcc.count}
                     propertyId={guidanceOcc.propertyId}
                     guidanceNote={guidanceOcc.guidanceNote}
-                    canEdit
+                    canEdit={canManageSchedule}
                     defaultExpanded
                     startInEditMode
                     onUpdated={() => void loadDetail(guidanceOcc.jobId, true)}

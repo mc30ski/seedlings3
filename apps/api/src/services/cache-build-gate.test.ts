@@ -91,7 +91,7 @@ describe("cache build gate — the four migrated call sites", () => {
     "services/weatherAlerts.ts": readFileSync(join(ROOT, "apps/api/src/services/weatherAlerts.ts"), "utf8"),
     "services/marketRate.ts": readFileSync(join(ROOT, "apps/api/src/services/marketRate.ts"), "utf8"),
     "lib/routing/mapbox.ts": readFileSync(join(ROOT, "apps/api/src/lib/routing/mapbox.ts"), "utf8"),
-    "routes/worker.ts": readFileSync(join(ROOT, "apps/api/src/routes/worker.ts"), "utf8"),
+    "routes/occurrences.ts": readFileSync(join(ROOT, "apps/api/src/routes/occurrences.ts"), "utf8"),
   };
 
   it("all four go through the shared cache", () => {

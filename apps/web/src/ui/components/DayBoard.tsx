@@ -15,7 +15,7 @@
  * WHAT IS NOT ON IT, ON PURPOSE:
  *   • No money, anywhere. Not per-person, not team total.
  *   • No hours per person.
- * Visits, acreage, properties and same-day closes only. Worker views must
+ * Visits, acreage, properties and same-day closes only. Self-scoped views must
  * never expose wages or cost-split percentages, and the moment a leaderboard
  * carries money it stops being a locker room and becomes a payroll dispute.
  * `/dashboard-summary`'s `topWorkers` rows DO carry `earnings` — take the name
@@ -54,7 +54,7 @@ import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 export const BOARD_VERSION = "3";
 
 export type BoardWorker = {
-  /** Display name. Never an email — worker views must not expose those. */
+  /** Display name. Never an email — self-scoped views must not expose those. */
   name: string;
   initials: string;
   visits: number;

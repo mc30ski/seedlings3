@@ -9,7 +9,7 @@
 //   1. A WORKER'S QUERY CANNOT RETURN AN UNPUBLISHED GUIDE. Visibility is
 //      a WHERE clause, not a client-side filter — hiding a draft in the UI
 //      would still ship its body in the payload.
-//   2. VIDEO IS SUPER-ONLY. It is the one asset class that can quietly
+//   2. VIDEO NEEDS `content.approve`. It is the one asset class that can quietly
 //      become expensive and the one with a playback trap, so exactly one
 //      role uploads it.
 //   3. ASSETS ARE IMMUTABLE. No update path exists, because replacing an
@@ -51,23 +51,25 @@ describe("guides build gate — worker visibility", () => {
     expect(
       code(SERVICE),
       "visibilityWhere must constrain workers to guides with a currentVersionId",
-    ).toMatch(/kind === "worker"[\s\S]{0,200}currentVersionId:\s*\{\s*not:\s*null\s*\}/);
+    ).toMatch(/kind === "reader"[\s\S]{0,200}currentVersionId:\s*\{\s*not:\s*null\s*\}/);
   });
 
   it("worker read routes never expose the authoring surface", () => {
-    // Every mutation must sit behind adminGuard or superGuard. A worker
+    // Every mutation must sit behind a content.* capability. A worker
     // route that mutated would bypass the whole workflow.
     const workerRoutes = [...code(ROUTES).matchAll(/app\.(get|post|patch|delete)\("(\/me\/[^"]+)"[^,]*,\s*(\w+)/g)];
     expect(workerRoutes.length).toBeGreaterThan(0);
     for (const [, method, path, guard] of workerRoutes) {
       expect(method, `${path} is a worker route and must be read-only`).toBe("get");
-      expect(guard, `${path} must use workerGuard`).toBe("workerGuard");
+      // Reading the catalog is ownership-shaped: every approved person sees
+      // the same guides, so there is nothing per-person to gate on.
+      expect(guard, `${path} must use approvedUser`).toBe("approvedUser");
     }
   });
 });
 
 describe("guides build gate — media rules", () => {
-  it("video upload is refused for anyone but a Super", () => {
+  it("video upload is refused for anyone without content.approve", () => {
     // Asserted PER FUNCTION, not as a total count. A count is satisfied by
     // any two of the three guards, so removing finalize's check survived
     // it — the finalize route is separately callable, which is exactly the
@@ -80,8 +82,8 @@ describe("guides build gate — media rules", () => {
       const body = src.slice(start, next === -1 ? undefined : next);
       expect(
         body,
-        `${fn} must refuse video from a non-Super — each entry point is callable on its own`,
-      ).toMatch(/"VIDEO" && viewer\.kind !== "super"/);
+        `${fn} must refuse video from a non-approver — each entry point is callable on its own`,
+      ).toMatch(/"VIDEO" && viewer\.kind !== "approver"/);
     }
   });
 
@@ -203,7 +205,7 @@ describe("guides build gate — view-as honesty", () => {
   // This class of bug has now shipped four times in this repo (see
   // docs/VIEW_AS_ENDPOINTS.md). Guides were the fourth: `guideViewer`
   // originally re-read the caller's roles straight out of the database,
-  // which meant a Super using "view as Worker" kept every super power on
+  // which meant someone with `content.approve` using "view as Worker" kept every super power on
   // this tab while every other surface correctly demoted them. The
   // impersonation-adjusted roles live on `req.user`, and that is the only
   // place a role decision may read from.
@@ -328,7 +330,7 @@ describe("guides build gate — cross-reference links", () => {
     const src = code(ROUTES);
     const route = src.slice(src.indexOf('"/me/guides/resolve"'));
     const head = route.slice(0, 400);
-    expect(head, "resolve must be worker-guarded").toContain("workerGuard");
+    expect(head, "resolve must be ownership-gated").toContain("approvedUser");
     expect(
       head,
       "resolve must build the viewer from the request, never take a role from the query",
@@ -346,7 +348,7 @@ describe("guides build gate — cross-reference links", () => {
     expect(enables.length, "the flag should be passed explicitly at each callsite").toBeGreaterThan(0);
     for (const value of enables) {
       expect(
-        value === "true" || value === "showAdminExtras",
+        value === "true" || value === "canWriteGuides",
         `showUnpublishedLinkState={${value}} — only an author surface may enable this`,
       ).toBe(true);
     }
@@ -402,9 +404,10 @@ describe("guides build gate — derived fields", () => {
 });
 
 describe("guides build gate — scope vs payload", () => {
-  // Role shells (Worker / Admin / Super tabs) are a CLIENT-side view. A
-  // Super browsing the Worker tab without activating "view as" still
-  // calls the API with Super privileges, so the payload carries drafts
+  // WHICH TABS YOU SEE IS A CLIENT-SIDE ANSWER. Someone holding
+  // `content.approve` who opens the Guides tab without activating
+  // "view as" still calls the API with everything they hold, so the
+  // payload carries drafts
   // and the author-only fields. GuidesTab originally rendered its badges
   // off those fields with a comment asserting "a worker never receives an
   // unpublished row" — true of a real worker, false of the surface — and
@@ -419,26 +422,26 @@ describe("guides build gate — scope vs payload", () => {
         const clause = m[0];
         expect(
           clause,
-          `g.${field} is rendered without showAdminExtras — it will show on the Worker tab`,
-        ).toMatch(/showAdminExtras/);
+          `g.${field} is rendered without canWriteGuides — it will show to a reader who cannot author`,
+        ).toMatch(/canWriteGuides/);
       }
     }
   });
 
   it("the worker surface filters the catalog to published rows", () => {
-    // Presentation, not access control — but without it a Super sees
-    // drafts on the Worker tab with no badge at all, which is worse than
+    // Presentation, not access control — but without it a `content.approve`
+    // holder sees drafts in the catalog with no badge at all, which is worse than
     // the badge this rule exists to prevent.
     const tab = code(read("apps/web/src/ui/tabs/GuidesTab.tsx"));
     expect(
       tab,
       "the Worker scope must show only published guides",
-    ).toMatch(/showAdminExtras \? rows : rows\.filter\(\(r\) => r\.isPublished\)/);
+    ).toMatch(/canWriteGuides \? rows : rows\.filter\(\(r\) => r\.isPublished\)/);
   });
 
   it("the author status strip is scope-gated too", () => {
     const tab = code(read("apps/web/src/ui/tabs/GuidesTab.tsx"));
-    expect(tab).toMatch(/\{showAdminExtras && \(pending \|\| draft \|\| !guide\.isPublished\)/);
+    expect(tab).toMatch(/\{canWriteGuides && \(pending \|\| draft \|\| !guide\.isPublished\)/);
   });
 });
 
@@ -549,7 +552,7 @@ describe("guides build gate — pre-ship audit findings", () => {
     );
     expect(fn, "assetUrl must take a viewer at all").toMatch(/viewer: GuideViewer/);
     expect(fn, "workers must be scoped by the shared visibility clause").toMatch(
-      /viewer\.kind === "worker"[\s\S]*visibilityWhere\(viewer\)/,
+      /viewer\.kind === "reader"[\s\S]*visibilityWhere\(viewer\)/,
     );
     expect(fn, "the scope check must look for the asset inside a published body").toMatch(
       /currentVersion: \{ contentMarkdown: \{ contains: `guide-asset:\$\{assetId\}` \} \}/,

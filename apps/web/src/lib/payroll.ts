@@ -1,3 +1,14 @@
+//
+// WHAT A CALLER MUST GATE ON: "payroll.manage".
+//
+// Every mutation below is guarded server-side by that capability
+// (docs/features/permissions-ROUTE-MAP.md). A transport module cannot gate
+// anything itself — it has no `scope` and no control to hide — so naming
+// the capability here is the fix G15 asks for. The next person calling one
+// of these from a new place can see what the control above it has to
+// check, instead of inheriting whatever gate happened to surround the
+// first callsite.
+
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
   bizToday,
@@ -12,7 +23,7 @@ import {
 // Payroll client — mirrors apps/api/src/services/payroll.ts.
 // Canonical spec: docs/features/payroll.md.
 //
-// THE SERVER DECIDES WHAT YOU GET. An admin's response genuinely does not
+// THE SERVER DECIDES WHAT YOU GET. Someone with `payroll.view`'s response genuinely does not
 // contain tax fields; they are not hidden client-side. That is why
 // `values` is a partial record rather than a fixed shape — read what is
 // present, never assume a field exists.
@@ -60,13 +71,13 @@ export type PayrollPeriodSummary = {
     paycheckTips: number | null;
     netPay: number | null;
     /**
-     * SUPER ONLY. Optional because an admin payload genuinely omits it —
+     * `payroll.manage` ONLY. Optional because an operator payload genuinely omits it —
      * the absence IS the access control, matching the per-entry
      * projection. Never render this behind a role check alone.
      */
     employerCost?: number | null;
   };
-  /** Worker view only — their own figures for the period. */
+  /** Self-scoped view only — their own figures for the period. */
   mine?: { grossEarnings: number | null; paycheckTips: number | null; netPay: number | null };
   entryCount?: number;
   unmatchedCount?: number;
@@ -81,7 +92,7 @@ export type PayrollEntryView = {
   employeeType: string | null;
   paymentMethod: string | null;
   values: PayrollValues;
-  /** Super only. */
+  /** `payroll.manage` only. */
   unmatched?: boolean;
 };
 
@@ -93,7 +104,7 @@ export type PayrollPeriodDetail = {
   label: string | null;
   archivedAt?: string | null;
   /**
-   * SUPER ONLY — the employer's side of Gusto's "Payroll Totals" row for
+   * `payroll.manage` ONLY — the employer's side of Gusto's "Payroll Totals" row for
    * this whole run. Absent from any other payload, so render it behind a
    * presence check as well as the role gate.
    */
@@ -172,7 +183,7 @@ export async function fetchMyPayrollPeriod(
  * Payroll attaches to an account BY NAME, so a name change (marriage, a
  * Gusto typo, Mike vs Michael) imports as an unattributed row and the
  * worker just sees a silent gap. This is the only signal they get that the
- * money exists and is waiting on an admin. Flag + date only — never a name
+ * money exists and is waiting on someone with `payroll.view`. Flag + date only — never a name
  * or an amount.
  */
 export async function fetchPayrollPendingMatch(

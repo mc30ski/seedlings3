@@ -108,7 +108,7 @@ export default function JobDialog({
     (async () => {
       try {
         const list = await apiGet<PropertyLite[]>(
-          "/api/admin/properties?status=ACTIVE&limit=500"
+          "/api/properties?status=ACTIVE&limit=500"
         );
         setProperties(Array.isArray(list) ? list : []);
       } catch {
@@ -125,7 +125,7 @@ export default function JobDialog({
       .then((list) => setAllCollections(Array.isArray(list) ? list : []))
       .catch(() => setAllCollections([]));
     if (mode === "UPDATE" && initial?.id) {
-      apiGet<{ collectionId: string }[]>(`/api/admin/jobs/${initial.id}/recommended-collections`)
+      apiGet<{ collectionId: string }[]>(`/api/jobs/${initial.id}/recommended-collections`)
         .then((rows) => setRecommendedCollectionIds(Array.isArray(rows) ? rows.map((r) => r.collectionId) : []))
         .catch(() => setRecommendedCollectionIds([]));
     } else {
@@ -242,7 +242,7 @@ export default function JobDialog({
     setBusy(true);
     try {
       if (mode === "CREATE") {
-        const created = await apiPost<{ id: string }>("/api/admin/jobs", payload);
+        const created = await apiPost<{ id: string }>("/api/jobs", payload);
         publishInlineMessage({ type: "SUCCESS", text: "Job created." });
         onOpenChange(false);
         onSaved?.({
@@ -254,10 +254,10 @@ export default function JobDialog({
         });
       } else {
         if (!initial?.id) throw new Error("Missing job id");
-        await apiPatch(`/api/admin/jobs/${initial.id}`, payload);
+        await apiPatch(`/api/jobs/${initial.id}`, payload);
         // Save recommended collections if changed
         if (recommendedDirty) {
-          await apiPut(`/api/admin/jobs/${initial.id}/recommended-collections`, {
+          await apiPut(`/api/jobs/${initial.id}/recommended-collections`, {
             collectionIds: recommendedCollectionIds,
           });
         }
@@ -507,7 +507,7 @@ export default function JobDialog({
                   <Textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Internal notes (admin only)…"
+                    placeholder="Internal notes (never shown to the client)…"
                     rows={3}
                   />
                 </div>

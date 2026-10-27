@@ -5,10 +5,10 @@
  *   • No money. Not per-person, not team total, not an average.
  *   • No hours per person.
  *   • No email, ever — a worker whose displayName is blank becomes "Worker",
- *     never their address. Worker views must not leak contact details.
+ *     never their address. Self-scoped views must not leak contact details.
  * Visits, acreage, properties and same-day closes only. A leaderboard that
  * carries money stops being a locker room and becomes a payroll dispute, and
- * this payload is read by every worker, not just admins.
+ * this payload is read by every worker, not just holders of `schedule.manage`.
  *
  * WEEK BOUNDARIES are Monday–Sunday in ET, via the canonical helpers — the
  * same rule Exports uses, never a rolling today-minus-7. A UTC week boundary
@@ -21,6 +21,7 @@
  */
 
 import { prisma } from "../db/prisma";
+import { withArea } from "../lib/areaScope";
 import { JobOccurrenceStatus, OccurrenceWorkflow } from "@prisma/client";
 import {
   etAddDays,
@@ -120,7 +121,7 @@ const SELECT = {
 } as const;
 
 export const board = {
-  async getBoard(): Promise<BoardData> {
+  async getBoard(areaWhere: Record<string, unknown> = {}): Promise<BoardData> {
     const todayKey = etToday();
     const thisMon = etMondayOnOrBefore();
     const lastMon = etAddDays(thisMon, -7);
@@ -128,11 +129,13 @@ export const board = {
 
     // ── the two weeks on the card ──────────────────────────────────────
     const rows = (await prisma.jobOccurrence.findMany({
-      where: {
+      // The board narrows too. A wall screen in one district showing
+      // another district's addresses is the same leak as a list doing it.
+      where: withArea({
         completedAt: { gte: etMidnight(lastMon), lte: etEndOfDay(thisSun) },
         workflow: { in: REAL_WORK },
         status: { notIn: NOT_COUNTED },
-      },
+      }, areaWhere),
       select: SELECT,
     })) as unknown as Row[];
 

@@ -1,15 +1,22 @@
 # Education guides
 
-Training material workers can read, authored by Admins, published only by
-a Super.
+Training material anyone on staff can read, authored by holders of
+`content.manage` and published only by holders of `content.approve`.
 
 The motivating case: a worker standing on a lawn wants to know how to
 fertilize Bermuda grass. Everything below follows from that — the content
 has to be readable, trustworthy, and available on a phone.
 
-## Roles
+## Capabilities
 
-| | Worker | Admin | Super |
+THREE ENTITLEMENTS, NOT THREE ROLES. This was a Worker/Admin/Super table,
+which is the deleted model: a custom role matching none of those three got
+whichever column it fell nearest. The columns below are the capabilities the
+routes are actually guarded on — `guideViewer()` in
+[`routes/guides.ts`](../../apps/api/src/routes/guides.ts) resolves the caller
+to exactly one of these tiers via `callerCan`.
+
+| | `content.view` | `content.manage` | `content.approve` |
 |---|---|---|---|
 | Read published guides | ✔ | ✔ | ✔ |
 | Search the catalog | ✔ | ✔ | ✔ |
@@ -23,8 +30,13 @@ has to be readable, trustworthy, and available on a phone.
 | **Upload or manage video** | — | **—** | **✔** |
 | Reference any existing media | ✔ (read) | ✔ | ✔ |
 
-**Admins cannot publish their own work**, deliberately. Content stalls when
-the Super is away; that is the accepted cost of the gate.
+The tiers are cumulative in practice because the starter ladder grants them
+that way, but each is checked on its own — holding `content.approve` without
+`content.manage` is a legitimate reviewer-only role.
+
+**Holders of `content.manage` cannot publish their own work**, deliberately.
+Content stalls when nobody holding `content.approve` is available; that is the
+accepted cost of the gate.
 
 ## State machine
 
@@ -82,7 +94,7 @@ would change published content without an approver ever seeing it, and the
 approval gate would quietly become advisory. "Replacing" means uploading a
 new asset and editing the page, which re-enters review.
 
-### Video is Super-only
+### Video needs `content.approve`
 
 Video is the one asset class that can silently become expensive, and the
 one with a format trap: phones record HEVC `.mov`, which Safari plays and
@@ -93,14 +105,14 @@ is learned once rather than repeatedly.
 `.mov` is **accepted with a warning**, not rejected — the uploader is told
 to export as MP4 (H.264) or set iPhone Camera → Formats → Most Compatible.
 
-Admins still see every video and can reference one in a page. They cannot
+Holders of `content.manage` still see every video and can reference one in a page. They cannot
 add or remove.
 
 ### Size limits
 
 | Setting | Default | Behaviour |
 |---|---|---|
-| `GUIDE_MAX_IMAGE_MB` | 10 | **Hard** — rejected. Admins are many; this is a real ceiling. |
+| `GUIDE_MAX_IMAGE_MB` | 10 | **Hard** — rejected. Holders of `content.manage` are many; this is a real ceiling. |
 | `GUIDE_MAX_VIDEO_MB` | 200 | **Soft** — warn, require an explicit override, audit it. One trusted uploader, so this catches accidents, not abuse. |
 | `GUIDE_VIDEO_HARD_CEILING_MB` | 2048 | **Not overridable.** An override protects against "bigger than usual"; it does not protect against selecting the wrong file. |
 | `GUIDE_MEDIA_ALLOWED_TYPES` | jpeg/png/webp/mp4/webm | Allowlist, not blocklist. |
@@ -139,7 +151,7 @@ are not in any published body yet.
 Assets are managed separately from pages, so without this someone
 eventually deletes the image a live guide uses and a worker gets a broken
 page in a field. Deletion is refused while any non-archived guide
-references the asset, and the error names them — a Super deleting a video
+references the asset, and the error names them — someone with `content.approve` deleting a video
 especially needs telling, since they may not have written the page.
 
 ## Markdown
@@ -200,7 +212,7 @@ cross-reference silently becomes an empty link.
 
 **Inbound links are a warning, not a block.** Unlike a deleted asset — which
 leaves a broken image in a live page — a link that stops resolving degrades
-to plain text. So unpublishing or archiving tells a Super how many guides
+to plain text. So unpublishing or archiving tells someone with `content.approve` how many guides
 point at this one and names them, then lets them proceed.
 
 **Hierarchy was considered and rejected.** A page tree fights the approval
@@ -214,7 +226,7 @@ nesting.
 
 ## Permanent delete
 
-Super-only, **archived-only**, behind a typed confirmation (the operator
+`content.approve`, **archived-only**, behind a typed confirmation (the operator
 retypes the guide title) — the same gate as "Approve as Worker".
 
 The audit row snapshots the guide and every version body **before**
@@ -253,7 +265,7 @@ There is no `UPDATED` verb for assets, on purpose — they are immutable.
 | Invariants | `guides-build-gate.test.ts` (34) | Worker scoping is a WHERE clause — for the catalog AND for link resolution; video is Super-only at every entry point; assets have no update path; size comes from R2; deletion is reference-checked; purge snapshots first; roles come from `req.user` not a DB read; every mutation sits behind a ConfirmDialog; `isPublished` is derived on both payloads; the editor never opens blank; the asset list is paged; the video directive is scheme-checked; worker media access is scoped; the edit path validates title + category |
 | Ordering | `alert-ordering-build-gate.test.ts` | The alert and the Tasks section exist together and in the same order |
 | Audit | `audit-coverage-build-gate.test.ts` | No unaudited mutation in `guides.ts` |
-| Browser | `guides-worker.spec.ts`, `guides-admin.spec.ts` | A worker cannot see or reach unpublished content; the workflow round-trips |
+| Browser | `guides-worker.spec.ts`, `guides-workflow-owner.spec.ts`, `scheduler-guides.spec.ts` | A worker cannot see or reach unpublished content; the workflow round-trips |
 
 ## Deliberately not built
 
@@ -347,7 +359,7 @@ uploads end up in front of workers.
 
 ### 5. Verify
 
-Sign in as Super → Records → Guides → **Media library** → Add image. A
+Sign in as Records → Guides → **Media library** → Add image. A
 successful upload lists the file with its size read back from R2.
 
 Then as Admin: the Add video button should not be there at all, and any
@@ -363,7 +375,7 @@ the row directly, then copy to production through the Neon UI.
 |---|---|
 | `GUIDE_CATEGORIES` | lawn-care, equipment, safety, admin |
 | `GUIDE_MAX_IMAGE_MB` | 10 (hard) |
-| `GUIDE_MAX_VIDEO_MB` | 200 (soft — Super can override) |
+| `GUIDE_MAX_VIDEO_MB` | 200 (soft — a holder of `content.approve` can override) |
 | `GUIDE_VIDEO_HARD_CEILING_MB` | 2048 (not overridable) |
 | `GUIDE_MEDIA_ALLOWED_TYPES` | jpeg, png, webp, mp4, webm |
 | `GUIDE_ALLOWED_EMBED_DOMAINS` | youtube, youtu.be, vimeo |

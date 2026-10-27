@@ -79,9 +79,29 @@ const BASELINE: Record<string, number> = {
   // audit branches (GUARANTEED_PAYOUT_STARTED / _ENDED), so deleting it
   // removed 1 mutation site and 2 writeAudit calls — the ratio gets worse
   // even though every remaining mutation is exactly as audited as before.
-  "apps/api/src/routes/admin.ts": 29,
+  // NONE OF THESE IS NEW DEBT — the routes moved.
+  //
+  // The route layer was split by resource. Existing unaudited mutations
+  // relocated, and the arithmetic is conserved — occurrences 21 + jobs 11 +
+  // equipment 4 is exactly the 36 held before the split. Nothing became
+  // unaudited here.
+  "apps/api/src/routes/occurrences.ts": 21,
+  "apps/api/src/routes/jobs.ts": 11,
+  "apps/api/src/routes/equipment.ts": 4,
+  //
+  // The three below moved in the first wave of the same split.
+  //
+  // The same split relocated more existing unaudited mutations. The
+  // arithmetic is conserved: 25→20 and 18→16 frees 7, and books 2 +
+  // documents 3 + calendarFeeds 2 is exactly 7. No mutation became
+  // unaudited in this change; each one simply has a new address.
+  // Lowered 2 → 1 on 2026-10-22: the five tax-export CSV endpoints now
+  // write AUDIT.EXPORT.DOWNLOADED through `deliverPlainCsv`, and the
+  // pricing-key delete moved into a transaction with its audit row.
+  "apps/api/src/routes/books.ts": 1,
+  "apps/api/src/routes/documents.ts": 3,
+  "apps/api/src/routes/calendarFeeds.ts": 2,
   "apps/api/src/services/payments.ts": 16,
-  "apps/api/src/routes/worker.ts": 18,
   "apps/api/src/services/supplies.ts": 14,
   // Background sync worker — queue/state bookkeeping, not user actions.
   // Best candidate for dropping to 0 via audit-allow comments.
@@ -131,6 +151,14 @@ function walk(dir: string, acc: string[]) {
     if (st.isDirectory()) walk(full, acc);
     else if (st.isFile() && full.endsWith(".ts") && !full.includes(".test.")) acc.push(full);
   }
+}
+
+/** Every scanned source file, repo-relative. Shares `walk` with the
+ *  ratchet above so the two can never disagree about what is in scope. */
+function sourceFiles(): string[] {
+  const files: string[] = [];
+  for (const d of [...SCAN_DIRS, "apps/api/src/lib"]) walk(join(REPO_ROOT, d), files);
+  return files.map((f) => relative(REPO_ROOT, f));
 }
 
 function scan(): FileStat[] {
@@ -218,5 +246,82 @@ describe("audit-coverage build gate", () => {
           `\n\nEdit BASELINE in this file. Ratchets only ever go down.\n`,
       );
     }
+  });
+  // ───────────────────────────────────────────────────────────────────────
+  // An audit row must not be able to claim more than the database did.
+  //
+  // Found 2026-10-22 in `DELETE /pricing/:key`: it called
+  // `writeAudit(prisma, …)` and THEN `prisma.setting.delete(…)`, neither in
+  // a transaction. A delete that threw — a key already gone, a constraint —
+  // left a row asserting a deletion that never happened. A trail is only
+  // evidence if it cannot outrun the writes it reports.
+  //
+  // The rule is narrow on purpose: an audit on the BARE client with a
+  // bare-client mutation close behind it. Audits inside `$transaction`
+  // blocks take `tx` and are atomic by construction, and a read event
+  // (DOCUMENT.VIEWED) has no following write, so neither trips this.
+  // ───────────────────────────────────────────────────────────────────────
+  it("no audit row is written before the mutation it reports", () => {
+    const offenders: string[] = [];
+    const BARE_MUTATION =
+      /\bprisma\.[a-zA-Z_$][\w$]*\.(?:create|createMany|update|updateMany|delete|deleteMany|upsert)\s*\(/;
+    for (const file of sourceFiles()) {
+      const lines = readFileSync(join(REPO_ROOT, file), "utf-8").split("\n");
+      lines.forEach((line, i) => {
+        if (!/\bwriteAudit\(\s*prisma\s*,/.test(line)) return;
+        const after = lines.slice(i + 1, i + 7).join("\n");
+        if (BARE_MUTATION.test(after)) {
+          offenders.push(
+            `  ${file}:${i + 1} — audit written before the write it reports; ` +
+              `put both in one $transaction and audit AFTER the write`,
+          );
+        }
+      });
+    }
+    expect(
+      offenders,
+      `\nAn audit row must not precede its own mutation:\n\n${offenders.join("\n")}\n`,
+    ).toEqual([]);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // The verb must name what the function actually did.
+  //
+  // Found 2026-10-22: `customRoles.create` and `customRoles.update` both
+  // wrote AUDIT.ROLE.ROLE_ASSIGNED, so defining a role and editing its icon
+  // both read in the trail as somebody being GRANTED a role — a different
+  // question entirely, and the one an auditor filters on. Both carried a
+  // metadata `action: "role_created"` saying the truth, which is why it
+  // survived: whoever opened a row saw the right thing, and whoever
+  // filtered by verb did not. The web's `entryLabel` builds its text from
+  // scope + verb, so the screen read "role role assigned" for an icon edit.
+  //
+  // Only the unambiguous direction is checked — a function whose name
+  // begins create/update must not write an ASSIGNED or REMOVED verb. Those
+  // name a grant, which is never what a create or an update is.
+  // ───────────────────────────────────────────────────────────────────────
+  it("a create/update function does not audit as a grant", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles()) {
+      const lines = readFileSync(join(REPO_ROOT, file), "utf-8").split("\n");
+      let fn: string | null = null;
+      lines.forEach((line, i) => {
+        const m = line.match(/^\s*(?:async\s+)?(?:function\s+)?([a-zA-Z_$][\w$]*)\s*\(/);
+        if (m && /^\s{0,4}(async\s+)?[a-zA-Z_$][\w$]*\s*\(/.test(line)) fn = m[1];
+        const a = line.match(/writeAudit\(\s*\w+,\s*AUDIT\.(\w+)\.(\w+)/);
+        if (!a || !fn) return;
+        if (!/^(create|update)/i.test(fn)) return;
+        if (/(ASSIGNED|REMOVED)/.test(a[2])) {
+          offenders.push(
+            `  ${file}:${i + 1} — ${fn}() writes AUDIT.${a[1]}.${a[2]}; ` +
+              `a create/update is not a grant`,
+          );
+        }
+      });
+    }
+    expect(
+      offenders,
+      `\nThe audit verb must name what the function did:\n\n${offenders.join("\n")}\n`,
+    ).toEqual([]);
   });
 });

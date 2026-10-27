@@ -1,5 +1,4 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { Role as RoleVal } from "@prisma/client";
 import { services } from "../services";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
@@ -16,8 +15,9 @@ import {
   confirmVanityPageImageUpload,
   clearVanityPageImage,
 } from "../services/vanityPages";
+import { makeGuards } from "../lib/routeGuards";
 
-// Super-only Vanity URL endpoints. All CRUD + image-upload URL flow
+// Vanity URL endpoints — `marketing.manage`. All CRUD + image-upload URL flow
 // lives here. Public read (for the Next.js dynamic route) is in
 // routes/public.ts.
 
@@ -26,14 +26,14 @@ async function currentUserId(req: any): Promise<string> {
 }
 
 export default async function vanityPagesRoutes(app: FastifyInstance) {
-  const superGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireRole(req, reply, RoleVal.SUPER),
-  };
-
+  const { requires } = makeGuards(app);
+  const req_marketingCampaigns = requires("marketing.campaigns");
+  const req_marketingManage = requires("marketing.manage");
+  // See the note in routes/promotions.ts: the pure content reads belong on
+  // the read verb, which previously gated only `GET /banners`.
   // List — sorted by default-first, then slug alpha. Editor renders the
   // default at the top so operator sees the fallback state at a glance.
-  app.get("/super/vanity", superGuard, async () => {
+  app.get("/vanity", req_marketingCampaigns, async () => {
     return listVanityPages();
   });
 
@@ -48,7 +48,7 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   // audited via updatedById + updatedAt). Missing rows default to
   // true (both features on) so the UX out-of-the-box shows the full
   // animation.
-  app.get("/super/vanity/animation-settings", superGuard, async () => {
+  app.get("/vanity/animation-settings", req_marketingCampaigns, async () => {
     const { prisma } = await import("../db/prisma");
     const [enabledRow, historyRow] = await Promise.all([
       prisma.setting.findUnique({
@@ -65,8 +65,8 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   });
 
   app.patch(
-    "/super/vanity/animation-settings",
-    superGuard,
+    "/vanity/animation-settings",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const uid = await currentUserId(req);
       const body = (req.body ?? {}) as {
@@ -145,14 +145,14 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   );
 
   // Single fetch for the edit form.
-  app.get("/super/vanity/:id", superGuard, async (req: any, reply: any) => {
+  app.get("/vanity/:id", req_marketingCampaigns, async (req: any, reply: any) => {
     const row = await getVanityPageById(String(req.params.id));
     if (!row) return reply.code(404).send({ error: "not_found" });
     return row;
   });
 
   // Create.
-  app.post("/super/vanity", superGuard, async (req: any, reply: any) => {
+  app.post("/vanity", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     try {
       const created = await createVanityPage({
@@ -175,7 +175,7 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   });
 
   // Update.
-  app.patch("/super/vanity/:id", superGuard, async (req: any, reply: any) => {
+  app.patch("/vanity/:id", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     try {
       const updated = await updateVanityPage({
@@ -201,7 +201,7 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   // Delete. Refuses when other rows alias this one — the response
   // carries the dependent slugs so the UI can name them in the block
   // dialog.
-  app.delete("/super/vanity/:id", superGuard, async (req: any, reply: any) => {
+  app.delete("/vanity/:id", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     try {
       await deleteVanityPage({
@@ -228,8 +228,8 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   // flag in the same tx). Called by the per-row default toggle on the
   // Vanity URLs tab.
   app.patch(
-    "/super/vanity/:id/default",
-    superGuard,
+    "/vanity/:id/default",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const uid = await currentUserId(req);
       try {
@@ -250,8 +250,8 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   // Toggle the per-row startup-animation flag. Called by the
   // sparkles button on the Vanity URLs tab. Payload: { enabled: bool }.
   app.patch(
-    "/super/vanity/:id/startup-animation",
-    superGuard,
+    "/vanity/:id/startup-animation",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const uid = await currentUserId(req);
       const body = (req.body ?? {}) as { enabled?: unknown };
@@ -276,8 +276,8 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   // every current row in the desired display order. Stamps each with
   // sortOrder = 10, 20, 30… so future inserts have room between rows.
   app.patch(
-    "/super/vanity/reorder",
-    superGuard,
+    "/vanity/reorder",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const uid = await currentUserId(req);
       const body = (req.body ?? {}) as { orderedIds?: unknown };
@@ -302,8 +302,8 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   // POSTs the confirmed key back so we persist it on the row.
 
   app.post(
-    "/super/vanity/:id/image-upload-url",
-    superGuard,
+    "/vanity/:id/image-upload-url",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const id = String(req.params.id);
       const body = (req.body ?? {}) as { contentType?: string };
@@ -324,8 +324,8 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   // Remove the hero image from a vanity page (operator action).
   // Row's imageR2Key is nulled; R2 object is best-effort deleted.
   app.delete(
-    "/super/vanity/:id/image",
-    superGuard,
+    "/vanity/:id/image",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const uid = await currentUserId(req);
       const id = String(req.params.id);
@@ -344,8 +344,8 @@ export default async function vanityPagesRoutes(app: FastifyInstance) {
   );
 
   app.post(
-    "/super/vanity/:id/confirm-image",
-    superGuard,
+    "/vanity/:id/confirm-image",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const uid = await currentUserId(req);
       const id = String(req.params.id);

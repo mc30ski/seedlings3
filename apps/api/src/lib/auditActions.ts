@@ -3,8 +3,20 @@ import { AuditScope, AuditVerb } from "@prisma/client";
 export const AUDIT = {
   USER: {
     APPROVED: [AuditScope.USER, AuditVerb.APPROVED] as const,
-    ROLE_ASSIGNED: [AuditScope.USER, AuditVerb.ROLE_ASSIGNED] as const,
-    ROLE_REMOVED: [AuditScope.USER, AuditVerb.ROLE_REMOVED] as const,
+    // USER.ROLE_ASSIGNED / USER.ROLE_REMOVED were REMOVED 2026-10-22.
+    //
+    // Granting and revoking moved to the ROLE scope with the capabilities
+    // refactor, and these two sat here afterwards with no call sites —
+    // writable, and invisible to every query that reads the role trail by
+    // scope. A constant that silently files a grant in the wrong drawer is
+    // worse than no constant: the write succeeds, the audit looks fine on
+    // the row, and the one report anybody runs misses it.
+    //
+    // Use AUDIT.ROLE.ROLE_ASSIGNED / .ROLE_REMOVED for a grant on a person,
+    // and AUDIT.AREA_ASSIGNMENT.* for one scoped to an area. The AuditVerb
+    // ENUM values are untouched and still used by both — this removes two
+    // scope+verb pairings, not an enum member, so no migration and no
+    // existing row is affected.
     DELETED: [AuditScope.USER, AuditVerb.DELETED] as const,
     WORKER_TYPE_SET: [AuditScope.USER, AuditVerb.WORKER_TYPE_SET] as const,
     // INSURANCE_UPLOADED, CONTRACTOR_AGREED, and W9_COLLECTED verbs were
@@ -98,6 +110,12 @@ export const AUDIT = {
   },
   SETTING: {
     UPDATED: [AuditScope.SETTING, AuditVerb.SETTING_UPDATED] as const,
+    // Deleting a pricing key used to be logged as SETTING.UPDATED with
+    // `action: "deleted"` in the metadata, because this constant did not
+    // exist. A reader filtering the trail for deletions did not see it.
+    // `DELETED` is already an AuditVerb, so this is a new pair of existing
+    // enum values and needs no migration.
+    DELETED: [AuditScope.SETTING, AuditVerb.DELETED] as const,
     PAYMENT_METHOD_UPDATED: [AuditScope.SETTING, AuditVerb.PAYMENT_METHOD_UPDATED] as const,
   },
   NOTIFICATION: {
@@ -150,8 +168,8 @@ export const AUDIT = {
     //   UPDATED   → pause / resume / edit times
     //   COMPLETED → end workday
     //   APPROVED  → admin approval (future phase)
-    // Impersonation: when an admin acts on a worker's workday, actorId is
-    // the admin's id and detail.impersonatedUserId is the worker's id so
+    // Impersonation: when someone acts on ANOTHER person's workday, actorId
+    // is the actor's own id and detail.impersonatedUserId is the target's, so
     // the audit trail reflects who actually pushed the button.
     CREATED: [AuditScope.WORKDAY, AuditVerb.CREATED] as const,
     UPDATED: [AuditScope.WORKDAY, AuditVerb.UPDATED] as const,
@@ -163,7 +181,7 @@ export const AUDIT = {
     DELETED: [AuditScope.WORKDAY, AuditVerb.DELETED] as const,
   },
   PAYMENT: {
-    // Reusing AuditVerb.CREATED for the admin-direct record path keeps the
+    // Reusing AuditVerb.CREATED for a caller with `audit.view`-direct record path keeps the
     // "admin recorded a payment" semantics consistent with how other scopes
     // log mutations. The new verbs cover the approval-flow specifics.
     CREATED: [AuditScope.PAYMENT, AuditVerb.CREATED] as const,
@@ -175,10 +193,10 @@ export const AUDIT = {
     REQUEST_SENT: [AuditScope.PAYMENT, AuditVerb.REQUEST_SENT] as const,
     TOKEN_ACCESSED: [AuditScope.PAYMENT, AuditVerb.TOKEN_ACCESSED] as const,
     WRITTEN_OFF: [AuditScope.PAYMENT, AuditVerb.WRITTEN_OFF] as const,
-    // Super-only "pretend this service never happened" — stronger than
+    // "Pretend this service never happened" (`money.approve`) — stronger than
     // WRITTEN_OFF. The payment stays in the DB (with all its history)
     // but is erased from every financial aggregate/export. Gated by
-    // type-APPROVE at the UI layer + `superGuard` at the route layer.
+    // type-APPROVE at the UI layer + `money.approve` at the route layer.
     SKIPPED: [AuditScope.PAYMENT, AuditVerb.SKIPPED] as const,
     UNSKIPPED: [AuditScope.PAYMENT, AuditVerb.UNSKIPPED] as const,
     ADJUSTED: [AuditScope.PAYMENT, AuditVerb.ADJUSTED] as const,
@@ -223,7 +241,7 @@ export const AUDIT = {
     // asset plus a guide edit, which re-enters approval.
     CREATED: [AuditScope.GUIDE_ASSET, AuditVerb.CREATED] as const,
     DELETED: [AuditScope.GUIDE_ASSET, AuditVerb.DELETED] as const,
-    /// A Super knowingly uploading past GUIDE_MAX_VIDEO_MB. Recorded
+    /// Someone with `audit.view` knowingly uploading past GUIDE_MAX_VIDEO_MB. Recorded
     /// separately so "why is there a 900 MB file in the bucket" has an
     /// answer with a name on it.
     SIZE_LIMIT_OVERRIDDEN: [AuditScope.GUIDE_ASSET, AuditVerb.SIZE_LIMIT_OVERRIDDEN] as const,
@@ -264,7 +282,7 @@ export const AUDIT = {
     // Admin bypassed the worker sign flow entirely by uploading the
     // artifact on behalf. Requires "type APPROVE" for SIGN-type docs;
     // routine for NONE-type docs.
-    ADMIN_UPLOADED_ON_BEHALF: [AuditScope.POLICY_SIGNATURE, AuditVerb.POLICY_ADMIN_UPLOADED_ON_BEHALF] as const,
+    UPLOADED_ON_BEHALF: [AuditScope.POLICY_SIGNATURE, AuditVerb.POLICY_UPLOADED_ON_BEHALF] as const,
   },
   PROMOTION: {
     // Lifecycle + edit + burst events for the Promotions feature. Metadata
@@ -311,7 +329,7 @@ export const AUDIT = {
     UPLOADED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_UPLOADED] as const,
     REPLACED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_REPLACED] as const,
     ARCHIVED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_ARCHIVED] as const,
-    // Name -> User mapping confirmed / removed by a Super. Metadata carries
+    // Name -> User mapping confirmed / removed by someone with `audit.view`. Metadata carries
     // { lastName, firstName, userId, entriesRelinked }.
     IDENTITY_LINKED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_IDENTITY_LINKED] as const,
     IDENTITY_UNLINKED: [AuditScope.PAYROLL, AuditVerb.PAYROLL_IDENTITY_UNLINKED] as const,
@@ -424,6 +442,32 @@ export const AUDIT = {
     TOKEN_ACCESSED: [AuditScope.DISPLAY, AuditVerb.TOKEN_ACCESSED] as const,
     UPDATED: [AuditScope.DISPLAY, AuditVerb.UPDATED] as const,
     DELETED: [AuditScope.DISPLAY, AuditVerb.DELETED] as const,
+  },
+
+  // Roles + entitlements, 2026-10-11. Every one of these changes what
+  // somebody may DO, so none happens without a trail.
+  ROLE: {
+    CREATED: [AuditScope.ROLE, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.ROLE, AuditVerb.UPDATED] as const,
+    DELETED: [AuditScope.ROLE, AuditVerb.DELETED] as const,
+    ROLE_ASSIGNED: [AuditScope.ROLE, AuditVerb.ROLE_ASSIGNED] as const,
+    ROLE_REMOVED: [AuditScope.ROLE, AuditVerb.ROLE_REMOVED] as const,
+  },
+
+  // The area tree decides who sees what money, so reshaping it is audited.
+  AREA: {
+    CREATED: [AuditScope.AREA, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.AREA, AuditVerb.UPDATED] as const,
+    RETIRED: [AuditScope.AREA, AuditVerb.RETIRED] as const,
+    UNRETIRED: [AuditScope.AREA, AuditVerb.UNRETIRED] as const,
+  },
+
+  // Separate from AREA: granting someone a role in a territory is a
+  // different act from reshaping the territory.
+  AREA_ASSIGNMENT: {
+    ROLE_ASSIGNED: [AuditScope.AREA_ASSIGNMENT, AuditVerb.ROLE_ASSIGNED] as const,
+    ROLE_REMOVED: [AuditScope.AREA_ASSIGNMENT, AuditVerb.ROLE_REMOVED] as const,
+    UPDATED: [AuditScope.AREA_ASSIGNMENT, AuditVerb.UPDATED] as const,
   },
 
   CALENDAR_FEED: {

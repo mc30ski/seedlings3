@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Badge, Box, Button, Card, HStack, Text, Textarea, VStack } from "@chakra-ui/react";
 import { Calendar, CheckCircle2, ChevronDown, ChevronUp, SkipForward, X } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import type { Scope } from "@/src/lib/scope";
 import { fmtDate, fmtDateWeekday } from "@/src/lib/dates";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
@@ -39,19 +40,40 @@ type Props = {
    * content-only.
    */
   onReady?: (api: { refresh: () => void; loading: boolean; count: number }) => void;
+
+  /**
+   * The caller's capabilities, so Approve / Deny can ask for the one their
+   * own endpoint is guarded on.
+   *
+   * WHY THE COMPONENT ASKS RATHER THAN ITS HOST. This renders in TWO
+   * places — ServicesTab and TasksPage — and until now neither the buttons
+   * nor this file mentioned `schedule.manage`, so whether they appeared
+   * depended entirely on which gate happened to surround the mount point.
+   * That is not a hole, because `POST /change-requests/:id/approve` fails
+   * closed on the server; it is a drift surface. Mount this panel in a
+   * third place with a looser gate and the buttons come along, 403 on
+   * click, and the person is told nothing useful.
+   */
+  scope?: Scope;
 };
 
-export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {}) {
+export default function ChangeRequestsPanel({ bare = false, onReady, scope }: Props = {}) {
   const [items, setItems] = useState<ChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(bare);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [denyDialog, setDenyDialog] = useState<{ id: string; note: string } | null>(null);
+  // Named for the capability, never for a role. Both endpoints behind these
+  // controls — approve and deny — are guarded on `schedule.manage`.
+  // Undefined scope means an older caller that has not been threaded yet;
+  // it keeps the previous behaviour rather than hiding a control somebody
+  // has today.
+  const canDecide = scope ? scope.can("schedule.manage") : true;
 
   async function load() {
     setLoading(true);
     try {
-      const list = await apiGet<ChangeRequest[]>("/api/admin/change-requests?status=PENDING");
+      const list = await apiGet<ChangeRequest[]>("/api/change-requests?status=PENDING");
       setItems(Array.isArray(list) ? list : []);
     } catch (err) {
       console.error("Load change requests failed:", err);
@@ -71,7 +93,7 @@ export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {
   async function approve(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/admin/change-requests/${id}/approve`, {});
+      await apiPost(`/api/change-requests/${id}/approve`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Request approved & applied." });
       await load();
     } catch (err) {
@@ -84,7 +106,7 @@ export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {
   async function deny(id: string, note: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/admin/change-requests/${id}/deny`, { note });
+      await apiPost(`/api/change-requests/${id}/deny`, { note });
       publishInlineMessage({ type: "INFO", text: "Request denied." });
       setDenyDialog(null);
       await load();
@@ -144,6 +166,7 @@ export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {
                         Requested by {requesterName} · {fmtDate(cr.createdAt)}
                       </Text>
                     </Box>
+                    {canDecide && (
                     <HStack gap={1} flexShrink={0}>
                       <Button
                         size="xs"
@@ -164,9 +187,10 @@ export default function ChangeRequestsPanel({ bare = false, onReady }: Props = {
                         <X size={12} /> Deny
                       </Button>
                     </HStack>
+                    )}
                   </HStack>
 
-                  {denyDialog?.id === cr.id && (
+                  {canDecide && denyDialog?.id === cr.id && (
                     <Box mt={2} p={2} bg="bg.panel" borderWidth="1px" borderColor="gray.emphasized" rounded="md">
                       <Text fontSize="xs" mb={1}>Optional note for the client:</Text>
                       <Textarea

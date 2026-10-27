@@ -188,7 +188,7 @@ export function isSignatureCurrent(
     }
     if (policy.workerUploadRequiresApproval && signature.uploadStatus === "NONE") {
       // Policy requires approval but no upload workflow ever ran on this
-      // sig — treat as pending review so the admin gets prompted.
+      // sig — treat as pending review so a caller with `compliance.manage` gets prompted.
       return { current: false, reason: "UPLOAD_PENDING_REVIEW" };
     }
     if (policy.workerUploadRequiresExpiry) {

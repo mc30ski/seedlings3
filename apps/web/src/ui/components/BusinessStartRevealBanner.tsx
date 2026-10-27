@@ -5,7 +5,7 @@ import { Eye } from "lucide-react";
 import { useBusinessStartCutoff } from "@/src/lib/businessStartCutoff";
 
 /**
- * Sticky top-of-page banner shown whenever the Super "Reveal pre-cutoff
+ * Sticky top-of-page banner shown whenever a caller with `settings.manage` "Reveal pre-cutoff
  * history" override is engaged.
  *
  * Why this exists: the reveal toggle changes what every Money/Jobs/Stats

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import type { Scope } from "@/src/lib/scope";
 import {
   Box,
   Button,
@@ -16,7 +17,6 @@ import {
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
 import {
-  Role,
   DialogMode,
   Contact,
   ContactStatus,
@@ -38,7 +38,9 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
-  role: Role;
+  /** What the viewer can do. Was `role: Surface` — a role name
+   *  deciding whether fields were editable. */
+  scope?: Scope;
   initial?: Contact | null;
   onSaved?: (saved: any) => void;
   clientId: string;
@@ -55,7 +57,7 @@ export default function ClientDialog({
   open,
   onOpenChange,
   mode,
-  role,
+  scope,
   initial,
   onSaved,
   clientId,
@@ -64,7 +66,9 @@ export default function ClientDialog({
   defaultIsPrimary,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-  const isAdmin = role === "ADMIN";
+  // The capability this dialog's writes actually require, not a
+  // role name. Absent scope fails closed.
+  const canManageClients = !!scope?.can("clients.manage");
   const [busy, setBusy] = useState(false);
   const dlgErr = useDialogError();
 
@@ -79,7 +83,7 @@ export default function ClientDialog({
   const [phone, setPhone] = useState("");
   const [isPrimary, setIsPrimary] = useState(false);
 
-  // Pre-flight: debounced lookup that warns the admin if an active contact
+  // Pre-flight: debounced lookup that warns the user if an active contact
   // already exists with the same email or phone. Catches the recreate-
   // after-delete and shared-household-email cases while they're still
   // typing, before the workflow's batchSave hits the per-client unique
@@ -152,7 +156,7 @@ export default function ClientDialog({
     // either edit the existing contact or change the identity here.
     // Cross-client matches are intentional (same person, new role)
     // and DON'T block save — the inline blue panel explains the
-    // consequences and the admin can proceed.
+    // consequences and a caller with `schedule.manage` can proceed.
     const sameClientDup = contactMatches.some((m) => m.client.id === clientId);
     return (
       statusValue &&
@@ -222,7 +226,7 @@ export default function ClientDialog({
     (async () => {
       try {
         const client = await apiGet<{ contacts: Array<{ id: string; status: string; isPrimary: boolean }> }>(
-          `/api/admin/clients/${clientId}`,
+          `/api/clients/${clientId}`,
         );
         if (cancelled) return;
         const activeContacts = (client?.contacts ?? []).filter((c) => c.status === "ACTIVE");
@@ -255,7 +259,7 @@ export default function ClientDialog({
     };
   }, [open, clientId, mode, initial?.id, initial?.isPrimary]);
 
-  // Debounced pre-flight: ~400ms after the admin stops typing email or
+  // Debounced pre-flight: ~400ms after a caller with `schedule.manage` stops typing email or
   // phone, look up existing contacts with those values and surface a
   // warning. Self-exclusion: when editing, don't flag the contact being
   // edited as a match. Workflow CREATE mode (clientId === "__deferred__")
@@ -272,7 +276,7 @@ export default function ClientDialog({
         const qs = new URLSearchParams();
         if (trimmedEmail) qs.set("email", trimmedEmail);
         if (trimmedPhone) qs.set("phone", trimmedPhone);
-        const rows = await apiGet<ContactMatch[]>(`/api/admin/client-contacts/check?${qs}`);
+        const rows = await apiGet<ContactMatch[]>(`/api/client-contacts/check?${qs}`);
         if (cancelled) return;
         const selfId = initial?.id;
         setContactMatches(Array.isArray(rows) ? rows.filter((r) => r.id !== selfId) : []);
@@ -328,7 +332,7 @@ export default function ClientDialog({
       let saved: Contact;
       if (mode === "CREATE") {
         saved = await apiPost<Contact>(
-          `/api/admin/clients/${clientId}/contacts`,
+          `/api/clients/${clientId}/contacts`,
           payload
         );
         publishInlineMessage({
@@ -338,7 +342,7 @@ export default function ClientDialog({
       } else {
         if (!initial?.id) throw new Error("Missing client id");
         saved = await apiPatch<Contact>(
-          `/api/admin/clients/${clientId}/contacts/${initial.id}`,
+          `/api/clients/${clientId}/contacts/${initial.id}`,
           payload
         );
         publishInlineMessage({
@@ -398,7 +402,7 @@ export default function ClientDialog({
                         strategy: "fixed",
                         hideWhenDetached: true,
                       }}
-                      disabled={!isAdmin && mode === "UPDATE"}
+                      disabled={!canManageClients && mode === "UPDATE"}
                     >
                       <Select.Control>
                         <Select.Trigger>
@@ -427,7 +431,7 @@ export default function ClientDialog({
                         strategy: "fixed",
                         hideWhenDetached: true,
                       }}
-                      disabled={!isAdmin && mode === "UPDATE"}
+                      disabled={!canManageClients && mode === "UPDATE"}
                     >
                       <Select.Control>
                         <Select.Trigger>

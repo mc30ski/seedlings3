@@ -2,9 +2,9 @@
 //
 // Two consumers today, and they MUST return identical bytes for the
 // same DB state so restoration from a nightly backup produces the same
-// artifact a Super would get from the manual "Export All Data" tile:
+// artifact someone with `settings.manage` would get from the manual "Export All Data" tile:
 //
-//   1. `GET /admin/export` — Super clicks the tile in Admin → Actions,
+//   1. `GET /export` — clicked from the tile in Actions,
 //      the JSON streams to their browser. Respects the Business Start
 //      Date cutoff so pre-cutoff money rows drop out unless Super has
 //      the reveal toggle on.
@@ -29,6 +29,8 @@ export type DataSnapshot = {
    *  "full" backup file from a "filtered" download during restore. */
   bsdCutoffApplied: boolean;
   users: unknown[];
+  /** Custom-role GRANTS. Was the `UserRole` enum table, which is gone —
+   *  a grant now carries its role, suspension state and who granted it. */
   userRoles: unknown[];
   equipment: unknown[];
   checkouts: unknown[];
@@ -79,7 +81,7 @@ export async function buildDataSnapshot(cutoff: Date | null): Promise<DataSnapsh
     auditEvents,
   ] = await Promise.all([
     prisma.user.findMany({ orderBy: { createdAt: "asc" } }),
-    prisma.userRole.findMany(),
+    prisma.userCustomRole.findMany({ include: { customRole: true } }),
     prisma.equipment.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.checkout.findMany({ where: { ...cutoffWhere("Checkout", cutoff) } }),
     prisma.client.findMany({ orderBy: { createdAt: "asc" } }),

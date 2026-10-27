@@ -18,8 +18,8 @@ type ContactRow = {
 };
 
 /**
- * Super-only "View as this client" button. Shown on each client card in
- * the admin ClientsTab. On click, fetches the impersonatable contacts
+ * The "View as this client" button (`clients.view-as`). Shown on each client card in
+ * the ClientsTab. On click, fetches the impersonatable contacts
  * for the client:
  *
  *  - Zero clerk-linked contacts → error toast, no dialog. Nothing to
@@ -51,7 +51,7 @@ export default function ViewAsClientButton({
     setBusy(true);
     try {
       const data = await apiGet<{ contacts: ContactRow[] }>(
-        `/api/admin/clients/${clientId}/impersonatable-contacts`,
+        `/api/clients/${clientId}/impersonatable-contacts`,
       );
       const list = data.contacts ?? [];
       const clerkLinked = list.filter((c) => c.hasClerkAccount);

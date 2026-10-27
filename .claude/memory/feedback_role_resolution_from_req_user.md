@@ -9,7 +9,7 @@ Any route helper that decides "is this caller a worker / admin / super"
 must read `req.user.roles`, which `requireApproved` populates with the
 **impersonation-adjusted** roles. Never re-query `prisma.user` for roles.
 
-**Why:** a fresh DB lookup returns the caller's *real* roles, so a Super
+**Why:** a fresh DB lookup returns the caller's *real* roles, so someone with `people.approve`
 using "view as Worker" keeps every super power on that surface while every
 other surface correctly demotes them — the view-as feature then lies about
 exactly the thing it exists to test. Guides shipped this bug in

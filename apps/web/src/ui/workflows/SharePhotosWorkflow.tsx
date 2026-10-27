@@ -79,7 +79,7 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
       const qs = new URLSearchParams();
       if (dateFrom) qs.set("from", dateFrom);
       if (dateTo) qs.set("to", dateTo);
-      const list = await apiGet<PhotoItem[]>(`/api/admin/photos?${qs}`);
+      const list = await apiGet<PhotoItem[]>(`/api/photos?${qs}`);
       setPhotos(Array.isArray(list) ? list : []);
     } catch {
       setPhotos([]);

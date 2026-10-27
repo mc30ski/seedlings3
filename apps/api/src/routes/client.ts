@@ -8,7 +8,7 @@ import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 
 /**
- * Client-facing routes. Require Clerk auth but NOT worker/admin roles.
+ * Client-facing routes. Require Clerk auth but no staff entitlement.
  * Access is scoped to the client linked via ClientContact.clerkUserId.
  *
  * Business Start Date cutoff is OPERATOR-ONLY: do NOT call resolveCutoff()
@@ -19,7 +19,7 @@ import { AUDIT } from "../lib/auditActions";
  * would gaslight clients about service the business actually performed.
  */
 export default async function clientRoutes(app: FastifyInstance) {
-  // Guard: must be authenticated via Clerk. When a Super is impersonating
+  // Guard: must be authenticated via Clerk. When someone with `clients.view-as` is impersonating
   // a client (via the x-impersonate-client-contact header, resolved by
   // plugins/clientImpersonation.ts), the caller's own clerkUserId is
   // real but we want every route body to run against the impersonated
@@ -230,7 +230,7 @@ export default async function clientRoutes(app: FastifyInstance) {
           orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
         });
     if (!candidate) {
-      throw app.httpErrors.notFound("This proposal is no longer available — ask an admin to link you manually.");
+      throw app.httpErrors.notFound("This proposal is no longer available — ask someone with schedule authority to link you manually.");
     }
     // Actor is the client themselves. The auth plugin auto-provisions a User
     // row for every Clerk identity, but fall back to a null actor (allowed by
@@ -358,12 +358,12 @@ export default async function clientRoutes(app: FastifyInstance) {
         // ANNOUNCEMENT, ESTIMATE) never surface to the client — same
         // rule applied by the worker route.
         workflow: { in: ["STANDARD", "ONE_OFF"] },
-        // isAdminOnly is INTENTIONALLY NOT filtered here. That flag is
+        // mustBeAssigned is INTENTIONALLY NOT filtered here. That flag is
         // about worker ASSIGNMENT behavior ("Administered — workers
         // cannot claim, must be assigned") — nothing to do with what the
         // client sees. Estimates auto-set it to true but they're already
         // excluded by the workflow filter above, so leaving it off can't
-        // leak them. Removing the filter here fixes a bug where admins
+        // leak them. Removing the filter here fixes a bug where holders of `schedule.manage`
         // who checked "Administered" on a legitimate service to control
         // assignment inadvertently hid the completed job from the client.
         // Historical data has some rows in a completion state with
@@ -486,7 +486,7 @@ export default async function clientRoutes(app: FastifyInstance) {
           workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").trim()).filter(Boolean),
           // durationMinutes intentionally omitted — see comment on the select above.
           photos: photos.filter(Boolean),
-          // `paid` is true ONLY after the admin confirms the payment.
+          // `paid` is true ONLY after the payment has been approved.
           // Until then, the row exists (because the client self-reported
           // via /pay/[token]) but the money hasn't been verified
           // received. We expose a separate `paymentPending` flag so the
@@ -795,7 +795,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         // Belt-and-suspenders exclusion for any occurrence flagged as
         // an estimate via legacy isEstimate.
         isEstimate: false,
-        // isAdminOnly is INTENTIONALLY NOT filtered — see the same
+        // mustBeAssigned is INTENTIONALLY NOT filtered — see the same
         // note in the /client/jobs query above. It's an assignment
         // rule, not a visibility rule.
         OR: [
@@ -1071,25 +1071,34 @@ export default async function clientRoutes(app: FastifyInstance) {
 
   /**
    * Fire-and-forget admin notification when a client submits a change
-   * request. Push to every approved admin/super. SMS/email gated by the
+   * request. Push to every approved management. SMS/email gated by the
    * NOTIFY_CHANGE_REQUEST_VIA_SMS_EMAIL setting (default off, push-only).
    */
-  async function notifyAdminsOfChangeRequest(opts: {
+  async function notifySchedulersOfChangeRequest(opts: {
     kind: "RESCHEDULE" | "SKIP";
     propertyLabel: string;
     clientLabel: string;
     occurrenceDateLabel: string;
     comment: string | null;
     /** Optional client-suggested new date for RESCHEDULE. Not applied
-     *  by approval — just included in the admin push so they have it
+     *  by approval — just included in the push so the recipient has it
      *  before reaching out. */
     proposedStartAt?: Date | null;
   }): Promise<void> {
     try {
-      const admins = await prisma.user.findMany({
+      const scheduleManagers = await prisma.user.findMany({
         where: {
           isApproved: true,
-          roles: { some: { role: { in: ["ADMIN" as any, "SUPER" as any] } } },
+          // Whoever runs the schedule — `schedule.manage`.
+          customRoles: {
+            some: {
+              suspendedAt: null,
+              customRole: {
+                suspendedAt: null,
+                entitlements: { some: { entitlement: "schedule.manage" } },
+              },
+            },
+          },
         },
         select: { id: true },
       });
@@ -1108,14 +1117,14 @@ export default async function clientRoutes(app: FastifyInstance) {
         `${opts.clientLabel} requested a ${verb} for ${opts.propertyLabel} on ${opts.occurrenceDateLabel}.` +
         suggestion +
         (opts.comment ? ` "${opts.comment}"` : "");
-      for (const u of admins) {
+      for (const u of scheduleManagers) {
         notifyWorker(u.id, body, { subject, pushOnly: !allowSmsEmail }).catch(() => {});
       }
     } catch (err) {
       // Notifications are best-effort — never let a failure here break
       // the request creation.
       // eslint-disable-next-line no-console
-      console.warn("notifyAdminsOfChangeRequest failed:", err);
+      console.warn("notifySchedulersOfChangeRequest failed:", err);
     }
   }
 
@@ -1151,10 +1160,10 @@ export default async function clientRoutes(app: FastifyInstance) {
     const body = req.body || {};
     // Reschedule requests are conversation starters, not commands. The
     // client *may* suggest a date (defaults to 3 days from now in the
-    // UI); the admin uses it as context when reaching out to confirm a
-    // real time. Approving the request does NOT auto-apply this date —
-    // the admin does the actual schedule edit through normal admin
-    // tooling after talking to the client.
+    // UI); whoever handles the request uses it as context when reaching out
+    // to confirm a real time. Approving the request does NOT auto-apply this
+    // date — the schedule edit happens through the normal scheduling tools
+    // after talking to the client.
     const occ = await verifyOccurrenceForClient(id, clerkUserId);
     if (occ.status !== "SCHEDULED" && occ.status !== "ACCEPTED") {
       throw app.httpErrors.badRequest("Only scheduled jobs can be rescheduled.");
@@ -1197,7 +1206,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         },
       });
       // Consequence: opens a PENDING request that locks out any further
-      // client change request on this occurrence until an admin resolves it.
+      // client change request on this occurrence until someone with `schedule.manage` resolves it.
       await writeAudit(tx, AUDIT.CHANGE_REQUEST.CREATED, me.id, {
         changeRequestId: row.id,
         kind: "RESCHEDULE",
@@ -1209,7 +1218,7 @@ export default async function clientRoutes(app: FastifyInstance) {
       return row;
     });
     const ctx = await buildChangeRequestContext(id, me.id);
-    void notifyAdminsOfChangeRequest({
+    void notifySchedulersOfChangeRequest({
       kind: "RESCHEDULE",
       propertyLabel: ctx.propertyLabel,
       clientLabel: ctx.clientLabel,
@@ -1256,7 +1265,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         },
       });
       // Consequence: opens a PENDING request that locks out any further
-      // client change request on this occurrence until an admin resolves it.
+      // client change request on this occurrence until someone with `schedule.manage` resolves it.
       await writeAudit(tx, AUDIT.CHANGE_REQUEST.CREATED, me.id, {
         changeRequestId: row.id,
         kind: "SKIP",
@@ -1267,7 +1276,7 @@ export default async function clientRoutes(app: FastifyInstance) {
       return row;
     });
     const ctx = await buildChangeRequestContext(id, me.id);
-    void notifyAdminsOfChangeRequest({
+    void notifySchedulersOfChangeRequest({
       kind: "SKIP",
       propertyLabel: ctx.propertyLabel,
       clientLabel: ctx.clientLabel,
@@ -1291,7 +1300,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         where: { id },
         data: { status: "CANCELED", resolvedAt: new Date() },
       });
-      // Consequence: withdraws the request from the admin queue and frees the
+      // Consequence: withdraws the request from the scheduling queue and frees the
       // occurrence for a new client change request. Snapshot the pre-cancel
       // row since the PENDING state is overwritten in place.
       await writeAudit(tx, AUDIT.CHANGE_REQUEST.CANCELED, me.id, {

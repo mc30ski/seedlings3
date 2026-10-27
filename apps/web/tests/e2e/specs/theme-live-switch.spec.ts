@@ -27,15 +27,15 @@ test("switching theme live repaints the page, not just the cards", async ({ page
   await page.goto("/");
   await page.evaluate(() => {
     localStorage.setItem("seedlings_theme", "dark");
-    localStorage.setItem("seedlings_topTab", JSON.stringify("worker"));
-    localStorage.setItem("seedlings_workerTab", JSON.stringify("profile"));
+    localStorage.setItem("seedlings_topTab", JSON.stringify("staff"));
+    localStorage.setItem("seedlings_staffTab", JSON.stringify("profile"));
     localStorage.setItem("seedlings_lastAppOpenedAt", new Date().toISOString());
   });
   await page.goto("/");
   await page.waitForLoadState("networkidle").catch(() => {});
   // Deliberately a WORKER account. The Appearance card is gated on `isSelf`,
-  // and for an admin/super that resolves through the profile's user picker
-  // (`targetUserId = isAdmin ? selectedUserId : me.id`, default ""), so the
+  // and for someone with `schedule.manage` that resolves through the profile's user picker
+  // (`targetUserId` defaulted to "" rather than to yourself), so the
   // card is absent until they select themselves. A worker always sees it,
   // and the bug under test is theme-wide, not role-specific.
   //

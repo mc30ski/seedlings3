@@ -6,13 +6,23 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // THE SCHEMA ENGINE MUST NOT GO THROUGH THE POOLER.
+  //
+  // Both Neon URLs are `-pooler` hosts, which is right for Prisma Client
+  // and wrong for `migrate`. A migration takes a Postgres advisory lock,
+  // and in transaction pooling the backend that takes it is not the one
+  // that comes back to release it — so the lock strands. That is not
+  // theoretical: a `migrate deploy` hung here on 2026-10-22 and the
+  // backend had to be killed by hand before the retry could run.
+  //
+  // `url` stays pooled (Prisma Client wants the pooler); `directUrl` is
+  // used ONLY by migrate / db push / db pull. `prisma generate` does not
+  // resolve it, so an unset DIRECT_URL cannot break a Vercel build —
+  // verified, because `postinstall` runs generate on every deploy. The
+  // commands that DO need it are `validate`, `migrate` and `db`, which
+  // only ever run by hand or through script.db.prod.sh.
+  directUrl = env("DIRECT_URL")
   // shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
-}
-
-enum Role {
-  WORKER
-  ADMIN
-  SUPER
 }
 
 enum EquipmentStatus {
@@ -63,17 +73,30 @@ enum AuditScope {
   // archiving, and the name -> User identity mapping.
   PAYROLL
 
-  // Added 2026-09-02 with the Super forecasting tool (Money -> Forecast).
+  // Added 2026-09-02 with a caller with `settings.manage` forecasting tool (Money -> Forecast).
   // A forecast changes no live setting and pays nobody, but it is the
   // document a pay-structure decision gets argued from, so who built it,
   // who edited the assumptions, and who deleted it are all worth keeping.
   FORECAST
 
-  // Added 2026-09-20 with wall Displays (Super -> System -> Displays).
+  // Added 2026-09-20 with wall Displays (System -> Displays).
   // A paired display reads job and worker data with NO user session, so
   // who paired one, into which mode, and who revoked it are the whole
   // security story. The token handoff itself is audited too.
   DISPLAY
+
+  // Added 2026-10-11 with roles + entitlements. Covers defining a custom
+  // role, changing its entitlements, suspending or deleting it, and
+  // granting or revoking it on a person. Each changes what somebody may
+  // do, so none may happen without a trail.
+  ROLE
+
+  // The area tree decides who sees what money, so creating, renaming,
+  // retiring and the guided move all leave a trail. AREA_ASSIGNMENT is
+  // separate because granting someone a role in a territory is a different
+  // act from reshaping the territory itself.
+  AREA
+  AREA_ASSIGNMENT
 }
 
 enum AuditVerb {
@@ -144,7 +167,7 @@ enum AuditVerb {
   POLICY_EXCEPTION_REVOKED
   POLICY_ARCHIVED
   POLICY_UNARCHIVED
-  POLICY_ADMIN_UPLOADED_ON_BEHALF
+  POLICY_UPLOADED_ON_BEHALF
   // Promotion lifecycle verbs. Scope: PROMOTION. See models Promotion /
   // PromotionDelivery below.
   PROMOTION_STARTED
@@ -155,7 +178,7 @@ enum AuditVerb {
   PROMOTION_DUPLICATED
   PROMOTION_DISPATCHED
   PROMOTION_TEST_SENT
-  // Rotation of the auto-managed PROMOTION_HMAC_SECRET (Super-only).
+  // Rotation of the auto-managed PROMOTION_HMAC_SECRET (`marketing.manage`).
   // Metadata carries { previousSecretPreviewHash, rotatedAt }. Rotating
   // invalidates every in-flight promo click URL's attribution (still
   // redirects, logs as anonymous).
@@ -215,9 +238,21 @@ enum AuditVerb {
 }
 
 enum WorkerType {
+  /// W-2. Made whole on a write-off; no contractor fee.
   EMPLOYEE
+
+  /// 1099. Carries the contractor fee; not made whole.
   CONTRACTOR
-  TRAINEE
+
+  /// Not paid at all — a family member or observer with real access to the
+  /// app and no place in payroll. A legitimate answer to "how is this person
+  /// paid": they are not.
+  ///
+  /// MUST never reach a payment split, a wage, a payroll row or a tax
+  /// export (G33). `rateFor()` throws rather than defaulting when handed
+  /// one — an unpaid person charged a contractor fee is a silent money bug,
+  /// and a crash is recoverable.
+  UNPAID
 }
 
 // ── Compliance policy system ─────────────────────────────────────────────────
@@ -284,7 +319,7 @@ enum GuideVersionStatus {
 }
 
 /// Media kind for a guide asset. Drives who may upload it: IMAGE is
-/// Admin+, VIDEO is Super-only (see docs/features/education.md — video is
+/// `content.manage`; VIDEO needs `content.approve` (see docs/features/education.md — video is
 /// the only asset class that can quietly become expensive, and the only
 /// one with a format/playback trap worth concentrating in one person).
 enum GuideAssetKind {
@@ -331,17 +366,6 @@ model User {
   // Earnings absorbs the full target gross.
   hourlyWage Decimal @default(0) @db.Decimal(10, 2)
 
-  // Privilege overrides. Null = follow workerType default (resolved in app
-  // code via DEFAULTS_BY_WORKERTYPE). True/false = explicit override.
-  //
-  //   canPullInventory  defaults: TRAINEE=false, CONTRACTOR/EMPLOYEE=true
-  //   canChargeBusinessExpenses  defaults: false everywhere (granted explicitly)
-  //
-  // Admin/Super always have both effectively true regardless of these
-  // columns — the role guard wins.
-  canPullInventory          Boolean?
-  canChargeBusinessExpenses Boolean?
-
   // Compliance-policy sign / upload / exception state lives entirely in
   // the PolicyDocument / PolicyDocumentVersion / PolicySignature /
   // PolicyException / PolicyReadingProgress model chain. There is no
@@ -350,8 +374,10 @@ model User {
   // relations. See services/policies.ts.
 
   // LLC-owner flag. At most one user may have this set to true (enforced via
-  // partial unique index in the migration). Additive to ADMIN/SUPER role —
-  // does not replace it. The owner participates in jobs like any worker;
+  // partial unique index in the migration). It is NOT a role and grants
+  // nothing: no route is gated on it, and the capability system does not
+  // know it exists. It is business identity — who owns the LLC — and it
+  // changes how money is CLASSIFIED, not who may do what. The owner participates in jobs like any worker;
   // their PaymentSplit rows get ownerEarnings=true, which the Gusto/payroll
   // exports filter out (the owner takes a draw, not a paycheck).
   isOwner Boolean @default(false)
@@ -372,7 +398,6 @@ model User {
   lastSignInAt  DateTime?
   lastSessionId String?
 
-  roles          UserRole[]
   checkouts      Checkout[]
   checkoutSplits CheckoutSplit[]
   auditEvents    AuditEvent[]    @relation("AuditActor")
@@ -472,20 +497,20 @@ model User {
   policyReadingProgress      PolicyReadingProgress[]
 
   // Promotion audit-actor back-relations. All use onDelete:SetNull on
-  // the forward side so hard-deleting a Super doesn't destroy audit
+  // the forward side so hard-deleting someone with `settings.manage` doesn't destroy audit
   // history — the row lingers with a null actor and the UI renders
   // "unknown" instead of a dangling FK.
-  promotionsCreated            Promotion[]            @relation("PromotionCreator")
-  promotionsUpdated            Promotion[]            @relation("PromotionUpdater")
-  promotionsStarted            Promotion[]            @relation("PromotionStarter")
-  promotionsClosed             Promotion[]            @relation("PromotionCloser")
+  promotionsCreated   Promotion[]               @relation("PromotionCreator")
+  promotionsUpdated   Promotion[]               @relation("PromotionUpdater")
+  promotionsStarted   Promotion[]               @relation("PromotionStarter")
+  promotionsClosed    Promotion[]               @relation("PromotionCloser")
   streamPausesOpened  JobOccurrencePauseEvent[] @relation("StreamPausedBy")
   streamPausesResumed JobOccurrencePauseEvent[] @relation("StreamResumedBy")
 
   promotionLandingPagesCreated PromotionLandingPage[] @relation("PromotionLandingCreator")
   promotionLandingPagesUpdated PromotionLandingPage[] @relation("PromotionLandingUpdater")
   // Vanity URL audit-actor back-relations — SetNull on the forward
-  // side (see VanityPage) so hard-deleting a Super doesn't destroy
+  // side (see VanityPage) so hard-deleting someone with `settings.manage` doesn't destroy
   // audit history.
   vanityPagesCreated           VanityPage[]           @relation("VanityPageCreator")
   vanityPagesUpdated           VanityPage[]           @relation("VanityPageUpdater")
@@ -511,12 +536,176 @@ model User {
   guideVersionsRejected  GuideVersion[] @relation("GuideVersionRejecter")
   guideAssetsUploaded    GuideAsset[]   @relation("GuideAssetUploader")
 
-  // Wall displays (Super -> System -> Displays). A Display is a paired
+  // Wall displays (System -> Displays). A Display is a paired
   // DEVICE, not a person — these relations only record which human
   // approved or revoked one.
-  displaysPaired        Display[]            @relation("DisplayPairedBy")
-  displaysRevoked       Display[]            @relation("DisplayRevokedBy")
-  publicPhotosHidden    JobOccurrencePhoto[] @relation("PublicPhotoHiddenBy")
+  displaysPaired     Display[]            @relation("DisplayPairedBy")
+  displaysRevoked    Display[]            @relation("DisplayRevokedBy")
+  publicPhotosHidden JobOccurrencePhoto[] @relation("PublicPhotoHiddenBy")
+
+  // Roles + entitlements. These are grants held GLOBALLY; an area-scoped
+  // grant lives on AreaAssignment, added with areas.
+  customRoles        UserCustomRole[] @relation("UserCustomRoleUser")
+  customRolesGranted UserCustomRole[] @relation("UserCustomRoleGrantor")
+  customRolesCreated CustomRole[]     @relation("CustomRoleCreator")
+
+  /// Informational home areas. Grant nothing (G17).
+  areaMemberships        AreaMembership[] @relation("AreaMembershipUser")
+  /// Roles held within an area's subtree. These DO grant.
+  areaAssignments        AreaAssignment[] @relation("AreaAssignmentUser")
+  areaAssignmentsGranted AreaAssignment[] @relation("AreaAssignmentGrantor")
+}
+
+// ─── Roles and entitlements ──────────────────────────────────────────────
+// A custom role is a NAMED BUNDLE of entitlements assignable to people.
+// Manager, coordinator and bookkeeper are custom roles rather than `Role`
+// enum values — see the comment on `enum Role`.
+//
+// Roles are ABSOLUTE, never deltas from a base: the same role goes to people
+// with different base roles (a WORKER in the field and a desk-bound STAFF
+// member), so "extends WORKER" would be meaningless for the second. The role
+// builder may COPY a base role's entitlements as a starting point, but the
+// saved role holds every entitlement explicitly.
+//
+// Full design: docs/features/permissions.md
+model CustomRole {
+  id          String  @id @default(cuid())
+  /// Display text, e.g. "District Manager", suggested from the
+  /// MANAGER_TITLES setting. NO CODE EVER BRANCHES ON THIS — it is a label;
+  /// the entitlements are the behaviour.
+  name        String  @unique
+  description String?
+
+  /// PROVENANCE ONLY: this row came from `install-starter-roles.ts` rather
+  /// than from an operator in the Roles tab. Nothing is gated on it.
+  ///
+  /// It used to carry two rules — undeletable, and at most one per person —
+  /// and both misfired, because the install script stamps it on everything
+  /// it installs. That is seven roles, not four: the ladder PLUS Field
+  /// Clearance and the two "May …" exception roles, which exist precisely to
+  /// be granted on top of a ladder rung and could therefore never be granted
+  /// at all. The flag meant "the installer made it" while the rules wanted
+  /// "is a rung of the ladder", and those are different sets.
+  ///
+  /// The ladder rule now lives on `isLadderRung`. Deletion is governed by
+  /// the suspend-first flow that applies to every role.
+  isSystem Boolean @default(false)
+
+  /// A RUNG OF THE STARTER LADDER: Trainee -> Worker -> Admin -> Super.
+  ///
+  /// At most one may be held per person, because the ladder is built on
+  /// inheritance — Admin already contains Worker, which contains Trainee —
+  /// so a second rung adds nothing and makes the provenance view attribute a
+  /// capability to the lower one. Not expressible as a unique index (the
+  /// condition is "at most one row whose JOINED role has this"), so it is
+  /// enforced in `customRoles.assign`.
+  ///
+  /// Explicit rather than inferred from `perspectiveOrder`. Being offered as
+  /// a lens and being mutually exclusive are different properties that
+  /// happen to coincide for these four; a custom role made into a
+  /// perspective must not inherit exclusivity it never asked for.
+  isLadderRung Boolean @default(false)
+
+  /// Which icon the perspective picker draws beside this role, as a stable
+  /// KEY from `PERSPECTIVE_ICONS` (@repo/permissions) — never a component
+  /// name from a UI library, which would rot the moment the icon set is
+  /// swapped. Null means no icon; the picker falls back to a blank gutter
+  /// so the labels still line up.
+  ///
+  /// Only meaningful when `isPerspective` is true, and deliberately NOT
+  /// cleared when that is turned off: an operator who toggles a role off
+  /// and back on should not have to pick the icon again.
+  perspectiveIcon String?
+
+  /// Suspending makes every grant of this role inactive IMMEDIATELY while
+  /// leaving assignments intact, and is reversible. It is also how a role is
+  /// switched off for everyone at once — there is no separate mechanism.
+  /// Deleting is possible only from the suspended state.
+  suspendedAt DateTime?
+
+  createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("CustomRoleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  entitlements RoleEntitlement[]
+  userGrants   UserCustomRole[]
+
+  /// The same role, held within an area rather than globally.
+  areaGrants AreaAssignment[]
+
+  /// Immutable identifier for roles a STARTER SCRIPT owns ("seedlings.worker").
+  /// The script upserts by key, so re-running it after adding entitlements
+  /// rebuilds the role while preserving its id — and therefore every
+  /// UserCustomRole and AreaAssignment pointing at it. `name` is an editable
+  /// label and can never be the key. User-created roles have none.
+  key String? @unique
+
+  /// Roles BUILD ON each other: Worker inherits Trainee and adds field
+  /// clearance; Admin inherits Worker. Adding an entitlement to a base must
+  /// reach everything above it, or an operator maintains duplicated sets by
+  /// hand and they drift. The cost is that editing a base changes its
+  /// descendants, so the UI must show that impact before saving (G34).
+  ///
+  /// Restrict, not Cascade: deleting a role that others build on would
+  /// silently strip entitlements from everyone holding them.
+  inheritsFromId String?
+  inheritsFrom   CustomRole?  @relation("RoleInheritance", fields: [inheritsFromId], references: [id], onDelete: Restrict)
+  inheritedBy    CustomRole[] @relation("RoleInheritance")
+
+  /// Does this role appear as a top-tab PERSPECTIVE?
+  ///
+  /// A perspective lets someone look at the app as a person with less access
+  /// would — the downgrade is the feature. It is a named SUBSET of what you
+  /// hold, so it can only ever narrow (G35). You are offered a perspective
+  /// only if you hold its role or one inheriting it, which is why an unpaid
+  /// observer never sees someone with `schedule.manage` perspective.
+  isPerspective    Boolean @default(false)
+  /// Dropdown position, so the list reads as a ladder rather than a set.
+  perspectiveOrder Int?
+
+  @@index([suspendedAt])
+  @@index([key])
+  @@index([inheritsFromId])
+  @@index([isPerspective, perspectiveOrder])
+}
+
+/// One entitlement held by one role. `entitlement` is a STRING, not a Prisma
+/// enum: entitlements are defined in code (each maps to routes), so adding
+/// one is a code change, not a migration. The TypeScript union is the source
+/// of truth and the permissions matrix is generated from it.
+model RoleEntitlement {
+  id           String     @id @default(cuid())
+  customRoleId String
+  customRole   CustomRole @relation(fields: [customRoleId], references: [id], onDelete: Cascade)
+  entitlement  String
+
+  @@unique([customRoleId, entitlement])
+  @@index([entitlement])
+}
+
+/// A role held GLOBALLY by a person. Unique on the PAIR, not on userId:
+/// roles stack, and the union of everything a person holds is their
+/// authority. There is deliberately no per-person entitlement table — every
+/// grant goes through a named role, so an exception is a role someone can
+/// read rather than a tick nobody can audit.
+model UserCustomRole {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation("UserCustomRoleUser", fields: [userId], references: [id], onDelete: Cascade)
+  customRoleId String
+  customRole   CustomRole @relation(fields: [customRoleId], references: [id], onDelete: Cascade)
+
+  /// Pauses one person's grant without touching the role or anyone else's.
+  /// Deliberately NOT time-based expiry: date-driven revocation fails
+  /// silently at the worst moment.
+  suspendedAt DateTime?
+
+  grantedAt   DateTime @default(now())
+  grantedById String?
+  grantedBy   User?    @relation("UserCustomRoleGrantor", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, customRoleId])
+  @@index([userId])
 }
 
 model NotificationTemplate {
@@ -544,16 +733,6 @@ model PushSubscription {
   lastUsedAt DateTime?
 
   @@index([userId])
-}
-
-model UserRole {
-  id     String @id @default(cuid())
-  userId String
-  role   Role
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, role])
 }
 
 model Equipment {
@@ -589,7 +768,7 @@ model Equipment {
   // any active BLOCK policies that gate VEHICLE_RESERVE globally, and calls
   // policyPredicate.assertPoliciesSigned. Replaces the old
   // `requiresInsurance` boolean with a fully flexible per-piece opt-in that
-  // works for insurance, vehicle policy, or any other policy the admin
+  // works for insurance, vehicle policy, or any other policy a caller with `schedule.manage`
   // publishes. Empty array (default) = no equipment-level requirements.
   requiredPolicyIds String[] @default([])
 
@@ -750,7 +929,9 @@ model Client {
   vipReason String?
 
   notesInternal String?
-  adminTags     String? // JSON string array e.g. ["LATE_PAYER","ARGUMENTATIVE"] — admin-only
+  /// Internal context about a client — never shown to the client, and
+  /// stripped from client-facing payloads by observerRedaction.
+  internalTags  String? // JSON string array e.g. ["LATE_PAYER","ARGUMENTATIVE"]
 
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -827,7 +1008,7 @@ model ClientContact {
   //   • the client, via a signed HMAC opt-out URL in the promo footer
   //   • the client, via the "Opt in to promotion offers" affordance on
   //     the /pay/[token] page
-  //   • a Super, via the Promotions tab (opt-in requires typed APPROVE
+  //   • someone with `settings.manage`, via the Promotions tab (opt-in requires typed APPROVE
   //     and a documented reason, per CAN-SPAM defensive posture)
   //   • the Resend hard-bounce webhook (phase 2) → auto-opt-out for
   //     email with source="hard_bounce"
@@ -855,7 +1036,7 @@ model ClientContact {
   // has us service their own home). All matching rows can share
   // identity fields AND a Clerk binding. Identity drift between
   // rows is prevented at the UX layer:
-  //   • On create: the admin dialog runs a pre-flight lookup by
+  //   • On create: the dialog runs a pre-flight lookup by
   //     phone/email and surfaces matches, requiring an explicit
   //     "yes, add anyway" before writing.
   //   • On edit: the dialog detects linked rows (same clerkUserId
@@ -945,8 +1126,15 @@ model Property {
   jobs   Job[]
   photos PropertyPhoto[]
 
+  /// Exactly ONE area, and optional. A column, not a join table: a property
+  /// is in one place. Unassigned is allowed but warned for its CONSEQUENCE
+  /// — its work appears in no area's rollup.
+  areaId String?
+  area   Area?   @relation(fields: [areaId], references: [id], onDelete: Restrict)
+
   @@index([clientId])
   @@index([kind])
+  @@index([areaId])
 }
 
 // ----- Post-MVP: per-unit granularity inside aggregate-site Properties -----
@@ -1076,8 +1264,14 @@ model Job {
   followups              FollowupJob[]
   recommendedCollections JobRecommendedCollection[]
 
+  /// Where FUTURE occurrences in this chain land, when the previous one
+  /// cannot say. A projection default, never the source of truth for money.
+  defaultAreaId String?
+  defaultArea   Area?   @relation(fields: [defaultAreaId], references: [id], onDelete: Restrict)
+
   @@index([defaultGroupId])
   @@index([clientBulkPausedAt])
+  @@index([defaultAreaId])
 }
 
 model JobContact {
@@ -1142,11 +1336,11 @@ model JobOccurrence {
   /// ("trimmed the hedge at no charge"), so it must not leak onto the next
   /// invoice. There is deliberately no Job-level default.
   ///
-  /// Editable by the claimer, an admin, or a super — the crew that did the
+  /// Editable by the claimer, someone with `schedule.manage`, or someone with `settings.manage` — the crew that did the
   /// work is usually the only one who knows what to say.
   customerVisibleNotes String?
 
-  price   Float?
+  price Float?
 
   /// Optional CLIENT-VISIBLE detail under the labor line on the invoice —
   /// e.g. "3 hours at $50/hr". Presentational only. Typing an hourly
@@ -1184,7 +1378,14 @@ model JobOccurrence {
   isOneOff          Boolean @default(false) // @deprecated — use workflow
   isTentative       Boolean @default(false)
   isEstimate        Boolean @default(false) // @deprecated — use workflow
-  isAdminOnly       Boolean @default(false)
+  /// This visit cannot be SELF-CLAIMED; somebody with `schedule.manage` has
+  /// to assign it. An ASSIGNMENT rule, not a visibility one.
+  ///
+  /// Do NOT filter client-facing queries on this. It was once named for a
+  /// role, read as "only staff may SEE it", and filtered into
+  /// /client/jobs and /client/upcoming on that reading — legitimate
+  /// completed jobs stopped showing to clients in production.
+  mustBeAssigned    Boolean @default(false)
   isClientConfirmed Boolean @default(false)
 
   /// When we last OPENED A MESSAGE asking the client to confirm this visit.
@@ -1224,9 +1425,9 @@ model JobOccurrence {
   /// loses every time you follow up. Same pairing as
   /// paymentRequestSentAt / paymentRequestFirstSentAt.
   confirmationFirstRequestedAt DateTime?
-  isHighPriority    Boolean @default(false)
-  pinnedNote        String?
-  pinnedNoteRepeats Boolean @default(true)
+  isHighPriority               Boolean   @default(false)
+  pinnedNote                   String?
+  pinnedNoteRepeats            Boolean   @default(true)
 
   // Optional free-text description for the occurrence's guidance, shown
   // alongside the guidance photos. Carried forward to the next occurrence
@@ -1282,7 +1483,7 @@ model JobOccurrence {
   // Null = even-split fallback applies.
   completionSplits Json?
 
-  // One-time date override for the next repeating occurrence. Set by admins
+  // One-time date override for the next repeating occurrence. Set by holders of `schedule.manage`
   // on the CURRENT occurrence when a client has asked to shift ONLY the
   // next visit (e.g. "come one day earlier next time"). YYYY-MM-DD ET
   // calendar day. Consumed at payment-approval time by
@@ -1341,7 +1542,7 @@ model JobOccurrence {
   //
   // Distinct from `status = PAUSED` which is the WORKER TIMER paused
   // state during an in-progress job — completely different concept.
-  pauseEvents            JobOccurrencePauseEvent[]
+  pauseEvents JobOccurrencePauseEvent[]
 
   streamPausedAt         DateTime?
   streamPausedById       String?
@@ -1355,7 +1556,7 @@ model JobOccurrence {
   streamPauseReasonCode  String?
   streamResumeReminderAt DateTime?
 
-  // "Next visit not scheduled" warning — suppressed by an admin.
+  // "Next visit not scheduled" warning — suppressed by someone with `schedule.manage`.
   //
   // A next-visit ghost is NOT a row. It is synthesized per-job by
   // services.jobs.listNextOccurrenceGhosts() from the job's most-recent
@@ -1369,11 +1570,13 @@ model JobOccurrence {
   // Replaces a 30-day auto-drop. Expired ghosts used to fade out on
   // their own once they were a month past due, which silently threw
   // away the reminder whether or not anyone had dealt with it. Now they
-  // persist until an admin says so, and saying so is an explicit,
+  // persist until someone with `schedule.manage` says so, and saying so is an explicit,
   // audited, reversible act.
   //
-  // Set together via PATCH /occurrences/:id/next-visit-warning — ADMIN
-  // or SUPER only. Suppressed ghosts are excluded from the feed and from
+  // Set together via PATCH /occurrences/:id/next-visit-warning. The route
+  // takes `approvedUser` and scopes to the caller's own visit in the
+  // handler — this comment claimed "ADMIN or SUPER only", which named roles
+  // that no longer exist AND overstated the restriction. Suppressed ghosts are excluded from the feed and from
   // BOTH ghost-expiry counts; the "Suppressed next visits" status filter
   // is what brings them back into view to be restored.
   nextVisitWarningSuppressedAt   DateTime?
@@ -1393,7 +1596,7 @@ model JobOccurrence {
   // actual hours and adjusted estimate is within the warning threshold
   // (currently 30%, matching the visual warning on the card), hoursApprovedAt
   // is stamped immediately. Outside the threshold, it stays null and the
-  // occurrence shows an "Hours awaiting approval" chip until an admin/super
+  // occurrence shows an "Hours awaiting approval" chip until someone with `schedule.manage`/super
   // explicitly approves (or adjusts startedAt/completedAt back into range).
   hoursApprovedAt   DateTime?
   hoursApprovedById String?
@@ -1437,6 +1640,12 @@ model JobOccurrence {
   followupJobs     FollowupJob[]
   changeRequests   OccurrenceChangeRequest[]
 
+  /// Stamped at creation, editable while SCHEDULED, FROZEN at completion —
+  /// the same rule as completion splits (G22). Money rides the occurrence,
+  /// so moving a property must never rewrite what a closed visit earned.
+  areaId String?
+  area   Area?   @relation(fields: [areaId], references: [id], onDelete: Restrict)
+
   @@index([linkGroupId])
   @@index([assignedGroupId])
   @@index([jobId, status])
@@ -1444,6 +1653,7 @@ model JobOccurrence {
   @@index([kind])
   @@index([hoursApprovedAt])
   @@index([streamResumeReminderAt])
+  @@index([areaId])
 }
 
 /// One pause of a repeating stream, kept after it ends.
@@ -1476,9 +1686,9 @@ model JobOccurrencePauseEvent {
   reminderAt DateTime?
 
   /// Null while the pause is still open. Set on resume.
-  resumedAt    DateTime?
-  resumedById  String?
-  resumedBy    User?     @relation("StreamResumedBy", fields: [resumedById], references: [id], onDelete: SetNull)
+  resumedAt     DateTime?
+  resumedById   String?
+  resumedBy     User?     @relation("StreamResumedBy", fields: [resumedById], references: [id], onDelete: SetNull)
   /// The date the stream was resumed ONTO — resume always picks a fresh
   /// start, so this is not derivable from the occurrence afterwards.
   resumedOntoAt DateTime?
@@ -1625,7 +1835,7 @@ model Payment {
 
   // Nullable: client self-reports via /pay/[token] without a logged-in user;
   // claimer on-site reports set this to themselves; admin direct-records sets
-  // this to the admin.
+  // this to a caller with `schedule.manage`.
   collectedById String?
   collectedBy   User?   @relation("PaymentCollector", fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
@@ -1639,7 +1849,7 @@ model Payment {
   confirmedById String?
   confirmedBy   User?     @relation("PaymentConfirmer", fields: [confirmedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
   // True when the row was created via /pay/[token] client action OR a worker
-  // on-site report — distinguished from an admin-direct record for audit + UI.
+  // on-site report — distinguished from someone with `schedule.manage`-direct record for audit + UI.
   selfReported  Boolean   @default(false)
 
   nextOccurrenceSkipReason String? // null = created successfully, "one_off" = expected, others = warning
@@ -1707,7 +1917,7 @@ model Payment {
   // payroll, 1099s, P&L, vs-revenue, accounting) filters
   // `skippedAt IS NULL`. Payment splits stay on the row for audit
   // history but are excluded from all payroll/1099 aggregations.
-  // Gated to Super-only + type-APPROVE at the mutation layer.
+  // Gated to `marketing.manage` + type-APPROVE at the mutation layer.
   skippedAt   DateTime?
   skippedById String?
   skippedBy   User?     @relation("PaymentSkip", fields: [skippedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
@@ -2011,7 +2221,7 @@ model BusinessExpense {
   // Reconciliation flag — set when the operator has manually matched
   // this entry against QuickBooks (or another external source of
   // truth) and confirmed the two agree. Null = not yet reconciled.
-  // Filterable on the Super → Money → Ledger tab so the operator can
+  // Filterable on the Money → Ledger tab so the operator can
   // see their outstanding work queue.
   //
   // Applies to ALL entry types (EXPENSE, CAPITAL_CONTRIBUTION,
@@ -2052,7 +2262,7 @@ model Setting {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Promotions — Super-only marketing campaigns that piggyback on outgoing
+// Promotions — `marketing.manage` campaigns that piggyback on outgoing
 // invoice communications and/or display passively on the /pay/[token]
 // invoice page. Design goals:
 //   • Piggyback (no separate scheduler needed for MVP-1)
@@ -2766,7 +2976,7 @@ model OccurrenceInstruction {
 
 // ── Client-initiated change requests on a scheduled occurrence ──────────────
 // Clients can request a reschedule (with proposed date) or skip a single
-// occurrence. Admins approve/deny — approval applies the change.
+// occurrence. Holders of `schedule.manage` approve/deny — approval applies the change.
 enum ChangeRequestKind {
   RESCHEDULE
   SKIP
@@ -2816,16 +3026,16 @@ model OccurrenceChangeRequest {
 model Supply {
   id String @id @default(cuid())
 
-  name          String
-  description   String?
-  unit          String // "bag", "spool", "lb"
+  name            String
+  description     String?
+  unit            String // "bag", "spool", "lb"
   // For future UPC-scan add-flow. Nullable; not unique because the same
   // SKU could legitimately be entered twice with different display names.
-  upc           String?
+  upc             String?
   // Schedule C category for the BusinessExpense paired with each purchase.
   // Defaults to "Supplies"; can be overridden per supply (e.g. "Car and
   // truck expenses" if you ever want to track fuel as inventory).
-  category      String  @default("Supplies")
+  category        String  @default("Supplies")
   /// WHAT THE STOCK COST IS NOT STORED HERE. There was a `businessCost`
   /// column holding the most recent purchase price; every buy overwrote it,
   /// so recording a receipt silently restated what all existing stock had
@@ -2840,7 +3050,7 @@ model Supply {
   /// of the crew's pay. They never do — the client pays them — and the name
   /// told every reader the opposite. May exceed `businessCost`; the
   /// difference is the material margin.
-  clientUnitPrice Float @default(0)
+  clientUnitPrice Float   @default(0)
 
   /// Percent ON TOP of the average cost of stock on hand, as an alternative
   /// to the fixed `clientUnitPrice` above. A markup keeps the default in step
@@ -2858,7 +3068,7 @@ model Supply {
   clientMarkupPercent Float?
   // Physical units in stock. Available = onHand − Σ(active holds), computed
   // at query time.
-  onHand        Int     @default(0)
+  onHand              Int    @default(0)
 
   archivedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -2910,10 +3120,10 @@ model SupplyPurchase {
   supplyId String
   supply   Supply @relation(fields: [supplyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  quantity      Int
-  unitCost      Float // per-unit cost at this purchase (snapshot)
-  totalCost     Float // quantity × unitCost (denormalized for export)
-  date          DateTime @default(now())
+  quantity  Int
+  unitCost  Float // per-unit cost at this purchase (snapshot)
+  totalCost Float // quantity × unitCost (denormalized for export)
+  date      DateTime @default(now())
   /// NO vendor, and NO invoiceNumber. A receipt/invoice number describes the RECEIPT, which
   /// is a Ledger fact — `BusinessExpense` is where both live and where they are
   /// reconciled from. Carrying second copies here invited two answers to one
@@ -2923,7 +3133,7 @@ model SupplyPurchase {
   /// receipt reading "Lowes" on the purchase and "Lowe's Hardware" on the
   /// ledger row it pointed at. Link the purchase to its ledger row instead;
   /// both facts are then one click away and have a single owner.
-  notes         String?
+  notes     String?
 
   // 1:1 link to the tax-ledger row created at the same time. Same dual-write
   // pattern as job Expense ↔ BusinessExpense in step-2. Restrict (not
@@ -2960,7 +3170,7 @@ model SupplyHold {
   /// The client price SNAPSHOT taken when the hold was created, so repricing
   /// the catalog never reprices stock already committed to a job.
   clientUnitPrice Float
-  status        SupplyHoldStatus @default(ACTIVE)
+  status          SupplyHoldStatus @default(ACTIVE)
 
   // 1:1 link to the invoice charge this consumption put on the client's bill.
   // No paired BusinessExpense — the deduction is the real card charge for the
@@ -3027,7 +3237,7 @@ enum EntryType {
 // Groups (crews)
 //
 // A Group is a saved roster of workers + observers led by a single claimer.
-// Admins manage groups via Admin → Directory → Groups. A user can be in
+// Holders of `schedule.manage` manage groups via Directory → Groups. A user can be in
 // multiple groups. At job-assignment time the group is *materialized* into
 // individual JobOccurrenceAssignee rows — the group is a template, not a
 // live join. Mid-flight group edits never propagate to in-flight occurrences;
@@ -3110,8 +3320,9 @@ model CompanyDocument {
   title       String
   description String?
   expiresAt   DateTime?
-  // When true, Admins cannot see this document; only Super.
-  adminHidden Boolean   @default(false)
+  // When true, Holders of `schedule.manage` cannot see this document; only Super.
+  /// Served only to callers holding `documents.manage`.
+  restricted  Boolean   @default(false)
 
   // Pointer to the currently-active version. Nullable while doc has no
   // uploaded version yet (e.g., metadata created but file not yet PUT).
@@ -3217,7 +3428,7 @@ model DocumentSyncState {
 // Timeline events — important upcoming dates surfaced in the Timeline tab
 // alongside CompanyDocument expirations. `rrule` is a RFC 5545 RRULE string
 // (e.g., "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=15"); empty/null = one-time at
-// `anchorDate`. Hidden events (adminHidden=true) are visible to Super only.
+// `anchorDate`. Restricted events are served only to `timeline.manage`.
 model TimelineEvent {
   id              String    @id @default(cuid())
   title           String
@@ -3237,7 +3448,8 @@ model TimelineEvent {
   // Timestamp of the most recent "mark complete" action — used for display
   // ("last completed Jan 2026") and audit trail.
   lastCompletedAt DateTime?
-  adminHidden     Boolean   @default(false)
+  /// Served only to callers holding `timeline.manage`.
+  restricted      Boolean   @default(false)
   archivedAt      DateTime?
 
   createdById String
@@ -3251,7 +3463,7 @@ model TimelineEvent {
   @@index([archivedAt])
 }
 
-// Home-tab banner notifications. An admin posts a message to one or more
+// Home-tab banner notifications. Someone with `schedule.manage` posts a message to one or more
 // users (or everyone); each recipient sees it on Worker Home until they
 // individually dismiss it. Dismissals are per-user — one person dismissing
 // has no effect on anyone else's view.
@@ -3318,7 +3530,7 @@ model BannerDismissal {
 // AM Wednesday — row remains anchored to Tuesday). The unique constraint
 // enforces "one row per worker per anchor day."
 //
-// `approvedAt` / `approvedById` are reserved for the admin-approval phase
+// `approvedAt` / `approvedById` are reserved for a caller with `schedule.manage`-approval phase
 // (built next). Empty for now; the loader + audit log already account for
 // them so the approval phase is purely additive.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3347,8 +3559,8 @@ model WorkerWorkday {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Money-Ledger followup flag — polymorphic. A Super can flag any row that
-// appears on the Super → Money → Ledger view (Payment, BusinessExpense, or
+// Money-Ledger followup flag — polymorphic. Someone with `settings.manage` can flag any row that
+// appears on the Money → Ledger view (Payment, BusinessExpense, or
 // Checkout rental income) for follow-up — e.g. "waiting on ACH to post",
 // "vendor disputing", "reconcile against bank statement next month."
 //
@@ -3403,7 +3615,7 @@ model LedgerFollowup {
 //
 // Approval mirrors the Workday model: after the daily cutoff
 // (WORKDAY_APPROVAL_CUTOFF_HOUR_ET setting), the previous day's
-// entries surface in the Super approval queue. Approving locks the
+// entries surface in a caller with `settings.manage` approval queue. Approving locks the
 // row; unapproved rows stay editable by the driver.
 // ─────────────────────────────────────────────────────────────────────────────
 model Vehicle {
@@ -3519,7 +3731,11 @@ model PolicyDocument {
   // Admin can upload an artifact on behalf of a worker (bypassing worker
   // sign). Required = true when workerAction = NONE. Optional otherwise;
   // some SIGN docs (like safety) shouldn't allow admin bypass — set false.
-  adminCanUploadOnBehalf       Boolean             @default(false)
+  /// May a signature on this policy be uploaded on somebody else's
+  /// behalf? Doing it needs `compliance.manage`; this column says whether
+  /// the policy permits it at all. Named `adminCanUploadOnBehalf` until
+  /// 2026-10-18, which read as though a role owned the decision.
+  allowUploadOnBehalf          Boolean             @default(false)
   // Worker attaches a personal document alongside their signature — e.g.
   // insurance certificate, W-9 PDF. When false, wizard is content-only.
   requiresWorkerUpload         Boolean             @default(false)
@@ -3949,7 +4165,7 @@ model PayrollEntry {
   payrollPeriodId String
   payrollPeriod   PayrollPeriod @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  /// NULL until a Super confirms who this row belongs to. The CSV carries no
+  /// NULL until someone with `settings.manage` confirms who this row belongs to. The CSV carries no
   /// employee identifier — only a first and last name — so rows are NEVER
   /// auto-matched. Unmatched rows are still stored (or the totals stop
   /// balancing) and are invisible to every worker.
@@ -4028,7 +4244,7 @@ model PayrollIdentity {
   id String @id @default(cuid())
 
   // Matched case-insensitively by the service; stored as they appear in the
-  // CSV so the review UI can show a Super exactly what Gusto wrote.
+  // CSV so the review UI can show someone with `settings.manage` exactly what Gusto wrote.
   lastName  String
   firstName String
 
@@ -4167,7 +4383,7 @@ model GuideAsset {
   sizeBytes      Int
   /// Alt text / caption. Required for images.
   altText        String?
-  /// Set when a Super knowingly uploaded past GUIDE_MAX_VIDEO_MB.
+  /// Set when someone with `settings.manage` knowingly uploaded past GUIDE_MAX_VIDEO_MB.
   sizeOverride   Boolean   @default(false)
 
   /// Optional owning guide — assets can also live unattached in the
@@ -4184,7 +4400,7 @@ model GuideAsset {
   @@index([uploadedById])
 }
 
-/// A saved pay-structure scenario from the Super forecasting tool
+/// A saved pay-structure scenario from a caller with `settings.manage` forecasting tool
 /// (Money -> Forecast). ADVISORY ONLY — a Forecast never writes a Setting,
 /// never touches a Payment, and pays nobody. It is a saved question, not a
 /// decision that has been executed.
@@ -4275,7 +4491,7 @@ model CacheEntry {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WALL DISPLAYS — Super -> System -> Displays
+// WALL DISPLAYS — System -> Displays
 //
 // A TV on the shop wall, or a vertical kiosk in the waiting room, showing a
 // live board. The device runs an ordinary browser at /display in kiosk mode;
@@ -4284,7 +4500,7 @@ model CacheEntry {
 // WHY THIS IS NOT A CLERK SESSION. A display hangs on a wall for months and
 // nobody is standing at it. A user session expires, and re-authenticating
 // means carrying a keyboard to the wall — so instead the device holds a
-// long-lived bearer token that only ever buys the board payload, and a Super
+// long-lived bearer token that only ever buys the board payload, and someone with `settings.manage`
 // can revoke it from their phone. The token is NOT a user: it has no roles,
 // cannot mutate anything, and reads only what its own mode allows.
 //
@@ -4383,4 +4599,97 @@ model DisplayPairing {
 
   @@index([code])
   @@index([expiresAt])
+}
+
+/// A place the business works: a region, a county, a town. The tree models
+/// AREAS, not people — owning an area is accountability for a place, never
+/// authority over a person.
+model Area {
+  id       String  @id @default(cuid())
+  name     String
+  /// Display label from the AREA_TIER_NAMES setting ("Region", "District").
+  /// The schema does not care what you call a level; only the shape matters.
+  tier     String?
+  parentId String?
+  /// Restrict, not Cascade: deleting a parent must never silently orphan or
+  /// delete the places beneath it. Areas are RETIRED, never deleted.
+  parent   Area?   @relation("AreaTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Area[]  @relation("AreaTree")
+
+  /// Materialized path of IDS, delimited and terminated: "/ck3.../ck7.../".
+  /// Ids because names are neither unique nor stable — a slug path breaks on
+  /// rename, and two areas may legitimately both be called "Raleigh". The
+  /// trailing delimiter is load-bearing: without it a prefix test matches a
+  /// sibling whose id merely starts with the same characters.
+  path String
+
+  /// Where this territory IS, for the weather forecast.
+  ///
+  /// Optional, and deliberately NOT derived from the properties in the area.
+  /// A centroid of the customer list moves every time a client joins or
+  /// leaves, which would make the forecast anchor drift for reasons that have
+  /// nothing to do with geography. An operator picks the point once.
+  ///
+  /// Blank means "no opinion": the weather falls back to BUSINESS_ADDRESS,
+  /// exactly as it did before areas existed. There is no inheritance from a
+  /// parent area — a blank child is blank, not "whatever the region says" —
+  /// because a silent inherited coordinate is indistinguishable from a
+  /// deliberate one when the forecast turns out to be for the wrong town.
+  lat Float?
+  lng Float?
+
+  /// Retired areas are hidden from PICKERS and still present in REPORTING —
+  /// history has to resolve through a closed territory.
+  retiredAt DateTime?
+  createdAt DateTime  @default(now())
+
+  assignments AreaAssignment[]
+  memberships AreaMembership[]
+  properties  Property[]
+  occurrences JobOccurrence[]
+  jobDefaults Job[] // Job.defaultArea
+
+  @@index([path])
+  @@index([parentId])
+  @@index([retiredAt])
+}
+
+/// "This person usually works here." INFORMATIONAL ONLY.
+/// Grants nothing, and no permission check may read it (G17): a check here
+/// would silently restrict where people are allowed to work.
+model AreaMembership {
+  userId String
+  areaId String
+  user   User   @relation("AreaMembershipUser", fields: [userId], references: [id], onDelete: Cascade)
+  area   Area   @relation(fields: [areaId], references: [id], onDelete: Cascade)
+
+  @@id([userId, areaId])
+  @@index([areaId])
+}
+
+/// A role held WITHIN one area's subtree. This is what actually grants.
+model AreaAssignment {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation("AreaAssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  areaId       String
+  area         Area       @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  customRoleId String
+  customRole   CustomRole @relation(fields: [customRoleId], references: [id], onDelete: Cascade)
+
+  /// Temporary cover. Surfaces in the dormant-access audit panel, because
+  /// suspension without expiry means a stand-in stays until a human removes
+  /// them — and the dormancy check will not catch it, since they are active
+  /// and merely over-privileged.
+  isTemporary Boolean @default(false)
+  note        String?
+
+  suspendedAt DateTime?
+  grantedAt   DateTime  @default(now())
+  grantedById String?
+  grantedBy   User?     @relation("AreaAssignmentGrantor", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, areaId, customRoleId])
+  @@index([userId])
+  @@index([areaId])
 }

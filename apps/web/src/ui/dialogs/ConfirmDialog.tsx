@@ -47,6 +47,11 @@ type Props = {
   pricingReferenceTags?: string[];
   /** Pricing endpoint to fetch from. Defaults to the worker route. */
   pricingEndpoint?: string;
+  /** Blocks Confirm for a reason the dialog itself cannot see — a choice
+   *  made in `messageNode`, for instance. `requiredInputValue` covers
+   *  "type this to prove intent"; this covers "you have not answered the
+   *  question yet". Both apply when both are set. */
+  confirmDisabled?: boolean;
   /** Custom label for the cancel button */
   cancelLabel?: string;
   /** Action to perform on cancel (instead of just closing) */
@@ -102,6 +107,7 @@ export default function ConfirmDialog({
   inputOptional,
   inputDefaultValue,
   requiredInputValue,
+  confirmDisabled,
   amountLabel,
   amountPlaceholder,
   amountDefaultValue,
@@ -152,7 +158,7 @@ export default function ConfirmDialog({
   const resolvedSecondaryActionFirst = hintActive
     ? !hint.defaultToWithLocation
     : secondaryActionFirst;
-  const primaryConfirmDisabled = hintActive && hint.withLocationDisabled;
+  const primaryConfirmDisabled = (hintActive && hint.withLocationDisabled) || !!confirmDisabled;
 
   const referenceMatches = useMemo(() => {
     if (!pricingReferenceTags || pricingReferenceTags.length === 0) return [];

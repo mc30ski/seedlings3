@@ -7,7 +7,7 @@
 //   apps/web/src/ui/tabs/AuditTab.tsx   AUDIT_CHECKS — id, label, description,
 //                                       severity. Severity is CLIENT-ONLY; the
 //                                       server never sends one.
-//   apps/api/src/routes/admin.ts        POST /admin/system-audit — a chain of
+//   apps/api/src/routes/books.ts        POST /system-audit — a chain of
 //                                       `if (checks.includes("<id>"))` blocks,
 //                                       each pushing { check, label, issues }.
 //
@@ -44,7 +44,7 @@ const TAB_SRC = readFileSync(
   "utf8",
 );
 const ROUTE_SRC = readFileSync(
-  join(REPO_ROOT, "apps/api/src/routes/admin.ts"),
+  join(REPO_ROOT, "apps/api/src/routes/books.ts"),
   "utf8",
 );
 

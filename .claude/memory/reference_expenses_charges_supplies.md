@@ -13,7 +13,7 @@ metadata:
 |---|---|---|
 | What | real money off a card statement | what the CLIENT is billed |
 | Tax | **is** the Schedule C deduction | **none, ever** |
-| Written by | `/admin/business-expenses/*`, Super only | the job surfaces, admin only |
+| Written by | `/business-expenses/*` (`books.manage`) | the job surfaces (`materials.charge`) |
 | Reconciled with | Gusto / QuickBooks — the source of truth | nothing |
 
 They reconcile **in aggregate only**. One $500 Lowe's receipt is one ledger

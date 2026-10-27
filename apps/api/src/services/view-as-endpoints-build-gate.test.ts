@@ -7,11 +7,15 @@ import { join, resolve, relative } from "path";
  *
  * Enforces the rule documented in docs/VIEW_AS_ENDPOINTS.md:
  *
- *   Every `GET /me/*` route registered with `workerGuard` (or
- *   `requireApproved`) must EITHER support view-as (i.e. accept an
- *   optional `?viewAsUserId=<id>` query param + role gate) OR be
- *   annotated as `// view-as-allow: <reason>` explaining why the
- *   endpoint is intentionally caller-scoped.
+ *   Every `GET /me/*` route must EITHER support view-as (i.e. accept an
+ *   optional `?viewAsUserId=<id>` query param, gated on a CAPABILITY —
+ *   `people.manage`, or the narrower `time.manage` / `payroll.view` the
+ *   shared helpers apply) OR be annotated as `// view-as-allow: <reason>`
+ *   explaining why the endpoint is intentionally caller-scoped.
+ *
+ *   The guard names in the original rule (`workerGuard`) and the role check
+ *   it called for are both gone; `approvedUser` is the guard now and the
+ *   check is a capability. The RULE is unchanged.
  *
  * This has already caught the same class of bug THREE times in
  * production (client "My Properties", workday-start spinner,
@@ -155,7 +159,9 @@ describe("view-as endpoints build gate", () => {
         `${findings.length} /me GET route(s) fail the view-as endpoints build gate.`,
         "",
         "Either:",
-        "  (a) support view-as — accept `?viewAsUserId=<id>` and gate on ADMIN/SUPER role,",
+        "  (a) support view-as — accept `?viewAsUserId=<id>` and gate it on a",
+        "      CAPABILITY: `people.manage`, or the narrower `time.manage` /",
+        "      `payroll.view` the shared helpers apply. NOT a role — there are none.",
         "      OR",
         "  (b) annotate the route with `// view-as-allow: <reason>` explaining why it is",
         "      intentionally caller-scoped.",

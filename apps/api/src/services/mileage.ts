@@ -11,14 +11,15 @@
 //                            Row is "open" (endedAt = null).
 //   2. Driver taps Stop    → finalizeEntry(endOdometer, endedAt, notes)
 //                            Miles derived. Row becomes closed.
-//   3. Super approves      → approveEntry / approveWorkerDay
+//   3. `time.manage` approves → approveEntry / approveWorkerDay
 //                            approvedAt set. Row locked from driver
-//                            edits; Super can still edit.
+//                            edits; a `time.manage` holder can still edit.
 //
 // Only one open entry per (driverUserId, vehicleId) at a time. Trying
 // to start a second open entry throws — driver must stop the first.
 // ─────────────────────────────────────────────────────────────────────────────
 import { prisma } from "../db/prisma";
+import { ServiceError } from "../lib/errors";
 import { etFormatDate, etToday } from "../lib/dates";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
@@ -242,18 +243,18 @@ export async function finalizeEntry(params: {
 }
 
 /**
- * Super-side create — backfill a closed mileage entry for a worker
+ * `time.manage` create — backfill a closed mileage entry for a worker
  * who forgot to log it in the moment. Same shape a
  * `startEntry → finalizeEntry` pair would produce, but skips the open
  * state entirely and stamps `approvedAt: null` so the row flows
  * through the normal daily-approval queue like any driver-created
  * entry.
  *
- * No worker-assignment check — this is a Super override path. The
- * route layer is Super-guarded; if you want to enforce assignment,
+ * No worker-assignment check — this is someone with `time.manage` override path. The
+ * route layer is `time.manage`-guarded; if you want to enforce assignment,
  * add it there.
  */
-export async function superCreateMileageEntry(params: {
+export async function createMileageEntryFor(params: {
   vehicleId: string;
   driverUserId: string;
   startedAt: Date;
@@ -261,7 +262,7 @@ export async function superCreateMileageEntry(params: {
   startOdometer: number;
   endOdometer: number;
   notes?: string | null;
-  /** The Super doing the backfill. Distinct from driverUserId — the
+  /** A caller with `time.manage` doing the backfill. Distinct from driverUserId — the
    *  miles land on the worker's record but somebody else typed them. */
   actorUserId?: string | null;
 }) {
@@ -300,7 +301,7 @@ export async function superCreateMileageEntry(params: {
     });
     // Advance the vehicle's cached odometer if this entry ended past
     // the current value — same "only forward" rule finalizeEntry
-    // uses, so an admin backfill from months ago doesn't rewind the
+    // uses, so someone with `time.manage` backfill from months ago doesn't rewind the
     // cache.
     await tx.vehicle.updateMany({
       where: {
@@ -321,7 +322,7 @@ export async function superCreateMileageEntry(params: {
       driverUserId: created.driverUserId,
       subjectUserId: created.driverUserId,
       entryDate: created.entryDate,
-      superBackfill: true,
+      backfill: true,
       startedAt: created.startedAt,
       endedAt: created.endedAt,
       startOdometer: created.startOdometer,
@@ -369,25 +370,45 @@ export async function cancelEntry(entryId: string, actorUserId?: string) {
 }
 
 /** Driver-side edit — only allowed on entries the driver owns and only
- *  while unapproved. Super uses adminEditEntry for locked-row edits. */
+ *  while unapproved. `time.manage` uses editEntryAsManager for locked-row edits. */
 export async function editEntryByDriver(
   entryId: string,
   driverUserId: string,
   patch: { startOdometer?: number; endOdometer?: number; notes?: string | null },
 ) {
+  // THESE WERE BARE `Error`s, AND A BARE ERROR IS A 500.
+  //
+  // `plugins/errorMapper.ts` keys on `statusCode`, which a plain Error does
+  // not have, so all three of these fell through to "Internal Server Error"
+  // with the message in a `detail` field the UI never reads. The API e2e
+  // suite caught it: a driver editing a mileage row that had been deleted
+  // got a 500 instead of being told the row was gone.
+  //
+  // The statuses are not interchangeable — the UI shows a 403 and a 409
+  // differently, and "ask someone with timesheet authority" is advice, not a server fault.
   const entry = await prisma.mileageEntry.findUnique({ where: { id: entryId } });
-  if (!entry) throw new Error("Mileage entry not found.");
+  if (!entry) {
+    throw new ServiceError("NOT_FOUND", "Mileage entry not found.", 404);
+  }
   if (entry.driverUserId !== driverUserId) {
-    throw new Error("You can only edit your own mileage entries.");
+    throw new ServiceError(
+      "FORBIDDEN",
+      "You can only edit your own mileage entries.",
+      403,
+    );
   }
   if (entry.approvedAt) {
-    throw new Error("Entry has been approved; ask an admin to make changes.");
+    throw new ServiceError(
+      "ALREADY_APPROVED",
+      "Entry has been approved; ask someone with timesheet authority to make changes.",
+      409,
+    );
   }
   return applyEntryPatch(entry.id, patch, driverUserId);
 }
 
-/** Super-side edit — overrides even approved entries. Use sparingly. */
-export async function adminEditEntry(
+/** `time.manage` edit — overrides even approved entries. Use sparingly. */
+export async function editEntryAsManager(
   entryId: string,
   patch: {
     startOdometer?: number;
@@ -518,7 +539,7 @@ async function applyEntryPatchData(
 }
 
 /** List entries for a specific driver in a date-key range (inclusive).
- *  Used by the MileageStrip history and by the Super approval queue. */
+ *  Used by the MileageStrip history and by the approval queue. */
 export async function listEntriesForUser(
   userId: string,
   opts: { fromDate?: string; toDate?: string } = {},
@@ -593,7 +614,7 @@ export async function approveEntry(entryId: string, approverId: string) {
 
 /** Bulk-approve every closed, unapproved entry for one worker on one
  *  ET calendar day. Called by the unified daily approval flow so the
- *  Super approves hours + mileage in one action. */
+ *  `time.manage` approves hours + mileage in one action. */
 export async function approveWorkerDay(
   userId: string,
   entryDate: string,
@@ -640,7 +661,7 @@ export async function approveWorkerDay(
   });
 }
 
-/** Reverse an approval — Super only. Unlocks the row for further
+/** Reverse an approval — `time.manage`. Unlocks the row for further
  *  edits without deleting the underlying data. */
 export async function unapproveEntry(entryId: string, actorUserId?: string | null) {
   // Read first: the update nulls approvedById, so who signed this off
@@ -668,13 +689,13 @@ export async function unapproveEntry(entryId: string, actorUserId?: string | nul
   });
 }
 
-/** Super-side reject — hard-delete an unapproved entry. Used from the
+/** `time.manage` reject — hard-delete an unapproved entry. Used from the
  *  Review dialog when the operator decides a session is bogus (worker
  *  picked the wrong vehicle and forgot to cancel, junk row, etc.). We
  *  refuse to delete already-approved entries so an approval audit
  *  can't be silently erased; unapprove first, then reject. Symmetric
  *  with the worker's own cancelEntry — same underlying delete, just
- *  gated for the super's use on both open AND closed rows. */
+ *  gated for the owner’s use on both open AND closed rows. */
 export async function rejectEntry(entryId: string, actorUserId?: string | null) {
   const entry = await prisma.mileageEntry.findUnique({ where: { id: entryId } });
   if (!entry) throw new Error("Mileage entry not found.");
@@ -708,7 +729,7 @@ export async function rejectEntry(entryId: string, actorUserId?: string | null) 
   });
 }
 
-/** Aggregate per-vehicle totals for a date range. Powers the admin
+/** Aggregate per-vehicle totals for a date range. Powers a caller with `time.manage`
  *  yearly-rollup view. */
 export async function vehicleTotalsForRange(
   vehicleId: string,
@@ -839,13 +860,13 @@ export function todayEntryDate(): string {
 }
 
 /**
- * Pending-approval summary for the Super title-bar alert + Tasks
- * page. Mirrors superPendingApprovalsSummary for workdays: counts
+ * Pending-approval summary for the title-bar alert + Tasks
+ * page. Mirrors pendingApprovalsSummary for workdays: counts
  * closed unapproved entries anchored to past ET calendar dates
  * (today's still-in-progress work is excluded — approval opens
  * after the daily cutoff).
  */
-export async function superPendingMileageSummary(): Promise<{
+export async function pendingMileageSummary(): Promise<{
   totalPending: number;
   byDate: { entryDate: string; count: number }[];
 }> {
@@ -870,7 +891,7 @@ export async function superPendingMileageSummary(): Promise<{
 
 /**
  * Per-user mileage entries for a specific ET calendar date. Used by
- * the Super WorkdaysTab + PendingWorkdaysSection so each worker × day
+ * the WorkdaysTab + PendingWorkdaysSection so each person × day
  * row can show its mileage summary + Approve-mileage button inline.
  *
  * Groups by driverUserId with pending entries first (so a mixed row
@@ -879,7 +900,7 @@ export async function superPendingMileageSummary(): Promise<{
  * on the date — callers rely on presence-of-key to gate the mileage
  * chip render.
  */
-export async function superListMileageForDate(
+export async function listMileageForDate(
   entryDate: string,
 ): Promise<Record<string, Array<{
   id: string;
@@ -918,7 +939,7 @@ export async function superListMileageForDate(
  * a MiniStatCard grid without further math. Per-driver + per-vehicle
  * top-N arrays are included so the panel can call out the leaders.
  */
-export async function superRoutesOperationsSummary(
+export async function routesOperationsSummary(
   from: string,
   to: string,
 ): Promise<{

@@ -19,7 +19,7 @@ type Props = {
 };
 
 /**
- * Multi-select worker picker matching the "View as" picker on Admin → Work
+ * Multi-select worker picker matching the "View as" picker on Work
  * → Home. Search-input opens a floating dropdown; each row toggles in and
  * out of the selection via a blue ✓. Selected names show as a comma-
  * separated list in the input's placeholder when the search field is empty.

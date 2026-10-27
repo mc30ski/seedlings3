@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Box, Button, HStack, Text, Textarea, VStack } from "@chakra-ui/react";
 import { Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
+import type { Scope } from "@/src/lib/scope";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { compressOnly } from "@/src/lib/imageRedact";
 import {
@@ -22,13 +23,37 @@ type EquipmentPhoto = {
 
 type Props = {
   equipmentId: string;
-  /** Worker = read-only view; admin = upload/edit/delete */
+  /**
+   * Legacy override, kept so existing callers keep working. Prefer `scope`.
+   *
+   * ITS DOC USED TO READ "Worker = read-only view; admin = upload/edit/
+   * delete", which is the deleted role model written into a comment. There
+   * are no roles — upload, edit and delete are each guarded on
+   * `equipment.manage`, and a custom role matching neither "worker" nor
+   * "admin" had no answer in that sentence.
+   */
   readOnly?: boolean;
   /** When false, skip the initial fetch (caller already knows there are no photos). */
   hasPhotos?: boolean;
+  /**
+   * The caller's capabilities, so the write controls ask for the one their
+   * own endpoints are guarded on.
+   *
+   * WHY THE COMPONENT ASKS. It renders in two places and they did not
+   * agree: InventoryTab passed `readOnly={!canManageEquipment}`, and
+   * EquipmentDialog passed nothing at all — so the gate there was
+   * whatever happened to surround the mount, which today is
+   * `canManageEquipment` on the dialog itself. Correct, and nothing in
+   * this file said so. Move the dialog, or mount the photos a third
+   * time, and the controls come along ungated and 403 on click.
+   */
+  scope?: Scope;
 };
 
-export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Props) {
+export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos, scope }: Props) {
+  // Scope wins when given; `readOnly` remains the answer for a caller that
+  // has not been threaded yet, so nothing a person can do today disappears.
+  const canManage = scope ? scope.can("equipment.manage") : !readOnly;
   const [photos, setPhotos] = useState<EquipmentPhoto[]>([]);
   const [loading, setLoading] = useState(hasPhotos !== false);
   const [uploading, setUploading] = useState(false);
@@ -37,9 +62,9 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   async function load(useCache = true) {
-    const isAdmin = !readOnly;
+    const editable = canManage;
     if (useCache) {
-      const cached = getCachedEquipmentPhotos(equipmentId, isAdmin);
+      const cached = getCachedEquipmentPhotos(equipmentId, editable);
       if (cached) {
         setPhotos(cached);
         setLoading(false);
@@ -47,10 +72,10 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
       }
     }
     try {
-      const endpoint = readOnly ? `/api/equipment/${equipmentId}/photos` : `/api/admin/equipment/${equipmentId}/photos`;
+      const endpoint = `/api/equipment/${equipmentId}/photos`;
       const list = await apiGet<EquipmentPhoto[]>(endpoint);
       const photos = Array.isArray(list) ? list : [];
-      setCachedEquipmentPhotos(equipmentId, photos, isAdmin);
+      setCachedEquipmentPhotos(equipmentId, photos, editable);
       setPhotos(photos);
     } catch {
       setPhotos([]);
@@ -59,15 +84,15 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
   }
 
   useEffect(() => {
-    // Worker view: if caller already knows there are no photos, skip the fetch.
-    // Admins can upload, so still load (to allow uploads even when initially empty).
-    if (hasPhotos === false && readOnly) {
+    // Self-scoped view: if caller already knows there are no photos, skip the fetch.
+    // Holders of `equipment.manage` can upload, so still load (to allow uploads even when initially empty).
+    if (hasPhotos === false && !canManage) {
       setPhotos([]);
       setLoading(false);
       return;
     }
     void load();
-  }, [equipmentId, hasPhotos, readOnly]);
+  }, [equipmentId, hasPhotos, canManage]);
 
   async function handleUpload(file: File) {
     setUploading(true);
@@ -75,12 +100,12 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
       const compressed = await compressOnly(file);
       const contentType = "image/jpeg";
       const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-        `/api/admin/equipment/${equipmentId}/photos/upload-url`,
+        `/api/equipment/${equipmentId}/photos/upload-url`,
         { fileName: file.name, contentType },
       );
       const uploadRes = await fetch(uploadUrl, { method: "PUT", body: compressed, headers: { "Content-Type": contentType } });
       if (!uploadRes.ok) throw new Error(`R2 upload failed: ${uploadRes.status}`);
-      await apiPost(`/api/admin/equipment/${equipmentId}/photos/confirm`, {
+      await apiPost(`/api/equipment/${equipmentId}/photos/confirm`, {
         key, fileName: file.name, contentType,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Photo uploaded." });
@@ -95,7 +120,7 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
 
   async function handleDelete(photoId: string) {
     try {
-      await apiDelete(`/api/admin/equipment/${equipmentId}/photos/${photoId}`);
+      await apiDelete(`/api/equipment/${equipmentId}/photos/${photoId}`);
       setPhotos((prev) => prev.filter((p) => p.id !== photoId));
       invalidateEquipmentPhotos(equipmentId);
       publishInlineMessage({ type: "SUCCESS", text: "Photo deleted." });
@@ -106,7 +131,7 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
 
   async function saveDescription(photoId: string) {
     try {
-      await apiPatch(`/api/admin/equipment/${equipmentId}/photos/${photoId}`, { description: editDesc });
+      await apiPatch(`/api/equipment/${equipmentId}/photos/${photoId}`, { description: editDesc });
       setPhotos((prev) => prev.map((p) => p.id === photoId ? { ...p, description: editDesc.trim() || null } : p));
       invalidateEquipmentPhotos(equipmentId);
       setEditingId(null);
@@ -130,9 +155,9 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
   if (loading) return null;
 
   // Hide entirely for workers when there are no photos
-  if (readOnly && photos.length === 0) return null;
+  if (!canManage && photos.length === 0) return null;
 
-  const canUpload = !readOnly && photos.length < 10;
+  const canUpload = canManage && photos.length < 10;
 
   return (
     <Box>
@@ -175,8 +200,8 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
         )}
       </HStack>
 
-      {/* Description editor (admin only) */}
-      {!readOnly && photos.map((photo) => (
+      {/* Description editor (`equipment.manage`) */}
+      {canManage && photos.map((photo) => (
         editingId === photo.id ? (
           <VStack key={`edit-${photo.id}`} align="stretch" gap={1} w="full" mt={2} p={2} bg="blue.faint" borderRadius="md">
             <Text fontSize="xs" color="fg.muted">Description for: {photo.fileName ?? "photo"}</Text>
@@ -250,7 +275,7 @@ export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Pr
               <Text color="whiteAlpha.700" fontSize="sm">
                 {viewerIndex + 1} / {photos.length}
               </Text>
-              {!readOnly && (
+              {canManage && (
                 <Button size="xs" variant="ghost" color="whiteAlpha.800" onClick={() => { setEditingId(photo.id); setEditDesc(photo.description ?? ""); setViewerIndex(null); }}>
                   Edit
                 </Button>

@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Forecast service — Super → Money → Forecast
+// Forecast service — Money → Forecast
 //
 // Two jobs:
 //   1. Assemble a BASELINE for a date window: what actually happened, shaped
@@ -44,6 +44,7 @@ import {
   type Assumptions,
   DEFAULT_COST_BEHAVIOR,
 } from "@repo/money";
+import { classify } from "@repo/money";
 
 /** Workers-comp rate as a percent of W-2 wages. A quote, not something the
  *  app can derive, so it lives in Settings with a conservative default. The
@@ -517,14 +518,35 @@ export async function buildBaseline(from: EtDateKey, to: EtDateKey): Promise<For
   // the model reproduces the books. A miscounted reference makes the model
   // look wrong when it is right. pnlReport.ts has always split Wages from
   // Contract Labor; this now matches it.
-  let crewWages = 0;      // W-2 (employee + trainee), non-owner
+  let crewWages = 0;      // W-2, non-owner
   let contractLabor = 0;  // 1099
   let ownerEarnings = 0;
+  // EXHAUSTIVE. The trailing `else` meant "therefore W-2", so an UNPAID
+  // helper's amount landed in crewWages — which is the wage base the employer
+  // payroll-tax estimate is computed from. The business would have been shown
+  // estimated payroll tax on someone who is not on payroll.
+  let unpaidClassEarnings = 0;
   for (const [userId, amt] of actualPay) {
     const u = userById.get(userId);
-    if (u?.isOwner) ownerEarnings += amt;
-    else if (u?.workerType === "CONTRACTOR") contractLabor += amt;
-    else crewWages += amt;
+    if (u?.isOwner) {
+      ownerEarnings += amt;
+      continue;
+    }
+    switch (classify(u?.workerType)) {
+      case "w2":
+        crewWages += amt;
+        break;
+      case "contractor":
+        contractLabor += amt;
+        break;
+      case "unpaid":
+      case "unclassified":
+        // Kept out of both tax-facing lines. Non-zero here means someone
+        // off-payroll was paid, which is a data problem to surface rather
+        // than a figure to fold into Wages.
+        unpaidClassEarnings += amt;
+        break;
+    }
   }
   const employerTaxPercent = totalEmployerTaxPct(taxCfg);
   // Payroll tax only. Workers comp is NOT synthesized here: the real premium
@@ -766,6 +788,13 @@ export async function archiveForecast(id: string, archived: boolean, actorUserId
   });
 }
 
+/**
+ * SHARED BY DESIGN. `createdById` records the author and the audit records
+ * the actor, but neither gates this: any holder of `forecasts.view` may
+ * delete anyone's scenario. A forecast is a company planning artefact, not
+ * private work. Confirmed deliberate 2026-10-18 — if that ever changes, the
+ * check belongs here and in updateForecast/archiveForecast together.
+ */
 export async function deleteForecast(id: string, actorUserId: string) {
   const existing = await getForecast(id);
   return prisma.$transaction(async (tx) => {

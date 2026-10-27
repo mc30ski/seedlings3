@@ -77,11 +77,11 @@ describe("computeBreakdown — canonical per-worker formula", () => {
     expect(rows[0].net).toBe(28);
   });
 
-  it("treats TRAINEE identically to EMPLOYEE (same fee class, same protections)", () => {
+  it("two EMPLOYEEs on an even split are treated identically", () => {
     const rows = computeBreakdown(
       100,
       0,
-      [w("t", "TRAINEE", 50), w("e", "EMPLOYEE", 50)],
+      [w("t", "EMPLOYEE", 50), w("e", "EMPLOYEE", 50)],
       RATES,
     );
     const trainee = rows.find((r) => r.userId === "t")!;
@@ -91,11 +91,13 @@ describe("computeBreakdown — canonical per-worker formula", () => {
     expect(trainee.net).toBe(employee.net);
   });
 
-  it("treats a null workerType as contractor-class (contractor fee applies)", () => {
-    const rows = computeBreakdown(100, 0, [w("u", null, 100)], RATES);
-    expect(rows[0].ratePercent).toBe(20);
-    expect(rows[0].fee).toBe(20);
-    expect(rows[0].net).toBe(80);
+  it("refuses a null workerType instead of treating it as contractor-class", () => {
+    // Was: "treats a null workerType as contractor-class". See the note on
+    // the matching invariant in payments-build-gate.test.ts — "not an
+    // employee" is not a reason to charge someone a contractor fee.
+    expect(() => computeBreakdown(100, 0, [w("u", null, 100)], RATES)).toThrow(
+      /no worker type/,
+    );
   });
 
   it("normalizes split percentages that don't sum to 100", () => {
@@ -229,7 +231,7 @@ describe("reconcileApproval — promised vs collected scenarios", () => {
 });
 
 describe("Payment-row aggregate identity — exports rely on this", () => {
-  // The Admin Money summary, the QB-Income export, and the Schedule-C
+  // A caller with `money.view` Money summary, the QB-Income export, and the Schedule-C
   // line items all rely on this identity holding:
   //
   //   amountPaid = sum(splits) + platformFeeAmount + businessMarginAmount
@@ -278,7 +280,7 @@ describe("Payment-row aggregate identity — exports rely on this", () => {
     assertIdentity(200, 30, [
       w("c", "CONTRACTOR", 40),
       w("e", "EMPLOYEE", 30),
-      w("t", "TRAINEE", 30),
+      w("t", "EMPLOYEE", 30),
     ]);
   });
 });
@@ -328,13 +330,13 @@ describe("Class-fee totals on the Payment row (used by exports)", () => {
 
 describe("Property-based — no negative payouts ever", () => {
   // Strong tax-protective invariant: no matter how strange the inputs
-  // (zero rates, all-trainee crew, huge expenses, write-off), no worker
+  // (zero rates, single-class crew, huge expenses, write-off), no worker
   // should ever receive a negative split. Negative payouts would corrupt
   // payroll exports.
   const cases: Array<[string, number, number, ReturnType<typeof w>[]]> = [
     ["zero collected", 0, 0, [w("a", "EMPLOYEE", 100)]],
     ["expenses exceed collected", 100, 500, [w("a", "EMPLOYEE", 100)]],
-    ["all-trainee", 100, 0, [w("a", "TRAINEE", 100)]],
+    ["all-employee", 100, 0, [w("a", "EMPLOYEE", 100)]],
     ["empty workers", 100, 0, []],
     ["fractional cents", 33.33, 0, [w("a", "CONTRACTOR", 33.33), w("b", "EMPLOYEE", 66.67)]],
   ];
@@ -453,8 +455,28 @@ describe("computeNextOccurrenceStart — recurring cycle + past-guard", () => {
     const after = Date.now();
 
     expect(result.snappedForward).toBe(false);
-    const expectedMin = before + 7 * 86_400_000 - 5_000; // -5s tolerance
-    const expectedMax = after + 7 * 86_400_000 + 5_000;
+
+    // CALENDAR DAYS, NOT `7 * 86_400_000`.
+    //
+    // The helper advances with `setDate(getDate() + freq)`, which keeps the
+    // wall-clock time and is why it carries a `date-handling-allow`. Across
+    // a DST boundary that is NOT seven times 86,400,000 ms — the fall-back
+    // adds an hour — so the old assertion failed by exactly 3,595,000 ms
+    // (one hour, less the 5s tolerance) for the whole week before every
+    // transition, and passed again afterwards. A suite that goes red once
+    // a year for a correct implementation is how "it's just flaky" gets
+    // learned.
+    //
+    // Stepping the bounds the same way the helper does means the DST hour
+    // appears on both sides and cancels. The date-handling gate skips
+    // `.test.ts`, so nothing was going to catch this but the calendar.
+    const plusFreqDays = (ms: number) => {
+      const d = new Date(ms);
+      d.setDate(d.getDate() + 7); // date-handling-allow: mirrors the helper under test
+      return d.getTime();
+    };
+    const expectedMin = plusFreqDays(before) - 5_000; // -5s tolerance
+    const expectedMax = plusFreqDays(after) + 5_000;
     expect(result.startAt.getTime()).toBeGreaterThanOrEqual(expectedMin);
     expect(result.startAt.getTime()).toBeLessThanOrEqual(expectedMax);
   });

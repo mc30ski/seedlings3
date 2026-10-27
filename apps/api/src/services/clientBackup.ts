@@ -17,18 +17,18 @@
 // with `-HHMM` so both are preserved.
 //
 // Payload is the shared snapshot from services/dataExport.ts —
-// identical to what "Export All Data" in Admin → Actions produces,
+// identical to what "Export All Data" in Actions produces,
 // so any human-triggered download and the nightly Drive file are
 // guaranteed to match for a given DB state.
 //
 // Kill switch: setting `CLIENT_BACKUP_ENABLED` ("true" | "false").
 // Off in dev by default; on in prod. Distinct from
-// DOCUMENT_SYNC_ENABLED because a Super may want one on and the
+// DOCUMENT_SYNC_ENABLED because the operator may want one on and the
 // other off.
 //
 // Called by:
 //   - `/cron/client-backup` (Vercel cron, ~2-3 AM ET daily)
-//   - (potentially) a Super "Backup Now" button — not shipped yet.
+//   - (potentially) a "Backup Now" button — not shipped yet.
 
 import { prisma } from "../db/prisma";
 import { ensureFolder, findFileByName, uploadFile } from "../lib/driveClient";

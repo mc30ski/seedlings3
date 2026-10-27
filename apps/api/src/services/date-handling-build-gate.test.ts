@@ -172,7 +172,12 @@ const FORBIDDEN_PATTERNS: Rule[] = [
     // instant across DST rather than wall-clock; ≤1-hour drift is invisible
     // for day-anchored jobs. See docs/DATE_HANDLING.md "Legitimate exceptions".
     allowFiles: [
-      "apps/api/src/routes/admin.ts",
+      // Recurrence maths moved out of the role-named route files: the
+      // cadence helper now lives in routes/_shared.ts and the ledger
+      // due-soon horizon in routes/books.ts. Same documented exception.
+      "apps/api/src/routes/_shared.ts",
+      "apps/api/src/routes/books.ts",
+      "apps/api/src/routes/occurrences.ts",
       "apps/api/src/services/jobs.ts",
       "apps/api/src/services/payments.ts",
       "apps/api/prisma/seed.ts", // test data — server-local timing is fine
@@ -184,7 +189,12 @@ const FORBIDDEN_PATTERNS: Rule[] = [
     reason: ".setMonth(d.getMonth() + N) mutates in server-local time, breaking on month overflow + DST.",
     fix: "Use bizAddMonths(str, N) on the web; on the API recurrence is the only documented case.",
     allowFiles: [
-      "apps/api/src/routes/admin.ts",
+      // Recurrence maths moved out of the role-named route files: the
+      // cadence helper now lives in routes/_shared.ts and the ledger
+      // due-soon horizon in routes/books.ts. Same documented exception.
+      "apps/api/src/routes/_shared.ts",
+      "apps/api/src/routes/books.ts",
+      "apps/api/src/routes/occurrences.ts",
       "apps/api/src/services/jobs.ts",
       "apps/api/src/services/payments.ts",
     ],
@@ -194,7 +204,12 @@ const FORBIDDEN_PATTERNS: Rule[] = [
     reason: ".setFullYear(d.getFullYear() + N) mutates in server-local time.",
     fix: "Use bizAddYears(str, N) on the web or refactor for API.",
     allowFiles: [
-      "apps/api/src/routes/admin.ts",
+      // Recurrence maths moved out of the role-named route files: the
+      // cadence helper now lives in routes/_shared.ts and the ledger
+      // due-soon horizon in routes/books.ts. Same documented exception.
+      "apps/api/src/routes/_shared.ts",
+      "apps/api/src/routes/books.ts",
+      "apps/api/src/routes/occurrences.ts",
       "apps/api/src/services/jobs.ts",
     ],
   },

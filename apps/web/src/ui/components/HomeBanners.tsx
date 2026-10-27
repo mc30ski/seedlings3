@@ -19,8 +19,8 @@ type Banner = {
  * Each banner has a Dismiss (✕) action that removes it from the user's
  * own view — dismissals are per-user and don't affect anyone else.
  *
- * Hidden when the admin Home tab is impersonating someone else (viewing
- * as a different worker). The data we fetch is always the *current* user's
+ * Hidden when the Home tab is impersonating someone else (viewing as a
+ * different person). The data we fetch is always the *current* user's
  * banners, so showing them while impersonating would be misleading.
  */
 export default function HomeBanners({ disabled }: { disabled?: boolean }) {

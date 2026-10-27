@@ -10,6 +10,7 @@
 // team/groups worker endpoints follow.
 // ─────────────────────────────────────────────────────────────────────────────
 import { test, expect } from "@playwright/test";
+import { waitForJobsListSettled } from "../helpers/nav";
 
 test("a worker's parcel payload carries no value or owner", async ({ page }) => {
   test.setTimeout(180_000);
@@ -23,9 +24,9 @@ test("a worker's parcel payload carries no value or owner", async ({ page }) => 
 
   await page.goto("/");
   await page.evaluate(() => {
-    localStorage.setItem("seedlings_topTab", JSON.stringify("worker"));
-    localStorage.setItem("seedlings_workerTab", JSON.stringify("jobs"));
-    localStorage.setItem("seedlings_workerCategory", JSON.stringify("Work"));
+    localStorage.setItem("seedlings_topTab", JSON.stringify("staff"));
+    localStorage.setItem("seedlings_staffTab", JSON.stringify("jobs"));
+    localStorage.setItem("seedlings_staffCategory", JSON.stringify("Work"));
     localStorage.setItem("seedlings_lastAppOpenedAt", new Date().toISOString());
     localStorage.setItem("seedlings_wjobs_status", JSON.stringify(["CLOSED"]));
     localStorage.setItem("seedlings_wjobs_datePreset", JSON.stringify("all"));
@@ -33,7 +34,7 @@ test("a worker's parcel payload carries no value or owner", async ({ page }) => 
   });
   await page.goto("/");
   await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(4000);
+  await waitForJobsListSettled(page);
 
   const icon = page.locator('button[title*="Property record"]').first();
   expect(await icon.count(), "a worker should see the parcel icon").toBeGreaterThan(0);

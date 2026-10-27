@@ -76,7 +76,7 @@ export type InvoiceLine = {
 /**
  * The lines a client sees, in the order they see them.
  *
- * ONE PLACE. The pay page, the receipt and the admin preview all read this, so
+ * ONE PLACE. The pay page, the receipt and the staff-side preview all read this, so
  * a line can never appear on one and be missing from another — and the sum is
  * guaranteed to equal `invoiceTotal`, which the build gate asserts rather than
  * leaves to trust.

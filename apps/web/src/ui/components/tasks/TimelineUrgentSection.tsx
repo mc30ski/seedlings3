@@ -2,7 +2,7 @@
 
 // Inline section for the Tasks page — lists past-due TimelineEvents
 // (the same rows that count as "urgent" in the title-bar Timeline
-// alert badge). Mark-complete is super-only at the API layer
+// alert badge). Mark-complete needs `timeline.manage` at the API layer
 // (services/timelineEvents.ts), so the inline Complete button only
 // renders for super. Admin-without-super sees the list as
 // informational and uses Goto Task to act in the Timeline tab.
@@ -31,7 +31,7 @@ type UpcomingRow = {
   type?: string;
   nextDate: string | null;
   archivedAt?: string | null;
-  adminHidden?: boolean;
+  restricted?: boolean;
 };
 
 function isPast(iso: string | null): boolean {
@@ -40,13 +40,20 @@ function isPast(iso: string | null): boolean {
 }
 
 type Props = {
-  // Complete is super-only at the API; admin-without-super gets a
+  // Complete needs `timeline.manage` at the API; a reader without it gets a
   // read-only list. Passed in from TasksPage so we don't re-derive
   // the role here.
-  isSuper: boolean;
+  /** May this reader see hidden timeline rows and complete an event?
+   *  Both are `timeline.manage`. */
+  canSeeHidden: boolean;
 };
 
-export default function TimelineUrgentSection({ isSuper }: Props) {
+export default function TimelineUrgentSection({ canSeeHidden }: Props) {
+  // READ FROM "timeline.manage" by the caller — the capability the hidden
+  // -event endpoints behind this section are guarded on. The callsite had
+  // it right all along; this file never named it, so nothing here tied the
+  // flag to the thing it stands for and a second caller had only the prop
+  // name to go on.
   const [rows, setRows] = useState<UpcomingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -54,10 +61,9 @@ export default function TimelineUrgentSection({ isSuper }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const endpoint = isSuper
-        ? "/api/super/timeline/upcoming"
-        : "/api/admin/timeline/upcoming";
-      const list = await apiGet<UpcomingRow[]>(endpoint);
+      // One endpoint — the two arms were the same URL. What a reader
+      // gets back is decided server-side from their capabilities.
+      const list = await apiGet<UpcomingRow[]>("/api/timeline/upcoming");
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({
@@ -67,7 +73,7 @@ export default function TimelineUrgentSection({ isSuper }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [isSuper]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -91,7 +97,7 @@ export default function TimelineUrgentSection({ isSuper }: Props) {
       // next-entry date on recurring rows so the operator sees when
       // it'll reappear without having to open the row.
       const updated = await apiPost<{ nextDueDate: string | null }>(
-        `/api/super/timeline/${row.id}/complete`,
+        `/api/timeline/${row.id}/complete`,
         {},
       );
       window.dispatchEvent(new Event("seedlings3:timeline-changed"));
@@ -125,7 +131,7 @@ export default function TimelineUrgentSection({ isSuper }: Props) {
     <VStack align="stretch" gap={2}>
       {overdue.map((r) => {
         const rowKey = r.id ?? r.documentId ?? r.title;
-        const canComplete = isSuper && r.kind !== "document_expiration" && !!r.id;
+        const canComplete = canSeeHidden && r.kind !== "document_expiration" && !!r.id;
         return (
           <Box
             key={rowKey}

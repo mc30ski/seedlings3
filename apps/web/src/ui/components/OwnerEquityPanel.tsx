@@ -48,7 +48,7 @@ export function useOwnerEquity(range: PayrollRangeKey, enabled: boolean) {
 
   const load = useCallback(async () => {
     // Hooks can't be conditional, but the fetch must be: this endpoint is
-    // Super-only, so firing it for an ordinary worker is a guaranteed 403
+    // Gated on `books.view`, so firing it without that is a guaranteed 403
     // and a spurious error toast.
     if (!enabled) {
       setRows(null);
@@ -66,8 +66,8 @@ export function useOwnerEquity(range: PayrollRangeKey, enabled: boolean) {
         return p.toString();
       };
       const [contrib, draws] = await Promise.all([
-        apiGet<{ rows: EquityRow[] }>(`/api/admin/business-expenses?${qs("CAPITAL_CONTRIBUTION")}`),
-        apiGet<{ rows: EquityRow[] }>(`/api/admin/business-expenses?${qs("OWNER_DRAW")}`),
+        apiGet<{ rows: EquityRow[] }>(`/api/business-expenses?${qs("CAPITAL_CONTRIBUTION")}`),
+        apiGet<{ rows: EquityRow[] }>(`/api/business-expenses?${qs("OWNER_DRAW")}`),
       ]);
       const all = [...(contrib?.rows ?? []), ...(draws?.rows ?? [])].sort((a, b) =>
         b.date.localeCompare(a.date),

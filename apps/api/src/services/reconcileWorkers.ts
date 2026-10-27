@@ -1,13 +1,13 @@
+import { classify, isW2, type WorkerType } from "@repo/money";
 import { prisma } from "../db/prisma";
 import { invoiceTotal } from "../lib/jobPricing";
 import { etFormatDate } from "../lib/dates";
-import { Role as RoleVal } from "@prisma/client";
 import {
   computeBreakdown,
   loadRates,
   type WorkerInput,
 } from "./payments";
-import { isEmployeeClass } from "./exports";
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Worker Reconciliation — a single-window aggregation of hours, jobs,
@@ -42,7 +42,7 @@ import { isEmployeeClass } from "./exports";
 export type ReconcileJobAssigneeBreakdown = {
   userId: string;
   displayName: string | null;
-  workerType: string | null;
+  workerType: WorkerType | null;
   isOwner: boolean;
   splitPercent: number;
   gross: number;
@@ -90,7 +90,7 @@ export type ReconcileJobRow = {
   jobPrice: number;
   grossShare: number;          // pre-fee/margin
   feeOrMargin: number;         // contractor fee or business margin
-  topUp: number;               // employee/trainee make-whole
+  topUp: number;               // W-2 (EMPLOYEE) make-whole
   netPaid: number;             // what the worker actually received (see netForJob)
   /** What % of the job payment this worker was credited for.
    *  Source priority: completionSplits (the operator-edited split),
@@ -124,7 +124,7 @@ export type ReconcileWorkerRow = {
   userId: string;
   displayName: string | null;
   email: string | null;
-  workerType: string | null;
+  workerType: WorkerType | null;
   isOwner: boolean;
 
   // Time
@@ -173,7 +173,7 @@ export type PayrollRow = {
   userId: string;
   displayName: string | null;
   email: string | null;
-  workerType: string | null;
+  workerType: WorkerType | null;
   isOwner: boolean;
   hours: number;
   hourlyWage: number;
@@ -200,7 +200,7 @@ export type ReconcilePeriod = {
     totalEquipmentRental: number;  // Checkout.rentalCost
     totalProcessorFees: number;    // Payment.processorFeeAmount
     totalWorkerGross: number;      // sum of worker gross shares (exc. owner)
-    totalBusinessMargin: number;   // sum of employee/trainee margins
+    totalBusinessMargin: number;   // sum of W-2 (EMPLOYEE) margins
     totalContractorFees: number;   // sum of contractor platform fees
     totalTopUps: number;
     /** Tips paid to workers in the window. Payment-anchored, and NOT part
@@ -213,7 +213,7 @@ export type ReconcilePeriod = {
   };
   reconciliationTargets: {
     // Numbers the operator should copy-paste against external systems.
-    gustoEmployeeWages: number;    // W-2 (employee+trainee) gross+topUp earnings
+    gustoEmployeeWages: number;    // W-2 (EMPLOYEE) gross+topUp earnings
     qbServiceIncome: number;        // Payment.amountPaid (sum)
     qbEquipmentRentalIncome: number;
     qbProcessorFees: number;
@@ -272,7 +272,7 @@ function activeMs(
 }
 
 // Read the JobOccurrence.promisedPayouts snapshot into a map.
-type SnapshotEntry = { userId?: string; net?: number; gross?: number; fee?: number; workerType?: string };
+type SnapshotEntry = { userId?: string; net?: number; gross?: number; fee?: number; workerType?: WorkerType };
 function readSnapshot(raw: unknown): Map<string, SnapshotEntry> | null {
   if (!Array.isArray(raw)) return null;
   const m = new Map<string, SnapshotEntry>();
@@ -485,7 +485,7 @@ export async function buildReconcileWorkers(
       id: string;
       displayName: string | null;
       email: string | null;
-      workerType: string | null;
+      workerType: WorkerType | null;
       hourlyWage: number;
       isOwner: boolean;
     };
@@ -542,7 +542,7 @@ export async function buildReconcileWorkers(
     id: string;
     displayName: string | null;
     email: string | null;
-    workerType: string | null;
+    workerType: WorkerType | null;
     hourlyWage?: unknown;
     isOwner?: boolean | null;
   }): Accum["user"] {
@@ -612,7 +612,7 @@ export async function buildReconcileWorkers(
   // ── Apply occurrences → jobs + per-worker earnings ─────────────────────
   for (const occ of occurrences) {
     if (!occ.completedAt) continue;
-    // Super-Skipped payments mean the service financially never
+    // Skipped payments mean the service financially never
     // happened — stronger than write-off. Per the Payment.skippedAt
     // schema note, every money query (income, exports, payroll,
     // 1099s, P&L, vs-revenue) filters skippedAt IS NULL. This loop
@@ -971,7 +971,7 @@ export async function buildReconcileWorkers(
     // happens to be EMPLOYEE in the data.
     const belowMinWage =
       !a.user.isOwner &&
-      isEmployeeClass(a.user.workerType) &&
+      isW2(a.user.workerType) &&
       preTopUpHourly != null &&
       preTopUpHourly < minWage;
 
@@ -1114,7 +1114,11 @@ export async function buildReconcileWorkers(
   const rosterUsers = await prisma.user.findMany({
     where: {
       isApproved: true,
-      OR: [{ roles: { some: { role: RoleVal.WORKER } } }, { isOwner: true }],
+      // Anyone ON PAYROLL, plus the owner. This asked for a role,
+      // which is gone — and payroll is the better question anyway, since the
+      // roster exists to show who could have been paid this period. An
+      // UNPAID helper is correctly absent: they cannot hold a paid seat.
+      OR: [{ workerType: { in: ["EMPLOYEE", "CONTRACTOR"] } }, { isOwner: true }],
     },
     select: {
       id: true,
@@ -1154,13 +1158,13 @@ export async function buildReconcileWorkers(
     });
   }
 
-  // Payroll order: W-2 (employee+trainee) first, then contractors,
+  // Payroll order: W-2 (EMPLOYEE) first, then contractors,
   // alphabetical by display name within each group. Matches how the
   // operator scans Gusto: salaried/hourly W-2 entry, then 1099
   // contractor payments.
   payroll.sort((a, b) => {
-    const aEmp = isEmployeeClass(a.workerType) ? 0 : 1;
-    const bEmp = isEmployeeClass(b.workerType) ? 0 : 1;
+    const aEmp = isW2(a.workerType) ? 0 : 1;
+    const bEmp = isW2(b.workerType) ? 0 : 1;
     if (aEmp !== bEmp) return aEmp - bEmp;
     return (a.displayName ?? "").localeCompare(b.displayName ?? "");
   });
@@ -1185,9 +1189,30 @@ export async function buildReconcileWorkers(
   // Split fees/margin by worker type.
   let totalBusinessMargin = 0;
   let totalContractorFees = 0;
+  // EXHAUSTIVE, not if/else. `else` meant "therefore a contractor", so an
+  // unpaid helper's cut would have landed in Contractor Fees — and from there
+  // in QuickBooks Contract Labor, a tax line. Neither non-paid class may be
+  // bucketed, and anything that reaches here with a cut and no pay class is a
+  // conservation error worth refusing over.
   for (const w of workers) {
-    if (isEmployeeClass(w.workerType)) totalBusinessMargin += w.feesOrMargin;
-    else totalContractorFees += w.feesOrMargin;
+    switch (classify(w.workerType)) {
+      case "w2":
+        totalBusinessMargin += w.feesOrMargin;
+        break;
+      case "contractor":
+        totalContractorFees += w.feesOrMargin;
+        break;
+      case "unpaid":
+      case "unclassified":
+        if (Math.abs(w.feesOrMargin) > 0.005) {
+          throw new Error(
+            `Worker ${w.userId} is ${classify(w.workerType)} but carries a ` +
+              `business cut of ${w.feesOrMargin}. They should never have a ` +
+              `split at all — exclude them upstream rather than bucketing it.`,
+          );
+        }
+        break;
+    }
   }
   totalBusinessMargin = round2(totalBusinessMargin);
   totalContractorFees = round2(totalContractorFees);
@@ -1202,13 +1227,13 @@ export async function buildReconcileWorkers(
   );
 
   // ── Reconciliation targets ─────────────────────────────────────────────
-  // Gusto employee wages = W-2 (employee+trainee) gross + top-ups, fees
+  // Gusto employee wages = W-2 gross + top-ups, fees
   // not deducted (fees are the business's cut). This is what Gusto will
   // pay through payroll.
   let gustoEmployeeWages = 0;
   let qbContractLabor = 0;
   for (const w of workers) {
-    if (isEmployeeClass(w.workerType)) {
+    if (isW2(w.workerType)) {
       // Employee tips are W-2 wages — Gusto pays them through payroll
       // (in its own Tips earning type), so they belong in this target.
       gustoEmployeeWages += w.grossEarnings - w.feesOrMargin + w.topUps + w.tips;
@@ -1297,7 +1322,7 @@ function payrollTypeLabel(t: string | null | undefined, isOwner: boolean): strin
   if (isOwner) return "Owner";
   switch (t) {
     case "EMPLOYEE": return "Employee";
-    case "TRAINEE": return "Trainee";
+    case "UNPAID": return "Unpaid";
     case "CONTRACTOR": return "Contractor";
     default: return "Unclassified";
   }

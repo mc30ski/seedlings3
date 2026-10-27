@@ -1,7 +1,7 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GuideApprovalsSection — education guides waiting on a Super.
+// GuideApprovalsSection — education guides waiting on someone with `settings.manage`.
 //
 // Canonical spec: docs/features/education.md
 //
@@ -10,7 +10,7 @@
 // CollapsibleSectionCard on the Tasks page.
 //
 // Approving is the ONLY way a guide becomes readable, so a pending item is
-// work nobody but a Super can clear — which is why it earns an alert and a
+// work nobody but someone with `settings.manage` can clear — which is why it earns an alert and a
 // Tasks row rather than living only inside the tab.
 // ─────────────────────────────────────────────────────────────────────────────
 

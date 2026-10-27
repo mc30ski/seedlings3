@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, Dialog, HStack,
   Spacer, Portal, Spinner, Text, VStack } from "@chakra-ui/react";
-import { AlertTriangle, ArrowLeftCircle, Banknote, Link2, LineChart } from "lucide-react";
+import { AlertTriangle, ArrowLeftCircle, Banknote, BarChart3, ChevronDown, Link2, LineChart, TrendingUp } from "lucide-react";
 import OnClockBubble from "@/src/ui/components/OnClockBubble";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
@@ -11,6 +11,7 @@ import PolicyGateInterceptor from "@/src/ui/components/PolicyGateInterceptor";
 import MileageReminderInterceptor from "@/src/ui/components/MileageReminderInterceptor";
 import { apiGet } from "@/src/lib/api";
 import { setCompressionDefaults } from "@/src/lib/imageRedact";
+import { getClientImpersonation } from "@/src/lib/impersonation";
 import { bizDateKey, bizToday, bizTomorrow, bizYesterday, bizAddDays, bizHour } from "@/src/lib/dates";
 import { overdueKind, loadPaymentRequestExpiryHours } from "@/src/lib/overdueRule";
 import { ActiveTabExplainerButton } from "@/src/ui/components/TabExplainer";
@@ -21,11 +22,11 @@ import Link from "next/link";
 import { UserButton, useAuth, useUser } from "@clerk/clerk-react";
 
 import UsersTab from "@/src/ui/tabs/UsersTab";
-import AdminComplianceTab from "@/src/ui/tabs/AdminComplianceTab";
+import ComplianceTab from "@/src/ui/tabs/ComplianceTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
 import HistoryTab from "@/src/ui/tabs/HistoryTab";
 import SettingsTab from "@/src/ui/tabs/SettingsTab";
-import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
+import UnclaimedTab from "@/src/ui/tabs/UnclaimedTab";
 import WorkdaysTab from "@/src/ui/tabs/WorkdaysTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
@@ -39,9 +40,9 @@ import MileageStrip from "@/src/ui/components/MileageStrip";
 import InventoryTab from "@/src/ui/tabs/InventoryTab";
 import VehiclesTab from "@/src/ui/tabs/VehiclesTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
-// ServicesTab: one mount serves both Admin and Super. The tab
-// derives Super-only affordances from the caller's actual role via
-// determineRoles(me, "ADMIN"), so purpose="ADMIN" is correct for both.
+// ServicesTab: one mount, like every other tab. What it offers comes
+// from `schedule.view` / `schedule.manage`, read inside the tab from the
+// perspective-narrowed capability set.
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
 import PropertiesTab from "@/src/ui/tabs/PropertiesTab";
 import PaymentsTab from "@/src/ui/tabs/PaymentsTab";
@@ -60,22 +61,22 @@ import ForecastTab from "@/src/ui/tabs/ForecastTab";
 import GuidesTab from "@/src/ui/tabs/GuidesTab";
 import { fetchPendingApprovalCount as fetchGuidePendingCount } from "@/src/lib/guides";
 import { fetchUnmatchedPayrollNames } from "@/src/lib/payroll";
-import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/AdminTasksTab";
+import TasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/TasksTab";
 import SharePhotosWorkflow from "@/src/ui/workflows/SharePhotosWorkflow";
-// StatisticsTab is no longer wired into the worker or super shell (both tab
-// entries were removed per operator preference). The component file and the
-// /api/me/statistics + /api/admin/statistics endpoints stay in place so
-// the import can be reinstated cleanly if the tab returns.
-// import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
+// Reinstated 2026-10-26 as the TEAM ROLLUP, after being unwired for a
+// while. `/statistics` is area-scoped now, so this is also how an area
+// lead rolls up their own district: a company-wide holder sees the
+// company, an area-limited one sees their area and the page says which.
+import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 import HomeTab from "@/src/ui/tabs/HomeTab";
 import ImpersonationBanner from "@/src/ui/components/ImpersonationBanner";
 import MulchJobTool from "@/src/ui/tools/MulchJobTool";
 import MowingJobTool from "@/src/ui/tools/MowingJobTool";
-import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
+import NotifyTab from "@/src/ui/tabs/NotifyTab";
 import CollectionsTab from "@/src/ui/tabs/CollectionsTab";
-import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
+import CrewsTab from "@/src/ui/tabs/CrewsTab";
 import PricingTab from "@/src/ui/tabs/PricingTab";
 import PromotionsTab from "@/src/ui/tabs/PromotionsTab";
 import VanityUrlsTab from "@/src/ui/tabs/VanityUrlsTab";
@@ -84,14 +85,17 @@ import DisplaysTab from "@/src/ui/tabs/DisplaysTab";
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
+import { setPerspective, PERSPECTIVE_CHANGED_EVENT, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
+import RolesTab from "@/src/ui/tabs/RolesTab";
+import AreasTab from "@/src/ui/tabs/AreasTab";
 
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
-import { Me, Role, AdminTabs, ClientTabs, WorkerTabs, SuperTabs, EventTypes } from "@/src/lib/types";
+import { Me, ClientTabs, StaffTabs, EventTypes } from "@/src/lib/types";
 import { FiActivity, FiAlertCircle, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiHome, FiLink, FiMapPin, FiMonitor, FiNavigation, FiPackage, FiRefreshCw, FiSearch, FiSettings, FiShield, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
-import { GrUserAdmin } from "react-icons/gr";
+import { GrUserSettings } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
 import { TfiMoney } from "react-icons/tfi";
 
@@ -100,17 +104,67 @@ import ScrollableUnderlineTabs, {
 } from "../src/ui/components/ScrollableUnderlineTabs";
 import BreadcrumbNav from "@/src/ui/components/BreadcrumbNav";
 import DayBoardButton from "@/src/ui/components/DayBoardButton";
+
+/**
+ * THE BOARD (trophy icon) — MOVED into the header drawer 2026-10-26.
+ *
+ * It was hidden outright earlier the same day for taking permanent space in
+ * the title bar. It is back, but behind the chevron rather than beside the
+ * avatar: a thing worth keeping and not worth a slot that is paid for on
+ * every screen of every session.
+ *
+ * This flag still controls the OLD inline slot, next to the copy-link
+ * button, and stays false. The drawer renders its own copy — see
+ * `headerDrawerOpen` further down. Two callsites, one feature; if the
+ * inline one is ever revived, delete the drawer copy rather than shipping
+ * the trophy twice.
+ *
+ * The capability gate on both is CORRECT: the board reads `GET /board`,
+ * which is `schedule.view`. It used to ask `hasAnyRole` — "holds any
+ * capability at all" — so a payroll clerk was offered the trophy and got a
+ * 403 rendered as "Couldn't load the board just now."
+ */
+const SHOW_DAY_BOARD_BUTTON: boolean = false;
 import RoleChip, { type RoleValue } from "@/src/ui/components/RoleChip";
+import AreaLensChip from "@/src/ui/components/AreaLensChip";
+import AreaScopeNotice from "@/src/ui/components/AreaScopeNotice";
 import ThemeChip from "@/src/ui/components/ThemeChip";
 import TasksPage from "@/src/ui/pages/TasksPage";
+import { can, isEntitlement, type Entitlement } from "@repo/permissions";
+import { isFieldCleared } from "../src/lib/scope";
+import { canSeeTab, hasCapabilityTab } from "@/src/lib/tabRequirements";
 
-const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
-  !!roles?.includes(role);
+// `hasRole` lived here as a local copy. Both it and the Role enum it asked
+// about are gone; every question is `scopeCan(<entitlement>)`.
 
 /** Where the user was standing when they opened a workflow. Read by
  *  "Return to Workflow" so stepping out to Equipment/Routes and coming
  *  back lands on the launching tab. */
 const WORKFLOW_ORIGIN_KEY = "seedlings_workflow_origin";
+
+/**
+ * Which category strip each staff tab lives under.
+ *
+ * ONE map. There were two — someone with `schedule.manage` one and someone with `settings.manage` one — and a caller with `schedule.manage`
+ * copy was missing ten tabs (Ledger, Promotions, Forecast, Reconcile,
+ * Workdays, Compliance, Audit, Tools, Vanity, Displays), so a cross-tab jump
+ * to any of them resolved no category and left the strip on the old one.
+ *
+ * Values must match the `category:` on each tab entry below.
+ */
+const TAB_CATEGORY: Record<string, string> = {
+  home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
+  equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
+  clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
+  payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
+  ledger: "Money", promotions: "Money", forecast: "Money",
+  reconcile: "Records", workdays: "Records", compliance: "Records",
+  activity: "Records", history: "Records", timeline: "Records",
+  documents: "Records", guides: "Records", audit: "Records",
+  "tools-mowing": "Tools", "tools-mulch": "Tools",
+  notify: "System", settings: "System", profile: "System",
+  vanity: "System", displays: "System", roles: "System", areas: "System",
+};
 
 export default function HomePage() {
   const router = useRouter();
@@ -122,6 +176,14 @@ export default function HomePage() {
   const [queueDialogOpen, setQueueDialogOpen] = useState(false);
 
   const [me, setMe] = useState<Me | null>(null);
+  // Is a client "View as" session running? Read once on mount: entering or
+  // leaving one reloads the page, so it cannot change under us.
+  const [clientViewAs, setClientViewAs] = useState(false);
+  // Did the person PICK this shell, or did they just land on it? Persisted
+  // next to `topTab`, because the rescue effect runs on every load and the
+  // distinction has to survive one.
+  const [shellChosen, setShellChosen] = usePersistedState<boolean>("shellChosen", false);
+  useEffect(() => { setClientViewAs(!!getClientImpersonation()); }, []);
   const [meLoading, setMeLoading] = useState(true);
   // Splash-done flag: gates browser-permission prompts (geolocation,
   // notifications, etc.) so the OS/browser dialog doesn't pop up over
@@ -133,32 +195,131 @@ export default function HomePage() {
     const t = window.setTimeout(() => setSplashDone(true), 9500);
     return () => window.clearTimeout(t);
   }, []);
-  const isAdmin = hasRole(me?.roles, "ADMIN");
-  const isWorker = hasRole(me?.roles, "WORKER");
-  const isSuper = hasRole(me?.roles, "SUPER");
-  const hasAnyRole = (me?.roles?.length ?? 0) > 0;
+  // NO SURFACE FLAGS. Three role booleans were derived here from three
+  // capabilities and then read 50 times, which put the deleted role model
+  // back into every decision on the page — including the fifteen alert
+  // loaders, where "runs the business" stood in for the entitlement each
+  // queue's own endpoint is actually guarded by. Every one of those now asks
+  // `scopeCan(<the route's entitlement>)`, so a badge cannot appear for a
+  // queue the server would refuse to serve.
+  // Is this person internal at all? Was "holds any role". Holding no
+  // capability is now a REAL state — somebody on payroll whom nobody has
+  // given a role yet, and the unpaid helper — so they get the client shell
+  // rather than an empty staff one.
+  const hasAnyRole = (me?.capabilities?.length ?? 0) > 0;
 
-  const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin" | "super">("topTab", "client");
+  // TWO SHELLS. Was `"client" | "worker" | "admin" | "super"` — three of
+  // which were the same staff app rendered three ways. The stored value is
+  // migrated on read: a browser holding "worker", "admin" or "super" lands
+  // on "staff" rather than on nothing.
+  const [topTabRaw, setTopTab] = usePersistedState<"client" | "staff">("topTab", "client");
+  const topTab: "client" | "staff" =
+    topTabRaw === "client" ? "client" : "staff";
 
-  // Effective role scope — reflects what the operator is currently
-  // acting AS, not just what their underlying account is allowed to
-  // do. A Super who has switched their top-tab to "Worker" is looking
-  // at the world through a Worker's lens; the alerts dropdown and
-  // TasksPage must show only what a Worker would see, otherwise
-  // admin/super items (Timeline urgent, Payments to review, etc.) leak
-  // through and mislead the operator about what they can act on from
-  // the current tab.
+  // WHAT YOU CAN DO DOES NOT DEPEND ON WHICH SCREEN YOU ARE LOOKING AT.
   //
-  //   scopeIsWorker: active on worker/admin/super tab, requires WORKER role
-  //   scopeIsAdmin:  active on admin/super tab,        requires ADMIN role
-  //   scopeIsSuper:  active on super tab only,         requires SUPER role
+  // Everything on this page asks `scopeCan(<entitlement>)`, over the
+  // capability set `/api/me` returned. The server has already applied any
+  // active perspective to that set, so a narrower perspective narrows both
+  // the tab list and the contents of every tab — and the browser never
+  // re-derives it, because re-deriving is what lets the two disagree.
   //
-  // Roles nest upward: a Super acting on the Admin tab sees Admin-scope
-  // alerts (they can act on them); a Super acting on the Worker tab
-  // sees Worker-scope only.
-  const scopeIsWorker = (topTab === "worker" || topTab === "admin" || topTab === "super") && isWorker;
-  const scopeIsAdmin  = (topTab === "admin" || topTab === "super") && isAdmin;
-  const scopeIsSuper  = topTab === "super" && isSuper;
+  // What was here instead: three role flags, each ANDed with `topTab`, so
+  // the same tab rendered three different ways depending on the shell it
+  // was reached through — and the mounts below pinned one of them off on
+  // top of that. Between them a tab's content was decided by navigation
+  // rather than by entitlement, and a custom role that lit no shell got
+  // whichever build its surface fell nearest: a bookkeeper was shown a
+  // field worker's Payments screen.
+  //
+  // It runs the SAME can() the server's route guard runs, over the
+  // capabilities /api/me resolved, so a button cannot appear for an action
+  // the route would refuse (G15).
+  const capabilities = useMemo(
+    () => (me?.capabilities ?? []).filter(isEntitlement),
+    [me?.capabilities],
+  );
+  const scopeCan = useCallback(
+    (capability: Entitlement) =>
+      can(
+        {
+          kind: "user",
+          // The server already applied the payroll gate and any active
+          // perspective before sending `capabilities`, so the browser asks
+          // about the set it was GIVEN rather than re-deriving one. Re-deriving
+          // is exactly what lets the two disagree.
+          workerType: me?.workerType ?? null,
+          roles: [{ roleId: "__me__", name: "me", entitlements: capabilities }],
+          perspective: null,
+        },
+        capability,
+      ),
+    [capabilities],
+  );
+  // One object, spread into every tab, so a future field is added once.
+  const scopeBase = { can: scopeCan };
+
+  /**
+   * An approved STAFF account that no capability lets into any tab.
+   *
+   * ONE CONDITION, TWO CONSUMERS. The no-role notice and the tab strip have
+   * to agree: the notice says "nothing has been shared with it yet… your
+   * profile is still available from the avatar", and a tab strip underneath
+   * it calls that a lie. It was one — `hasCapabilityTab` deliberately
+   * ignores the ALWAYS tabs, so they kept rendering under the notice, and a
+   * brand-new account with no grants landed on Work → Payments reading
+   * "Payout: $0.00" above "No payments found."
+   *
+   * ALWAYS means "no capability distinguishes this tab", not "visible to
+   * somebody who has been given nothing at all" — those tabs exist for a
+   * worker who is not an administrator, which is a person with capabilities.
+   */
+  const homelessStaff =
+    !meLoading &&
+    !!me?.isApproved &&
+    !me?.isClientContact &&
+    !clientViewAs &&
+    !hasCapabilityTab(scopeCan);
+
+  // WHICH TABS EXIST is decided by capability, not by which shell is on
+  // screen. Before this, a worker list and a manager list were hardcoded and
+  // chosen by surface, so a role that was neither — a bookkeeper holding
+  // `books.*` but not `schedule.manage` — had no list to appear on and
+  // therefore no app. `TAB_REQUIREMENTS` is the single table; see its
+  // header for why it is the one mapping the UI is allowed to keep.
+  //
+  // A tab's OWN `visible` predicate still applies on top of the capability
+  // answer, because a few depend on data rather than permission (Routes
+  // needs a workerType). Both must say yes.
+  const tabVisible = useCallback(
+    (t: TabItem): (() => boolean) =>
+      () => {
+        if (!canSeeTab(t.value, scopeCan)) return false;
+        if (typeof t.visible === "function") return t.visible();
+        return t.visible !== false;
+      },
+    [scopeCan],
+  );
+  /**
+   * Is any tab in this shell reachable?
+   *
+   * A shell is a grouping of tabs, so the honest test of whether to offer
+   * it is whether it contains anything this person may open. The surface
+   * capability alone is not that test: it answers "which layout suits
+   * you", and a role that lights none of the three — a bookkeeper, a
+   * payroll clerk — then had no door to tabs the table says they can see.
+   */
+  const anyTabVisible = useCallback(
+    (tabs: TabItem[]) => tabs.some((t) => canSeeTab(t.value, scopeCan)),
+    [scopeCan],
+  );
+
+  // Applied to a literal tab array (the shell builds one inline).
+  const withCapabilityVisibility = useCallback(
+    <T extends TabItem>(tabs: T[]): T[] =>
+      tabs.map((t) => ({ ...t, visible: tabVisible(t) })),
+    [tabVisible],
+  );
 
   // Captured synchronously at first render — was there a `?tab=` deep-link
   // in the URL when this page mounted? The deep-link resolver strips the
@@ -180,38 +341,37 @@ export default function HomePage() {
   const [tasksOpen, setTasksOpen] = useState(false);
 
   const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
-  const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "jobs");
-  const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "home");
-  const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
-  const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
-  const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "Work");
-  const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "home");
+  // ONE inner tab and ONE category for the staff shell. There were three
+  // of each — worker, admin, super — because there were three shells, so
+  // the same feature remembered three different "where was I" positions
+  // and switching shell silently moved you.
+  const [staffInnerTab, setStaffInnerTab] = usePersistedState<StaffTabs>("staffTab", "home");
+  const [staffCategory, setStaffCategory] = usePersistedState<string>("staffCategory", "Work");
   // Migration: existing users have "operations" or "unclaimed" persisted
-  // under superTab from when those tabs existed / were the default.
-  // Redirect them to the new "home" tab once, silently — otherwise the
-  // Super shell tries to render a non-existent inner tab and shows nothing.
+  // from when those tabs existed / were the default. Redirect them to
+  // "home" once, silently — otherwise the shell tries to render an inner
+  // tab that no longer exists and shows nothing.
   useEffect(() => {
     // One-shot migration: only inspect the persisted value at mount.
-    // Deliberately not keyed on `superInnerTab` so a user navigating
-    // to Super → Home doesn't re-run this on every tab change. Empty
+    // Deliberately not keyed on `staffInnerTab` so a user navigating
+    // to Home doesn't re-run this on every tab change. Empty
     // deps are intentional here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    const stale = superInnerTab as string;
-    if (stale === "operations" || stale === "unclaimed") setSuperInnerTab("home");
+    const stale = staffInnerTab as string;
+    if (stale === "operations" || stale === "unclaimed") setStaffInnerTab("home");
   }, []);
 
-  // Migration: existing workers and admins had removed tab values
-  // ("reminders" from the retired Planning tab, "usage" from the
-  // retired Equipment Usage tab) persisted under workerTab /
-  // adminTab. Redirect them to "home" once so they don't land on a
-  // now-nonexistent inner tab and see a blank tab area.
+  // Migration: removed tab values ("reminders" from the retired Planning
+  // tab, "usage" from the retired Equipment Usage tab) are still persisted
+  // under the two old per-shell keys. Redirect them to "home" once so
+  // nobody lands on a now-nonexistent inner tab and sees a blank area.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    const w = workerInnerTab as string;
-    if (w === "reminders" || w === "usage") setWorkerInnerTab("home");
+    const w = staffInnerTab as string;
+    if (w === "reminders" || w === "usage") setStaffInnerTab("home");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    const a = adminInnerTab as string;
-    if (a === "reminders" || a === "usage") setAdminInnerTab("home");
+    const a = staffInnerTab as string;
+    if (a === "reminders" || a === "usage") setStaffInnerTab("home");
   }, []);
 
   // Workday-approval badge state — declared up here (before the tab
@@ -243,17 +403,20 @@ export default function HomePage() {
   const [streamReviewOccId, setStreamReviewOccId] = useState<string | null>(null);
   const [streamReviewNonce, setStreamReviewNonce] = useState(0);
   const loadPendingWorkdaysRef = useRef<() => Promise<void>>(async () => {});
-  // Super-only: count of open ledger followups (Money → Ledger flags
+  // `books.view` (the guard on /ledger-followups/count): open ledger
+  // followups (Money → Ledger flags
   // waiting on the operator). Drives the "Ledger followups" entry in the
   // alerts dropdown and pre-applies the "Followups only" filter on click.
   const [ledgerFollowupCount, setLedgerFollowupCount] = useState<number>(0);
-  // Super-only: count of recurring business expenses whose next expected
+  // `books.view` (the guard on /business-expenses/due-soon/count):
+  // recurring business expenses whose next expected
   // instance is due within a week (or overdue). Drives the "Due to record"
   // alert in the dropdown + Tasks page shortcut. Source of truth is the
   // Money → Ledger tab's Due-to-Record panel.
   const [dueToRecordCount, setDueToRecordCount] = useState<number>(0);
 
-  // Admin: count of stream-paused occurrences whose reminder date has
+  // `schedule.view` (the guard on /stream-pauses/reminders/count):
+  // stream-paused occurrences whose reminder date has
   // arrived or passed. Drives the "Paused streams to review" alert +
   // Tasks page shortcut. Source of truth is the Services tab where
   // stream-pauses live.
@@ -261,14 +424,15 @@ export default function HomePage() {
   // Next-visit ghost placeholders needing attention. Two buckets: due within
   // three days (still fixable) and already past due. The expired bucket has
   // no upper bound — there is no grace window any more, so it counts every
-  // outstanding stall however old, minus the ones an admin has suppressed.
+  // outstanding stall however old, minus the ones someone with `schedule.manage` has suppressed.
   // Deliberately range-independent — see countGhostExpiry.
   const [ghostExpiringCount, setGhostExpiringCount] = useState<number>(0);
   const [ghostExpiredCount, setGhostExpiredCount] = useState<number>(0);
 
-  // Super-only: compliance-policy alerts. Two independent buckets:
-  //   pendingUploadReviews = worker uploads awaiting admin approve/reject
-  //   pendingApprovals     = policy versions awaiting a second-super approve
+  // `compliance.view` (the guard on /policies/counts). Two independent
+  // buckets:
+  //   pendingUploadReviews = worker uploads awaiting approve/reject
+  //   pendingApprovals     = policy versions awaiting a second approver
   // Both surface as separate rows in the alerts dropdown so the operator
   // can act on whichever is blocking work.
   const [policyPendingUploadsCount, setPolicyPendingUploadsCount] = useState<number>(0);
@@ -282,24 +446,26 @@ export default function HomePage() {
   // Handle /e/[slug] QR redirect — navigate to equipment tab
   useEffect(() => {
     if (sessionStorage.getItem("equipmentQrSlug")) {
-      setTopTab("worker");
-      setWorkerInnerTab("equipment");
-      setWorkerCategory("Equipment");
+      setTopTab("staff");
+      setStaffInnerTab("equipment");
+      setStaffCategory("Equipment");
     }
   }, []);
 
   // Per-tab remount counters. Bumping a key forces React to unmount + remount the
   // corresponding tab, which makes its `usePersistedState` reads pick up freshly-written
   // localStorage values on first render (no flicker).
+  //
+  // ONE SET. There were two — these three and an `admin*` trio — from when a
+  // worker tab and a manager tab were different mounts. Of the six, only the
+  // admin equipment key was ever READ; the other five were incremented and
+  // consumed by nothing, so `remount: true` on a jobs or payments handoff
+  // has been silently doing nothing. Collapsed here; wiring the other two
+  // into their tabs' `key` is a separate change, deliberately not made
+  // blind.
   const [jobsRemountKey, setJobsRemountKey] = useState(0);
   const [equipmentRemountKey, setEquipmentRemountKey] = useState(0);
   const [paymentsRemountKey, setPaymentsRemountKey] = useState(0);
-  // Admin-side remount counters — used by HomeTab (which impersonates a worker)
-  // when its tile click-throughs route into admin tabs that need to re-read fresh
-  // localStorage filters.
-  const [adminJobsRemountKey, setAdminJobsRemountKey] = useState(0);
-  const [adminEquipmentRemountKey, setAdminEquipmentRemountKey] = useState(0);
-  const [adminPaymentsRemountKey, setAdminPaymentsRemountKey] = useState(0);
 
   // Auto-show worker Home tab on first open of the day (after 5am ET) or after ≥6h idle.
   // Updates `seedlings_lastAppOpenedAt` on every app load. Respects "snooze until next 5am ET".
@@ -322,9 +488,9 @@ export default function HomePage() {
       // Only auto-show on the first open of a new ET day, after 5am, before 10pm.
       const shouldShow = !snoozed && !isLateEvening && isPastFiveEt && newDay;
       if (shouldShow) {
-        setTopTab("worker");
-        setWorkerInnerTab("home");
-        setWorkerCategory("Work");
+        setTopTab("staff");
+        setStaffInnerTab("home");
+        setStaffCategory("Work");
       }
       localStorage.setItem("seedlings_lastAppOpenedAt", now.toISOString());
     } catch {}
@@ -340,35 +506,24 @@ export default function HomePage() {
   // Both the in-app back button and browser/OS back gesture go through the same path:
   // - In-app button calls history.back() → triggers popstate → restoreFromHistory()
   // - Browser back fires popstate → restoreFromHistory()
-  type NavState = { outer: string; inner: string; category?: string };
+  type NavState = { outer: "client" | "staff"; inner: string; category?: string };
   const navHistoryRef = useRef<NavState[]>([]);
   const [canGoBack, setCanGoBack] = useState(false);
 
   // Use refs for current nav state so closures always read the latest values
   const topTabRef = useRef(topTab);
   const clientInnerTabRef = useRef(clientInnerTab);
-  const workerInnerTabRef = useRef(workerInnerTab);
-  const adminInnerTabRef = useRef(adminInnerTab);
-  const superInnerTabRef = useRef(superInnerTab);
-  const workerCategoryRef = useRef(workerCategory);
-  const adminCategoryRef = useRef(adminCategory);
-  const superCategoryRef = useRef(superCategory);
+  const staffInnerTabRef = useRef(staffInnerTab);
+  const staffCategoryRef = useRef(staffCategory);
   topTabRef.current = topTab;
   clientInnerTabRef.current = clientInnerTab;
-  workerInnerTabRef.current = workerInnerTab;
-  adminInnerTabRef.current = adminInnerTab;
-  superInnerTabRef.current = superInnerTab;
-  workerCategoryRef.current = workerCategory;
-  adminCategoryRef.current = adminCategory;
-  superCategoryRef.current = superCategory;
+  staffInnerTabRef.current = staffInnerTab;
+  staffCategoryRef.current = staffCategory;
 
   function getCurrentNavState(): NavState {
     const t = topTabRef.current;
-    const inner = t === "client" ? clientInnerTabRef.current
-      : t === "worker" ? workerInnerTabRef.current
-      : t === "admin" ? adminInnerTabRef.current
-      : superInnerTabRef.current;
-    const category = t === "worker" ? workerCategoryRef.current : t === "admin" ? adminCategoryRef.current : t === "super" ? superCategoryRef.current : undefined;
+    const inner = t === "client" ? clientInnerTabRef.current : staffInnerTabRef.current;
+    const category = t === "client" ? undefined : staffCategoryRef.current;
     return { outer: t, inner, category };
   }
 
@@ -387,15 +542,15 @@ export default function HomePage() {
   function applyNavState(prev: NavState) {
     topTabRef.current = prev.outer as any;
     if (prev.outer === "client") clientInnerTabRef.current = prev.inner as any;
-    else if (prev.outer === "worker") { workerInnerTabRef.current = prev.inner as any; if (prev.category) workerCategoryRef.current = prev.category; }
-    else if (prev.outer === "admin") { adminInnerTabRef.current = prev.inner as any; if (prev.category) adminCategoryRef.current = prev.category; }
-    else if (prev.outer === "super") { superInnerTabRef.current = prev.inner as any; if (prev.category) superCategoryRef.current = prev.category; }
+    // `else` — there are two shells. This was three more branches, one
+    // per old shell, with identical bodies; `outer` comes from
+    // getCurrentNavState() which returns topTabRef, typed
+    // "client" | "staff", so none of them could ever run.
+    else { staffInnerTabRef.current = prev.inner as any; if (prev.category) staffCategoryRef.current = prev.category; }
     // Now set React state (no skipNextPush needed — onOuterChange/onInnerChange only fire from user clicks)
     setTopTab(prev.outer as any);
     if (prev.outer === "client") setClientInnerTab(prev.inner as any);
-    else if (prev.outer === "worker") { setWorkerInnerTab(prev.inner as any); if (prev.category) setWorkerCategory(prev.category); }
-    else if (prev.outer === "admin") { setAdminInnerTab(prev.inner as any); if (prev.category) setAdminCategory(prev.category); }
-    else if (prev.outer === "super") { setSuperInnerTab(prev.inner as any); if (prev.category) setSuperCategory(prev.category); }
+    else { setStaffInnerTab(prev.inner as any); if (prev.category) setStaffCategory(prev.category); }
   }
 
   function restoreFromHistory() {
@@ -471,8 +626,8 @@ export default function HomePage() {
     check();
     window.addEventListener("storage", check);
     const onCheck = () => setTimeout(check, 50);
-    window.addEventListener("navigate:workerTab", onCheck);
-    return () => { window.removeEventListener("storage", check); window.removeEventListener("navigate:workerTab", onCheck); };
+    window.addEventListener("navigate:staffTab", onCheck);
+    return () => { window.removeEventListener("storage", check); window.removeEventListener("navigate:staffTab", onCheck); };
   }, []);
 
   // Escape closes the Tasks page — third close affordance alongside
@@ -498,7 +653,7 @@ export default function HomePage() {
 
   async function downloadSummary() {
     try {
-      const { text } = await apiGet<{ text: string }>("/api/admin/export-summary");
+      const { text } = await apiGet<{ text: string }>("/api/export-summary");
       const blob = new Blob([text], { type: "text/plain" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -513,7 +668,7 @@ export default function HomePage() {
 
   async function downloadRaw() {
     try {
-      const data = await apiGet<Record<string, unknown>>("/api/admin/export");
+      const data = await apiGet<Record<string, unknown>>("/api/export");
       const json = JSON.stringify(data, null, 2);
       const blob = new Blob([json], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -529,10 +684,14 @@ export default function HomePage() {
 
 
 
-  const adminTasks: TaskDef[] = [
+  const staffTasks: TaskDef[] = [
     {
       id: "new-job-setup",
       label: "New Job Service",
+      // POST /clients + POST /properties are `clients.manage`; POST /jobs
+      // is `schedule.manage`. The workflow runs all three in one pass, so
+      // it needs both — holding one gets you a wizard that dies halfway.
+      requires: ["clients.manage", "schedule.manage"],
       description: "Create a new client, property, job, and first occurrence",
       icon: FiPlus,
       colorPalette: "green",
@@ -542,6 +701,10 @@ export default function HomePage() {
     {
       id: "share-photos",
       label: "Share Photos",
+      // Its only endpoint is `GET /photos` — `schedule.contribute`. That
+      // is on the base rung, so a worker keeps this one; the card reads
+      // and downloads, it does not publish.
+      requires: ["schedule.contribute"],
       description: "Select photos from jobs and share to Instagram, social media, or download",
       icon: FiShare2,
       colorPalette: "orange",
@@ -551,6 +714,10 @@ export default function HomePage() {
     {
       id: "export-summary",
       label: "Export Summary",
+      // `GET /export-summary` is `books.view`, same as Export All Data.
+      // Ungated, this offered every holder of `schedule.view` a button
+      // whose only outcome was a 403 reported as "Export failed".
+      requires: ["books.view"],
       description: "Download a human-readable summary of all your data",
       icon: FiDownload,
       colorPalette: "blue",
@@ -571,20 +738,22 @@ export default function HomePage() {
       icon: FiDatabase,
       colorPalette: "purple",
       bgColor: "purple.faint",
-      disabled: !isSuper,
-      disabledMessage: "Only super administrators can export all data.",
+      // `GET /export` needs `books.view`. "Super" was a stand-in for it,
+      // so a bookkeeper — whose whole role is the books — was refused.
+      //
+      // ONE MECHANISM. This used to ALSO carry `disabled` + a "you don't
+      // have permission" message and a refusal branch in onClick, which
+      // made the same capability answer the question in three places. The
+      // card is now absent when the capability is, like every other entry.
+      requires: ["books.view"],
       onClick: () => {
-        if (!isSuper) {
-          setConfirmAction({ title: "Restricted", message: "Only super administrators can export all data.", confirmLabel: "OK", colorPalette: "purple", onConfirm: () => {} });
-        } else {
-          setConfirmAction({
-            title: "Export Raw Data",
-            message: "This will download all raw data as JSON. This may be a large file. Continue?",
-            confirmLabel: "Download",
-            colorPalette: "purple",
-            onConfirm: downloadRaw,
-          });
-        }
+        setConfirmAction({
+          title: "Export Raw Data",
+          message: "This will download all raw data as JSON. This may be a large file. Continue?",
+          confirmLabel: "Download",
+          colorPalette: "purple",
+          onConfirm: downloadRaw,
+        });
       },
     },
   ];
@@ -670,12 +839,53 @@ export default function HomePage() {
   }, []);
 
   // Silent refresh — updates me without showing loading spinner
+  // TAKING A PERSPECTIVE NO LONGER RELOADS THE PAGE.
+  //
+  // It used to, because every response on screen was fetched under the
+  // outgoing lens and a reload is the crudest way to re-ask for all of
+  // them. Two cheaper things do the same job:
+  //
+  //   `/api/me` is refetched, and that cascades on its own — `capabilities`
+  //   is a new array, so the `scopeCan` callback changes identity, so every
+  //   title-bar count and alert callback built on it changes identity, so
+  //   their effects re-run. The counts come back narrowed without anything
+  //   here naming them.
+  //
+  //   `contentGeneration` is appended to the key on the tab content, which
+  //   remounts the open tab so its own fetches run again. Nothing else
+  //   re-asks for a tab's data — that is the half `refreshMe` cannot reach.
+  //
+  // Client "View as" still reloads, and should: it changes WHO the caller
+  // is rather than narrowing what one caller may see.
+  const [contentGeneration, setContentGeneration] = useState(0);
   const refreshMe = useCallback(async () => {
     try {
       const data = await apiGet<Me>("/api/me");
       setMe(data);
     } catch {}
   }, []);
+
+  useEffect(() => {
+    const onPerspectiveChanged = () => {
+      void (async () => {
+        await refreshMe();
+        setContentGeneration((g) => g + 1);
+      })();
+    };
+    window.addEventListener(PERSPECTIVE_CHANGED_EVENT, onPerspectiveChanged);
+    // THE AREA LENS NEEDS EXACTLY THE SAME TREATMENT, for the same reason:
+    // every response on screen was fetched through the outgoing lens, so
+    // each one may be answering about a district nobody is looking at any
+    // more. `refreshMe` is not strictly needed here — a lens changes WHERE,
+    // not WHAT MAY BE DONE, so the capability set is identical — but the
+    // remount is, and keeping the two paths the same shape is worth more
+    // than skipping one request.
+    window.addEventListener(AREA_LENS_CHANGED_EVENT, onPerspectiveChanged);
+    return () => {
+      window.removeEventListener(PERSPECTIVE_CHANGED_EVENT, onPerspectiveChanged);
+      window.removeEventListener(AREA_LENS_CHANGED_EVENT, onPerspectiveChanged);
+    };
+  }, [refreshMe]);
 
   useEffect(() => {
     if (authLoaded && isSignedIn) {
@@ -690,7 +900,7 @@ export default function HomePage() {
   // PHOTO_MAX_EDGE_PX / PHOTO_JPEG_QUALITY drive every photo upload path
   // (occurrences, equipment, properties, receipts). New photos use whatever
   // is configured at upload time — already-stored photos are untouched.
-  // Staff-only: /api/settings is worker/admin/super-gated and 403s for
+  // Staff-only: /api/settings is staff-gated and 403s for
   // pure client accounts (clients don't upload photos anyway, so they
   // don't need the compression defaults).
   useEffect(() => {
@@ -712,15 +922,35 @@ export default function HomePage() {
   }, [authLoaded, isSignedIn, hasAnyRole]);
 
   useEffect(() => {
-    // Don't reset tabs until we know the user's roles
+    // Don't reset tabs until we know what the person can do.
     if (!me) return;
-    if (topTab === "admin" && !isAdmin)
-      setTopTab(isWorker ? "worker" : "client");
-    if (topTab === "worker" && !isWorker)
-      setTopTab(isAdmin ? "admin" : "client");
-    if (topTab === "super" && !isSuper)
-      setTopTab(isAdmin ? "admin" : isWorker ? "worker" : "client");
-  }, [isAdmin, isWorker, topTab, me]);
+    // TWO SHELLS NOW: the client portal, and staff. Which of three staff
+    // shells you landed on used to be a question; there is one, and what
+    // you see inside it comes from your entitlements.
+    //
+    // `staffTabs` is declared further down the component. Safe, because an
+    // effect body runs AFTER the function returns — but do not lift it into
+    // the deps array or the render path, where it would be a TDZ error.
+    const staffReachable = anyTabVisible(staffTabs);
+    if (topTab !== "client" && !staffReachable) setTopTab("client");
+    // A first sign-in stamps "client", which for a bookkeeper is an empty
+    // room. Move them to the staff shell when they have one.
+    //
+    // NOT during a client "View as" session. `/api/me` answers as the
+    // operator there, so `isClientContact` is false and this threw them
+    // straight back out of the portal they had just entered — the whole
+    // feature, silently dead, which is the failure mode
+    // docs/features/client-view-as.md was written after.
+    if (
+      topTab === "client" &&
+      !me.isClientContact &&
+      !clientViewAs &&
+      !shellChosen &&
+      staffReachable
+    ) {
+      setTopTab("staff");
+    }
+  }, [topTab, me, anyTabVisible, setTopTab, clientViewAs, shellChosen]);
 
   // On every load, a signed-in approved client lands on "My Properties" —
   // the personalized view is the useful landing target every time, not
@@ -735,7 +965,11 @@ export default function HomePage() {
   const clientDefaultFlippedRef = useRef(false);
   useEffect(() => {
     if (!me?.isApproved) return;
-    if (isWorker || isAdmin) return;
+    // A customer, not staff. `isClientContact` is the honest test; the
+    // old one asked whether they held two particular capabilities. An
+    // operator in a client "View as" session is looking at the portal as
+    // that customer, so they land where the customer would.
+    if (!me?.isClientContact && !clientViewAs) return;
     if (topTab !== "client") return;
     if (clientInnerTab === "my-jobs") return;
     if (clientDefaultFlippedRef.current) return;
@@ -746,7 +980,7 @@ export default function HomePage() {
     if (hadInitialTabDeepLinkRef.current) return;
     clientDefaultFlippedRef.current = true;
     setClientInnerTab("my-jobs");
-  }, [me?.isApproved, isWorker, isAdmin, topTab, clientInnerTab, setClientInnerTab]);
+  }, [me?.isApproved, topTab, clientInnerTab, setClientInnerTab, clientViewAs]);
 
   // Re-fetch me silently when switching top tabs so admin changes are reflected
   useEffect(() => {
@@ -771,7 +1005,13 @@ export default function HomePage() {
       value: "my-jobs",
       label: "My Properties",
       icon: FiBriefcase,
-      visible: () => !!isSignedIn && !!me?.isApproved && !isWorker && !isAdmin,
+      // A customer tab. Shown to somebody attached to a customer record,
+      // which is what makes them a customer — not the absence of two
+      // particular staff capabilities. An operator in a client "View as"
+      // session counts: `/api/me` answers as the operator, so this read
+      // false and hid the two tabs the session exists to show.
+      visible: () =>
+        !!isSignedIn && ((!!me?.isApproved && !!me?.isClientContact) || clientViewAs),
       content: <ClientMyJobsTab />,
     },
     {
@@ -782,7 +1022,13 @@ export default function HomePage() {
       value: "statements",
       label: "Statements",
       icon: FiFileText,
-      visible: () => !!isSignedIn && !!me?.isApproved && !isWorker && !isAdmin,
+      // A customer tab. Shown to somebody attached to a customer record,
+      // which is what makes them a customer — not the absence of two
+      // particular staff capabilities. An operator in a client "View as"
+      // session counts: `/api/me` answers as the operator, so this read
+      // false and hid the two tabs the session exists to show.
+      visible: () =>
+        !!isSignedIn && ((!!me?.isApproved && !!me?.isClientContact) || clientViewAs),
       content: <ClientStatementsTab />,
     },
     {
@@ -793,8 +1039,8 @@ export default function HomePage() {
     },
     {
       // Value is `client-services`, NOT `services` — see the docstring
-      // on `ClientTabs` in types.ts. Same value as the Admin Work
-      // Services tab would cause BreadcrumbNav to render a
+      // on `ClientTabs` in types.ts. Sharing the staff Work → Services
+      // tab's value would cause BreadcrumbNav to render a
       // cross-role chip pairing the two, which is wrong: they're
       // unrelated tabs (client's subscribed services vs. operator's
       // job-recipe manager).
@@ -808,7 +1054,7 @@ export default function HomePage() {
       // people most worth showing an offer to are the ones who do not have
       // an account yet.
       //
-      // Value is `client-promotions`, NOT `promotions`: the Super Money
+      // Value is `client-promotions`, NOT `promotions`: the Money →
       // Promotions tab already owns that value, and sharing it makes
       // BreadcrumbNav pair the two as one cross-role tab. Same reason
       // Services is `client-services`. The deep link is unaffected — the
@@ -825,24 +1071,32 @@ export default function HomePage() {
     },
   ];
 
-  const isTraineeWorker = me?.workerType === "TRAINEE";
+  // Clearance is a capability, not a pay class: isFieldCleared() asks
+  // for `work.claim`.
+  const notFieldCleared = !isFieldCleared(me);
 
   const workerTasks: TaskDef[] = [
     {
       id: "plan-route",
       label: "Plan Next Work Day",
-      description: isTraineeWorker ? "View your upcoming job summary" : "Confirm your claimed jobs for tomorrow and notify clients",
+      // Every route these two touch is OWNERSHIP, so the capability they
+      // need is just "can you see the schedule at all". That used to be
+      // implicit in the tab's own gate; it stopped being implicit when the
+      // tab became reachable on `books.view` for the bookkeeper, who was
+      // then offered a workday planner for work they do not do.
+      requires: ["schedule.view"],
+      description: notFieldCleared ? "View your upcoming job summary" : "Confirm your claimed jobs for tomorrow and notify clients",
       icon: FiNavigation,
       colorPalette: "blue",
       bgColor: "blue.faint",
       onClick: () => {
-        if (isTraineeWorker) {
+        if (notFieldCleared) {
           setConfirmAction({
-            title: "Trainee — Read Only",
+            title: "Read only",
             message: "As a trainee, you can view your upcoming job summary but cannot confirm, release, or message clients. Contact your team lead to manage your schedule.",
             confirmLabel: "View Summary",
             colorPalette: "blue",
-            onConfirm: () => launchWorkflow("plan-workday-trainee", { targetDate: bizTomorrow() }),
+            onConfirm: () => launchWorkflow("plan-workday-readonly", { targetDate: bizTomorrow() }),
           });
         } else {
           launchWorkflow("plan-workday", { targetDate: bizTomorrow() });
@@ -852,6 +1106,7 @@ export default function HomePage() {
     {
       id: "start-day",
       label: "Prepare for Work Day",
+      requires: ["schedule.view"],
       description: "Review today's schedule, confirm jobs, and start your first stop",
       icon: FiSun,
       colorPalette: "green",
@@ -866,424 +1121,594 @@ export default function HomePage() {
   // list within each category) from the order tabs appear here. Keep tabs of
   // the same category contiguous, categories in the intended display order:
   // Work · Equipment · Directory · Money · Records · System.
-  const workerTabs: TabItem[] = [
-    // ── Work ──
-    {
-      value: "home",
-      label: "Home",
-      icon: FiHome,
-      content: wrapWithInlineMessage(
-        <HomeTab
-          me={me}
-          onLaunchWorkflow={(name, opts) => launchWorkflow(name, opts)}
-          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "jobs",
-      label: "Jobs",
-      icon: FiClipboard,
-      content: wrapWithInlineMessage(
-        <JobsTab
-          key={`wjobs-${jobsRemountKey}`}
-          me={me}
-          purpose="WORKER"
-          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "routes",
-      label: "Routes",
-      icon: FiNavigation,
-      visible: () => !!me?.workerType,
-      content: wrapWithInlineMessage(
-        <PreviewRoutesTab scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />
-      ),
-    },
-    {
-      value: "tasks",
-      label: "Actions",
-      icon: FiPlus,
-      content: <AdminTasksTab tasks={workerTasks} scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} workerType={me?.workerType} />,
-    },
-    // ── Equipment ──
-    {
-      value: "equipment",
-      label: "Inventory",
-      icon: FiTool,
-      content: wrapWithInlineMessage(
-        <InventoryTab
-          key={`weq-${equipmentRemountKey}`}
-          me={me}
-          purpose="WORKER"
-          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "collections",
-      label: "Collections",
-      icon: FiPackage,
-      content: wrapWithInlineMessage(
-        <CollectionsTab
-          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "vehicles",
-      label: "Vehicles",
-      icon: FiTruck,
-      content: wrapWithInlineMessage(
-        <VehiclesTab
-          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
-        />
-      ),
-    },
-    // ── Directory ──
-    {
-      value: "clients",
-      label: "Clients",
-      icon: FiUsers,
-      content: wrapWithInlineMessage(
-        <ClientsTab
-          me={me}
-          purpose="WORKER"
-          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "properties",
-      label: "Properties",
-      icon: FiMapPin,
-      content: wrapWithInlineMessage(
-        <PropertiesTab
-          me={me}
-          purpose="WORKER"
-          scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }}
-        />
-      ),
-    },
-    {
-      // Team roster — read-only list of active workers (name +
-      // worker-type badge only). Sensitive data (email, wage, roles,
-      // privilege flags) is scrubbed server-side and again on the
-      // client. Admin/Super get the full user-management UI on their
-      // own tabs.
-      value: "users",
-      label: "Users",
-      icon: AiOutlineTeam,
-      content: wrapWithInlineMessage(
-        <UsersTab scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />
-      ),
-    },
-    {
-      // Worker view — read-only list of ONLY the crews the caller is on.
-      // Fetches from /api/me/groups; cost-split percentages and other
-      // crews the worker isn't on stay hidden.
-      value: "groups",
-      label: "Groups",
-      icon: AiOutlineTeam,
-      content: wrapWithInlineMessage(
-        <AdminGroupsTab scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />
-      ),
-    },
-    // ── Money ──
-    {
-      value: "payments",
-      label: "Payments",
-      icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab key={`wpay-${paymentsRemountKey}`} me={me} purpose="WORKER" scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />),
-    },
-    {
-      // Worker payroll is view-only and own-rows-only; the server enforces
-      // both, not this component. See docs/features/payroll.md.
-      value: "payroll",
-      label: "Payroll",
-      // Banknote, not TfiMoney — the Money CATEGORY and the Payments tab
-      // both use the dollar glyph, so repeating it here made three
-      // identical icons in one dropdown. Matches the Home PAYROLL section.
-      icon: Banknote,
-      content: wrapWithInlineMessage(<PayrollTab me={me} purpose="WORKER" scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />),
-    },
-    {
-      value: "pricing",
-      label: "Pricing",
-      icon: FiTag,
-      content: wrapWithInlineMessage(<PricingTab readOnly scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />),
-    },
-    {
-      value: "supplies",
-      label: "Supplies",
-      icon: FiPackage,
-      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="WORKER" scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />),
-    },
-    // NOTE: the Worker "Records → Statistics" tab was removed per operator
-    // preference (no longer needed). The StatisticsTab component file and
-    // its API endpoints (/api/me/statistics, /api/admin/statistics) stay
-    // in place in case the tab is wanted back later — to restore, re-add a
-    // tab block here with visible: () => !!me?.workerType and
-    // content: <StatisticsTab myId={me?.id} />, plus the catMap entry
-    // `statistics: "Records"` below.
-    {
-      // ── Records ──
-      // Education guides. Present for EVERY role by design: the whole
-      // point is that workers can read the material. Authoring and
-      // approval are gated inside the tab by `scope`, not by hiding it.
-      // See docs/features/education.md.
-      value: "guides",
-      label: "Guides",
-      icon: FiBookOpen,
-      content: wrapWithInlineMessage(
-        <GuidesTab me={me} purpose="WORKER" scope={{ isWorker: scopeIsWorker, isAdmin: false, isSuper: false }} />,
-      ),
-    },
-    // ── System ──
-    {
-      value: "profile",
-      label: "Profile",
-      icon: FiUser,
-      content: wrapWithInlineMessage(<ProfileTab me={me} purpose="WORKER" onProfileUpdated={refreshMe} />),
-    },
-  ];
 
-  const adminTabs: TabItem[] = [
-    {
-      // ── Work ──
-      // Inner value matches the Worker shell's Home tab so BreadcrumbNav's
-      // cross-role jump chip pairs them — one tap in the inner dropdown
-      // takes Admin → Worker Home and vice versa.
-      value: "home",
-      label: "Home",
-      icon: FiHome,
-      content: wrapWithInlineMessage(
-        <HomeTab
-          me={me}
-          onLaunchWorkflow={() => {}}
-          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "jobs",
-      label: "Jobs",
-      icon: FiClipboard,
-      content: wrapWithInlineMessage(
-        <JobsTab
-          key={`ajobs-${adminJobsRemountKey}`}
-          me={me}
-          purpose="ADMIN"
-          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "routes",
-      label: "Routes",
-      icon: FiNavigation,
-      content: wrapWithInlineMessage(
-        <PreviewRoutesTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />
-      ),
-    },
-    {
-      // Was `value: "jobs"`, but Worker's Jobs tab also uses `"jobs"` —
-      // that collision made BreadcrumbNav's cross-role chip from
-      // Worker → Jobs land here (Services) instead of on Admin → Jobs.
-      // Renamed to `"services"` so the chip pairing is unambiguous:
-      // Jobs ↔ Jobs (the Admin Jobs tab below uses `value: "jobs"`).
-      value: "services",
-      label: "Services",
-      icon: FiBriefcase,
-      content: wrapWithInlineMessage(
-        <ServicesTab
-          me={me}
-          purpose="ADMIN"
-          streamReviewOccId={streamReviewOccId}
-          streamReviewNonce={streamReviewNonce}
-        />,
-      ),
-    },
-    {
-      value: "tasks",
-      label: "Actions",
-      icon: FiPlus,
-      content: <AdminTasksTab tasks={adminTasks} scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} workerType={me?.workerType} />,
-    },
-    {
-      // ── Equipment ──
-      value: "equipment",
-      label: "Inventory",
-      icon: FiTool,
-      content: wrapWithInlineMessage(
-        <InventoryTab
-          key={`aeq-${adminEquipmentRemountKey}`}
-          me={me}
-          purpose="ADMIN"
-          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "collections",
-      label: "Collections",
-      icon: FiPackage,
-      content: wrapWithInlineMessage(
-        <CollectionsTab
-          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "vehicles",
-      label: "Vehicles",
-      icon: FiTruck,
-      content: wrapWithInlineMessage(
-        <VehiclesTab
-          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-        />
-      ),
-    },
-    {
-      // ── Directory ──
-      value: "clients",
-      label: "Clients",
-      icon: FiUsers,
-      content: wrapWithInlineMessage(
-        <ClientsTab
-          me={me}
-          purpose="ADMIN"
-          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "properties",
-      label: "Properties",
-      icon: FiMapPin,
-      content: wrapWithInlineMessage(
-        <PropertiesTab
-          me={me}
-          purpose="ADMIN"
-          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "users",
-      label: "Users",
-      icon: AiOutlineTeam,
-      // Read-only for admins. User management (approve / role changes /
-      // privilege toggles / delete) moved to the Super tab. Admins see
-      // the directory for context but can't mutate it, and pending
-      // users are hidden entirely so the queue doesn't tempt action.
-      content: wrapWithInlineMessage(
-        <UsersTab
-          role="admin"
-          readOnly
-          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-        />
-      ),
-    },
-    {
-      value: "groups",
-      label: "Groups",
-      icon: AiOutlineTeam,
-      content: wrapWithInlineMessage(
-        <AdminGroupsTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />
-      ),
-    },
-    {
-      // ── Money ──
-      value: "payments",
-      label: "Payments",
-      icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab key={`apay-${adminPaymentsRemountKey}`} me={me} purpose="ADMIN" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />),
-    },
-    {
-      // Admin sees the team total, or one worker's hours/gross/net when a
-      // worker is selected. The tax breakdown is withheld server-side.
-      value: "payroll",
-      label: "Payroll",
-      icon: Banknote,
-      content: wrapWithInlineMessage(<PayrollTab me={me} purpose="ADMIN" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />),
-    },
-    {
-      value: "pricing",
-      label: "Pricing",
-      icon: FiTag,
-      content: wrapWithInlineMessage(<PricingTab readOnly scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />),
-    },
-    {
-      value: "supplies",
-      label: "Supplies",
-      icon: FiPackage,
-      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="ADMIN" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }} />),
-    },
-    {
-      // ── Records ── (audit / review surfaces — placed between
-      // Money and System so the Admin category strip matches the
-      // canonical top-level order Work → Equipment → Directory →
-      // Money → Records → System.)
-      value: "activity",
-      label: "Engagement",
-      icon: FiActivity,
-      content: wrapWithInlineMessage(<ActivityTab role="admin" />),
-    },
-    {
-      value: "history",
-      label: "History",
-      icon: FiFileText,
-      content: wrapWithInlineMessage(<HistoryTab role="admin" />),
-    },
-    {
-      value: "timeline",
-      label: "Timeline",
-      icon: FiCalendar,
-      content: wrapWithInlineMessage(<TimelineTab />),
-    },
-    {
-      value: "documents",
-      label: "Documents",
-      icon: FiFolder,
-      content: wrapWithInlineMessage(<DocumentsTab />),
-    },
-    {
-      // Education guides — see docs/features/education.md. Admin authors
-      // drafts and manages their own images; approval and video are Super.
-      value: "guides",
-      label: "Guides",
-      icon: FiBookOpen,
-      content: wrapWithInlineMessage(
-        <GuidesTab
-          me={me}
-          purpose="ADMIN"
-          scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: false }}
-        />,
-      ),
-    },
-    {
-      // ── System ── (order: Profile → Notify → Settings)
-      value: "profile",
-      label: "Profile",
-      icon: FiUser,
-      content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="ADMIN" onProfileUpdated={refreshMe} />),
-    },
-    {
-      value: "notify",
-      label: "Notify",
-      icon: FiBell,
-      content: wrapWithInlineMessage(<AdminNotifyTab />),
-    },
-    {
-      value: "settings",
-      label: "Settings",
-      icon: FiSettings,
-      content: wrapWithInlineMessage(<SettingsTab me={me} purpose="ADMIN" />),
-    },
-  ];
+
+  // HOISTED OUT OF `navTabs` so the SHELL can ask whether any of these is
+  // visible. A shell used to appear only for a holder of its own surface
+  // capability, which stranded anybody whose role lights none of the three:
+  // a bookkeeper has tabs in this list and `settings.manage` in none of
+  // their roles, so the tabs existed and there was no door to them.
+  // THE tab list — one entry per feature.
+  //
+  // There were three: a worker copy, a manager copy and this one. Which
+  // you got was decided by navigation, so the same feature rendered
+  // three ways and a custom role received whichever build its shell
+  // happened to light — a bookkeeper was shown a field worker's
+  // Payments screen. This list already held all 37 tabs; the other two
+  // were subsets mounting the same components differently.
+  //
+  // A tab appears if your entitlements open it (TAB_REQUIREMENTS) and
+  // renders from those same entitlements. Both read the
+  // PERSPECTIVE-NARROWED set, so taking a perspective narrows the tab
+  // list AND the contents of every tab still in it.
+  const staffTabs = withCapabilityVisibility([
+        {
+          // ── Work ──
+          // Operations-pulse dashboard — money / jobs / equipment /
+          // team / clients rollup for a rolling period ending today.
+          // One period button drives every section. This is the staff
+          // landing tab.
+          value: "home",
+          label: "Home",
+          icon: FiHome,
+          content: wrapWithInlineMessage(
+            <HomeTab
+              me={me}
+              onLaunchWorkflow={() => {}}
+              scope={scopeBase}
+            />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // Jobs — same JobsTab as Admin+Worker, driven by scope so the
+          // Management overlays appear (Client Requests, Ops
+          // summary strip, cancel/reopen action row, etc.).
+          value: "jobs",
+          label: "Jobs",
+          icon: FiClipboard,
+          content: wrapWithInlineMessage(
+            <JobsTab
+              me={me}
+             
+              scope={scopeBase}
+            />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // Routes — the same PreviewRoutesTab every shell mounts. Scope
+          // brings the team-travel Operations panel to the top of the tab.
+          value: "routes",
+          label: "Routes",
+          icon: FiNavigation,
+          content: wrapWithInlineMessage(
+            <PreviewRoutesTab scope={scopeBase} />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // Services. Everything it offers gates on `schedule.view` /
+          // `schedule.manage` inside the tab.
+          value: "services",
+          label: "Services",
+          icon: FiBriefcase,
+          content: wrapWithInlineMessage(
+            <ServicesTab
+              me={me}
+             
+              streamReviewOccId={streamReviewOccId}
+              streamReviewNonce={streamReviewNonce}
+            />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // Actions (+) — the task list. Each shortcut in it is gated on
+          // the capability of the queue it opens.
+          //
+          // ONE LIST. `workerTasks` used to be mounted by the worker shell
+          // and `staffTasks` by the other two; when the shells merged into
+          // this single tab list, only `staffTasks` kept a mount point and
+          // `workerTasks` became dead code — so the two workday workflows
+          // disappeared for everyone, including the people they exist for,
+          // while the setup and export cards appeared for every holder of
+          // `schedule.view`. Concatenated here and filtered per entry by
+          // `requires`, so what you see is your capabilities and not which
+          // shell drew the page.
+          //
+          // Workday first: they are the daily ones, and they are what a
+          // field worker opens this tab for.
+          value: "tasks",
+          label: "Actions",
+          icon: FiPlus,
+          content: (
+            <TasksTab
+              tasks={[...workerTasks, ...staffTasks]}
+              scope={scopeBase}
+              workerType={me?.workerType}
+              // Never passed before, so the read-only note for somebody
+              // without field clearance could not render.
+              fieldCleared={!notFieldCleared}
+            />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // ── Equipment ──
+          // Inventory. The act-on-behalf-of-worker controls (reserve /
+          // cancel / checkout / return for a specific worker) are gated
+          // inside the tab on `equipment.manage` — a fail-safe for when
+          // somebody is stuck in the mobile flow and needs the action
+          // driven remotely.
+          //
+          // Positioned right after Services so the Equipment category
+          // sits IMMEDIATELY BELOW Work in the category strip.
+          value: "equipment",
+          label: "Inventory",
+          icon: FiTool,
+          content: wrapWithInlineMessage(
+            <InventoryTab
+              key={`seq-${equipmentRemountKey}`}
+              me={me}
+             
+              scope={scopeBase}
+            />
+          ),
+          category: "Equipment",
+          categoryIcon: FiTool,
+        },
+        {
+          // ── Equipment → Collections ──
+          // CollectionsTab gates its authoring controls on
+          // `equipment.manage` and its Insights strip (kits with issues,
+          // availability, job coverage) on `reports.view`. Insights is
+          // computed from the collections payload already fetched — no
+          // extra server round-trip.
+          value: "collections",
+          label: "Collections",
+          icon: FiPackage,
+          content: wrapWithInlineMessage(
+            <CollectionsTab
+              scope={scopeBase}
+            />
+          ),
+          category: "Equipment",
+          categoryIcon: FiTool,
+        },
+        {
+          // ── Equipment → Vehicles ──
+          // Dual-use vehicle fleet: manage vehicles, assignments (which
+          // workers can log mileage against which vehicle), and the
+          // per-vehicle mileage log. See services/vehicles.ts and
+          // services/mileage.ts for the backend contracts and the
+          // MileageStrip on the worker HomeTab for the driver-side flow.
+          value: "vehicles",
+          label: "Vehicles",
+          icon: FiTruck,
+          content: wrapWithInlineMessage(
+            <VehiclesTab
+              scope={scopeBase}
+            />
+          ),
+          category: "Equipment",
+          categoryIcon: FiTool,
+        },
+        {
+          // ── Directory ── (Clients → Properties → Users → Groups)
+          // Clients. The "View as this client" button is gated inside the
+          // tab on `clients.view-as`, which is also the guard on the
+          // impersonation routes. There used to be two Clients mounts —
+          // someone with `schedule.manage` one and someone with `settings.manage` one — and the button was rendered
+          // only on the second; it is one tab and one capability now.
+          value: "clients",
+          label: "Clients",
+          icon: FiUsers,
+          content: wrapWithInlineMessage(
+            <ClientsTab
+              me={me}
+             
+              scope={scopeBase}
+            />
+          ),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
+          // Properties. The tab reads `clients.view` for the list and
+          // `clients.manage` for CRUD, the photos manager and delete.
+          value: "properties",
+          label: "Properties",
+          icon: FiMapPin,
+          content: wrapWithInlineMessage(
+            <PropertiesTab
+              me={me}
+             
+              scope={scopeBase}
+            />
+          ),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
+          // Users. One directory: UsersTab renders the trimmed Team
+          // roster without `people.manage`, the full directory with it,
+          // and gates approving on `people.approve` and the role picker
+          // on `people.grant-roles` separately. This was a second,
+          // writable mount sitting beside a read-only admin one.
+          // The "Pending Users" alert chip in the title bar routes here.
+          value: "users",
+          label: "Users",
+          icon: AiOutlineTeam,
+          content: wrapWithInlineMessage(
+            <UsersTab scope={scopeBase} />
+          ),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
+          // Groups — the same CrewsTab holders of `schedule.manage` see. Groups (crews)
+          // are managed at the management tier, but the top tier also needs the
+          // surface for support debugging + cross-role parity.
+          value: "groups",
+          label: "Groups",
+          icon: AiOutlineTeam,
+          content: wrapWithInlineMessage(
+            <CrewsTab scope={scopeBase} />
+          ),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
+          // ── Money ── (Super sub-tab order: Payments → Payroll →
+          // Ledger → Pricing → Supplies → Promotions → Forecast.
+          //
+          // The first three are the money-movement surfaces — what came
+          // in, what went out to people, what went out everywhere else —
+          // so they sit together; Pricing and Supplies are configuration
+          // rather than record-keeping and follow.
+          //
+          // Forecast sits LAST — it is the only surface here that reports
+          // nothing that happened. Everything above it is a record or a
+          // setting; Forecast is advisory, writes no setting and pays nobody,
+          // so it reads as the thing you do after the rest rather than
+          // another ledger.
+          //
+          // Every tab in this category is one tab. Which of them appear
+          // for a given reader is TAB_REQUIREMENTS: Payments `money.view`,
+          // Payroll `payroll.view`, Ledger `books.view`, Pricing
+          // `pricing.view`, Forecast `forecasts.view`, Promotions
+          // `marketing.campaigns`.)
+          value: "payments",
+          label: "Payments",
+          icon: TfiMoney,
+          content: wrapWithInlineMessage(<PaymentsTab me={me} scope={scopeBase} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // `payroll.view` opens it; `payroll.manage` adds upload,
+          // identity matching and archive. Both are read inside the tab.
+          value: "payroll",
+          label: "Payroll",
+          icon: Banknote,
+          content: wrapWithInlineMessage(<PayrollTab me={me} scope={scopeBase} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Internally this tab is BusinessExpensesTab and the API/model
+          // is BusinessExpense — both kept for historical reasons. The
+          // visible label is "Ledger" because the tab is a hand-logged
+          // record of three money-movement categories: business expenses,
+          // capital contributions (equity in), and owner draws (equity
+          // out). See the EntryType discriminator on the BusinessExpense
+          // model. The URL key is "ledger" to match the visible name —
+          // deep links and localStorage handoffs (Supply badge, Job badge)
+          // need updating to match.
+          //
+          // `books.view` — it is not mounted for anyone without it.
+          value: "ledger",
+          label: "Ledger",
+          icon: FiBook,
+          content: wrapWithInlineMessage(<BusinessExpensesTab scope={scopeBase} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          value: "pricing",
+          label: "Pricing",
+          icon: FiTag,
+          content: wrapWithInlineMessage(<PricingTab scope={scopeBase} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          value: "supplies",
+          label: "Supplies",
+          icon: FiPackage,
+          content: wrapWithInlineMessage(<SuppliesTab scope={scopeBase} />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Promotions — `marketing.campaigns`. Campaigns piggyback on
+          // outgoing invoice comms (or blast manually), with full audit
+          // trail and per-contact opt-out. See PromotionsTab +
+          // services/promotions.ts.
+          value: "promotions",
+          label: "Promotions",
+          icon: FiSpeaker,
+          content: wrapWithInlineMessage(<PromotionsTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        // NOTE: Reconcile moved out of Money → Records. It lives next to
+        // Workdays / Audit / Timeline now since it's an external-system
+        // reconciliation surface rather than a per-record money editor.
+        {
+          // ── Records ── (audit / review surfaces — placed between
+          // Money and Tools so the top-level category order matches
+          // Work → Equipment → Directory → Money → Records → Tools
+          // → System.)
+          // Reconcile — accounting-software validation surface. Replaces
+          // the old Exports + P&L Report tabs. Renders a QB-style P&L
+          // for the selected window with click-to-drill-down on every
+          // row, and offers flat CSVs (Capital, Income, Expenses,
+          // Workdays) for visual cross-checking against the operator's
+          // accounting software (which is now the source of truth, wired
+          // directly to the bank). See ReconcileTab.tsx + services/
+          // pnlReport.ts + services/exports.ts.
+          value: "reconcile",
+          label: "Reconcile",
+          icon: FiBarChart2,
+          content: wrapWithInlineMessage(<ReconcileTab scope={scopeBase} />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // Workdays — the review queue for per-worker clock-in/out.
+          // Opens on `time.view` or `time.manage`; approving each row is
+          // `time.approve`. Day-paged; the 4 AM ET cutoff (settings-driven)
+          // gates the approval actions. See ui/tabs/WorkdaysTab.tsx +
+          // services/workdays.ts.
+          value: "workdays",
+          label: "Workdays",
+          icon: FiClock,
+          content: wrapWithInlineMessage(
+            <WorkdaysTab
+              pendingByDate={pendingWorkdaysByDate}
+              initialDate={workdaysJumpDate}
+              jumpNonce={workdaysJumpNonce}
+              onApprovalsChanged={() => void loadPendingWorkdaysRef.current()}
+            />,
+          ),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // Compliance — admin surface for the PolicyDocument system.
+          // Placed under Records right after Workdays so both worker-
+          // gate surfaces (hours + policy signatures) sit side-by-side.
+          value: "compliance",
+          label: "Compliance",
+          icon: FiUserCheck,
+          content: wrapWithInlineMessage(<ComplianceTab />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // Engagement — same ActivityTab holders of `schedule.manage` see. Surfaced under
+          // Super Records for parity with Admin's Records sub-tabs.
+          value: "activity",
+          label: "Engagement",
+          icon: FiActivity,
+          content: wrapWithInlineMessage(<ActivityTab scope={scopeBase} />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // History — same HistoryTab holders of `schedule.manage` see. Same rationale as
+          // Engagement above.
+          value: "history",
+          label: "History",
+          icon: FiFileText,
+          content: wrapWithInlineMessage(<HistoryTab scope={scopeBase} />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          value: "timeline",
+          label: "Timeline",
+          icon: FiCalendar,
+          content: wrapWithInlineMessage(<TimelineTab scope={scopeBase} />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          value: "documents",
+          label: "Documents",
+          icon: FiFolder,
+          content: wrapWithInlineMessage(<DocumentsTab scope={scopeBase} />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // Education guides — see docs/features/education.md. The `content.approve` holder is the
+          // only role that approves content or touches video.
+          value: "guides",
+          label: "Guides",
+          icon: FiBookOpen,
+          content: wrapWithInlineMessage(
+            <GuidesTab
+              me={me}
+             
+              scope={scopeBase}
+            />,
+          ),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          value: "audit",
+          label: "Audit",
+          icon: FiSearch,
+          content: <AuditTab />,
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // ── Insights ── ANALYSIS, NOT TRANSACTIONS.
+          //
+          // Two reports that interpret rather than record: Statistics looks
+          // backward at what happened, Forecast forward at what might.
+          // Neither writes anything, which is what separates them from
+          // Payments and the Ledger.
+          //
+          // CATEGORY ORDER IS DECLARATION ORDER in this array, so this run
+          // sits after the last Records tab and before Tools:
+          // Work → Equipment → Directory → Money → Records → Insights →
+          // Tools → System. Declaring a tab inside another category's run
+          // splits that category and the nav shows it twice — which is
+          // exactly what happened when Statistics was first added among the
+          // Money tabs.
+          value: "statistics",
+          label: "Statistics",
+          // BARS, because that is what the page draws — TEAM COMPARISON is
+          // a bar per person. The category keeps LineChart and Forecast
+          // takes TrendingUp; all three were LineChart at first, so the
+          // chip and both its tabs were the same glyph.
+          icon: BarChart3,
+          content: wrapWithInlineMessage(<StatisticsTab scope={scopeBase} />),
+          category: "Insights",
+          categoryIcon: LineChart,
+        },
+        {
+          // Pay-structure simulator — `forecasts.view`. Deliberately NOT
+          // part of Reconcile or the P&L: those report what happened, this
+          // asks what should change. Keeping them separate stops a
+          // projection from ever being mistaken for a record.
+          value: "forecast",
+          label: "Forecast",
+          // An arrow going up and to the right — it projects forward, which
+          // is the distinction from Statistics beside it.
+          icon: TrendingUp,
+          content: wrapWithInlineMessage(<ForecastTab />),
+          category: "Insights",
+          categoryIcon: LineChart,
+        },
+        {
+          // ── Tools ──
+          // Read-only calculators and estimating helpers. Each tool is its
+          // own third-level tab under the shared "Tools" category — add
+          // additional tools by appending sibling entries with the same
+          // category. The tool components live in apps/web/src/ui/tools/
+          // and are self-contained from the rest of the app (pull existing
+          // settings but never mutate).
+          value: "tools-mowing",
+          label: "Mowing",
+          icon: FiTool,
+          content: wrapWithInlineMessage(<MowingJobTool />),
+          category: "Tools",
+          categoryIcon: FiTool,
+        },
+        {
+          value: "tools-mulch",
+          label: "Mulch",
+          icon: FiTool,
+          content: wrapWithInlineMessage(<MulchJobTool />),
+          category: "Tools",
+          categoryIcon: FiTool,
+        },
+        {
+          // ── System ── (order: Profile → Notify → Vanity → Settings)
+          value: "profile",
+          label: "Profile",
+          icon: FiUser,
+          content: wrapWithInlineMessage(<ProfileTab me={me} onProfileUpdated={refreshMe} />),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          // Notify — the same NotifyTab mounted elsewhere, here for parity
+          // with the System sub-tab list.
+          value: "notify",
+          label: "Notify",
+          icon: FiBell,
+          content: wrapWithInlineMessage(<NotifyTab />),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          // Roles — define what a role grants, and see every role against
+          // every capability. Appears for `roles.view`; editing needs
+          // `roles.define`, which the tab checks itself. Until this
+          // existed, roles could only be created by running a script.
+          value: "roles",
+          label: "Roles",
+          icon: FiShield,
+          content: wrapWithInlineMessage(
+            <RolesTab
+              scope={scopeBase}
+            />
+          ),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          // Areas — the place tree, and who looks after each branch. A role
+          // held in an area is the same role, confined to it.
+          value: "areas",
+          label: "Areas",
+          icon: FiMapPin,
+          content: wrapWithInlineMessage(
+            <AreasTab
+              scope={scopeBase}
+            />
+          ),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          // Vanity — `marketing.campaigns`. Editor for branded shortcuts on
+          // seedlings.pro. Each row is either a landing page (renders
+          // in-app) or a redirect (302 to a configured URL). One row
+          // is flagged as default and serves as the fallback for
+          // unknown slugs. See VanityUrlsTab + services/vanityPages.ts.
+          value: "vanity",
+          label: "Vanity",
+          icon: FiLink,
+          content: wrapWithInlineMessage(<VanityUrlsTab />),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          // Displays — wall screens showing a live board. Its own tab rather
+          // than a section inside Settings because of the pairing moment:
+          // you are standing at the screen with a code counting down and a
+          // phone in your hand, so it has to be one tap from the breadcrumb.
+          // See DisplaysTab + services/displays.ts + the Display model.
+          value: "displays",
+          label: "Displays",
+          icon: FiMonitor,
+          content: wrapWithInlineMessage(<DisplaysTab />),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          value: "settings",
+          label: "Settings",
+          icon: FiSettings,
+          content: wrapWithInlineMessage(<SettingsTab me={me} />),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+  ]);
 
   const navTabs: import("@/src/ui/components/BreadcrumbNav").OuterTab[] = [
     {
@@ -1294,10 +1719,16 @@ export default function HomePage() {
       innerTabs: clientTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content })),
     },
     {
-      value: "worker",
-      label: "Worker",
+      // ONE STAFF SHELL.
+      //
+      // There were three — My Work, Operations, Business — and the one you
+      // were in chose both the tab list and the build of each tab. Role
+      // switching is a PERSPECTIVE now, which narrows what you hold; it is
+      // not a different set of screens.
+      value: "staff",
+      label: "Work",
       icon: FiUser,
-      visible: () => !!isSignedIn && !!me?.isApproved && isWorker,
+      visible: () => !!isSignedIn && !!me?.isApproved && anyTabVisible(staffTabs),
       headerSlot: (
         <>
           {me && !me.workerType && (
@@ -1310,12 +1741,49 @@ export default function HomePage() {
               </HStack>
             </Box>
           )}
-          {me?.workerType === "TRAINEE" && (
-            <Box mb={2} p={3} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
+          {/* `schedule.view` as well as the clearance check: this explains
+              what you cannot do to VISITS, which is not news to somebody
+              who cannot see visits in the first place. The bookkeeper was
+              being told to ask their team manager about claiming jobs.
+
+              THE WORDING IS LOAD-BEARING AND WAS WRONG TWICE OVER.
+              It opened "You are not cleared for field work yet", which
+              reads as "you do not do field work". A trainee is an ordinary
+              EMPLOYEE; field clearance is three entitlements —
+              `work.claim`, `work.complete`, `inventory.pull` — so what
+              they lack is the ability to pick up or run a visit
+              THEMSELVES, not the work.
+
+              SAY NOTHING ABOUT PAY HERE. A draft read "you are paid for it
+              the same as anyone else", meaning "this is real work, not an
+              unpaid trial" — but it reads as a promise of the same HOURLY
+              RATE, which is a per-person fact this banner cannot know and
+              has no business asserting. Wage lives in payroll; a
+              capability notice should describe capabilities.
+              The "you only see what you are assigned to" clause is TRUE
+              and was briefly deleted on a bad measurement: `/api/clients`
+              returns all 16 rows to a trainee, which looked like the
+              banner was lying, but ClientsTab narrows them to the
+              assigned set and renders 4. Counting an API payload is not
+              counting what somebody sees. (The over-return is still real
+              and still worth closing at the endpoint — it is visible to
+              anyone who opens devtools — but it is not what this sentence
+              is about.)
+
+              SHORTENED 2026-10-26 — it ran to six lines on a phone, above
+              the content it was explaining. All three facts survive: you do
+              work visits, the four things you cannot do yourself and who to
+              ask, and that your lists are narrowed. What went is the
+              restatement — "visits, clients and properties" for "what", and
+              the "what you cannot do yet is" scaffolding. Phrase it as what
+              to DO rather than a list of refusals; if you add a fourth
+              clause, take one out. */}
+          {notFieldCleared && scopeCan("schedule.view") && (
+            <Box mb={2} p={{ base: 2, md: 3 }} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
               <HStack gap={2} align="start">
                 <Box flexShrink={0} pt="0.5"><AlertTriangle size={14} color="var(--chakra-colors-blue-500)" /></Box>
                 <Text fontSize="sm" color="blue.fg">
-                  You are currently a Trainee. You can view details and be added to a team, but you cannot claim jobs, take actions, or reserve equipment. You also have limited visibility to jobs, clients, and properties you are assigned to. Contact your team manager to take actions on your behalf.
+                  You can work visits you are assigned to, and only see those. Ask your team manager to pick up, start or finish a visit, or reserve equipment.
                 </Text>
               </HStack>
             </Box>
@@ -1325,11 +1793,11 @@ export default function HomePage() {
               banner sourced from GET /me/policies that covers insurance,
               W-9, safety SOP, and every other configured policy. */}
           <PlanWorkdayWorkflow
-            active={activeWorkflow === "plan-workday" || activeWorkflow === "plan-workday-trainee"}
+            active={activeWorkflow === "plan-workday" || activeWorkflow === "plan-workday-readonly"}
             onDone={() => setActiveWorkflow(null)}
             myId={me?.id}
             defaultTargetDate={planWorkdayDate ?? undefined}
-            trainee={activeWorkflow === "plan-workday-trainee"}
+            readOnly={activeWorkflow === "plan-workday-readonly"}
           />
           <BeginWorkDayWorkflow
             active={activeWorkflow === "begin-workday"}
@@ -1339,7 +1807,7 @@ export default function HomePage() {
           />
           {pausedWorkflow && !(
             (workflowOrigin?.outer ?? "worker") === topTab &&
-            (workflowOrigin?.inner ?? "tasks") === workerInnerTab
+            (workflowOrigin?.inner ?? "tasks") === staffInnerTab
           ) && (
             <Box
               mb={3} p={4} rounded="lg"
@@ -1377,9 +1845,12 @@ export default function HomePage() {
                   // Land on whichever tab launched this workflow. The old
                   // hardcoded "tasks" meant a workflow started from Home
                   // dumped you on +Actions after any step that links out.
-                  // Falls back to worker/tasks when no origin was recorded
-                  // (older paused state, or a write that failed).
-                  applyNavState(workflowOrigin ?? { outer: "worker", inner: "tasks", category: "Work" });
+                  // Falls back to staff/tasks when no origin was recorded
+                  // (older paused state, or a write that failed). The
+                  // fallback said `outer: "worker"`, a shell that no longer
+                  // exists — applyNavState would have set topTab to it and
+                  // the migration would have coerced it back to "staff".
+                  applyNavState(workflowOrigin ?? { outer: "staff", inner: "tasks", category: "Work" });
                   // trigger:workflow resumes WITHOUT re-recording an origin —
                   // see launchWorkflow.
                   setTimeout(() => {
@@ -1393,566 +1864,16 @@ export default function HomePage() {
           )}
         </>
       ),
-      innerTabs: (() => {
-        // Mirror the admin layout so a worker promoted to admin doesn't have
-        // to relearn the tab map. Categories: Work · Equipment · Directory ·
-        // Money · Records · System.
-        const catMap: Record<string, string> = {
-          home: "Work", jobs: "Work", routes: "Work", tasks: "Work",
-          equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
-          clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-          payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
-          // statistics: "Records" — re-add when the Worker Statistics tab is restored.
-          guides: "Records",
-          profile: "System",
-        };
-        const catIconMap: Record<string, React.ElementType> = {
-          Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Records: FiBarChart2, System: FiSettings,
-        };
-        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], // Actions/tasks tab was previously chip-styled on Worker + Admin
-// (`chip: t.value === "tasks"`), but Super renders it plain — the
-// mismatch read as a bug. Dropping the chip so all three roles
-// render the Actions tab with the same plain style.
-chip: false, bucket: t.bucket }));
-      })(),
-    },
-    {
-      value: "admin",
-      label: "Admin",
-      icon: GrUserAdmin,
-      visible: () => !!isSignedIn && isAdmin,
-      innerTabs: (() => {
-        const catMap: Record<string, string> = {
-          home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
-          equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
-          clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-          payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
-          activity: "Records", history: "Records", timeline: "Records", documents: "Records", guides: "Records",
-          notify: "System", settings: "System", profile: "System",
-        };
-        const catIconMap: Record<string, React.ElementType> = {
-          Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Records: FiBarChart2, System: FiSettings,
-        };
-        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], // Actions/tasks tab was previously chip-styled on Worker + Admin
-// (`chip: t.value === "tasks"`), but Super renders it plain — the
-// mismatch read as a bug. Dropping the chip so all three roles
-// render the Actions tab with the same plain style.
-chip: false, bucket: t.bucket }));
-      })(),
-    },
-    {
-      value: "super",
-      label: "Super",
-      icon: FiShield,
-      visible: () => !!isSignedIn && isSuper,
-      innerTabs: [
-        {
-          // ── Work ──
-          // Operations-pulse dashboard — money / jobs / equipment /
-          // team / clients rollup for a rolling period ending today.
-          // One period button drives every section. This is where the
-          // Super lands on entering the Super tab; matches the Admin
-          // shell's "Home" landing pattern.
-          value: "home",
-          label: "Home",
-          icon: FiHome,
-          content: wrapWithInlineMessage(
-            <HomeTab
-              me={me}
-              onLaunchWorkflow={() => {}}
-              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-            />
-          ),
-          category: "Work",
-          categoryIcon: FiHome,
-        },
-        {
-          // Jobs — same JobsTab as Admin+Worker, driven by scope so the
-          // Super sees admin+super overlays (Client Requests, Ops
-          // summary strip, cancel/reopen action row, etc.).
-          value: "jobs",
-          label: "Jobs",
-          icon: FiClipboard,
-          content: wrapWithInlineMessage(
-            <JobsTab
-              me={me}
-              purpose="ADMIN"
-              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-            />
-          ),
-          category: "Work",
-          categoryIcon: FiHome,
-        },
-        {
-          // Routes — same PreviewRoutesTab as Admin+Worker. Scope
-          // brings the Super's team-travel Operations panel to the
-          // top of the tab.
-          value: "routes",
-          label: "Routes",
-          icon: FiNavigation,
-          content: wrapWithInlineMessage(
-            <PreviewRoutesTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />
-          ),
-          category: "Work",
-          categoryIcon: FiHome,
-        },
-        {
-          // Services — the same shipped ServicesTab admins see.
-          // Super-only affordances gate on the user's actual role
-          // internally, so purpose="ADMIN" is intentional.
-          value: "services",
-          label: "Services",
-          icon: FiBriefcase,
-          content: wrapWithInlineMessage(
-            <ServicesTab
-              me={me}
-              purpose="ADMIN"
-              streamReviewOccId={streamReviewOccId}
-              streamReviewNonce={streamReviewNonce}
-            />
-          ),
-          category: "Work",
-          categoryIcon: FiHome,
-        },
-        {
-          // Actions (+) — same shipped AdminTasksTab admins see.
-          // Super uses the admin task list; there's no super-only
-          // shortcut set today, but the tab is here so cross-role
-          // navigation stays consistent.
-          value: "tasks",
-          label: "Actions",
-          icon: FiPlus,
-          content: <AdminTasksTab tasks={adminTasks} scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} workerType={me?.workerType} />,
-          category: "Work",
-          categoryIcon: FiHome,
-        },
-        {
-          // ── Equipment ──
-          // Same component as the admin Inventory tab, but rendered with
-          // scope.isSuper so InventoryTab exposes its act-on-behalf-of-
-          // worker controls (reserve / cancel / checkout / return for a
-          // specific worker). Fail-safe for when a worker is stuck in the
-          // mobile flow and a Super needs to drive the action remotely.
-          //
-          // Positioned right after Services so the Equipment category
-          // sits IMMEDIATELY BELOW Work in the category strip (matches
-          // Worker/Admin tab-order).
-          value: "equipment",
-          label: "Inventory",
-          icon: FiTool,
-          content: wrapWithInlineMessage(
-            <InventoryTab
-              key={`seq-${adminEquipmentRemountKey}`}
-              me={me}
-              purpose="SUPER"
-              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-            />
-          ),
-          category: "Equipment",
-          categoryIcon: FiTool,
-        },
-        {
-          // ── Equipment → Collections (Super scope) ──
-          // Blended CollectionsTab renders admin CRUD + a Super-only
-          // Insights strip (kits with issues, availability, job
-          // coverage) computed from the collections payload — no
-          // extra server round-trip.
-          value: "collections",
-          label: "Collections",
-          icon: FiPackage,
-          content: wrapWithInlineMessage(
-            <CollectionsTab
-              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-            />
-          ),
-          category: "Equipment",
-          categoryIcon: FiTool,
-        },
-        {
-          // ── Equipment → Vehicles ──
-          // Dual-use vehicle fleet: manage vehicles, assignments (which
-          // workers can log mileage against which vehicle), and the
-          // per-vehicle mileage log. See services/vehicles.ts and
-          // services/mileage.ts for the backend contracts and the
-          // MileageStrip on the worker HomeTab for the driver-side flow.
-          value: "vehicles",
-          label: "Vehicles",
-          icon: FiTruck,
-          content: wrapWithInlineMessage(
-            <VehiclesTab
-              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-            />
-          ),
-          category: "Equipment",
-          categoryIcon: FiTool,
-        },
-        {
-          // ── Directory ── (Clients → Properties → Users → Groups)
-          // Clients — Super's home for the "View as this client"
-          // affordance (Super-only impersonation for support debugging).
-          // Mounted with purpose="SUPER" so ClientsTab can distinguish
-          // this from the admin-side Clients mount and render the "View
-          // as" button only here. See ViewAsClientButton gate below.
-          value: "clients",
-          label: "Clients",
-          icon: FiUsers,
-          content: wrapWithInlineMessage(
-            <ClientsTab
-              me={me}
-              purpose="SUPER"
-              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-            />
-          ),
-          category: "Directory",
-          categoryIcon: AiOutlineTeam,
-        },
-        {
-          // Properties — same PropertiesTab admins see. Mounted at the
-          // Super tier for parity with Admin's Directory category. The
-          // legacy `purpose="ADMIN"` is preserved for backward-compat;
-          // the additive `scope` prop is authoritative and passes the
-          // Super capability through so `superRequired` (hard-delete
-          // unlock) resolves correctly here.
-          value: "properties",
-          label: "Properties",
-          icon: FiMapPin,
-          content: wrapWithInlineMessage(
-            <PropertiesTab
-              me={me}
-              purpose="ADMIN"
-              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-            />
-          ),
-          category: "Directory",
-          categoryIcon: AiOutlineTeam,
-        },
-        {
-          // Super-only writable Users view. The same component admins
-          // see read-only on their Directory tab, but with full mutation
-          // surface (approve / role changes / privilege toggles / delete).
-          // The "Pending Users" alert chip in the title bar routes here.
-          value: "users",
-          label: "Users",
-          icon: AiOutlineTeam,
-          content: wrapWithInlineMessage(
-            <UsersTab
-              role="admin"
-              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-            />
-          ),
-          category: "Directory",
-          categoryIcon: AiOutlineTeam,
-        },
-        {
-          // Groups — the same AdminGroupsTab admins see. Groups (crews)
-          // are managed at the admin tier, but Super also needs the
-          // surface for support debugging + cross-role parity.
-          value: "groups",
-          label: "Groups",
-          icon: AiOutlineTeam,
-          content: wrapWithInlineMessage(
-            <AdminGroupsTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />
-          ),
-          category: "Directory",
-          categoryIcon: AiOutlineTeam,
-        },
-        {
-          // ── Money ── (Super sub-tab order: Payments → Payroll →
-          // Ledger → Pricing → Supplies → Promotions → Forecast.
-          //
-          // The first three are the money-movement surfaces — what came
-          // in, what went out to people, what went out everywhere else —
-          // so they sit together; Pricing and Supplies are configuration
-          // rather than record-keeping and follow.
-          //
-          // Forecast sits LAST — it is the only surface here that reports
-          // nothing that happened. Everything above it is a record or a
-          // setting; Forecast is advisory, writes no setting and pays nobody,
-          // so it reads as the thing you do after the rest rather than
-          // another ledger.
-          //
-          // Payments/Pricing/Supplies are shared across all three roles
-          // via the additive scope prop; Payroll is shared but heavily
-          // scoped, and Ledger + Forecast + Promotions are Super-only.)
-          value: "payments",
-          label: "Payments",
-          icon: TfiMoney,
-          content: wrapWithInlineMessage(<PaymentsTab me={me} purpose="SUPER" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          // Super: full detail, plus upload / identity matching / archive.
-          value: "payroll",
-          label: "Payroll",
-          icon: Banknote,
-          content: wrapWithInlineMessage(<PayrollTab me={me} purpose="SUPER" scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          // Internally this tab is BusinessExpensesTab and the API/model
-          // is BusinessExpense — both kept for historical reasons. The
-          // visible label is "Ledger" because the tab is a hand-logged
-          // record of three money-movement categories: business expenses,
-          // capital contributions (equity in), and owner draws (equity
-          // out). See the EntryType discriminator on the BusinessExpense
-          // model. The URL key is "ledger" to match the visible name —
-          // deep links and localStorage handoffs (Supply badge, Job badge)
-          // need updating to match.
-          //
-          // Super-only — Ledger is intentionally NOT mounted for Admin or
-          // Worker.
-          value: "ledger",
-          label: "Ledger",
-          icon: FiBook,
-          content: wrapWithInlineMessage(<BusinessExpensesTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          value: "pricing",
-          label: "Pricing",
-          icon: FiTag,
-          content: wrapWithInlineMessage(<PricingTab isSuper scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        // NOTE: the Super "Money → Statistics" tab was removed per operator
-        // preference (no longer needed for routine ops review). The
-        // StatisticsTab component still ships for the Worker personal-stats
-        // view (workerTabs, "Records" category). To restore the Super entry,
-        // re-add a tab block here pointing at <StatisticsTab /> (no myId).
-        {
-          value: "supplies",
-          label: "Supplies",
-          icon: FiPackage,
-          content: wrapWithInlineMessage(<SuppliesTab scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }} />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          // Promotions — Super-only marketing campaigns. Piggyback on
-          // outgoing invoice comms (or blast manually), with full audit
-          // trail and per-contact opt-out. See PromotionsTab +
-          // services/promotions.ts.
-          value: "promotions",
-          label: "Promotions",
-          icon: FiSpeaker,
-          content: wrapWithInlineMessage(<PromotionsTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        {
-          // Pay-structure simulator. Super-only, and deliberately NOT part of
-          // Reconcile or the P&L: those report what happened, this asks what
-          // should change. Keeping them separate stops a projection from ever
-          // being mistaken for a record.
-          value: "forecast",
-          label: "Forecast",
-          icon: LineChart,
-          content: wrapWithInlineMessage(<ForecastTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
-        // NOTE: Reconcile moved out of Money → Records. It lives next to
-        // Workdays / Audit / Timeline now since it's an external-system
-        // reconciliation surface rather than a per-record money editor.
-        {
-          // ── Records ── (audit / review surfaces — placed between
-          // Money and Tools so the top-level category order matches
-          // Work → Equipment → Directory → Money → Records → Tools
-          // → System.)
-          // Reconcile — accounting-software validation surface. Replaces
-          // the old Exports + P&L Report tabs. Renders a QB-style P&L
-          // for the selected window with click-to-drill-down on every
-          // row, and offers flat CSVs (Capital, Income, Expenses,
-          // Workdays) for visual cross-checking against the operator's
-          // accounting software (which is now the source of truth, wired
-          // directly to the bank). See ReconcileTab.tsx + services/
-          // pnlReport.ts + services/exports.ts.
-          value: "reconcile",
-          label: "Reconcile",
-          icon: FiBarChart2,
-          content: wrapWithInlineMessage(<ReconcileTab />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          // Workdays — Super-only review queue for per-worker clock-in/out.
-          // Day-paged; the 4 AM ET cutoff (settings-driven) gates approval
-          // actions on each row. See ui/tabs/WorkdaysTab.tsx +
-          // services/workdays.ts (superListWorkdaysForDate et al).
-          value: "workdays",
-          label: "Workdays",
-          icon: FiClock,
-          content: wrapWithInlineMessage(
-            <WorkdaysTab
-              pendingByDate={pendingWorkdaysByDate}
-              initialDate={workdaysJumpDate}
-              jumpNonce={workdaysJumpNonce}
-              onApprovalsChanged={() => void loadPendingWorkdaysRef.current()}
-            />,
-          ),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          // Compliance — admin surface for the PolicyDocument system.
-          // Placed under Records right after Workdays so both worker-
-          // gate surfaces (hours + policy signatures) sit side-by-side.
-          value: "compliance",
-          label: "Compliance",
-          icon: FiUserCheck,
-          content: wrapWithInlineMessage(<AdminComplianceTab />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          // Engagement — same ActivityTab admins see. Surfaced under
-          // Super Records for parity with Admin's Records sub-tabs.
-          value: "activity",
-          label: "Engagement",
-          icon: FiActivity,
-          content: wrapWithInlineMessage(<ActivityTab role="admin" />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          // History — same HistoryTab admins see. Same rationale as
-          // Engagement above.
-          value: "history",
-          label: "History",
-          icon: FiFileText,
-          content: wrapWithInlineMessage(<HistoryTab role="admin" />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          value: "timeline",
-          label: "Timeline",
-          icon: FiCalendar,
-          content: wrapWithInlineMessage(<TimelineTab isSuper />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          value: "documents",
-          label: "Documents",
-          icon: FiFolder,
-          content: wrapWithInlineMessage(<DocumentsTab isSuper />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          // Education guides — see docs/features/education.md. Super is the
-          // only role that approves content or touches video.
-          value: "guides",
-          label: "Guides",
-          icon: FiBookOpen,
-          content: wrapWithInlineMessage(
-            <GuidesTab
-              me={me}
-              purpose="SUPER"
-              scope={{ isWorker: scopeIsWorker, isAdmin: scopeIsAdmin, isSuper: scopeIsSuper }}
-            />,
-          ),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          value: "audit",
-          label: "Audit",
-          icon: FiSearch,
-          content: <AuditTab />,
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          // ── Tools ──
-          // Read-only calculators and estimating helpers. Each tool is its
-          // own third-level tab under the shared "Tools" category — add
-          // additional tools by appending sibling entries with the same
-          // category. The tool components live in apps/web/src/ui/tools/
-          // and are self-contained from the rest of the app (pull existing
-          // settings but never mutate).
-          value: "tools-mowing",
-          label: "Mowing",
-          icon: FiTool,
-          content: wrapWithInlineMessage(<MowingJobTool />),
-          category: "Tools",
-          categoryIcon: FiTool,
-        },
-        {
-          value: "tools-mulch",
-          label: "Mulch",
-          icon: FiTool,
-          content: wrapWithInlineMessage(<MulchJobTool />),
-          category: "Tools",
-          categoryIcon: FiTool,
-        },
-        {
-          // ── System ── (order: Profile → Notify → Vanity → Settings)
-          value: "profile",
-          label: "Profile",
-          icon: FiUser,
-          content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="SUPER" onProfileUpdated={refreshMe} />),
-          category: "System",
-          categoryIcon: FiSettings,
-        },
-        {
-          // Notify — same AdminNotifyTab admins use. Mounted here for
-          // parity with the Admin System sub-tab list.
-          value: "notify",
-          label: "Notify",
-          icon: FiBell,
-          content: wrapWithInlineMessage(<AdminNotifyTab />),
-          category: "System",
-          categoryIcon: FiSettings,
-        },
-        {
-          // Vanity — Super-only editor for branded shortcuts on
-          // seedlings.pro. Each row is either a landing page (renders
-          // in-app) or a redirect (302 to a configured URL). One row
-          // is flagged as default and serves as the fallback for
-          // unknown slugs. See VanityUrlsTab + services/vanityPages.ts.
-          value: "vanity",
-          label: "Vanity",
-          icon: FiLink,
-          content: wrapWithInlineMessage(<VanityUrlsTab />),
-          category: "System",
-          categoryIcon: FiSettings,
-        },
-        {
-          // Displays — wall screens showing a live board. Its own tab rather
-          // than a section inside Settings because of the pairing moment:
-          // you are standing at the screen with a code counting down and a
-          // phone in your hand, so it has to be one tap from the breadcrumb.
-          // See DisplaysTab + services/displays.ts + the Display model.
-          value: "displays",
-          label: "Displays",
-          icon: FiMonitor,
-          content: wrapWithInlineMessage(<DisplaysTab />),
-          category: "System",
-          categoryIcon: FiSettings,
-        },
-        {
-          value: "settings",
-          label: "Settings",
-          icon: FiSettings,
-          content: wrapWithInlineMessage(<SettingsTab me={me} purpose="SUPER" />),
-          category: "System",
-          categoryIcon: FiSettings,
-        },
-      ],
+      innerTabs: staffTabs,
     },
   ];
 
   // Header-mounted role switcher — replaces the outer role pill that used
-  // to lead the BreadcrumbNav. Roles are computed from navTabs' visibility
+  // to lead the BreadcrumbNav. Computed from navTabs' visibility
   // functions so a single source of truth (the tab-tree) drives BOTH the
-  // rendered chrome and the switcher options. Client is always present
-  // (visible: true above); the others gate on isWorker/isAdmin/isSuper.
+  // rendered chrome and the switcher options. There are two shells now,
+  // `client` and `staff`; which TABS are on the staff one is decided by
+  // TAB_REQUIREMENTS, not by a role.
   const availableRoles = navTabs
     .filter((t) => (typeof t.visible === "function" ? t.visible() : t.visible !== false))
     .map((t) => ({ value: t.value as RoleValue, label: t.label, icon: t.icon }));
@@ -1962,13 +1883,16 @@ chip: false, bucket: t.bucket }));
   // role's persisted inner tab alone — that's normally the role's own
   // last-viewed tab or its default landing. Also pushes nav history so the
   // back button retraces the role switch.
-  function switchRole(newRole: RoleValue) {
+  function switchRole(newRole: "client" | "staff") {
     if (newRole === topTab) return;
-    const currentInner =
-      topTab === "client" ? clientInnerTab
-      : topTab === "worker" ? workerInnerTab
-      : topTab === "admin" ? adminInnerTab
-      : superInnerTab;
+    // DELIBERATE, so the rescue below must not undo it. A staff member may
+    // sit on the customer portal to look at the public side — Community,
+    // Services and Promotions render for anybody. Without this marker the
+    // reconciliation effect reads "staff account on the client shell" as
+    // somebody stranded and bounces them straight back, so the menu entry
+    // appears to do nothing.
+    setShellChosen(true);
+    const currentInner = topTab === "client" ? clientInnerTab : staffInnerTab;
     const targetRoleTabs = navTabs.find((n) => n.value === newRole)?.innerTabs ?? [];
     const equivalent = targetRoleTabs.find(
       (t) => t.value === currentInner
@@ -1977,43 +1901,25 @@ chip: false, bucket: t.bucket }));
     pushNavHistory(getCurrentNavState());
     if (equivalent) {
       if (newRole === "client") setClientInnerTab(equivalent.value as ClientTabs);
-      else if (newRole === "worker") setWorkerInnerTab(equivalent.value as WorkerTabs);
-      else if (newRole === "admin") setAdminInnerTab(equivalent.value as AdminTabs);
-      else if (newRole === "super") setSuperInnerTab(equivalent.value as SuperTabs);
+      else setStaffInnerTab(equivalent.value as StaffTabs);
     }
     setTopTab(newRole);
   }
 
-  // `tabName` can be:
-  //   • a string  — same target tab for admin and worker (must exist
-  //                  in BOTH AdminTabs & WorkerTabs)
-  //   • an object — separate targets, with `worker: null` marking
-  //                  "no worker-scope destination" (dispatchers must
-  //                  pass forAdmin:true; a worker dispatcher no-ops
-  //                  with a console warn). Use this for admin-only
-  //                  destinations like Services.
-  const setupSearchEvent = (
-    eventName: EventTypes,
-    tabName: (AdminTabs & WorkerTabs) | { admin: AdminTabs; worker: WorkerTabs | null }
-  ) => {
-    const adminTarget: AdminTabs = typeof tabName === "string" ? tabName : tabName.admin;
-    const workerTarget: WorkerTabs | null = typeof tabName === "string" ? tabName : tabName.worker;
+  // ONE destination per event. This took either a shared tab id or an
+  // `{ admin, worker }` pair, because the same feature lived on two tabs
+  // and a search result had to be routed to the right copy. There is one
+  // copy now, so there is one destination.
+  const setupSearchEvent = (eventName: EventTypes, tabName: StaffTabs) => {
+    const target: StaffTabs = tabName;
     useEffect(() => {
       if (typeof window === "undefined") return;
       const onEvent = (e: Event) => {
-        const { q, forAdmin, entityId } = (e as CustomEvent).detail || {};
+        const { q, entityId } = (e as CustomEvent).detail || {};
         if (!q && !entityId) return;
-        if (!forAdmin && workerTarget === null) {
-          // Admin-only destination — a worker-scope dispatcher would
-          // land nowhere useful. No-op rather than silently misroute.
-          if (typeof console !== "undefined") {
-            console.warn(`[${eventName}] worker-scope dispatch ignored; this event is admin-only`);
-          }
-          return;
-        }
         pushNavHistory(getCurrentNavState());
-        setTopTab(forAdmin ? "admin" : "worker");
-        forAdmin ? setAdminInnerTab(adminTarget) : setWorkerInnerTab(workerTarget as WorkerTabs);
+        setTopTab("staff");
+        setStaffInnerTab(target);
         window.sessionStorage.setItem(
           `open:${eventName}Once`,
           JSON.stringify({ q, entityId }),
@@ -2041,7 +1947,7 @@ chip: false, bucket: t.bucket }));
         );
       }, 150);
       return () => clearTimeout(timer);
-    }, [topTab, adminInnerTab, workerInnerTab]);
+    }, [topTab, staffInnerTab, staffInnerTab]);
   };
 
   setupSearchEvent("clientTabToPropertiesTabSearch", "properties");
@@ -2052,20 +1958,23 @@ chip: false, bucket: t.bucket }));
   setupSearchEvent("jobsTabToPropertiesTabSearch", "properties");
   setupSearchEvent("jobsTabToClientsTabSearch", "clients");
   setupSearchEvent("paymentsTabToPropertiesTabSearch", "properties");
+  // Areas → Properties. The Areas tab lists an area's properties; clicking
+  // one should land on it, not leave you to search for it by hand.
+  setupSearchEvent("areasTabToPropertiesTabSearch", "properties");
   setupSearchEvent("paymentsTabToClientsTabSearch", "clients");
   // jobsTabToServicesTabSearch — "Manage in Services" button on the
   // JobsTab occurrence card. The `:run` handler lives in ServicesTab
   // (see ServicesTab.tsx), so we must route to the "services" tab so
   // that handler is actually mounted when the event fires. A previous
   // change routed this to "jobs" which silently broke the button.
-  setupSearchEvent("jobsTabToServicesTabSearch", { admin: "services", worker: null });
+  setupSearchEvent("jobsTabToServicesTabSearch", "services");
   // clientsTabToServicesTabSearch — the "Job services" button on the
   // ClientsTab card (which also carries the paused-repeating count).
   // Routes to Services; ServicesTab's :run listener sets q to the
   // client's displayName and clears the status filter — the operator came
   // to pause or resume a repeating service, so the running ones are
   // exactly what they need to see.
-  setupSearchEvent("clientsTabToServicesTabSearch", { admin: "services", worker: null });
+  setupSearchEvent("clientsTabToServicesTabSearch", "services");
 
   // Payments "Job" link → Jobs tab, highlighted to the exact occurrence the
   // payment was recorded against. We send the OCCURRENCE id (plus its
@@ -2076,16 +1985,13 @@ chip: false, bucket: t.bucket }));
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onEvent = (e: Event) => {
-      const { forAdmin, entityId, anchorAt } = (e as CustomEvent).detail || {};
+      const { entityId, anchorAt } = (e as CustomEvent).detail || {};
       if (!entityId) return;
       pushNavHistory(getCurrentNavState());
-      if (forAdmin) {
-        setTopTab("admin");
-        setAdminInnerTab("jobs");
-      } else {
-        setTopTab("worker");
-        setWorkerInnerTab("jobs");
-      }
+      // One Jobs tab. This was a two-arm branch on a role flag with two
+      // identical bodies, left over from the two-shell split.
+      setTopTab("staff");
+      setStaffInnerTab("jobs");
       window.sessionStorage.setItem(
         "paymentsTabToJobsNav",
         JSON.stringify({ occId: entityId, anchorAt: anchorAt ?? null }),
@@ -2107,9 +2013,8 @@ chip: false, bucket: t.bucket }));
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const onAdminJobs = topTab === "admin" && adminInnerTab === "jobs";
-    const onWorkerJobs = topTab === "worker" && workerInnerTab === "jobs";
-    if (!onAdminJobs && !onWorkerJobs) return;
+    // One Jobs tab now, so one check.
+    if (topTab !== "staff" || staffInnerTab !== "jobs") return;
     const raw = window.sessionStorage.getItem("paymentsTabToJobsNav");
     if (!raw) return;
     window.sessionStorage.removeItem("paymentsTabToJobsNav");
@@ -2130,7 +2035,7 @@ chip: false, bucket: t.bucket }));
       }
     }, 100);
     return () => clearInterval(interval);
-  }, [topTab, adminInnerTab, workerInnerTab]);
+  }, [topTab, staffInnerTab, staffInnerTab]);
 
   // Generic tab switcher (used by Audit tab and others to navigate across top-level tabs)
   useEffect(() => {
@@ -2138,9 +2043,9 @@ chip: false, bucket: t.bucket }));
     const onSwitch = (e: Event) => {
       const { outer, inner } = (e as CustomEvent).detail || {};
       if (outer) setTopTab(outer);
-      if (inner && outer === "admin") setAdminInnerTab(inner);
-      if (inner && outer === "worker") setWorkerInnerTab(inner);
-      if (inner && outer === "super") setSuperInnerTab(inner);
+      if (inner && outer === "admin") setStaffInnerTab(inner);
+      if (inner && outer === "worker") setStaffInnerTab(inner);
+      if (inner && outer === "super") setStaffInnerTab(inner);
     };
     window.addEventListener("seedlings:switchTab", onSwitch as EventListener);
     return () => window.removeEventListener("seedlings:switchTab", onSwitch as EventListener);
@@ -2152,8 +2057,8 @@ chip: false, bucket: t.bucket }));
     const onEvent = (e: Event) => {
       const { entityId } = (e as CustomEvent).detail || {};
       if (!entityId) return;
-      setTopTab("admin");
-      setAdminInnerTab("jobs");
+      setTopTab("staff");
+      setStaffInnerTab("jobs");
       window.sessionStorage.setItem("servicesTabToJobsNav", entityId);
     };
     window.addEventListener("open:servicesTabToJobsTabSearch", onEvent as EventListener);
@@ -2161,7 +2066,7 @@ chip: false, bucket: t.bucket }));
   }, []);
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (adminInnerTab !== "jobs") return;
+    if (staffInnerTab !== "jobs") return;
     const entityId = window.sessionStorage.getItem("servicesTabToJobsNav");
     if (!entityId) return;
     window.sessionStorage.removeItem("servicesTabToJobsNav");
@@ -2177,14 +2082,14 @@ chip: false, bucket: t.bucket }));
       }
     }, 100);
     return () => clearInterval(interval);
-  }, [topTab, adminInnerTab]);
+  }, [topTab, staffInnerTab]);
 
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (topTab !== "admin" || adminInnerTab !== "users") return;
+    if (topTab !== "staff" || staffInnerTab !== "users") return;
 
-    const key = "admin:usersOpenOnce";
+    const key = "users:openOnce";
     const raw = window.sessionStorage.getItem(key);
     if (!raw) return;
 
@@ -2200,7 +2105,7 @@ chip: false, bucket: t.bucket }));
         window.sessionStorage.removeItem(key);
       }
     });
-  }, [topTab, adminInnerTab]);
+  }, [topTab, staffInnerTab]);
 
   const BRAND_ICON_H = 34; // px
 
@@ -2210,7 +2115,7 @@ chip: false, bucket: t.bucket }));
   // and the Cloud icon button below.
   type EarningsPeriod = "today" | "thisWeek" | "thisMonth" | "allTime";
   // Cycle only walks Today → Week → Month. "allTime" is intentionally
-  // omitted — admin/super views show this number; an unbounded "All"
+  // omitted — management views show this number; an unbounded "All"
   // running total stops being useful past a month.
   const EARNINGS_PERIODS: EarningsPeriod[] = ["today", "thisWeek", "thisMonth"];
   const EARNINGS_LABELS: Record<EarningsPeriod, string> = { today: "Today", thisWeek: "Wk", thisMonth: "Mo", allTime: "All" };
@@ -2222,6 +2127,11 @@ chip: false, bucket: t.bucket }));
   // user's chosen state survives reloads. WeatherBar is still mounted in
   // hidden mode so its fetch continues running and broadcasts current temp.
   const [weatherMode, setWeatherMode] = usePersistedState<WeatherBarMode>("titleWeatherMode", "hidden");
+  // The header drawer (the chevron at the end of the control strip).
+  // PERSISTED, because somebody who wants the trophy to hand should not
+  // re-open a drawer on every navigation — and closed by default, because
+  // the whole point of the drawer is that the bar is shorter without it.
+  const [headerDrawerOpen, setHeaderDrawerOpen] = usePersistedState<boolean>("headerDrawerOpen", false);
   const [titleWeather, setTitleWeather] = useState<{ temp: number; icon: string } | null>(() => {
     if (typeof window === "undefined") return null;
     const cached = (window as any).__seedlingsWeather?.current;
@@ -2254,17 +2164,17 @@ chip: false, bucket: t.bucket }));
   }, []);
   useEffect(() => {
     if (!isSignedIn || !me?.id) return;
-    // Skip while a Super is in a client view-as session. The /api/me
+    // Skip while someone with `settings.manage` is in a client view-as session. The /api/me
     // overlay makes `me` look client-shaped (empty roles, client
     // display name), but the earnings fetch would still go out under
-    // the Super's real Clerk token — the server would happily return
-    // the SUPER's own earnings, which the pill would then render on
+    // the CALLER's real Clerk token — the server would happily return
+    // the caller's OWN earnings, which the pill would then render on
     // top of the view-as shell. That misrepresents what the client
     // actually sees and can leak the operator's own numbers over the
     // client preview. The pill also has no place in a client view;
     // real clients aren't authorized on the underlying endpoint.
     if (me.isClientImpersonating) return;
-    // Skip for pure client accounts (no worker/admin/super role) — the
+    // Skip for pure client accounts (no staff) — the
     // endpoint is staff-only and would just 403 in a loop.
     if (!hasAnyRole) return;
     // Dedicated endpoint for the title-bar money chip — NOT the same one
@@ -2318,28 +2228,34 @@ chip: false, bucket: t.bucket }));
   // an extra chip. See OnClockBubble.onActiveChange.
   const [onClockActive, setOnClockActive] = useState(false);
 
-  // ---- Pending approvals badge (super only) ----
-  // User-management is a Super activity now — admins see the directory
+  // ---- Pending approvals badge (`money.approve`) ----
+  // User-management is someone with `settings.manage` activity now — holders of `schedule.manage` see the directory
   // read-only and don't need a pending count. Loader bails for non-super
   // so we don't spend an API call we won't render.
   const [pending, setPending] = useState<number>(0);
 
   const loadPending = useCallback(async () => {
-    if (!isSuper) {
+    // TWO capabilities, deliberately. The badge exists so somebody can
+    // ADMIT a pending sign-up (`people.approve`), and the count it shows
+    // comes from `/users/pendingCount` (`people.view`). Requiring both
+    // means it is neither a number nobody can act on nor a request that
+    // refuses. It was gated on `settings.manage`, which is
+    // unrelated to either.
+    if (!scopeCan("people.approve") || !scopeCan("people.view")) {
       setPending(0);
       markAlertLoaded("pending");
       return;
     }
     try {
       const res = await apiGet<{ pending: number }>(
-        "/api/admin/users/pendingCount"
+        "/api/users/pendingCount"
       );
       setPending(res?.pending ?? 0);
     } catch {
       setPending(0);
     }
     markAlertLoaded("pending");
-  }, [isSuper]);
+  }, [scopeCan]);
 
   useEffect(() => {
     void loadPending();
@@ -2349,33 +2265,35 @@ chip: false, bucket: t.bucket }));
   const [pendingPayments, setPendingPayments] = useState<number>(0);
 
   const loadPendingPayments = useCallback(async () => {
-    if (!isSuper) {
+    // Same shape: approving is `money.approve`, the count is
+    // `/payments/pending` (`money.view`).
+    if (!scopeCan("money.approve") || !scopeCan("money.view")) {
       setPendingPayments(0);
       markAlertLoaded("pendingPayments");
       return;
     }
     try {
-      const list = await apiGet<unknown[]>("/api/admin/payments/pending");
+      const list = await apiGet<unknown[]>("/api/payments/pending");
       setPendingPayments(Array.isArray(list) ? list.length : 0);
     } catch {
       setPendingPayments(0);
     }
     markAlertLoaded("pendingPayments");
-  }, [isAdmin, isSuper]);
+  }, [scopeCan]);
 
   useEffect(() => {
     void loadPendingPayments();
     // Refresh in-place when any Payment row mutates anywhere in the app
     // — approve, reject, write-off, edit, revert, mark-paid, worker
-    // accept-payment, etc. all fire bumpAdminPayments() which emits this
+    // accept-payment, etc. all fire bumpPayments() which emits this
     // event. Without this subscription the "Payments to review" badge
     // stays stale until a hard refresh after an approval.
     const onChanged = () => void loadPendingPayments();
-    window.addEventListener("seedlings:admin-payments-changed", onChanged);
-    return () => window.removeEventListener("seedlings:admin-payments-changed", onChanged);
+    window.addEventListener("seedlings:payments-changed", onChanged);
+    return () => window.removeEventListener("seedlings:payments-changed", onChanged);
   }, [loadPendingPayments]);
 
-  // ---- Pending workday approvals badge (super only) ----
+  // ---- Pending workday approvals badge (`time.view`) ----
   // State lives near the top of the component (above the tab tree)
   // because the tab JSX reads these synchronously. The loader is
   // defined here next to its peers and registered into the ref so the
@@ -2383,7 +2301,7 @@ chip: false, bucket: t.bucket }));
   // NEEDS_ENDING rows are intentionally excluded from this count —
   // those need a force-end action first; different bucket.
   const loadPendingWorkdays = useCallback(async () => {
-    if (!isSuper) {
+    if (!scopeCan("time.view")) {
       setPendingWorkdays(0);
       setPendingWorkdaysByDate([]);
       setPendingMileage(0);
@@ -2400,11 +2318,11 @@ chip: false, bucket: t.bucket }));
         apiGet<{
           totalPending: number;
           byDate: { workdayDate: string; count: number }[];
-        }>("/api/super/workdays/pending-summary").catch(() => null),
+        }>("/api/workdays/pending-summary").catch(() => null),
         apiGet<{
           totalPending: number;
           byDate: { entryDate: string; count: number }[];
-        }>("/api/super/mileage/pending-summary").catch(() => null),
+        }>("/api/mileage/pending-summary").catch(() => null),
       ]);
       setPendingWorkdays(wd?.totalPending ?? 0);
       setPendingWorkdaysByDate(Array.isArray(wd?.byDate) ? wd.byDate : []);
@@ -2417,40 +2335,40 @@ chip: false, bucket: t.bucket }));
       setPendingMileageByDate([]);
     }
     markAlertLoaded("pendingWorkdays");
-  }, [isSuper]);
+  }, [scopeCan]);
 
   const loadLedgerFollowupCount = useCallback(async () => {
-    if (!isSuper) {
+    if (!scopeCan("books.view")) {
       setLedgerFollowupCount(0);
       markAlertLoaded("ledgerFollowups");
       return;
     }
     try {
-      const r = await apiGet<{ count: number }>("/api/super/ledger-followups/count");
+      const r = await apiGet<{ count: number }>("/api/ledger-followups/count");
       setLedgerFollowupCount(r?.count ?? 0);
     } catch {
       setLedgerFollowupCount(0);
     }
     markAlertLoaded("ledgerFollowups");
-  }, [isSuper]);
+  }, [scopeCan]);
 
   const loadStreamPauseRemindersCount = useCallback(async () => {
-    if (!(isAdmin || isSuper)) {
+    if (!scopeCan("schedule.view")) {
       setStreamPauseRemindersCount(0);
       markAlertLoaded("streamPauseReminders");
       return;
     }
     try {
-      const r = await apiGet<{ count: number }>("/api/admin/stream-pauses/reminders/count");
+      const r = await apiGet<{ count: number }>("/api/stream-pauses/reminders/count");
       setStreamPauseRemindersCount(r?.count ?? 0);
     } catch {
       setStreamPauseRemindersCount(0);
     }
     markAlertLoaded("streamPauseReminders");
-  }, [isAdmin, isSuper]);
+  }, [scopeCan]);
 
   const loadGhostExpiryCounts = useCallback(async () => {
-    if (!(isAdmin || isSuper)) {
+    if (!scopeCan("schedule.view")) {
       setGhostExpiringCount(0);
       setGhostExpiredCount(0);
       markAlertLoaded("ghostExpiry");
@@ -2467,33 +2385,33 @@ chip: false, bucket: t.bucket }));
       setGhostExpiredCount(0);
     }
     markAlertLoaded("ghostExpiry");
-  }, [isAdmin, isSuper]);
+  }, [scopeCan]);
 
   const loadDueToRecordCount = useCallback(async () => {
-    if (!isSuper) {
+    if (!scopeCan("books.view")) {
       setDueToRecordCount(0);
       markAlertLoaded("dueToRecord");
       return;
     }
     try {
-      const r = await apiGet<{ count: number }>("/api/admin/business-expenses/due-soon/count");
+      const r = await apiGet<{ count: number }>("/api/business-expenses/due-soon/count");
       setDueToRecordCount(r?.count ?? 0);
     } catch {
       setDueToRecordCount(0);
     }
     markAlertLoaded("dueToRecord");
-  }, [isSuper]);
+  }, [scopeCan]);
 
-  const loadPolicyAdminCounts = useCallback(async () => {
-    if (!isSuper) {
+  const loadPolicyReviewCounts = useCallback(async () => {
+    if (!scopeCan("compliance.view")) {
       setPolicyPendingUploadsCount(0);
       setPolicyPendingApprovalsCount(0);
-      markAlertLoaded("policyAdmin");
+      markAlertLoaded("policyReview");
       return;
     }
     try {
       const r = await apiGet<{ pendingUploadReviews: number; pendingApprovals: number }>(
-        "/api/admin/policies/counts",
+        "/api/policies/counts",
       );
       setPolicyPendingUploadsCount(r?.pendingUploadReviews ?? 0);
       setPolicyPendingApprovalsCount(r?.pendingApprovals ?? 0);
@@ -2501,14 +2419,15 @@ chip: false, bucket: t.bucket }));
       setPolicyPendingUploadsCount(0);
       setPolicyPendingApprovalsCount(0);
     }
-    markAlertLoaded("policyAdmin");
-  }, [isSuper]);
+    markAlertLoaded("policyReview");
+  }, [scopeCan]);
 
   const loadPolicyWorkerCount = useCallback(async () => {
-    // Every signed-in worker (including admins with a workerType) sees
-    // this. Admin-only supers with workerType=null get 0 back from the
-    // server and the alert simply doesn't render. Skip entirely for
-    // pure client accounts — the endpoint is staff-only and 403s.
+    // Anyone on staff with a workerType sees this — it is their own
+    // compliance queue, so it is an OWNERSHIP route and asks for no
+    // entitlement. Somebody with workerType=null gets 0 back from the
+    // server and the alert simply does not render. Skipped entirely for
+    // client accounts: the endpoint is staff-only and 403s.
     if (!isSignedIn || !hasAnyRole) {
       setPolicyWorkerPendingCount(0);
       markAlertLoaded("policyWorker");
@@ -2535,7 +2454,7 @@ chip: false, bucket: t.bucket }));
   }, [loadPendingWorkdays]);
 
   // Initial fetch of the ledger-followup count + listener for the
-  // cross-tab bus event so the alerts dot stays in sync when a Super
+  // cross-tab bus event so the alerts dot stays in sync when someone with `settings.manage`
   // flags/resolves a row from the Ledger tab.
   useEffect(() => {
     void loadLedgerFollowupCount();
@@ -2544,7 +2463,7 @@ chip: false, bucket: t.bucket }));
     return () => window.removeEventListener("seedlings:ledger-followups-changed", onChanged);
   }, [loadLedgerFollowupCount]);
 
-  // Same pattern for the Due-to-Record alert — fires when the Super
+  // Same pattern for the Due-to-Record alert — fires when a caller with `settings.manage`
   // skips / records / marks-already-recorded a row on the Ledger panel.
   useEffect(() => {
     void loadDueToRecordCount();
@@ -2553,7 +2472,7 @@ chip: false, bucket: t.bucket }));
     return () => window.removeEventListener("seedlings:due-to-record-changed", onChanged);
   }, [loadDueToRecordCount]);
 
-  // Stream-pause reminders — fires when an admin pauses/updates/resumes
+  // Stream-pause reminders — fires when someone with `schedule.manage` pauses/updates/resumes
   // a stream in ServicesTab. Keeps the alert badge in lockstep.
   useEffect(() => {
     void loadStreamPauseRemindersCount();
@@ -2573,14 +2492,14 @@ chip: false, bucket: t.bucket }));
   }, [loadGhostExpiryCounts]);
 
   // Compliance-policy alert refresh. Reloads on any policy signature or
-  // version state change so the admin-side "pending uploads" badge stays
+  // version state change so a caller with `schedule.manage`-side "pending uploads" badge stays
   // fresh, and the worker-side "documents to sign" badge clears the moment
   // the interceptor fires policies:signed after a successful wizard flow.
   useEffect(() => {
-    void loadPolicyAdminCounts();
+    void loadPolicyReviewCounts();
     void loadPolicyWorkerCount();
     const onSigned = () => {
-      void loadPolicyAdminCounts();
+      void loadPolicyReviewCounts();
       void loadPolicyWorkerCount();
     };
     window.addEventListener("policies:signed", onSigned);
@@ -2589,25 +2508,25 @@ chip: false, bucket: t.bucket }));
       window.removeEventListener("policies:signed", onSigned);
       window.removeEventListener("policies:changed", onSigned);
     };
-  }, [loadPolicyAdminCounts, loadPolicyWorkerCount]);
+  }, [loadPolicyReviewCounts, loadPolicyWorkerCount]);
 
-  // ---- Awaiting-client-payment badge (super only) ----
+  // ---- Awaiting-client-payment badge (`money.view`) ----
   // Counts every outstanding payment request — sent to a client, not paid
-  // back yet. The worklist on the Super Money Payments tab still flags the
+  // back yet. The worklist on the Money → Payments tab still flags the
   // stale ones (past PAYMENT_REQUEST_STALE_DAYS) visually; the alert
   // surfaces the full set so a fresh request doesn't sit unseen either.
   const [awaitingClientPaymentCount, setAwaitingClientPaymentCount] = useState<number>(0);
   const [staleRequestCount, setStaleRequestCount] = useState<number>(0);
 
   const loadAwaitingClientPayment = useCallback(async () => {
-    if (!isSuper) {
+    if (!scopeCan("money.view")) {
       setAwaitingClientPaymentCount(0);
       setStaleRequestCount(0);
       markAlertLoaded("awaitingClientPayment");
       return;
     }
     try {
-      const list = await apiGet<{ stale: boolean }[]>("/api/admin/payment-requests/outstanding");
+      const list = await apiGet<{ stale: boolean }[]>("/api/payment-requests/outstanding");
       const arr = Array.isArray(list) ? list : [];
       setAwaitingClientPaymentCount(arr.length);
       setStaleRequestCount(arr.filter((r) => r.stale).length);
@@ -2616,18 +2535,18 @@ chip: false, bucket: t.bucket }));
       setStaleRequestCount(0);
     }
     markAlertLoaded("awaitingClientPayment");
-  }, [isSuper]);
+  }, [scopeCan]);
 
   useEffect(() => {
     void loadAwaitingClientPayment();
     // Same event the pending-approvals counter subscribes to — when a
-    // payment lands (approve, admin-mark-paid, etc.), the matching
+    // payment lands (approve, mark-paid, etc.), the matching
     // outstanding request disappears from this list, so the badge has
     // to recount too. Kept on the same bus so any payment mutation
     // refreshes both halves of "Payments to review" together.
     const onChanged = () => void loadAwaitingClientPayment();
-    window.addEventListener("seedlings:admin-payments-changed", onChanged);
-    return () => window.removeEventListener("seedlings:admin-payments-changed", onChanged);
+    window.addEventListener("seedlings:payments-changed", onChanged);
+    return () => window.removeEventListener("seedlings:payments-changed", onChanged);
   }, [loadAwaitingClientPayment]);
 
   // Overdue count for admin header badge — matches Admin Jobs tab
@@ -2642,7 +2561,7 @@ chip: false, bucket: t.bucket }));
    *  them in one pass keeps the two numbers from ever drifting apart. */
   const [activitiesOverdueCount, setActivitiesOverdueCount] = useState(0);
   const loadOverdue = useCallback(async () => {
-    if (!isAdmin) { setOverdueCount(0); markAlertLoaded("overdue"); return; }
+    if (!scopeCan("schedule.view")) { setOverdueCount(0); markAlertLoaded("overdue"); return; }
     try {
       const today = bizToday();
       const toStr = bizYesterday();
@@ -2669,7 +2588,7 @@ chip: false, bucket: t.bucket }));
       setActivitiesOverdueCount(0);
     }
     markAlertLoaded("overdue");
-  }, [isAdmin]);
+  }, [scopeCan]);
 
   useEffect(() => {
     void loadOverdue();
@@ -2685,15 +2604,15 @@ chip: false, bucket: t.bucket }));
   // request fires the same `jobs-changed` event we already listen to).
   const [changeRequestCount, setChangeRequestCount] = useState(0);
   const loadChangeRequestCount = useCallback(async () => {
-    if (!isAdmin) { setChangeRequestCount(0); markAlertLoaded("changeRequests"); return; }
+    if (!scopeCan("schedule.view")) { setChangeRequestCount(0); markAlertLoaded("changeRequests"); return; }
     try {
-      const result = await apiGet<{ count: number }>("/api/admin/change-requests/pending-count");
+      const result = await apiGet<{ count: number }>("/api/change-requests/pending-count");
       setChangeRequestCount(result?.count ?? 0);
     } catch {
       setChangeRequestCount(0);
     }
     markAlertLoaded("changeRequests");
-  }, [isAdmin]);
+  }, [scopeCan]);
   useEffect(() => {
     void loadChangeRequestCount();
     const onRefresh = () => void loadChangeRequestCount();
@@ -2707,22 +2626,23 @@ chip: false, bucket: t.bucket }));
   // is open, then lets the alert fall off after 4 weeks.
   const [estimateFollowupCount, setEstimateFollowupCount] = useState(0);
   const loadEstimateFollowupCount = useCallback(async () => {
-    // Always mark loaded on early-exit — for non-admin users, isAdmin
-    // stays false and the [isAdmin] dep never triggers a re-fire, so
-    // gating on `if (me)` here can leave the badge stuck pulsating.
-    if (!isAdmin) {
+    // Always mark loaded on early-exit. For somebody without the
+    // entitlement the answer never changes, so the dep never triggers a
+    // re-fire and gating on `if (me)` here would leave the badge stuck
+    // pulsating.
+    if (!scopeCan("estimates.create")) {
       setEstimateFollowupCount(0);
       markAlertLoaded("estimateFollowups");
       return;
     }
     try {
-      const result = await apiGet<{ count: number }>("/api/admin/estimates/stale-followup-count");
+      const result = await apiGet<{ count: number }>("/api/estimates/stale-followup-count");
       setEstimateFollowupCount(result?.count ?? 0);
     } catch {
       setEstimateFollowupCount(0);
     }
     markAlertLoaded("estimateFollowups");
-  }, [isAdmin]);
+  }, [scopeCan]);
   useEffect(() => {
     void loadEstimateFollowupCount();
     const onRefresh = () => void loadEstimateFollowupCount();
@@ -2736,19 +2656,19 @@ chip: false, bucket: t.bucket }));
   // job can still have unapproved hours).
   const [unapprovedHoursCount, setUnapprovedHoursCount] = useState(0);
   const loadUnapprovedHoursCount = useCallback(async () => {
-    if (!isAdmin) {
+    if (!scopeCan("time.approve")) {
       setUnapprovedHoursCount(0);
       markAlertLoaded("unapprovedHours");
       return;
     }
     try {
-      const result = await apiGet<{ count: number }>("/api/admin/occurrences/unapproved-hours-count");
+      const result = await apiGet<{ count: number }>("/api/occurrences/unapproved-hours-count");
       setUnapprovedHoursCount(result?.count ?? 0);
     } catch {
       setUnapprovedHoursCount(0);
     }
     markAlertLoaded("unapprovedHours");
-  }, [isAdmin]);
+  }, [scopeCan]);
   useEffect(() => {
     void loadUnapprovedHoursCount();
     const onRefresh = () => void loadUnapprovedHoursCount();
@@ -2756,12 +2676,13 @@ chip: false, bucket: t.bucket }));
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadUnapprovedHoursCount]);
 
-  // Education guides awaiting approval. SUPER-only: approving is the only
-  // way material becomes readable, so a pending guide is work blocked on
-  // the Super and nobody else can clear it.
+  // Education guides awaiting approval. `content.approve` — the guard on
+  // /guides/pending-approvals/count, and on approving itself. Approving is
+  // the only way material becomes readable, so a pending guide is work
+  // blocked on whoever holds that entitlement and nobody else.
   const [guideApprovalCount, setGuideApprovalCount] = useState(0);
   const loadGuideApprovalCount = useCallback(async () => {
-    if (!isSuper) {
+    if (!scopeCan("content.approve")) {
       setGuideApprovalCount(0);
       markAlertLoaded("guideApprovals");
       return;
@@ -2773,7 +2694,7 @@ chip: false, bucket: t.bucket }));
       setGuideApprovalCount(0);
     }
     markAlertLoaded("guideApprovals");
-  }, [isSuper]);
+  }, [scopeCan]);
   useEffect(() => {
     void loadGuideApprovalCount();
     const onRefresh = () => void loadGuideApprovalCount();
@@ -2781,11 +2702,11 @@ chip: false, bucket: t.bucket }));
     return () => window.removeEventListener("seedlings:guides-changed", onRefresh);
   }, [loadGuideApprovalCount]);
 
-  // Super → Records → Guides, where the review queue lives.
+  // Records → Guides, where the review queue lives.
   const goToGuideApprovals = useCallback(() => {
-    setTopTab("super");
-    setSuperCategory("Records");
-    setSuperInnerTab("guides");
+    setTopTab("staff");
+    setStaffCategory("Records");
+    setStaffInnerTab("guides");
   }, []);
 
   // Unlinked client accounts. This was a Tasks section with NO dropdown
@@ -2794,19 +2715,19 @@ chip: false, bucket: t.bucket }));
   // reconciled; see the alert-ordering build gate.
   const [unlinkedAccountsCount, setUnlinkedAccountsCount] = useState(0);
   const loadUnlinkedAccountsCount = useCallback(async () => {
-    if (!isAdmin) {
+    if (!scopeCan("clients.view")) {
       setUnlinkedAccountsCount(0);
       markAlertLoaded("unlinkedAccounts");
       return;
     }
     try {
-      const list = await apiGet<unknown[]>("/api/admin/clients/unlinked-accounts");
+      const list = await apiGet<unknown[]>("/api/clients/unlinked-accounts");
       setUnlinkedAccountsCount(Array.isArray(list) ? list.length : 0);
     } catch {
       setUnlinkedAccountsCount(0);
     }
     markAlertLoaded("unlinkedAccounts");
-  }, [isAdmin]);
+  }, [scopeCan]);
   useEffect(() => {
     void loadUnlinkedAccountsCount();
     const onRefresh = () => void loadUnlinkedAccountsCount();
@@ -2814,9 +2735,10 @@ chip: false, bucket: t.bucket }));
     return () => window.removeEventListener("seedlings:client-accounts-changed", onRefresh);
   }, [loadUnlinkedAccountsCount]);
 
-  // Payroll names awaiting identity matching. SUPER-only: matching a name
-  // to a User is the one payroll action that changes who can see whose pay,
-  // so it sits behind the same guard as the import itself.
+  // Payroll names awaiting identity matching. `payroll.manage` — the guard
+  // on /payroll/identities/unmatched. Matching a name to a User is the one
+  // payroll action that changes who can see whose pay, so it sits behind
+  // the same entitlement as the import itself.
   //
   // This count is not cosmetic. Until a name is matched, THAT WORKER CANNOT
   // SEE THEIR OWN PAY — and the worker's only signal is a passive "ask your
@@ -2826,7 +2748,7 @@ chip: false, bucket: t.bucket }));
   // the person affected was told to go ask them.
   const [payrollUnmatchedCount, setPayrollUnmatchedCount] = useState(0);
   const loadPayrollUnmatchedCount = useCallback(async () => {
-    if (!isSuper) {
+    if (!scopeCan("payroll.manage")) {
       setPayrollUnmatchedCount(0);
       markAlertLoaded("payrollUnmatched");
       return;
@@ -2838,7 +2760,7 @@ chip: false, bucket: t.bucket }));
       setPayrollUnmatchedCount(0);
     }
     markAlertLoaded("payrollUnmatched");
-  }, [isSuper]);
+  }, [scopeCan]);
   useEffect(() => {
     void loadPayrollUnmatchedCount();
     // An import adds names to the queue; a match removes one. Both fire
@@ -2848,11 +2770,11 @@ chip: false, bucket: t.bucket }));
     return () => window.removeEventListener("seedlings:payroll-changed", onRefresh);
   }, [loadPayrollUnmatchedCount]);
 
-  // Super → Money → Payroll, where the review queue lives.
+  // Money → Payroll, where the review queue lives.
   const goToPayrollIdentities = useCallback(() => {
-    setTopTab("super");
-    setSuperCategory("Money");
-    setSuperInnerTab("payroll");
+    setTopTab("staff");
+    setStaffCategory("Money");
+    setStaffInnerTab("payroll");
   }, []);
 
   // Navigate to admin Jobs tab filtered to unapproved-hours occurrences.
@@ -2862,45 +2784,35 @@ chip: false, bucket: t.bucket }));
    * Navigate to a surface that exists for BOTH Admin and Super, without
    * changing the role the operator is acting as.
    *
-   * Alert handlers used to hardcode `setTopTab("admin")`, so a Super who
-   * clicked "Overdue" or "Unclaimed" was silently demoted to the Admin
+   * Alert handlers used to hardcode `setTopTab("staff")`, so someone with `settings.manage` who
+   * clicked "Overdue" or "Unclaimed" was silently demoted to a caller with `schedule.manage`
    * tab — different sections, different affordances, and no way to tell
    * why (reported 2026-08-27).
    *
-   * Branches on the CURRENT top tab, not on which roles the user holds:
-   * a Super deliberately acting as Admin should stay on Admin too.
-   * `superTab` is optional because a few surfaces genuinely have no Super
-   * equivalent (Services is the one today), and those must fall through
-   * to Admin rather than land nowhere.
+   * One destination, because there is one staff tab list. This used to
+   * branch on the current shell and take two possible tabs, falling through
+   * when a surface had no equivalent on the higher one.
    */
   const gotoOperatorSurface = useCallback(
     (opts: {
-      superTab?: string;
-      superCategory?: string;
-      adminTab: string;
-      adminCategory?: string;
+      tab: string;
+      category?: string;
     }) => {
-      if (topTab === "super" && opts.superTab) {
-        setTopTab("super");
-        if (opts.superCategory) setSuperCategory(opts.superCategory as any);
-        setSuperInnerTab(opts.superTab as any);
-        return;
-      }
-      setTopTab("admin");
-      if (opts.adminCategory) setAdminCategory(opts.adminCategory as any);
-      setAdminInnerTab(opts.adminTab as any);
+      setTopTab("staff");
+      if (opts.category) setStaffCategory(opts.category);
+      setStaffInnerTab(opts.tab as StaffTabs);
     },
     [topTab],
   );
 
   const goToUnapprovedHours = useCallback(() => {
     try {
-      localStorage.setItem("seedlings_adminJobs_showUnapprovedHours", "1");
-      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+      localStorage.setItem("seedlings_jobs_showUnapprovedHours", "1");
+      localStorage.setItem("seedlings_jobs_workers", JSON.stringify([]));
     } catch {}
-    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
+    gotoOperatorSurface({ tab: "jobs", category: "Work" });
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("adminJobs:showUnapprovedHours"));
+      window.dispatchEvent(new CustomEvent("staffJobs:showUnapprovedHours"));
     }, 100);
   }, [gotoOperatorSurface]);
 
@@ -2910,31 +2822,36 @@ chip: false, bucket: t.bucket }));
   // mounted.
   const goToEstimateFollowups = useCallback(() => {
     try {
-      localStorage.setItem("seedlings_adminJobs_showEstimateFollowups", "1");
-      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+      localStorage.setItem("seedlings_jobs_showEstimateFollowups", "1");
+      localStorage.setItem("seedlings_jobs_workers", JSON.stringify([]));
     } catch {}
-    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
+    gotoOperatorSurface({ tab: "jobs", category: "Work" });
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("adminJobs:showEstimateFollowups"));
+      window.dispatchEvent(new CustomEvent("staffJobs:showEstimateFollowups"));
     }, 100);
   }, [gotoOperatorSurface]);
 
   // Unclaimed count for admin header badge
   const [unclaimedCount, setUnclaimedCount] = useState(0);
   const loadUnclaimed = useCallback(async () => {
-    if (!isAdmin) { setUnclaimedCount(0); markAlertLoaded("unclaimed"); return; }
+    // `/api/operations` needs `reports.view`. It was gated on the
+    // schedule-manage flag instead — which is
+    // `schedule.manage` — this badge 403'd on EVERY page load for anyone
+    // who runs the schedule without reading the business rollup. A
+    // coordinator is exactly that person.
+    if (!scopeCan("reports.view")) { setUnclaimedCount(0); markAlertLoaded("unclaimed"); return; }
     try {
       const d = computeDatesFromPreset("overdueAndNext3");
       const qs = new URLSearchParams();
       if (d.from) qs.set("from", d.from);
       if (d.to) qs.set("to", d.to);
-      const result = await apiGet<{ jobs: { unclaimed: number } }>(`/api/admin/operations?${qs}`);
+      const result = await apiGet<{ jobs: { unclaimed: number } }>(`/api/operations?${qs}`);
       setUnclaimedCount(result?.jobs?.unclaimed ?? 0);
     } catch {
       setUnclaimedCount(0);
     }
     markAlertLoaded("unclaimed");
-  }, [isAdmin]);
+  }, [scopeCan]);
 
   useEffect(() => {
     void loadUnclaimed();
@@ -2958,12 +2875,18 @@ chip: false, bucket: t.bucket }));
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.ghostExpiry && alertsLoaded.policyAdmin && alertsLoaded.policyWorker && alertsLoaded.timeline && alertsLoaded.payrollUnmatched && alertsLoaded.unlinkedAccounts && alertsLoaded.guideApprovals);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.pendingWorkdays && alertsLoaded.ledgerFollowups && alertsLoaded.dueToRecord && alertsLoaded.streamPauseReminders && alertsLoaded.ghostExpiry && alertsLoaded.policyReview && alertsLoaded.policyWorker && alertsLoaded.timeline && alertsLoaded.payrollUnmatched && alertsLoaded.unlinkedAccounts && alertsLoaded.guideApprovals);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
-    // Staff-only: /api/occurrences requires a worker/admin/super role.
-    // Client-only accounts would just 403 in a loop.
-    if (!me?.isApproved || !hasAnyRole) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
+    // ASK FOR THE CAPABILITY THE ROUTE ASKS FOR. This used to say
+    // "staff-only" and test `hasAnyRole`, i.e. holds ANYTHING — which a
+    // bookkeeper does, while holding no `schedule.view`. The result was two
+    // 403s on every page load for anyone whose role is not field-shaped.
+    if (!me?.isApproved || !scopeCan("schedule.view")) {
+      setAnnouncementCount(0);
+      if (me) markAlertLoaded("announcements");
+      return;
+    }
     // Check if user already dismissed announcements today
     try {
       const dismissedDate = localStorage.getItem("seedlings_announcements_dismissed");
@@ -2993,48 +2916,48 @@ chip: false, bucket: t.bucket }));
     // Mark announcements as seen for today
     try { localStorage.setItem("seedlings_announcements_dismissed", bizDateKey(new Date())); } catch {}
     setAnnouncementCount(0);
-    setTopTab("worker");
-    setWorkerInnerTab("jobs" as any);
-    try { localStorage.setItem("seedlings_adminJobs_showAnnouncements", "1"); } catch {}
+    setTopTab("staff");
+    setStaffInnerTab("jobs" as any);
+    try { localStorage.setItem("seedlings_jobs_showAnnouncements", "1"); } catch {}
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("adminJobs:showAnnouncements"));
+      window.dispatchEvent(new CustomEvent("staffJobs:showAnnouncements"));
     }, 150);
   }, []);
 
   const goToUnclaimed = useCallback(() => {
-    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
+    gotoOperatorSurface({ tab: "jobs", category: "Work" });
     // Signal the Jobs tab to apply unclaimed filter
-    try { localStorage.setItem("seedlings_adminJobs_showUnclaimed", "1"); } catch {}
+    try { localStorage.setItem("seedlings_jobs_showUnclaimed", "1"); } catch {}
     // Also dispatch event in case the tab is already mounted
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("adminJobs:showUnclaimed"));
+      window.dispatchEvent(new CustomEvent("staffJobs:showUnclaimed"));
     }, 50);
   }, [gotoOperatorSurface]);
 
   const goToActivitiesOverdue = useCallback(() => {
     try {
-      localStorage.setItem("seedlings_adminJobs_showActivitiesOverdue", "1");
+      localStorage.setItem("seedlings_jobs_showActivitiesOverdue", "1");
       // Same "View as" clear as goToOverdue — the count is company-wide, so
       // landing on a list scoped to one worker would show fewer rows than
       // the badge promised.
-      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+      localStorage.setItem("seedlings_jobs_workers", JSON.stringify([]));
     } catch {}
-    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
+    gotoOperatorSurface({ tab: "jobs", category: "Work" });
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("adminJobs:showActivitiesOverdue"));
+      window.dispatchEvent(new CustomEvent("staffJobs:showActivitiesOverdue"));
     }, 50);
   }, [gotoOperatorSurface]);
 
   const goToOverdue = useCallback(() => {
     try {
-      localStorage.setItem("seedlings_adminJobs_showOverdue", "1");
+      localStorage.setItem("seedlings_jobs_showOverdue", "1");
       // Clear the "View as" user filter so all overdue jobs are shown
-      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+      localStorage.setItem("seedlings_jobs_workers", JSON.stringify([]));
     } catch {}
-    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
+    gotoOperatorSurface({ tab: "jobs", category: "Work" });
     // Also dispatch event for when component is already mounted
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("adminJobs:showOverdue"));
+      window.dispatchEvent(new CustomEvent("staffJobs:showOverdue"));
     }, 100);
   }, [gotoOperatorSurface]);
 
@@ -3043,72 +2966,62 @@ chip: false, bucket: t.bucket }));
   // covers a cold mount, the event covers an already-mounted tab.
   const goToGhostBucket = useCallback((bucket: "expiring" | "expired") => {
     const key = bucket === "expired"
-      ? "seedlings_adminJobs_showExpiredGhosts"
-      : "seedlings_adminJobs_showExpiringGhosts";
+      ? "seedlings_jobs_showExpiredGhosts"
+      : "seedlings_jobs_showExpiringGhosts";
     try {
       localStorage.setItem(key, "1");
       // Clear "View as" so every matching ghost shows, not just one
       // worker's — mirrors goToOverdue.
-      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+      localStorage.setItem("seedlings_jobs_workers", JSON.stringify([]));
     } catch {}
-    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
+    gotoOperatorSurface({ tab: "jobs", category: "Work" });
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent(
-        bucket === "expired" ? "adminJobs:showExpiredGhosts" : "adminJobs:showExpiringGhosts",
+        bucket === "expired" ? "staffJobs:showExpiredGhosts" : "staffJobs:showExpiringGhosts",
       ));
     }, 100);
   }, [gotoOperatorSurface]);
   const goToExpiringGhosts = useCallback(() => goToGhostBucket("expiring"), [goToGhostBucket]);
   const goToExpiredGhosts = useCallback(() => goToGhostBucket("expired"), [goToGhostBucket]);
 
-  // Jump to the admin Jobs tab and scroll to the Client Requests section.
-  // The section is mounted at the top of the Jobs view for admins, so we
+  // Jump to the Jobs tab and scroll to the Client Requests section.
+  // The section is mounted at the top of the Jobs view for holders of `schedule.manage`, so we
   // navigate there and then scroll-into-view its anchor.
   const goToClientRequests = useCallback(() => {
-    gotoOperatorSurface({ superTab: "jobs", superCategory: "Work", adminTab: "jobs" });
+    gotoOperatorSurface({ tab: "jobs", category: "Work" });
     setTimeout(() => {
       const el = document.getElementById("client-requests-section");
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 150);
   }, [gotoOperatorSurface]);
 
-  // Lands on Admin → Directory → Clients where the
+  // Lands on Directory → Clients where the
   // UnlinkedClientAccountsSection is hosted. Used by Tasks page's
   // collapsible card's "Goto Task" icon button so the operator can
   // jump to the section's home tab if they prefer working there.
   const goToUnlinkedAccounts = useCallback(() => {
-    gotoOperatorSurface({
-      superTab: "clients",
-      superCategory: "Directory",
-      adminTab: "clients",
-      adminCategory: "Directory",
-    });
+    gotoOperatorSurface({ tab: "clients", category: "Directory" });
   }, [gotoOperatorSurface]);
 
   // Timeline alert — merged count of urgent timeline events + expiring
-  // documents (urgent = past or ≤7 days). Super uses /super/ for the full
-  // view including hidden items; admin uses /admin/ which filters hidden
-  // server-side.
+  // documents (urgent = past or ≤7 days). Hidden events are filtered out
+  // server-side unless the caller holds `timeline.manage`.
   const [timelineUrgentCount, setTimelineUrgentCount] = useState(0);
   const loadTimelineCount = useCallback(async () => {
-    if (!isAdmin) { setTimelineUrgentCount(0); if (me) markAlertLoaded("timeline"); return; }
+    // Same shape as the unclaimed badge above: this reads the timeline, so
+    // it asks for `timeline.view` rather than for a role flag. A coordinator
+    // runs the schedule and does not read the company timeline.
+    if (!scopeCan("timeline.view")) { setTimelineUrgentCount(0); if (me) markAlertLoaded("timeline"); return; }
     try {
-      // Scope by the ROLE CHIP the operator is on (`scopeIsSuper`), not by
-      // their underlying role. The super endpoint includes adminHidden
-      // events; the admin one doesn't — and goToTimeline lands on whichever
-      // tab tree the chip selects. Keying off `isSuper` meant a super
-      // sitting on the Admin chip got a badge counting super-only rows and
-      // a list that couldn't show them: the badge said 2, the tab showed 1.
-      const endpoint = scopeIsSuper
-        ? "/api/super/timeline/upcoming-counts"
-        : "/api/admin/timeline/upcoming-counts";
-      const r = await apiGet<{ urgent: number; soon: number }>(endpoint);
+      // ONE endpoint, which decides how much to return from the caller's
+      // capability rather than from which URL was asked for.
+      const r = await apiGet<{ urgent: number; soon: number }>("/api/timeline/upcoming-counts");
       setTimelineUrgentCount(r?.urgent ?? 0);
     } catch {
       setTimelineUrgentCount(0);
     }
     markAlertLoaded("timeline");
-  }, [isAdmin, scopeIsSuper, me]);
+  }, [scopeCan, me]);
 
   useEffect(() => {
     void loadTimelineCount();
@@ -3147,11 +3060,11 @@ chip: false, bucket: t.bucket }));
         loadGhostExpiryCounts(),
         // Policy counts — omitted from this list originally, which meant
         // clicking the dropdown refresh button never updated "Documents
-        // to sign" or the admin-side compliance queues. The worker who
+        // to sign" or a caller with `schedule.manage`-side compliance queues. The worker who
         // signed a policy on another device would see the stale count
         // until they closed the browser tab. Reported on 2026-07-13.
         loadPolicyWorkerCount(),
-        loadPolicyAdminCounts(),
+        loadPolicyReviewCounts(),
         loadPayrollUnmatchedCount(),
         loadUnlinkedAccountsCount(),
         loadGuideApprovalCount(),
@@ -3165,7 +3078,7 @@ chip: false, bucket: t.bucket }));
     loadUnapprovedHoursCount, loadUnclaimed, loadAnnouncementCount,
     loadTimelineCount, loadLedgerFollowupCount,
     loadDueToRecordCount, loadStreamPauseRemindersCount,
-    loadPolicyWorkerCount, loadPolicyAdminCounts,
+    loadPolicyWorkerCount, loadPolicyReviewCounts,
   ]);
 
   // Opening the Tasks page fires the same full refresh as tapping
@@ -3181,12 +3094,7 @@ chip: false, bucket: t.bucket }));
 
   const goToTimeline = useCallback(() => {
     try { sessionStorage.setItem("pendingTimelineUrgencyFilter", "urgent"); } catch {}
-    gotoOperatorSurface({
-      superTab: "timeline",
-      superCategory: "Records",
-      adminTab: "timeline",
-      adminCategory: "Records",
-    });
+    gotoOperatorSurface({ tab: "timeline", category: "Records" });
   }, [gotoOperatorSurface]);
 
   useEffect(() => {
@@ -3201,27 +3109,27 @@ chip: false, bucket: t.bucket }));
         status === "pending" || status === "approved" || status === "all";
       if (!ok) return;
 
-      // SUPER, not admin. User management is Super-only, and both
-      // dispatchers of this event already route there — this listener was
-      // the stale one, and because it fires on a 100ms timeout it ran
-      // AFTER the handler's own navigation and quietly overrode it. That
-      // is why the "Pending Users" alert landed on the Admin Users tab
-      // (reported 2026-08-27), which no longer even has the pending
-      // section.
-      setTopTab("super");
-      setSuperCategory("Directory");
-      setSuperInnerTab("users");
+      // There is one Users tab, so this routes to it unconditionally and
+      // UsersTab decides what to show from `people.view` / `people.manage`
+      // / `people.approve`. Both dispatchers of this event already route
+      // here; this listener was the stale one, and because it fires on a
+      // 100ms timeout it ran AFTER the handler's own navigation and quietly
+      // overrode it. That is why the "Pending Users" alert used to land on
+      // a Users tab with no pending section (reported 2026-08-27).
+      setTopTab("staff");
+      setStaffCategory("Directory");
+      setStaffInnerTab("users");
 
       window.sessionStorage.setItem(
-        "admin:usersOpenOnce",
+        "users:openOnce",
         JSON.stringify({ status })
       );
     };
 
-    window.addEventListener("admin:openUsers", onOpenUsers as EventListener);
+    window.addEventListener("users:open", onOpenUsers as EventListener);
     return () =>
       window.removeEventListener(
-        "admin:openUsers",
+        "users:open",
         onOpenUsers as EventListener
       );
   }, []);
@@ -3236,7 +3144,7 @@ chip: false, bucket: t.bucket }));
   // Listen for profile navigation
   useEffect(() => {
     const onProfile = (e: Event) => {
-      const { userId, forAdmin } = (e as CustomEvent).detail || {};
+      const { userId, otherUser } = (e as CustomEvent).detail || {};
       // Push the current tab onto the nav history stack BEFORE switching
       // so the back button (in-app or browser/OS gesture) can return the
       // user to where they were. Every other programmatic tab switch
@@ -3244,161 +3152,97 @@ chip: false, bucket: t.bucket }));
       // handler was previously missing it, so "View profile" jumps into
       // Profile but the back button has no state to restore.
       pushNavHistory(getCurrentNavState());
-      if (forAdmin && isAdmin) {
-        setTopTab("admin");
-        setAdminInnerTab("profile");
+      if (otherUser && scopeCan("people.view")) {
+        setTopTab("staff");
+        setStaffInnerTab("profile");
         // Set the selected user in profile via localStorage (ProfileTab reads it)
         try { localStorage.setItem("seedlings_profile_userId", JSON.stringify(userId === me?.id ? "" : userId)); } catch {}
         window.dispatchEvent(new CustomEvent("profile:selectUser", { detail: { userId } }));
       } else {
-        setTopTab("worker");
-        setWorkerInnerTab("profile");
+        setTopTab("staff");
+        setStaffInnerTab("profile");
       }
     };
     window.addEventListener("navigate:profile", onProfile as EventListener);
     return () => window.removeEventListener("navigate:profile", onProfile as EventListener);
-  }, [isAdmin, me?.id]);
+  }, [scopeCan, me?.id]);
 
-  // Listen for worker tab navigation (from Reminders → Routes, etc.)
+  // THE staff-tab navigation handler. One listener for `navigate:staffTab`.
+  //
+  // There were THREE, one per old shell (worker, admin, super). Collapsing
+  // the shells merged the EVENT but left all three subscribed, so a single
+  // jump ran every one of them: `pushNavHistory` up to three times for one
+  // navigation — which is why Back sometimes needed several presses — three
+  // `setStaffInnerTab` calls, and three different answers for the category,
+  // last writer winning.
+  //
+  // Their category maps also disagreed. the copy was missing ten tabs
+  // (Ledger, Promotions, Forecast, Reconcile, Workdays, Compliance, Audit,
+  // Tools, Vanity, Displays), so a jump to any of those resolved nothing and
+  // left the strip on the old category with the wrong inner tabs showing.
+  // `TAB_CATEGORY` at the top of this file is now the single map.
   const programmaticNavRef = useRef(false);
   useEffect(() => {
     const onNav = (e: Event) => {
       const { tab, category, autoAnalyze, filter, remount } = (e as CustomEvent).detail || {};
-      if (tab) {
-        // Record the current location to history before navigating, so back button works
-        const current = getCurrentNavState();
-        const targetCategory = category ?? (topTab === "worker" ? workerCategory : workerCategoryRef.current);
-        const wouldChange = current.outer !== "worker" || current.inner !== tab || (category && current.category !== category);
-        if (wouldChange) pushNavHistory(current);
-        programmaticNavRef.current = true;
-        setTopTab("worker");
-        setWorkerInnerTab(tab);
-        if (category) setWorkerCategory(category);
-        // Remount the destination tab so its persisted-state hooks re-read localStorage
-        // (which the caller has just pre-written with the desired filter values).
-        if (remount) {
-          if (tab === "jobs") setJobsRemountKey((k) => k + 1);
-          else if (tab === "equipment") setEquipmentRemountKey((k) => k + 1);
-          else if (tab === "payments") setPaymentsRemountKey((k) => k + 1);
-        }
-        if (autoAnalyze && tab === "routes") {
-          setTimeout(() => {
-            window.dispatchEvent(new CustomEvent("routes:autoAnalyze"));
-          }, 300);
-        }
-        // Legacy: event-driven filter for flows that haven't switched to the remount pattern yet.
-        if (filter && tab === "jobs") {
-          setTimeout(() => {
-            window.dispatchEvent(new CustomEvent("jobs:applyFilter", { detail: filter }));
-          }, 300);
-        }
-        if (filter && tab === "equipment") {
-          setTimeout(() => {
-            window.dispatchEvent(new CustomEvent("equipment:applyFilter", { detail: filter }));
-          }, 300);
-        }
-        if (filter && tab === "payments") {
-          setTimeout(() => {
-            window.dispatchEvent(new CustomEvent("payments:applyFilter", { detail: filter }));
-          }, 300);
-        }
-        // Reset flag after React processes the state update
-        setTimeout(() => { programmaticNavRef.current = false; }, 50);
-      }
-    };
-    window.addEventListener("navigate:workerTab", onNav as EventListener);
-    return () => window.removeEventListener("navigate:workerTab", onNav as EventListener);
-  }, []);
-
-  // Mirror handler for admin tab navigation. Used by HomeTab's tile click-throughs
-  // (which target admin tabs filtered to the impersonated worker). Same remount-on-demand
-  // pattern as the worker version — caller pre-writes localStorage, we bump the key.
-  // Also updates adminCategory when the destination tab lives in a different category
-  // than the current one — otherwise the category nav stays on the old category and
-  // the inner-tab bar can render the wrong set of tabs.
-  useEffect(() => {
-    const adminCatMap: Record<string, string> = {
-      home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
-      equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
-      clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-      payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
-      activity: "Records", history: "Records", timeline: "Records", documents: "Records", guides: "Records",
-      notify: "System", settings: "System", profile: "System",
-    };
-    const onNav = (e: Event) => {
-      const { tab, remount } = (e as CustomEvent).detail || {};
       if (!tab) return;
       const current = getCurrentNavState();
-      const wouldChange = current.outer !== "admin" || current.inner !== tab;
+      // Compared against "worker" / "admin" / "super" in the three originals
+      // — shell names that no longer exist, so this was always true and every
+      // jump pushed history even when it went nowhere.
+      const wouldChange =
+        current.outer !== "staff" ||
+        current.inner !== tab ||
+        (category && current.category !== category);
       if (wouldChange) pushNavHistory(current);
       programmaticNavRef.current = true;
-      setTopTab("admin");
-      setAdminInnerTab(tab as any);
-      const destCategory = adminCatMap[tab];
-      if (destCategory) setAdminCategory(destCategory);
+      setTopTab("staff");
+      setStaffInnerTab(tab as any);
+      // An explicit category wins; otherwise the destination's own.
+      const destCategory = category ?? TAB_CATEGORY[tab];
+      if (destCategory) setStaffCategory(destCategory);
+      // Remount the destination so its `usePersistedState` hooks re-read the
+      // localStorage the caller just pre-wrote (no flicker).
       if (remount) {
-        if (tab === "jobs") setAdminJobsRemountKey((k) => k + 1);
-        else if (tab === "equipment") setAdminEquipmentRemountKey((k) => k + 1);
-        else if (tab === "payments") setAdminPaymentsRemountKey((k) => k + 1);
+        if (tab === "jobs") setJobsRemountKey((k) => k + 1);
+        else if (tab === "equipment") setEquipmentRemountKey((k) => k + 1);
+        else if (tab === "payments") setPaymentsRemountKey((k) => k + 1);
+      }
+      if (autoAnalyze && tab === "routes") {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("routes:autoAnalyze"));
+        }, 300);
+      }
+      // Legacy: event-driven filter for flows not yet on the remount pattern.
+      if (filter && tab === "jobs") {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("jobs:applyFilter", { detail: filter }));
+        }, 300);
+      }
+      if (filter && tab === "equipment") {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("equipment:applyFilter", { detail: filter }));
+        }, 300);
+      }
+      if (filter && tab === "payments") {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("payments:applyFilter", { detail: filter }));
+        }, 300);
       }
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
     };
-    window.addEventListener("navigate:adminTab", onNav as EventListener);
-    return () => window.removeEventListener("navigate:adminTab", onNav as EventListener);
+    window.addEventListener("navigate:staffTab", onNav as EventListener);
+    return () => window.removeEventListener("navigate:staffTab", onNav as EventListener);
   }, []);
 
-  // navigate:superTab — handoff from any tab into a Super inner tab (e.g.
-  // BusinessExpensesTab clicking the "Supply: Mulch ×10" badge to land on
-  // Super → Supplies). Mirrors the navigate:adminTab pattern; the receiving
-  // tab reads its own pendingHighlight key on mount.
-  //
-  // Category map matches the Super category strip; kept in sync with the
-  // Super tab tree above so a cross-tab jump also switches the category
-  // nav to reveal the destination. Also mirrors admin's remount handling
-  // so cross-tab handoffs that need a fresh mount (e.g. clearing per-mount
-  // state) work identically in super scope.
-  useEffect(() => {
-    // Kept in sync with the super tab tree above — every super inner
-    // tab needs an entry so cross-tab handoffs route to the right
-    // category strip. Values must match `category:` on the tab entry.
-    const superCatMap: Record<string, string> = {
-      home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
-      equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
-      clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-      payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money", ledger: "Money", promotions: "Money", forecast: "Money",
-      reconcile: "Records", workdays: "Records", compliance: "Records", activity: "Records",
-      history: "Records", timeline: "Records", documents: "Records", guides: "Records", audit: "Records",
-      "tools-mowing": "Tools", "tools-mulch": "Tools",
-      notify: "System", settings: "System", profile: "System", vanity: "System", displays: "System",
-    };
-    const onNav = (e: Event) => {
-      const { tab, remount } = (e as CustomEvent).detail || {};
-      if (!tab) return;
-      const current = getCurrentNavState();
-      const wouldChange = current.outer !== "super" || current.inner !== tab;
-      if (wouldChange) pushNavHistory(current);
-      programmaticNavRef.current = true;
-      setTopTab("super");
-      setSuperInnerTab(tab as any);
-      const destCategory = superCatMap[tab];
-      if (destCategory) setSuperCategory(destCategory);
-      if (remount) {
-        if (tab === "jobs") setAdminJobsRemountKey((k) => k + 1);
-        else if (tab === "equipment") setAdminEquipmentRemountKey((k) => k + 1);
-        else if (tab === "payments") setAdminPaymentsRemountKey((k) => k + 1);
-      }
-      setTimeout(() => { programmaticNavRef.current = false; }, 50);
-    };
-    window.addEventListener("navigate:superTab", onNav as EventListener);
-    return () => window.removeEventListener("navigate:superTab", onNav as EventListener);
-  }, []);
+
 
   // Listen for "launch New Job Setup with estimate defaults" from JobsTab
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       setWorkflowEstimateDefaults(detail ?? null);
-      setTopTab("admin");
+      setTopTab("staff");
       launchWorkflow("new-job-setup");
     };
     window.addEventListener("trigger:newJobSetupFromEstimate", handler);
@@ -3420,8 +3264,8 @@ chip: false, bucket: t.bucket }));
     if (meLoading) return; // Wait for user data to load
     const wf = router.query.workflow as string | undefined;
     if (wf && me?.isApproved) {
-      setTopTab("worker");
-      setWorkerInnerTab("tasks");
+      setTopTab("staff");
+      setStaffInnerTab("tasks");
       setActiveWorkflow(wf);
       // Clean the URL without reloading
       router.replace("/", undefined, { shallow: true });
@@ -3498,7 +3342,7 @@ chip: false, bucket: t.bucket }));
       }
       // 3-part fallback: tolerate a stale/renamed category slug as long as
       // the inner slug still names a real tab. The tab's *current* category
-      // is used (the matched.category that flows through to setWorkerCategory
+      // is used (the matched.category that flows through to setStaffCategory
       // etc.) so the user lands on the correct group.
       if (!matched) {
         for (const t of outer.innerTabs) {
@@ -3525,14 +3369,14 @@ chip: false, bucket: t.bucket }));
 
     setTopTab(outerValue as any);
     if (outerValue === "worker") {
-      setWorkerInnerTab(matched.value as any);
-      if (matched.category) setWorkerCategory(matched.category);
+      setStaffInnerTab(matched.value as any);
+      if (matched.category) setStaffCategory(matched.category);
     } else if (outerValue === "admin") {
-      setAdminInnerTab(matched.value as any);
-      if (matched.category) setAdminCategory(matched.category);
+      setStaffInnerTab(matched.value as any);
+      if (matched.category) setStaffCategory(matched.category);
     } else if (outerValue === "super") {
-      setSuperInnerTab(matched.value as any);
-      if (matched.category) setSuperCategory(matched.category);
+      setStaffInnerTab(matched.value as any);
+      if (matched.category) setStaffCategory(matched.category);
     } else if (outerValue === "client") {
       setClientInnerTab(matched.value as any);
     }
@@ -3551,12 +3395,16 @@ chip: false, bucket: t.bucket }));
   // "today" default).
   useEffect(() => {
     const occId = router.query.occ as string | undefined;
-    const view = router.query.view as string | undefined;
+    // `?view=admin` IS NO LONGER READ. It picked between a worker and an
+    // admin destination for this deep link; there is one staff tab list, so
+    // both arms did the same thing — except on Equipment, where the
+    // "admin" arm skipped setStaffCategory and left the category strip on
+    // whatever was there. Old links carrying the param still work: it is
+    // ignored rather than rejected.
     const at = router.query.at as string | undefined;
     if (occId) {
       try {
         localStorage.setItem("seedlings_deeplink_occ", occId);
-        if (view) localStorage.setItem("seedlings_deeplink_view", view);
         if (at) localStorage.setItem("seedlings_deeplink_at", at);
         else localStorage.removeItem("seedlings_deeplink_at");
         localStorage.setItem("seedlings_deeplink_ts", String(Date.now()));
@@ -3572,11 +3420,9 @@ chip: false, bucket: t.bucket }));
   // Deep-link to a specific equipment item (e.g., ?equipment=ID or ?equipment=ID&view=admin)
   useEffect(() => {
     const equipmentId = router.query.equipment as string | undefined;
-    const view = router.query.view as string | undefined;
     if (equipmentId) {
       try {
         localStorage.setItem("seedlings_deeplink_equipment", equipmentId);
-        if (view) localStorage.setItem("seedlings_deeplink_equipment_view", view);
         localStorage.setItem("seedlings_deeplink_equipment_ts", String(Date.now()));
       } catch {}
       if (isSignedIn) {
@@ -3609,7 +3455,7 @@ chip: false, bucket: t.bucket }));
   }, [router.query.docId, router.query.typeKey, isSignedIn]);
 
   // Consume the stashed Documents deep-link once auth is settled. Navigates
-  // to Super → Documents if the user is Super, else Admin → Documents. Then
+  // to Documents if the user is Super, else Documents. Then
   // dispatches `documentsTab:applyDeepLink` repeatedly until DocumentsTab
   // signals readiness (via window.__documentsTabReady) — same retry-pattern
   // used by the occurrence deep-link above.
@@ -3645,17 +3491,16 @@ chip: false, bucket: t.bucket }));
     // user is already sitting on Documents (admin or super), keep them
     // there and just dispatch — only choose a default when the link came
     // in without a `tab=` slug so nothing routed yet.
-    const onAdminDocs = topTab === "admin" && adminInnerTab === "documents";
-    const onSuperDocs = topTab === "super" && superInnerTab === "documents";
-    if (!onAdminDocs && !onSuperDocs) {
-      if (isSuper) {
-        setTopTab("super");
-        setSuperInnerTab("documents" as any);
-        setSuperCategory("Records");
-      } else if (isAdmin) {
-        setTopTab("admin");
-        setAdminInnerTab("documents" as any);
-        setAdminCategory("Records");
+    // One Documents tab.
+    const onDocs = topTab === "staff" && staffInnerTab === "documents";
+    if (!onDocs) {
+      // One tab, one capability. This was a two-arm branch on role flags
+      // with two IDENTICAL bodies — the shape left over from the days when
+      // super and admin had separate documents tabs to land on.
+      if (scopeCan("documents.view")) {
+        setTopTab("staff");
+        setStaffInnerTab("documents" as any);
+        setStaffCategory("Records");
       } else {
         // No documents tab visible to this role; nothing to do.
         return;
@@ -3678,7 +3523,7 @@ chip: false, bucket: t.bucket }));
     return () => clearInterval(interval);
     // topTab/innerTab read at run-time intentionally — not in deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me?.isApproved, meLoading, isSuper, isAdmin]);
+  }, [me?.isApproved, meLoading, scopeCan]);
 
   // Deep-link to a Timeline event (?eventId=…). Mirrors the Documents pattern:
   // stash on detect, navigate after auth, dispatch event once Timeline tab is
@@ -3724,17 +3569,16 @@ chip: false, bucket: t.bucket }));
     // user is sitting on a Timeline tab (either admin or super), keep them
     // there and just dispatch the deep-link event. Only choose a default
     // when the link came in without a `tab=` slug (so nothing routed yet).
-    const onAdminTimeline = topTab === "admin" && adminInnerTab === "timeline";
-    const onSuperTimeline = topTab === "super" && superInnerTab === "timeline";
-    if (!onAdminTimeline && !onSuperTimeline) {
-      if (isSuper) {
-        setTopTab("super");
-        setSuperInnerTab("timeline" as any);
-        setSuperCategory("Records");
-      } else if (isAdmin) {
-        setTopTab("admin");
-        setAdminInnerTab("timeline" as any);
-        setAdminCategory("Records");
+    // One Timeline tab.
+    const onTimeline = topTab === "staff" && staffInnerTab === "timeline";
+    if (!onTimeline) {
+      // One tab, one capability. This was a two-arm branch on role flags
+      // with two IDENTICAL bodies — the shape left over from the days when
+      // super and admin had separate timeline tabs to land on.
+      if (scopeCan("timeline.view")) {
+        setTopTab("staff");
+        setStaffInnerTab("timeline" as any);
+        setStaffCategory("Records");
       } else {
         return;
       }
@@ -3756,16 +3600,14 @@ chip: false, bucket: t.bucket }));
     // topTab/innerTab read at run-time intentionally — not in deps, so we
     // don't re-fire on tab navigation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me?.isApproved, meLoading, isSuper, isAdmin]);
+  }, [me?.isApproved, meLoading, scopeCan]);
 
   useEffect(() => {
     if (meLoading || !me?.isApproved) return;
     let occId: string | null = null;
-    let view: string | null = null;
     let anchorAt: string | null = null;
     try {
       occId = localStorage.getItem("seedlings_deeplink_occ");
-      view = localStorage.getItem("seedlings_deeplink_view");
       anchorAt = localStorage.getItem("seedlings_deeplink_at");
       const ts = localStorage.getItem("seedlings_deeplink_ts");
       // Discard stale deep links (older than 5 minutes)
@@ -3787,13 +3629,9 @@ chip: false, bucket: t.bucket }));
     if (router.query.occ) {
       router.replace("/", undefined, { shallow: true });
     }
-    if (view === "admin") {
-      setTopTab("admin");
-      setAdminInnerTab("jobs");
-    } else {
-      setTopTab("worker");
-      setWorkerInnerTab("jobs" as any);
-    }
+    setTopTab("staff");
+    setStaffInnerTab("jobs");
+    setStaffCategory("Work");
     // Retry dispatching the highlight event until the JobsTab is mounted and listening.
     // JobsTab sets a flag on window when its listener is ready.
     const savedOccId = occId;
@@ -3804,9 +3642,7 @@ chip: false, bucket: t.bucket }));
       attempts++;
       if ((window as any).__jobsTabReady || attempts >= maxAttempts) {
         clearInterval(interval);
-        if (view !== "admin") {
-          window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
-        }
+        window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "jobs" } }));
         window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId: savedOccId, anchorAt: savedAnchor } }));
       }
     }, 100);
@@ -3817,10 +3653,8 @@ chip: false, bucket: t.bucket }));
   useEffect(() => {
     if (meLoading || !me?.isApproved) return;
     let equipmentId: string | null = null;
-    let view: string | null = null;
     try {
       equipmentId = localStorage.getItem("seedlings_deeplink_equipment");
-      view = localStorage.getItem("seedlings_deeplink_equipment_view");
       const ts = localStorage.getItem("seedlings_deeplink_equipment_ts");
       if (ts && Date.now() - Number(ts) > 5 * 60 * 1000) {
         equipmentId = null;
@@ -3842,14 +3676,9 @@ chip: false, bucket: t.bucket }));
     if (router.query.equipment) {
       router.replace("/", undefined, { shallow: true });
     }
-    if (view === "admin") {
-      setTopTab("admin");
-      setAdminInnerTab("equipment" as any);
-    } else {
-      setTopTab("worker");
-      setWorkerInnerTab("equipment");
-      setWorkerCategory("Equipment");
-    }
+    setTopTab("staff");
+    setStaffInnerTab("equipment");
+    setStaffCategory("Equipment");
     const savedId = equipmentId;
     let attempts = 0;
     const maxAttempts = 30;
@@ -3857,9 +3686,7 @@ chip: false, bucket: t.bucket }));
       attempts++;
       if ((window as any).__equipmentTabReady || attempts >= maxAttempts) {
         clearInterval(interval);
-        if (view !== "admin") {
-          window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "equipment" } }));
-        }
+        window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "equipment" } }));
         window.dispatchEvent(new CustomEvent("equipmentTab:highlight", { detail: { equipmentId: savedId } }));
       }
     }, 100);
@@ -3867,27 +3694,27 @@ chip: false, bucket: t.bucket }));
   }, [me?.isApproved, meLoading]);
 
   const goToApprovals = useCallback(() => {
-    // User management is now a Super-only activity. The "Pending Users"
-    // alert chip in the title bar (also super-gated) routes here.
+    // Routes to the one Users tab. The "Pending Users" alert chip in the
+    // title bar is gated on `people.approve`, the same entitlement the
+    // approve action itself needs, so nobody is sent to a queue they
+    // cannot clear.
     // Include `role: "all"` in the payload so the persisted role filter
-    // (worker/admin/client) is reset on arrival — otherwise the alert
+    // is reset on arrival — otherwise the alert
     // would land on a screen filtered to a role the new sign-up doesn't
     // have, and the Pending section would silently show zero rows
     // despite the alert badge reading a positive count.
-    window.sessionStorage.setItem("admin:usersOpenOnce", JSON.stringify({ status: "pending", role: "all" }));
-    setTopTab("super");
-    // The CATEGORY has to move too. Without it the super category stayed
+    window.sessionStorage.setItem("users:openOnce", JSON.stringify({ status: "pending", role: "all" }));
+    setTopTab("staff");
+    // The CATEGORY has to move too. Without it the category stayed
     // wherever it was, "users" didn't resolve under it, and the app fell
-    // back — landing the operator on the Admin Users tab instead of the
-    // Super one (reported 2026-08-27). That got worse the moment PENDING
-    // SIGN-UPS became Super-only: the alert was routing to the one screen
-    // that no longer has the section it was pointing at.
-    setSuperCategory("Directory");
-    setSuperInnerTab("users");
+    // back to the wrong destination (reported 2026-08-27) — an alert
+    // routing to a screen without the section it pointed at.
+    setStaffCategory("Directory");
+    setStaffInnerTab("users");
     // Also dispatch event for when component is already mounted
     setTimeout(() => {
       window.dispatchEvent(
-        new CustomEvent("admin:openUsers", {
+        new CustomEvent("users:open", {
           detail: { status: "pending" as const, role: "all" as const },
         })
       );
@@ -3895,8 +3722,8 @@ chip: false, bucket: t.bucket }));
   }, []);
 
   const goToPaymentApprovals = useCallback(() => {
-    setTopTab("super");
-    setSuperInnerTab("payments");
+    setTopTab("staff");
+    setStaffInnerTab("payments");
   }, []);
 
   // Jump to Workdays tab and (when there are pending approvals) point
@@ -3904,8 +3731,8 @@ chip: false, bucket: t.bucket }));
   // backlog begins. State for the jump (workdaysJumpDate / Nonce) is
   // declared near the top of the component; this just bumps it.
   const goToWorkdayApprovals = useCallback(() => {
-    setTopTab("super");
-    setSuperInnerTab("workdays");
+    setTopTab("staff");
+    setStaffInnerTab("workdays");
     // Jump to the oldest date across BOTH pending workdays AND pending
     // mileage. Otherwise a lone pending mileage entry (a driver who
     // logged mileage without clocking a workday — Observer scenario)
@@ -3922,53 +3749,53 @@ chip: false, bucket: t.bucket }));
     setWorkdaysJumpNonce((n) => n + 1);
   }, [pendingWorkdaysByDate, pendingMileageByDate]);
 
-  // Land on Super → Money → Ledger with the "Followups only" filter
+  // Land on Money → Ledger with the "Followups only" filter
   // pre-applied. The Ledger tab listens for this event on mount and
   // flips its filter chip on. A short timeout gives the tab content
   // a tick to mount before the event fires (event before subscribe ⇒
   // missed signal).
   const goToLedgerFollowups = useCallback(() => {
-    setTopTab("super");
-    setSuperCategory("Money");
-    setSuperInnerTab("ledger" as any);
+    setTopTab("staff");
+    setStaffCategory("Money");
+    setStaffInnerTab("ledger" as any);
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("seedlings:open-ledger-followups"));
     }, 150);
   }, []);
 
-  // Land on Super → Money → Ledger — the Due-to-Record panel is pinned
+  // Land on Money → Ledger — the Due-to-Record panel is pinned
   // at the top of that tab, so just landing there surfaces it. No deep-
   // link event needed (the panel isn't behind a filter chip).
   const goToDueToRecord = useCallback(() => {
-    setTopTab("super");
-    setSuperCategory("Money");
-    setSuperInnerTab("ledger" as any);
+    setTopTab("staff");
+    setStaffCategory("Money");
+    setStaffInnerTab("ledger" as any);
   }, []);
 
-  // Super → Records → Compliance. Both compliance alerts (pending
+  // Records → Compliance. Both compliance alerts (pending
   // upload reviews, pending version approvals) land here — the tab
   // surfaces each in its own section so the operator sees both at once.
   const goToCompliance = useCallback(() => {
-    setTopTab("super");
-    setSuperCategory("Records");
-    setSuperInnerTab("compliance");
+    setTopTab("staff");
+    setStaffCategory("Records");
+    setStaffInnerTab("compliance");
   }, []);
 
-  // Worker → Profile. The worker Compliance section at the top of the
+  // Profile. The worker Compliance section at the top of the
   // profile page auto-opens the sign wizard when the "Sign now" button
   // is pressed, so landing here is one click away from signing.
   const goToWorkerCompliance = useCallback(() => {
-    setTopTab("worker");
-    setWorkerInnerTab("profile");
-    setWorkerCategory("System");
+    setTopTab("staff");
+    setStaffInnerTab("profile");
+    setStaffCategory("System");
   }, []);
 
-  // Stream-pause reminders — land on the Admin Services tab where the
-  // paused stream cards live (mounted with purpose="ADMIN"). Super's
-  // innerTabs list has NO "services" entry, so the previous
-  // `setSuperInnerTab("services")` silently fell back to the Super
-  // Home tab (Operations pulse). Route both roles through Admin —
-  // Super users in this app also carry the Admin role.
+  // Stream-pause reminders — land on the Services tab where the paused
+  // stream cards live. One former shell's innerTabs list had NO
+  // "services" entry, so the previous
+  // `setStaffInnerTab("services")` silently fell back to the Home tab
+  // (Operations pulse). There is one staff shell now, so there is one
+  // destination.
   //
   // Fires the review event AFTER the tab switch so ServicesTab (which
   // may not be mounted yet) has time to render. Event detail carries
@@ -3980,12 +3807,8 @@ chip: false, bucket: t.bucket }));
     // Super HAS a services tab (navTabs → super → "services", category
     // Work). An older comment here claimed it didn't and hardcoded Admin;
     // that was true once and stopped being true when the tab was added, so
-    // a Super clicking this alert kept getting demoted to Admin.
-    gotoOperatorSurface({
-      superTab: "services",
-      superCategory: "Work",
-      adminTab: "services",
-    });
+    // someone with `settings.manage` clicking this alert kept getting demoted to Admin.
+    gotoOperatorSurface({ tab: "services", category: "Work" });
     // Only accept string ids — some call sites pass this handler
     // directly to onClick, which forwards a MouseEvent. Guard against
     // that so we don't stuff a MouseEvent into the occurrenceId state.
@@ -3998,9 +3821,24 @@ chip: false, bucket: t.bucket }));
 
   return (
     <>
-      {/* Super-only impersonation banner — sits above the Container so it
+      {/* Client impersonation banner (`clients.view-as`) — sits above the Container so it
           spans the full viewport width and sticks to the top of every page. */}
-      <ImpersonationBanner me={me} />
+      <ImpersonationBanner
+        me={me}
+        // Staff standing in the customer shell. Not a customer doing so:
+        // for them it is simply their app, and a bar announcing it would
+        // be telling them where they live.
+        //
+        // AND NOT SOMEBODY PARKED THERE. The shell effect pushes an account
+        // with no reachable staff tab to `client`, so a brand-new hire with
+        // no grants was shown a teal "Client — viewing customer-facing
+        // pages, as a client sees them" bar. They are not a client, they
+        // did not choose this view, and the bar's documented way out is the
+        // role chip — which does not render for somebody holding no
+        // capabilities. A label naming a choice they did not make, with no
+        // exit, above a notice saying nothing has been shared with them.
+        inClientShell={topTab === "client" && !me?.isClientContact && !homelessStaff}
+      />
     <Container maxW="5xl" px={{ base: 3, md: 4 }} pt={3} pb={6}>
       {isDev && (
         <Box
@@ -4046,12 +3884,30 @@ chip: false, bucket: t.bucket }));
         px={{ base: 2.5, md: 3.5 }}
         py={{ base: 2, md: 2.5 }}
         borderRadius="md"
-        mb={1}
+        // ROOM FOR THE PULL-TAB. The drawer handle hangs off the bottom
+        // border (see it at the end of this block), so the header needs to
+        // be the positioning context and needs a little clearance beneath
+        // it. Was mb={1}.
+        position="relative"
+        mb={2.5}
       >
         {/* GRID header: left brand, center temp, right controls */}
         <Box
           display="grid"
-          gridTemplateColumns="1fr 1fr"
+          // `minmax(0, 1fr) auto`, NOT `1fr 1fr`.
+          //
+          // Two equal tracks give the controls half the bar whatever they
+          // measure, and a grid item defaults to `min-width: auto`, so the
+          // right-hand group refuses to shrink into its track and spills
+          // out of it instead. On a 390px phone that pushed the avatar 12px
+          // past the header's own right edge and gave the document a
+          // scrollWidth of 392 — the whole page scrolled sideways.
+          //
+          // The controls are discrete and must not be clipped; the brand
+          // and the temperature CAN give ground, and the left cell already
+          // carries `minW="0"` + `overflow="hidden"` to do it. So: size the
+          // right track to its content, let the left absorb the squeeze.
+          gridTemplateColumns="minmax(0, 1fr) auto"
           alignItems="center"
           columnGap={2}
           minH={`${BRAND_ICON_H}px`}
@@ -4108,9 +3964,7 @@ chip: false, bucket: t.bucket }));
                     const current = getCurrentNavState();
                     const targetInner = topTab === "client" ? clientInnerTab : "home";
                     if (current.inner !== targetInner) pushNavHistory(current);
-                    if (topTab === "worker") setWorkerInnerTab("home" as any);
-                    else if (topTab === "admin") setAdminInnerTab("home" as any);
-                    else if (topTab === "super") setSuperInnerTab("home" as any);
+                    if (topTab === "staff") setStaffInnerTab("home" as StaffTabs);
                     // Client tab tree has no "home" value — the tab stays
                     // where it is (no-op).
                   }}
@@ -4118,7 +3972,7 @@ chip: false, bucket: t.bucket }));
                 >
                   {/* Show "Seedlings" text only when the user actually IS a
                       client — either not signed in, or signed in with no
-                      staff role. A staff user (worker/admin/super) who
+                      staff role. A staff user (staff) who
                       switches to the Client tab is a preview, not an
                       actual client; keep the leaf-only look. */}
                   <BrandLabel
@@ -4152,7 +4006,7 @@ chip: false, bucket: t.bucket }));
                 )}
               </HStack>
             )}
-            {/* On-the-clock bubble — mounted only for staff (worker/admin/
+            {/* On-the-clock bubble — mounted only for staff (
                 super) since /api/me/workday/today is staff-only and would
                 403 in a loop for pure client accounts. Renders visible pill
                 only when IN_PROGRESS or PAUSED; when it does, it sits
@@ -4215,6 +4069,10 @@ chip: false, bucket: t.bucket }));
               gap: "6px",
               lineHeight: 0,
               minHeight: `${BRAND_ICON_H}px`,
+              // Belt and braces with the `auto` track above: if this group
+              // ever does have to shrink, let it, rather than overflowing
+              // the header the way it did before.
+              minWidth: 0,
             }}
           >
             {/* Earnings pill — DISABLED (may return). Previously a green
@@ -4253,16 +4111,72 @@ chip: false, bucket: t.bucket }));
                 has zero or one role; multi-role users get a compact chip
                 + dropdown. Switching preserves the current inner tab
                 when the same tab exists in the target role. */}
-            {/* Theme switcher, ahead of the role chip. Gated on `mounted`
-                because the theme comes from localStorage — rendering it during
-                SSR would hydrate showing the wrong one. Stays in step with the
-                Profile tab's picker automatically; see ThemeChip. */}
-            {mounted && <ThemeChip />}
-            {mounted && isSignedIn && hasAnyRole && availableRoles.length > 1 && (
+            {/* The theme switcher USED TO SIT HERE. It is in the header
+                drawer now (the chevron at the end of this row): a
+                preference people set once and then never touch was holding
+                32px of the title bar on every screen of every session. */}
+            {/* The AREA LENS — "show me only Durham", for somebody entitled
+                to see more. Sits before the perspective chip because the two
+                narrow different axes and read left to right as WHERE then
+                WHO: a perspective narrows what you may do, this narrows
+                where you are looking, and they combine freely. Renders
+                nothing unless there are at least two areas this person can
+                choose between. */}
+            {mounted && isSignedIn && hasAnyRole && <AreaLensChip />}
+            {/* The perspective picker. This slot held a shell switcher
+                listing one entry per role, deciding
+                which build of every tab you saw. One staff tab list means
+                there are no shells to switch, and this is where people
+                reach to change who they are looking as. */}
+            {mounted && isSignedIn && hasAnyRole && (
               <RoleChip
-                activeRole={topTab as RoleValue}
-                availableRoles={availableRoles}
-                onSwitch={switchRole}
+                inClientShell={topTab === "client" && !me?.isClientContact}
+                perspectives={(me?.perspectives ?? []).map((p) => ({
+                  roleId: p.roleId,
+                  name: p.name,
+                  icon: p.icon ?? null,
+                }))}
+                activeRoleId={me?.activePerspectiveRoleId ?? null}
+                onPick={(roleId, name) => {
+                  // A LENS ONLY MEANS ANYTHING IN THE STAFF APP, so picking
+                  // one from the customer shell goes back there and applies
+                  // it in one action. Otherwise the row would appear to do
+                  // nothing: the customer pages are gated on being a client
+                  // contact, not on any capability, so narrowing the
+                  // capability set changes not one pixel of them.
+                  if (topTab === "client") switchRole("staff");
+                  void setPerspective(roleId, name);
+                }}
+                otherShell={
+                  // ANY STAFF MEMBER, not only one who is also a customer.
+                  //
+                  // It was gated on `isClientContact`, which hid the entry
+                  // from everybody who is purely staff — and the customer
+                  // portal is where Community, Services and Promotions
+                  // live, none of which is gated on anything. Those are the
+                  // public-facing pages, and being able to go and look at
+                  // them is the whole reason this entry was always present
+                  // before the shells collapsed from four to two.
+                  //
+                  // ONE LABEL, BOTH WAYS. It used to read "Switch to staff
+                  // view" once you were in the customer shell — the only
+                  // row in the menu naming a journey rather than a place,
+                  // and it turned the control into a different control
+                  // depending on where you stood. The row is the
+                  // destination now; RoleChip marks it as the current one
+                  // when you are there, exactly as it marks a lens.
+                  //
+                  // What a customer sees and what staff see still differ —
+                  // a customer gets their own portal with My Properties and
+                  // Statements, staff get the public pages only — but that
+                  // is a fact about the destination, not two destinations.
+                  anyTabVisible(staffTabs)
+                    ? {
+                        label: "Client",
+                        onSwitch: () => switchRole("client"),
+                      }
+                    : undefined
+                }
               />
             )}
             {/* Combined alert badge — staff only. Clients have no alerts
@@ -4286,28 +4200,28 @@ chip: false, bucket: t.bucket }));
               </Box>
             )}
             {hasAnyRole && alertsReady && (() => {
-              // Alert visibility keys off SCOPED role vars (scopeIsAdmin
-              // / scopeIsSuper) rather than the raw underlying flags —
-              // so a Super acting as Worker doesn't see admin/super
+              // Each alert asks for the capability of the QUEUE IT OPENS.
+              // They keyed off three scoped role flags —
+              // so someone with `settings.manage` acting as Worker doesn't see management
               // alerts they can't act on from the current tab. See the
               // scope var definitions near the top of this component.
               const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
-              if (scopeIsAdmin && overdueCount > 0) alerts.push({ label: "Job Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
+              if (scopeCan("schedule.manage") && overdueCount > 0) alerts.push({ label: "Job Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
               // Sits next to Job Overdue because they are the same rule split
               // by workflow — an operator reading "3 / 2" should see at a
               // glance that those are five late things, in two queues.
-              if (scopeIsAdmin && activitiesOverdueCount > 0) alerts.push({ label: "Activities Overdue", count: activitiesOverdueCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToActivitiesOverdue });
-              if (scopeIsSuper && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
+              if (scopeCan("schedule.manage") && activitiesOverdueCount > 0) alerts.push({ label: "Activities Overdue", count: activitiesOverdueCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToActivitiesOverdue });
+              if (scopeCan("people.approve") && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
               // Payments to review — combined alert that rolls up
               // pending-admin-approval payments + outstanding client
               // payment requests. Both used to be separate entries
-              // that routed to the same Super → Payments tab, so we
+              // that routed to the same Payments tab, so we
               // collapsed them into a single, generically-named item.
               // Stale-aware color: when ANY outstanding request has
               // aged past the threshold, the alert switches to orange
               // tones as a visual prompt to follow up — same logic
               // the old "Awaiting payment" entry used.
-              if (scopeIsSuper) {
+              if (scopeCan("money.approve")) {
                 const paymentsToReview = pendingPayments + awaitingClientPaymentCount;
                 if (paymentsToReview > 0) {
                   alerts.push({
@@ -4324,7 +4238,7 @@ chip: false, bucket: t.bucket }));
               // but the label stays workday-centric because the click
               // drops onto the WorkdaysTab where each row shows both
               // categories side-by-side.
-              if (scopeIsSuper && pendingWorkdays + pendingMileage > 0) {
+              if (scopeCan("people.approve") && pendingWorkdays + pendingMileage > 0) {
                 alerts.push({
                   // Combined count intentionally — workdays + mileage
                   // share the same drill-in (Workdays tab, with mileage
@@ -4341,46 +4255,46 @@ chip: false, bucket: t.bucket }));
                   onClick: goToWorkdayApprovals,
                 });
               }
-              if (scopeIsSuper && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
-              if (scopeIsSuper && dueToRecordCount > 0) alerts.push({ label: "Due to record", count: dueToRecordCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToDueToRecord });
-              if (scopeIsAdmin && streamPauseRemindersCount > 0) alerts.push({ label: "Paused repeating to review", count: streamPauseRemindersCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToStreamPauseReminders });
+              if (scopeCan("books.manage") && ledgerFollowupCount > 0) alerts.push({ label: "Ledger followups", count: ledgerFollowupCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToLedgerFollowups });
+              if (scopeCan("money.record") && dueToRecordCount > 0) alerts.push({ label: "Due to record", count: dueToRecordCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToDueToRecord });
+              if (scopeCan("schedule.manage") && streamPauseRemindersCount > 0) alerts.push({ label: "Paused repeating to review", count: streamPauseRemindersCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToStreamPauseReminders });
               // Next-visit placeholders. Gray on purpose — it's the ghost
               // card's own color, so the alert and the cards it lands on
               // read as the same thing. Expired is the darker of the two.
-              if (scopeIsAdmin && ghostExpiringCount > 0) alerts.push({ label: "Next visits expiring", count: ghostExpiringCount, bg: "#F3F4F6", color: "#374151", dotColor: "#6B7280", onClick: goToExpiringGhosts });
+              if (scopeCan("schedule.manage") && ghostExpiringCount > 0) alerts.push({ label: "Next visits expiring", count: ghostExpiringCount, bg: "#F3F4F6", color: "#374151", dotColor: "#6B7280", onClick: goToExpiringGhosts });
               // Slate grey, not near-black. It was #374151, which sits at
               // 1.72:1 against the black total-count circle above it — the
               // two read as the same colour. #6b7280 is 3.67:1 from that
               // black while keeping the white numeral at 4.83:1, and it is
               // in the same family as the grey ghost cards it points at.
-              if (scopeIsAdmin && ghostExpiredCount > 0) alerts.push({ label: "Next visits expired", count: ghostExpiredCount, bg: "#E5E7EB", color: "#111827", dotColor: "#6b7280", onClick: goToExpiredGhosts });
-              if (scopeIsSuper && policyPendingUploadsCount > 0) alerts.push({ label: "Compliance uploads to review", count: policyPendingUploadsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToCompliance });
-              if (scopeIsSuper && policyPendingApprovalsCount > 0) alerts.push({ label: "Policy versions awaiting approval", count: policyPendingApprovalsCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToCompliance });
+              if (scopeCan("schedule.manage") && ghostExpiredCount > 0) alerts.push({ label: "Next visits expired", count: ghostExpiredCount, bg: "#E5E7EB", color: "#111827", dotColor: "#6b7280", onClick: goToExpiredGhosts });
+              if (scopeCan("compliance.manage") && policyPendingUploadsCount > 0) alerts.push({ label: "Compliance uploads to review", count: policyPendingUploadsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToCompliance });
+              if (scopeCan("compliance.manage") && policyPendingApprovalsCount > 0) alerts.push({ label: "Policy versions awaiting approval", count: policyPendingApprovalsCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToCompliance });
               // "Documents to sign" is a per-user obligation, so it
               // surfaces on any tab where the user is authenticated as
-              // themselves — worker / admin / super all sign policies.
+              // themselves — everyone on staff signs policies, whatever they hold.
               // No scope gate.
               if (policyWorkerPendingCount > 0) alerts.push({ label: "Documents to sign", count: policyWorkerPendingCount, bg: "#FEE2E2", color: "#7F1D1D", dotColor: "#DC2626", onClick: goToWorkerCompliance });
-              if (scopeIsAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
-              if (scopeIsAdmin && unlinkedAccountsCount > 0) alerts.push({ label: "Unlinked client accounts", count: unlinkedAccountsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToUnlinkedAccounts });
-              if (scopeIsAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
+              if (scopeCan("schedule.manage") && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
+              if (scopeCan("identity.link") && unlinkedAccountsCount > 0) alerts.push({ label: "Unlinked client accounts", count: unlinkedAccountsCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToUnlinkedAccounts });
+              if (scopeCan("estimates.create") && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
               // The two payroll queues sit together: this one blocks a
               // worker from seeing their pay, the next holds hours back
               // from the Gusto export. Purple matches the Payroll tab's
               // employer-cost accent, so the colour reads as "payroll"
               // rather than as a severity.
-              if (scopeIsSuper && payrollUnmatchedCount > 0) alerts.push({ label: "Payroll names to match", count: payrollUnmatchedCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToPayrollIdentities });
+              if (scopeCan("payroll.manage") && payrollUnmatchedCount > 0) alerts.push({ label: "Payroll names to match", count: payrollUnmatchedCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#A855F7", onClick: goToPayrollIdentities });
               // Blue: reviewing training material is a content task, not an
               // operational warning — orange is spoken for by the queues that
               // block someone from being paid or doing their job.
-              if (scopeIsSuper && guideApprovalCount > 0) alerts.push({ label: "Guides awaiting approval", count: guideApprovalCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToGuideApprovals });
-              if (scopeIsAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
-              if (scopeIsAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
-              // Announcements are worker-visible — gate on scopeIsWorker
+              if (scopeCan("content.approve") && guideApprovalCount > 0) alerts.push({ label: "Guides awaiting approval", count: guideApprovalCount, bg: "#DBEAFE", color: "#1E3A8A", dotColor: "#3B82F6", onClick: goToGuideApprovals });
+              if (scopeCan("time.approve") && unapprovedHoursCount > 0) alerts.push({ label: "Job hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
+              if (scopeCan("schedule.manage") && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
+              // Announcements are for anyone who can see the schedule.
               // so acting as a client hides them, but they surface for
-              // worker/admin/super scopes.
-              if (scopeIsWorker && announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
-              if (scopeIsAdmin && timelineUrgentCount > 0) alerts.push({ label: "Timeline", count: timelineUrgentCount, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToTimeline });
+              // staff scopes.
+              if (scopeCan("schedule.view") && announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
+              if (scopeCan("timeline.view") && timelineUrgentCount > 0) alerts.push({ label: "Timeline", count: timelineUrgentCount, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToTimeline });
               if (alerts.length === 0) return null;
               const total = alerts.reduce((s, a) => s + a.count, 0);
               const topAlert = alerts[0]; // highest priority for badge color
@@ -4527,7 +4441,18 @@ chip: false, bucket: t.bucket }));
                 </Box>
               );
             })()}
-            {isSignedIn && !hasAnyRole && me?.isApproved && (
+            {/* `isClientContact`, NOT "holds no capabilities".
+                This read `!hasAnyRole`, which is a different question with
+                the same answer most of the time — and the exception is the
+                one that matters: a staff account nobody has granted
+                anything to yet. A new hire signing in for the first time
+                was labelled Client in their own header.
+                CLAUDE.md is explicit that the customer boundary is an
+                ACTIVE ClientContact for the Clerk id, and that it never
+                consults roles. A real client contact holds no capabilities
+                anyway — the payroll gate sees to that — so this is strictly
+                narrower, not a widening. */}
+            {isSignedIn && me?.isClientContact && me?.isApproved && (
               <Badge size="sm" variant="subtle" colorPalette="green" lineHeight="normal">
                 Client
               </Badge>
@@ -4547,11 +4472,14 @@ chip: false, bucket: t.bucket }));
                   title="Profile"
                   onClick={() => {
                     const current = getCurrentNavState();
-                    if (current.outer !== "worker" || current.inner !== "profile") {
+                    // Compared `outer` against "worker", which `outer` can
+                    // never be — so this always pushed, even when already
+                    // sitting on Profile.
+                    if (current.outer !== "staff" || current.inner !== "profile") {
                       pushNavHistory(current);
                     }
-                    setTopTab("worker");
-                    setWorkerInnerTab("profile" as any);
+                    setTopTab("staff");
+                    setStaffInnerTab("profile" as any);
                   }}
                   width="28px"
                   height="28px"
@@ -4635,9 +4563,94 @@ chip: false, bucket: t.bucket }));
             ) : null}
           </div>
         </Box>
+
+        {/* THE HEADER DRAWER — a second row, only when asked for.
+            Labelled, because an icon that is hidden by default cannot teach
+            itself: nobody builds a habit for a control they see once a
+            month, so the words carry it. */}
+        {mounted && isSignedIn && headerDrawerOpen && (
+          <Box
+            data-testid="header-drawer"
+            mt={2}
+            pt={2}
+            borderTopWidth="1px"
+            borderColor="blackAlpha.200"
+            display="flex"
+            alignItems="center"
+            gap={4}
+            flexWrap="wrap"
+            // The strip above sets lineHeight 0 to close the gaps between
+            // its icons; this row has words in it and needs one back. The
+            // same note is on ThemeChip's dropdown panel, for the same
+            // reason, and it bit twice before being written down.
+            lineHeight="normal"
+          >
+            {/* The label goes INTO each control, not beside it — a caption
+                that is not part of the button is the one place a click does
+                nothing, and it is the bigger target of the two. */}
+            <ThemeChip label="Appearance" />
+            {scopeCan("schedule.view") && topTab !== "client" && (
+              <DayBoardButton userId={me?.id ?? null} label="Today’s board" />
+            )}
+          </Box>
+        )}
+
+        {/* THE DRAWER HANDLE — a pull-tab straddling the bottom border.
+            IT COSTS THE ROW NOTHING. As an item in the control strip it was
+            20px that every other control had to give up, on every screen,
+            to reach two things most people touch once. Absolutely
+            positioned it is out of the flow entirely: the strip measures
+            exactly as it would with no drawer at all.
+            Centred, because the middle of the bar is the one stretch that
+            is empty at every width — the brand sits left, the controls
+            right, and on a phone where the two nearly meet the tab is below
+            the border rather than between them.
+            Anchored to the HEADER, not the strip, so it rides down to the
+            new bottom edge when the drawer opens and always reads as the
+            handle for whatever is currently showing. */}
+        {mounted && isSignedIn && (
+          <Box
+            as="button"
+            aria-label={headerDrawerOpen ? "Hide extra controls" : "Show extra controls"}
+            aria-expanded={headerDrawerOpen}
+            title={headerDrawerOpen ? "Hide extra controls" : "Show extra controls"}
+            data-testid="header-drawer-toggle"
+            onClick={() => setHeaderDrawerOpen((v: boolean) => !v)}
+            position="absolute"
+            left="50%"
+            bottom="-2px"
+            transform="translate(-50%, 50%)"
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            width="34px"
+            height="16px"
+            borderRadius="full"
+            borderWidth="2px"
+            borderColor="border.emphasis"
+            bg="chrome.headerAlt"
+            color="chrome.headerFg"
+            cursor="pointer"
+            opacity={0.9}
+            _hover={{ opacity: 1 }}
+            transition="opacity 0.1s"
+            zIndex={1}
+          >
+            <Box
+              as="span"
+              display="inline-flex"
+              style={{
+                transform: headerDrawerOpen ? "rotate(180deg)" : "none",
+                transition: "transform 0.15s",
+              }}
+            >
+              <ChevronDown size={13} />
+            </Box>
+          </Box>
+        )}
       </Box>
       {/* Only ask for geolocation when the signed-in user is an approved
-          worker/admin/super. Also skipped entirely for pure client
+          staff. Also skipped entirely for pure client
           accounts — the /api/weather/* endpoints are staff-only and would
           403 in a loop; weather in the client-shell was aspirational
           rather than actually supported by the API.
@@ -4647,13 +4660,16 @@ chip: false, bucket: t.bucket }));
           value from localStorage which may not be "hidden" (returns a
           div). The mount gate defers WeatherBar to after hydration so
           server and client emit identical HTML on the first pass. */}
-      {mounted && hasAnyRole && (
+      {/* The weather strip reads `/api/weather/location`, which sits behind
+          `schedule.view` — it is there for people who are going outside.
+          Gated on `hasAnyRole` it also mounted for a bookkeeper and 403'd. */}
+      {mounted && scopeCan("schedule.view") && (
         <WeatherBar
           // Gate the geolocation permission prompt on splashDone so
           // the browser dialog doesn't cover the splash animation.
           // Same on .team and .pro — the flag is time-based, not
           // domain-based, so both domains benefit.
-          allowGeolocation={splashDone && !!(me?.isApproved && hasAnyRole)}
+          allowGeolocation={splashDone && !!me?.isApproved && scopeCan("schedule.view")}
           mode={weatherMode}
           onModeChange={setWeatherMode}
         />
@@ -4729,7 +4745,17 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
         </Box>
       )}
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
-      {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
+      {/* An approved account that no capability lets into any tab. Was
+          gated on `topTab !== "client"`, which meant it never rendered:
+          the redirect effect pushes a person with no surface to the client
+          shell, so the one population this notice exists for was always
+          excluded from it. `isClientContact` is what separates a real
+          customer (who belongs on the client shell) from a staff account
+          nobody has granted anything to. */}
+      {/* Not during a client "View as" session: `/api/me` answers with no
+          capabilities there, so this read as "granted nothing" and put a
+          no-access notice over the customer's portal. */}
+      {homelessStaff && <NoRoleNotice />}
       {/* Tasks page — orthogonal worklist surface. Takes over the
           BreadcrumbNav slot when open; closing returns the operator to
           the exact tab they were on (state never gets cleared). The
@@ -4737,13 +4763,12 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
           this reads as a distinct area of the app, not a tab. */}
       {authLoaded && (!isSignedIn || me) && tasksOpen && hasAnyRole && (
         <TasksPage
-          // Pass SCOPED role flags so TasksPage only surfaces sections
-          // the operator can act on from the currently-active top tab.
-          // Raw isWorker/isAdmin/isSuper would leak admin/super sections
-          // to a Super acting as Worker. See scopeIs* var docs above.
-          isWorker={scopeIsWorker}
-          isAdmin={scopeIsAdmin}
-          isSuper={scopeIsSuper}
+          // `can` and nothing else. This also passed three scoped role
+          // flags, and TasksPage sorted its sections by them — so a
+          // section was shown or hidden by which of three buckets the
+          // person fell into rather than by whether they can work the
+          // queue it opens.
+          can={scopeCan}
           counts={{
             pendingWorkdays,
             unapprovedHoursCount,
@@ -4791,8 +4816,22 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
           onClose={() => setTasksOpen(false)}
         />
       )}
-      {authLoaded && (!isSignedIn || me) && !tasksOpen && (
+      {authLoaded && (!isSignedIn || me) && !tasksOpen && !homelessStaff && (
+        <>
+        {/* "SHOWING DURHAM ONLY" — one notice for the whole app, ABOVE the
+            tab row, so it reads as a condition on everything below rather
+            than as a property of the open tab.
+            BEFORE this element, never after: BreadcrumbNav renders the
+            active tab's content as its own CHILD, so a sibling placed after
+            it lands below the entire page. That is where this first went —
+            y=1305 on a 1376px page — and it read as a flicker, because
+            switching tabs changed the content height and slid the strip in
+            and out of view at the bottom. */}
+        {mounted && isSignedIn && hasAnyRole && topTab !== "client" && (
+          <AreaScopeNotice areaScope={(me as any)?.areaScope ?? null} />
+        )}
         <BreadcrumbNav
+            contentGeneration={contentGeneration}
           outerTabs={navTabs}
           outerValue={topTab}
           hideOuterTab
@@ -4802,9 +4841,8 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
           }}
           innerValue={
             topTab === "client" ? clientInnerTab
-            : topTab === "worker" ? workerInnerTab
-            : topTab === "admin" ? adminInnerTab
-            : superInnerTab
+            : topTab === "staff" ? staffInnerTab
+            : staffInnerTab
           }
           onInnerChange={(v: string, newOuter?: string) => {
             const outer = newOuter ?? topTab;
@@ -4812,7 +4850,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             if (v !== current.inner || outer !== current.outer) pushNavHistory(current);
             if (outer === "client") setClientInnerTab(v as ClientTabs);
             else if (outer === "worker") {
-              setWorkerInnerTab(v as WorkerTabs);
+              setStaffInnerTab(v as StaffTabs);
               // Only clear workflow state on manual user navigation, not programmatic
               if (!programmaticNavRef.current && v !== "routes" && v !== "equipment" && v !== "jobs") {
                 try {
@@ -4824,16 +4862,13 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
                 setActiveWorkflow(null);
               }
             }
-            else if (outer === "admin") setAdminInnerTab(v as AdminTabs);
-            else if (outer === "super") setSuperInnerTab(v as SuperTabs);
+            else setStaffInnerTab(v as StaffTabs);
           }}
-          categoryValue={topTab === "worker" ? workerCategory : topTab === "admin" ? adminCategory : topTab === "super" ? superCategory : undefined}
+          categoryValue={topTab === "staff" ? staffCategory : undefined}
           onCategoryChange={(v: string) => {
-            const currentCat = topTab === "worker" ? workerCategory : topTab === "admin" ? adminCategory : topTab === "super" ? superCategory : undefined;
+            const currentCat = topTab === "staff" ? staffCategory : undefined;
             if (v !== currentCat) pushNavHistory(getCurrentNavState());
-            if (topTab === "worker") setWorkerCategory(v);
-            else if (topTab === "admin") setAdminCategory(v);
-            else if (topTab === "super") setSuperCategory(v);
+            if (topTab === "staff") setStaffCategory(v);
           }}
           headerLeft={
             <Box
@@ -4856,13 +4891,22 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
           }
           headerRight={
             <HStack gap={2} align="center">
-              {/* THE BOARD. Gated twice on purpose. `isWorker || isAdmin ||
-                  isSuper` keeps it off a signed-in ClientContact, who has none
-                  of those roles; `topTab !== "client"` keeps it off a Super
-                  sitting in client view-as, where the whole point is to mirror
-                  what the client sees. This title bar is shared with the
-                  client shell — an ungated control here renders for clients. */}
-              {(isWorker || isAdmin || isSuper) && topTab !== "client" && (
+              {/* THE BOARD, gated on the capability its own endpoint asks
+                  for. `GET /board` is `schedule.view`; this read
+                  `hasAnyRole`, which only means "holds at least one
+                  capability of any kind" — so a payroll clerk, who holds
+                  four and none of them `schedule.view`, was offered the
+                  trophy and got "Couldn't load the board just now." from a
+                  403. The board counts visits; somebody who cannot see the
+                  schedule has nothing to be shown.
+
+                  `schedule.view` also covers what `hasAnyRole` was there
+                  for — a ClientContact and a no-grants account both hold
+                  nothing, so neither passes. `topTab !== "client"` stays:
+                  this title bar is shared with the customer shell, and the
+                  point of client view-as is to mirror what the client
+                  sees. */}
+              {SHOW_DAY_BOARD_BUTTON && scopeCan("schedule.view") && topTab !== "client" && (
                 <DayBoardButton userId={me?.id ?? null} />
               )}
               {/* TRIAL (worker Jobs only): the "How Jobs work" explainer's
@@ -4891,16 +4935,8 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
                 const slugify = (s: string) =>
                   (s || "").toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
                 const outer = topTab;
-                const inner =
-                  outer === "client" ? clientInnerTab
-                  : outer === "worker" ? workerInnerTab
-                  : outer === "admin" ? adminInnerTab
-                  : superInnerTab;
-                const category =
-                  outer === "worker" ? workerCategory
-                  : outer === "admin" ? adminCategory
-                  : outer === "super" ? superCategory
-                  : undefined;
+                const inner = outer === "client" ? clientInnerTab : staffInnerTab;
+                const category = outer === "client" ? undefined : staffCategory;
                 const slug = category
                   ? `${outer}-${slugify(category)}-${slugify(inner)}`
                   : `${outer}-${slugify(inner)}`;
@@ -4925,30 +4961,33 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             </HStack>
           }
         />
+        </>
       )}
+
       {/* Offline Queue Dialog */}
       {/* WORKFLOWS MOUNT AT THE ROOT, NOT INSIDE A TAB.
-          These lived in the Admin tab's `headerSlot`, and BreadcrumbNav
-          renders only `activeOuter?.headerSlot` — the ACTIVE top tab's. So a
-          Super clicking "New Job Service" set activeWorkflow and nothing
+          These lived in one tab's `headerSlot`, and BreadcrumbNav renders
+          only `activeOuter?.headerSlot` — the ACTIVE top tab's. So clicking
+          "New Job Service" from anywhere else set activeWorkflow and nothing
           rendered, because the component that renders it was not mounted:
-          the action was silently dead for every role except Admin, with no
-          error to find. A modal workflow has no business depending on which
-          tab someone happens to be standing on.
+          the action was silently dead unless you happened to be standing on
+          that one tab, with no error to find. A modal workflow has no
+          business depending on which tab someone is standing on.
 
           Mounting them unconditionally is inert — each renders nothing until
           its own `active` prop is true. */}
       <NewJobSetupWorkflow
+        scope={scopeBase}
         active={activeWorkflow === "new-job-setup"}
         onDone={() => { setActiveWorkflow(null); setWorkflowEstimateDefaults(null); }}
         estimateDefaults={workflowEstimateDefaults}
         onComplete={(jobId) => {
           if (jobId) {
             // Navigate to Admin Services tab and highlight the new job
-            setTopTab("admin");
-            setAdminInnerTab("services" as any);
+            setTopTab("staff");
+            setStaffInnerTab("services" as any);
             setTimeout(() => {
-              window.dispatchEvent(new CustomEvent("open:jobsTabToServicesTabSearch", { detail: { q: jobId, forAdmin: true, entityId: jobId } }));
+              window.dispatchEvent(new CustomEvent("open:jobsTabToServicesTabSearch", { detail: { q: jobId, entityId: jobId } }));
             }, 200);
           } else {
             window.location.reload();

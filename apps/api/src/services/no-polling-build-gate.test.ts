@@ -16,7 +16,7 @@ import { join } from "path";
  * for a refresh — polling is the entire mechanism by which it works.
  *
  * This rule exists because it was broken within an hour of being agreed. The
- * Displays admin tab shipped with a 15-second `setInterval` refetch, justified
+ * DisplaysTab shipped with a 15-second `setInterval` refetch, justified
  * in a comment as convenience during pairing, and nobody would have noticed
  * until it was in production on every operator's open tab.
  */
@@ -105,7 +105,7 @@ describe("[build-gate] the app does not poll", () => {
     ).toMatch(/if \(!token\) return;/);
   });
 
-  it("the admin tab that broke this rule does not quietly regain a timer", () => {
+  it("the tab that broke this rule does not quietly regain a timer", () => {
     // Named explicitly. This is the file the rule was written for, and a
     // general scan would stop mentioning it the moment someone renamed a
     // helper the NETWORK regex happens to match.

@@ -54,7 +54,7 @@ Migration: `20260831144118_drop_guaranteed_payout`.
 
 ## Ratchet notes
 
-- `audit-coverage` baseline for `routes/admin.ts` went **32 → 33**. Not a
+- An `audit-coverage` baseline went **32 → 33**. Not a
   regression: the GP endpoint was one mutation with TWO audit branches,
   so deleting it removed 1 site and 2 `writeAudit` calls.
 - `routes/cron.ts` baseline entry removed — its only unaudited mutation

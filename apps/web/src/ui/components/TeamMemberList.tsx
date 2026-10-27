@@ -11,19 +11,50 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
+import { isPaid, type WorkerType } from "@repo/money";
 
 export type TeamMember = {
   userId: string;
   assignedById?: string | null;
   role?: string | null;
-  user: { id: string; displayName?: string | null; email?: string | null };
+  user: {
+    id: string;
+    displayName?: string | null;
+    email?: string | null;
+    /** Undefined when the caller did not load it — see `paidSeatState`. */
+    workerType?: WorkerType | null;
+  };
 };
 
 type WorkerOption = {
   id: string;
   displayName?: string | null;
   email?: string | null;
+  workerType?: WorkerType | null;
 };
+
+/**
+ * May this person hold a PAID seat — i.e. be a worker rather than an observer?
+ *
+ * A non-observer assignee is someone the money system will try to pay, so
+ * they have to be on payroll. An UNPAID helper or anyone whose worker type is
+ * not set yet can only observe. The server enforces this in
+ * `enforceAssigneeInvariants` (G33) and refuses the promotion outright; this
+ * is so the UI never offers a control that the API would reject.
+ *
+ * THREE states, not two. `undefined` means the caller did not load the worker
+ * type, and that must read as "unknown", never as "not on payroll" — guessing
+ * the restrictive way would grey out the control for a whole team because
+ * somebody forgot to pass a field.
+ */
+type PaidSeatState = "eligible" | "observer-only" | "unknown";
+function paidSeatState(wt: WorkerType | null | undefined): PaidSeatState {
+  if (wt === undefined) return "unknown";
+  return isPaid(wt) ? "eligible" : "observer-only";
+}
+const OBSERVER_ONLY_WHY =
+  "Not on payroll — can only be added as an observer. Set a worker type to " +
+  "assign them to paid work.";
 
 export type TeamMemberListProps = {
   members: TeamMember[];
@@ -40,7 +71,7 @@ export type TeamMemberListProps = {
   // Config
   showRoleControls?: boolean;
   showMakeClaimer?: boolean;
-  /** When true, admins can remove the claimer (makes job claimable). Shows a confirmation. */
+  /** When true, holders of `schedule.manage` can remove the claimer (makes job claimable). Shows a confirmation. */
   allowRemoveClaimer?: boolean;
 
   // Optional: highlight "you" card
@@ -94,8 +125,27 @@ export default function TeamMemberList({
     [workers, assignedIds]
   );
   const workerItems = useMemo(
-    () => availableWorkers.map((w) => ({ label: w.displayName ?? w.email ?? w.id, value: w.id })),
+    () =>
+      availableWorkers.map((w) => ({
+        label:
+          paidSeatState(w.workerType) === "observer-only"
+            ? `${w.displayName ?? w.email ?? w.id} — observer only`
+            : (w.displayName ?? w.email ?? w.id),
+        value: w.id,
+      })),
     [availableWorkers]
+  );
+  /** Any selected person who cannot hold a paid seat forces the whole add to
+   *  be an observer add — the API would refuse the paid one anyway, and a
+   *  partial success on a multi-select is worse than one clear rule. */
+  const selectionObserverOnly = useMemo(
+    () =>
+      selected.some(
+        (id) =>
+          paidSeatState(availableWorkers.find((w) => w.id === id)?.workerType) ===
+          "observer-only",
+      ),
+    [selected, availableWorkers]
   );
   const workerCollection = useMemo(
     () => createListCollection({ items: workerItems }),
@@ -107,7 +157,10 @@ export default function TeamMemberList({
 
   function handleAdd() {
     if (selected.length === 0) return;
-    onAdd(selected, addAsObserver ? "observer" : null);
+    // `selectionObserverOnly` wins over the toggle. The toggle is only
+    // disabled visually; relying on that alone would let a stale `true` in
+    // `addAsObserver` send a paid add the API then refuses.
+    onAdd(selected, addAsObserver || selectionObserverOnly ? "observer" : null);
     setSelected([]);
   }
 
@@ -118,6 +171,8 @@ export default function TeamMemberList({
   function renderMemberCard(m: TeamMember, isMe: boolean) {
     const isObs = m.role === "observer";
     const isClaimer = !isObs && claimerId === m.userId;
+    const seat = paidSeatState(m.user?.workerType);
+    const observerOnly = seat === "observer-only";
 
     return (
       <Box
@@ -143,6 +198,11 @@ export default function TeamMemberList({
               {isClaimer && <Badge size="sm" colorPalette="teal" variant="solid" fontSize="2xs" px="1.5" borderRadius="full">Claimer</Badge>}
               {isObs && <Badge size="sm" colorPalette="blue" variant="solid" fontSize="2xs" px="1.5" borderRadius="full">Observer</Badge>}
               {!isClaimer && !isObs && <Badge size="sm" colorPalette="gray" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full">Worker</Badge>}
+              {isObs && observerOnly && (
+                <Badge size="sm" colorPalette="purple" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full">
+                  Not on payroll
+                </Badge>
+              )}
             </HStack>
           </VStack>
           {isMe && !isClaimer && onLeave ? (
@@ -171,7 +231,7 @@ export default function TeamMemberList({
         </HStack>
         {showRoleControls && !isMe && (
           <HStack gap={1} mt={1}>
-            {showMakeClaimer && !isClaimer && !isObs && onMakeClaimer && (
+            {showMakeClaimer && !isClaimer && !isObs && !observerOnly && onMakeClaimer && (
               <Button size="xs" variant="outline" colorPalette="teal" disabled={busyId !== ""} onClick={() => onMakeClaimer(m.userId)}>
                 Make Claimer
               </Button>
@@ -181,7 +241,11 @@ export default function TeamMemberList({
                 size="xs"
                 variant="outline"
                 colorPalette={isObs ? "teal" : "blue"}
-                disabled={busyId !== ""}
+                // Promoting to worker is refused by the API for someone off
+                // payroll, so the button is disabled rather than offered and
+                // then rejected. Demoting TO observer stays available.
+                disabled={busyId !== "" || (isObs && observerOnly)}
+                title={isObs && observerOnly ? OBSERVER_ONLY_WHY : undefined}
                 onClick={() => onToggleRole(m.userId, m.role ?? null)}
               >
                 {isObs ? "→ Worker" : "→ Observer"}
@@ -213,8 +277,10 @@ export default function TeamMemberList({
         <HStack gap={2} mb={2}>
           <Button
             size="sm"
-            variant={!addAsObserver ? "solid" : "outline"}
-            colorPalette={!addAsObserver ? "teal" : "gray"}
+            variant={!addAsObserver && !selectionObserverOnly ? "solid" : "outline"}
+            colorPalette={!addAsObserver && !selectionObserverOnly ? "teal" : "gray"}
+            disabled={selectionObserverOnly}
+            title={selectionObserverOnly ? OBSERVER_ONLY_WHY : undefined}
             onClick={() => setAddAsObserver(false)}
           >
             {!hasWorkers ? "Worker (Claimer)" : "Worker"}
@@ -229,9 +295,11 @@ export default function TeamMemberList({
           </Button>
         </HStack>
         <Text fontSize="xs" color="fg.muted" mb={2}>
-          {addAsObserver
-            ? "Observers can see the job and set reminders, but cannot start, complete, or manage it."
-            : "Workers can take actions on the job — start, complete, manage expenses, etc."}
+          {selectionObserverOnly
+            ? OBSERVER_ONLY_WHY
+            : addAsObserver
+              ? "Observers can see the job and set reminders, but cannot start, complete, or manage it."
+              : "Workers can take actions on the job — start, complete, manage expenses, etc."}
         </Text>
 
         <HStack gap={2} align="flex-end">

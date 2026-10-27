@@ -25,7 +25,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { bizToday, bizAddDays, bizDateKey, fmtDateOpts, fmtDateShort } from "@/src/lib/dates";
 import { prettyStatus, notifyEquipmentUpdated, extractSlug } from "@/src/lib/labels";
-import { determineRoles } from "@/src/lib/roles";
+import { scopeFromMe } from "@/src/lib/roles";
 import { equipmentStatusColor } from "@/src/lib/statusColors";
 import { TabPropsType, EquipmentStatus, Equipment } from "@/src/lib/types";
 import { onEventSearchRun } from "@/src/lib/bus";
@@ -49,17 +49,19 @@ import DeleteDialog, {
 import EquipmentDialog from "@/src/ui/dialogs/EquipmentDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import ImpersonationWarning from "@/src/ui/components/ImpersonationWarning";
-import { AdminViewAsSelector, AdminViewAsBadges, type AdminWorker } from "@/src/ui/tabs/JobsTab.parts";
+import { ViewAsSelector, ViewAsBadges, type ViewAsWorker } from "@/src/ui/tabs/JobsTab.parts";
 
 import { EQUIPMENT_KIND, EQUIPMENT_STATUS } from "@/src/lib/types";
 import { parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
 import { Dashboard } from "@/src/ui/components/Dashboard";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import {
-  SUPER_PERIODS,
+  FULL_PERIODS,
   periodKey,
   periodToRange,
 } from "@/src/ui/components/WorkerHourlyPayCard";
+import type { Scope } from "@/src/lib/scope";
+import { isFeeable } from "@repo/money";
 
 // Kind states are now derived from loaded items (see useMemo below)
 
@@ -70,10 +72,10 @@ const workerStatusStates = [
   "AVAILABLE",
   "UNAVAILABLE",
 ] as const;
-const adminStatusStates = ["ALL", ...EQUIPMENT_STATUS] as const;
+const manageStatusStates = ["ALL", ...EQUIPMENT_STATUS] as const;
 
-// Card action bands — worker/admin/super buttons split into three
-// role-labeled bands so a super sees at a glance which capability
+// Card action bands — staff buttons split into three
+// capability-labelled bands so the reader sees at a glance which capability
 // tier each button belongs to. Mirrors the pattern used by
 // ElevatedActionRow on the Jobs tab: subtle top-bordered band with
 // a leading colored badge and the wrap-flow buttons trailing.
@@ -82,25 +84,25 @@ function CardActionBands(props: {
   loading: boolean;
   statusButtonBusyId: string;
   setStatusButtonBusyId: (v: string) => void;
-  showWorkerExtras: boolean;
-  showAdminExtras: boolean;
-  isTrainee: boolean;
+  canViewEquipment: boolean;
+  canManageEquipment: boolean;
+  cannotPullInventory: boolean;
   viewAsUserId: string | null;
   viewAsUserName: string | null;
-  canWorkerCheckout: boolean;
-  canWorkerCancel: boolean;
-  canWorkerReturn: boolean;
-  canWorkerReserve: boolean;
-  canAdminForceRelease: boolean;
-  canAdminStartMaintenance: boolean;
-  canAdminEndMaintenance: boolean;
-  canAdminRetire: boolean;
-  canAdminUnretire: boolean;
-  canSuperHardDelete: boolean;
-  canSuperReserveFor: boolean;
-  canSuperCancelFor: boolean;
-  canSuperCheckoutFor: boolean;
-  canSuperReturnFor: boolean;
+  canSubjectCheckout: boolean;
+  canSubjectCancel: boolean;
+  canSubjectReturn: boolean;
+  canSubjectReserve: boolean;
+  canForceRelease: boolean;
+  canStartMaintenance: boolean;
+  canEndMaintenance: boolean;
+  canRetire: boolean;
+  canUnretire: boolean;
+  canHardDelete: boolean;
+  canReserveForOther: boolean;
+  canCancelForOther: boolean;
+  canCheckoutForOther: boolean;
+  canReturnForOther: boolean;
   onEdit: () => void;
   onWorkerCheckout: () => void;
   onWorkerCancel: () => void;
@@ -112,22 +114,22 @@ function CardActionBands(props: {
   onRetire: () => void;
   onUnretire: () => void;
   onHardDelete: () => void;
-  onSuperReserveFor: () => void;
-  onSuperCancelFor: () => void;
-  onSuperCheckoutFor: () => void;
-  onSuperReturnFor: () => void;
+  onReserveForOther: () => void;
+  onCancelForOther: () => void;
+  onCheckoutForOther: () => void;
+  onReturnForOther: () => void;
 }) {
   const {
     e, loading, statusButtonBusyId, setStatusButtonBusyId,
-    showWorkerExtras, showAdminExtras, isTrainee,
+    canViewEquipment, canManageEquipment, cannotPullInventory,
     viewAsUserId, viewAsUserName,
-    canWorkerCheckout, canWorkerCancel, canWorkerReturn, canWorkerReserve,
-    canAdminForceRelease, canAdminStartMaintenance, canAdminEndMaintenance,
-    canAdminRetire, canAdminUnretire, canSuperHardDelete,
-    canSuperReserveFor, canSuperCancelFor, canSuperCheckoutFor, canSuperReturnFor,
+    canSubjectCheckout, canSubjectCancel, canSubjectReturn, canSubjectReserve,
+    canForceRelease, canStartMaintenance, canEndMaintenance,
+    canRetire, canUnretire, canHardDelete,
+    canReserveForOther, canCancelForOther, canCheckoutForOther, canReturnForOther,
     onEdit, onWorkerCheckout, onWorkerCancel, onWorkerReturn, onWorkerReserve,
     onForceRelease, onStartMaintenance, onEndMaintenance, onRetire, onUnretire,
-    onHardDelete, onSuperReserveFor, onSuperCancelFor, onSuperCheckoutFor, onSuperReturnFor,
+    onHardDelete, onReserveForOther, onCancelForOther, onCheckoutForOther, onReturnForOther,
   } = props;
 
   const holderLabel = e.holder?.displayName || e.holder?.email || "holder";
@@ -136,16 +138,16 @@ function CardActionBands(props: {
   // available (own reserve/checkout/cancel/return, or the trainee
   // gate hint). Empty band would be visual noise on admin cards with
   // nothing to reserve.
-  const showTraineeHint = showWorkerExtras && e.status === "AVAILABLE" && isTrainee && !viewAsUserId;
-  const showWorkerBand =
-    canWorkerCheckout || canWorkerCancel || canWorkerReturn || canWorkerReserve || showTraineeHint;
+  const showNoClearanceHint = canViewEquipment && e.status === "AVAILABLE" && cannotPullInventory && !viewAsUserId;
+  const showSubjectBand =
+    canSubjectCheckout || canSubjectCancel || canSubjectReturn || canSubjectReserve || showNoClearanceHint;
   // Admin band always renders when scope includes admin — the "Edit"
   // button anchors it, and the other Admin buttons appear as their
   // per-status guards permit.
-  const showSuperBand =
-    canSuperReserveFor || canSuperCancelFor || canSuperCheckoutFor || canSuperReturnFor || canSuperHardDelete;
+  const showTopBand =
+    canReserveForOther || canCancelForOther || canCheckoutForOther || canReturnForOther || canHardDelete;
 
-  if (!showWorkerBand && !showAdminExtras && !showSuperBand) return null;
+  if (!showSubjectBand && !canManageEquipment && !showTopBand) return null;
 
   const bandProps = {
     px: 3, py: 1.5, gap: 2, wrap: "wrap" as const,
@@ -155,7 +157,7 @@ function CardActionBands(props: {
 
   return (
     <VStack align="stretch" gap={0}>
-      {showWorkerBand && (
+      {showSubjectBand && (
         <HStack {...bandProps}>
           {/* Worker band leading label — only shows the "Acting as X"
               chip when admin has view-as active, since that context is
@@ -168,94 +170,100 @@ function CardActionBands(props: {
               <Text as="span">Acting as {viewAsUserName ?? "worker"}</Text>
             </Badge>
           )}
-          {canWorkerReserve && (
+          {canSubjectReserve && (
             <StatusButton id="equipment-reserve" itemId={e.id} label="Reserve" onClick={async () => onWorkerReserve()}
               variant="solid" colorPalette="green" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canWorkerCheckout && (
+          {canSubjectCheckout && (
             <StatusButton id="equipment-checkout" itemId={e.id} label="Check Out" onClick={async () => onWorkerCheckout()}
               variant="solid" colorPalette="blue" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canWorkerReturn && (
+          {canSubjectReturn && (
             <StatusButton id="equipment-return" itemId={e.id} label="Return" onClick={async () => onWorkerReturn()}
               variant="solid" colorPalette="orange" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canWorkerCancel && (
+          {canSubjectCancel && (
             <StatusButton id="equipment-cancel" itemId={e.id} label="Cancel Reservation" onClick={async () => onWorkerCancel()}
               variant="outline" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {showTraineeHint && (
-            <HStack gap={1} fontSize="xs" color="gray.fg"><AlertTriangle size={12} /><Text>Trainees cannot reserve equipment</Text></HStack>
+          {/* NAMED FOR THE CAPABILITY, NOT FOR A ROLE. This read
+              "Trainees cannot reserve equipment", which was wrong twice:
+              Trainee is a CustomRole an operator can rename or delete, and
+              the hint shows for anyone missing the capability — a
+              bookkeeper saw it too. It also named the wrong rule; see
+              `canSubjectReserve`. */}
+          {showNoClearanceHint && (
+            <HStack gap={1} fontSize="xs" color="gray.fg"><AlertTriangle size={12} /><Text>You do not have permission to reserve equipment.</Text></HStack>
           )}
         </HStack>
       )}
-      {showAdminExtras && (
+      {canManageEquipment && (
         <HStack {...bandProps}>
           <Badge size="xs" variant="subtle" colorPalette="purple">Admin</Badge>
           <StatusButton id="equipment-edit" itemId={e.id} label="Edit" onClick={async () => onEdit()}
             variant="outline" disabled={loading}
             busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
-          {canAdminForceRelease && (
+          {canForceRelease && (
             <StatusButton id="equipment-forceRelease" itemId={e.id} label="Force release" onClick={async () => onForceRelease()}
               variant="solid" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canAdminStartMaintenance && (
+          {canStartMaintenance && (
             <StatusButton id="equipment-startMaintenance" itemId={e.id} label="Start maintenance" onClick={async () => onStartMaintenance()}
               variant="subtle" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canAdminEndMaintenance && (
+          {canEndMaintenance && (
             <StatusButton id="equipment-endMaintenance" itemId={e.id} label="End maintenance" onClick={async () => onEndMaintenance()}
               variant="subtle" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canAdminRetire && (
+          {canRetire && (
             <StatusButton id="equipment-retire" itemId={e.id} label="Retire" onClick={async () => onRetire()}
               variant="outline" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canAdminUnretire && (
+          {canUnretire && (
             <StatusButton id="equipment-unretire" itemId={e.id} label="Unretire" onClick={async () => onUnretire()}
               variant="subtle" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
         </HStack>
       )}
-      {showSuperBand && (
+      {showTopBand && (
         <HStack {...bandProps}>
           <Badge size="xs" variant="subtle" colorPalette="orange">
             <HStack gap={0.5}><Zap size={9} /><Text>Super</Text></HStack>
           </Badge>
-          {canSuperReserveFor && (
+          {canReserveForOther && (
             <StatusButton id="equipment-super-reserve-for" itemId={e.id} label="Reserve for worker…"
-              onClick={async () => onSuperReserveFor()}
+              onClick={async () => onReserveForOther()}
               variant="subtle" colorPalette="purple" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canSuperCancelFor && (
+          {canCancelForOther && (
             <StatusButton id="equipment-super-cancel-for" itemId={e.id} label={`Cancel for ${holderLabel}`}
-              onClick={async () => onSuperCancelFor()}
+              onClick={async () => onCancelForOther()}
               variant="subtle" colorPalette="purple" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canSuperCheckoutFor && (
+          {canCheckoutForOther && (
             <StatusButton id="equipment-super-checkout-for" itemId={e.id} label={`Checkout for ${holderLabel}`}
-              onClick={async () => onSuperCheckoutFor()}
+              onClick={async () => onCheckoutForOther()}
               variant="solid" colorPalette="purple" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canSuperReturnFor && (
+          {canReturnForOther && (
             <StatusButton id="equipment-super-return-for" itemId={e.id} label={`Return for ${holderLabel}`}
-              onClick={async () => onSuperReturnFor()}
+              onClick={async () => onReturnForOther()}
               variant="solid" colorPalette="purple" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
           )}
-          {canSuperHardDelete && (
+          {canHardDelete && (
             <StatusButton id="equipment-hardDelete" itemId={e.id} label="Delete" onClick={async () => onHardDelete()}
               variant="danger-outline" disabled={loading}
               busyId={statusButtonBusyId} setBusyId={setStatusButtonBusyId} />
@@ -267,49 +275,85 @@ function CardActionBands(props: {
 }
 
 type InventoryTabProps = TabPropsType & {
-  /** Additive scope — capabilities ADD as you climb the ladder.
-   *  scope.isWorker → like/pin/reserve-for-self/reserve-for-group/kit
-   *  scope.isAdmin  → adds edit/force-release/maintenance/retire/insights/…
-   *  scope.isSuper  → adds reserve-for/checkout-for/return-for/hard-delete
-   *  Falls back to the legacy `purpose` prop when not passed. */
-  scope?: { isWorker: boolean; isAdmin: boolean; isSuper: boolean };
+  /** What the caller may do, as capabilities.
+   *  `equipment.view`   → the list, filters, detail, and the self-service
+   *                       actions: like / pin / reserve for yourself or
+   *                       your crew / take a kit.
+   *  `reports.view`     → the Insights rollups.
+   *  `equipment.manage` → edit/force-release/maintenance/retire, acting on
+   *                       behalf of another holder, and photo editing. */
+  scope?: Scope;
 };
 
-export default function InventoryTab({ me, purpose = "WORKER", scope }: InventoryTabProps) {
-  const { isSuper: hasSuperRole, isAvail, forAdmin } = determineRoles(me, purpose);
+/**
+ * What to CALL a piece of equipment on screen.
+ *
+ * `shortDesc` is `String?` in the schema and every other identifying field
+ * is too, so a row can legitimately arrive with nothing to show. The web
+ * `Equipment` type claimed `shortDesc: string`, which is why nothing warned
+ * about `a.shortDesc.localeCompare(b.shortDesc)` in the list sort — three
+ * blank rows reached the database and the tab died with "Failed to load
+ * equipment null is not an object", blaming the fetch for a crash in the
+ * comparator. The types are honest now; this is the one place that decides
+ * what to render when they are empty.
+ *
+ * Falls back the way the collections list already did, so the same piece of
+ * equipment reads the same in both places.
+ */
+export function equipmentLabel(eq: {
+  id: string;
+  shortDesc?: string | null;
+  brand?: string | null;
+  model?: string | null;
+  type?: string | null;
+}): string {
+  if (eq.shortDesc) return eq.shortDesc;
+  const parts = [eq.brand, eq.model].filter(Boolean);
+  if (parts.length > 0) return parts.join(" ");
+  if (eq.type) return eq.type;
+  // Last resort: a stable handle you can read out to somebody, rather
+  // than an empty row you cannot refer to at all.
+  return `Untitled (${eq.id.slice(-6)})`;
+}
+
+export default function InventoryTab({ me, scope }: InventoryTabProps) {
 
   // Effective scope: prefer the additive prop; fall back to a scope
   // derived from `purpose` for any callsite still on the old shape.
   const effScope = scope ?? {
-    isWorker: purpose === "WORKER",
-    isAdmin: purpose === "ADMIN" || purpose === "SUPER",
-    isSuper: purpose === "SUPER",
+    // Derived from CAPABILITIES, not from the shell that mounted
+    // this tab. These three read `purpose` and so answered
+    // "what may I do" with "where did you come from".
+    ...scopeFromMe(me),
+    
   };
   // Capabilities render additively AND are strictly governed by the
-  // scope prop — not by the underlying role. A user with admin+super
-  // roles viewing the *Admin* tab must NOT see Super buttons (that's
-  // what the Super top-tab is for). Super scope inherits Admin
-  // capabilities so a super sees admin controls too.
-  const showWorkerExtras = effScope.isWorker;
-  const showAdminExtras = effScope.isAdmin || effScope.isSuper;
-  const showSuperExtras = effScope.isSuper && hasSuperRole;
+  // scope prop. Every control asks for the capability its own endpoint is
+  // guarded on, so there is no second vocabulary that can drift from the
+  // server's answer.
+  const canViewEquipment = effScope.can("equipment.view");
+  // What this actually gates, per the route map.
+  const canManageEquipment = effScope.can("equipment.manage");
+  const canViewReports = effScope.can("reports.view");
+  const canViewBusinessReports = effScope.can("reports.business");
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
-  // Persisted-state prefix: worker-only view gets its own bucket so
-  // filters don't collide with an admin/super view on the same device.
-  const pfx = showAdminExtras ? "equip_a" : "equip_w";
+  // Persisted-state prefix: self-scoped-only view gets its own bucket so
+  // filters don't collide with the management view on the same device.
+  const pfx = canManageEquipment ? "equip_a" : "equip_w";
   const [compact, setCompact] = usePersistedState(`${pfx}_compact`, false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(
-    `${pfx}_status`, showAdminExtras ? ["ALL"] : ["CLAIMED"]
+    `${pfx}_status`, canManageEquipment ? ["ALL"] : ["CLAIMED"]
   );
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
   const [likedOnly, setLikedOnly] = usePersistedState<boolean>(`${pfx}_likedOnly`, false);
-  // Admin-only "filter to a specific worker" — pre-set externally from HomeTab tile
-  // click-throughs so the Equipment tab shows only what that worker has reserved/checked
-  // out. Multi-select array to mirror JobsTab's pattern.
+  // "Filter to a specific worker" (`equipment.manage`, which is what gates
+  // the picker) — also pre-set externally from HomeTab tile click-throughs
+  // so this tab shows only what that worker has reserved or checked out.
+  // Multi-select array to mirror JobsTab's pattern.
   const [workerFilter, setWorkerFilter] = usePersistedState<string[]>(
     `${pfx}_workers`, [],
   );
@@ -323,16 +367,17 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   );
   const viewAsUserId = viewAsUserIds[0] ?? null;
 
-  // `isWorkerView` — retained for existing callsites; means "the
-  // worker-facing affordances are showing on this render". Now driven
-  // by additive scope.
-  const isWorkerView = showWorkerExtras;
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
+  /** Has the first fetch finished? Not the same as `loading`, which starts
+   *  false while the fetch is kicked off by an effect that runs after the
+   *  first paint — so the empty state was announced before anything had
+   *  been asked for. See the longer note in ClientsTab. */
+  const [hasLoaded, setHasLoaded] = useState(false);
   // Global "refreshing all sections" flag — set by the toolbar refresh
   // button and cleared after a fixed window. Drives the tab-body dim
   // + spinning icon so users see feedback even for sections that are
@@ -344,7 +389,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   // chip + reserve-confirmation text renders $0.00/day instead of the
   // configured rate. See lib/useEquipmentBillingEnabled.
   const equipmentBillingEnabled = useEquipmentBillingEnabled();
-  // Equipment Collections — kits the admin has defined. Workers see them at
+  // Equipment Collections — kits a caller with `equipment.manage` has defined. Workers see them at
   // the top of the tab as "Reserve kit" shortcuts; the action loops the
   // existing per-piece reserve() call.
   type CollectionItem = { id: string; equipmentId: string; equipment: { id: string; shortDesc?: string | null; type?: string | null; brand?: string | null; model?: string | null; status?: string | null; retiredAt?: string | null } };
@@ -352,7 +397,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   const [collections, setCollections] = useState<Collection[]>([]);
   // Per-card expansion state for collection cards. Click the chevron to reveal
   // the description + member equipment list (matches what the Equipment
-  // Collections admin tab shows for each kit).
+  // CollectionsTab shows for each kit).
   const [expandedCollections, setExpandedCollections] = useState<Set<string>>(new Set());
   const [reservingKitId, setReservingKitId] = useState<string | null>(null);
   // Partial-availability confirm dialog state — opens when the user
@@ -375,7 +420,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   // strip when the user starts narrowing the equipment list.
   const filtersActiveRef = useRef(false);
   // Filter the equipment list to members of a single collection. Workers use
-  // it to drill into "what's in this kit"; admins use it to scope bulk actions
+  // it to drill into "what's in this kit"; holders of `equipment.manage` use it to scope bulk actions
   // like force-release.
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
 
@@ -396,11 +441,11 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     | null
   >(null);
   useEffect(() => {
-    // Fetch the caller's crew-lead groups regardless of scope. Admins
-    // who are ALSO workers (dual-role) should see their group card in
-    // admin view too — the endpoint returns [] for admin-only users so
-    // this is a no-op for them.
-    if (!showWorkerExtras) return;
+    // Fetch the caller's crew-lead groups regardless of what else they
+    // hold. Somebody who manages equipment AND leads a crew should still
+    // see their group card — the endpoint returns [] for anyone who leads
+    // no crew, so this is a no-op for them.
+    if (!canViewEquipment) return;
     apiGet<ClaimerGroup[]>("/api/me/groups-as-claimer")
       .then((list) => {
         const groups = Array.isArray(list) ? list : [];
@@ -414,13 +459,13 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showWorkerExtras]);
+  }, [canViewEquipment]);
 
   // Hand-off from JobsTab: when a worker clicks a preferred-equipment chip
   // on a group-claimed job, the chip sets `reserveAsGroupId` so the picker
   // here lands on the right group without a manual click. Reads + clears
   // on mount and on every navigate-to-equipment event (so the same handoff
-  // works even if EquipmentTab is already mounted in the background).
+  // works even if this tab is already mounted in the background).
   const applyReserveAsGroupHandoff = () => {
     try {
       const hint = window.sessionStorage.getItem("reserveAsGroupId");
@@ -431,16 +476,16 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     } catch {}
   };
   useEffect(() => { applyReserveAsGroupHandoff(); }, []);
-  // Workers list — only used by the admin worker-filter chip to look up names.
-  const [adminWorkers, setAdminWorkers] = useState<Array<{ id: string; displayName?: string | null; email?: string | null }>>([]);
+  // Workers list — only used by the worker-filter chip to look up names.
+  const [viewAsWorkers, setViewAsWorkers] = useState<Array<{ id: string; displayName?: string | null; email?: string | null }>>([]);
   useEffect(() => {
-    if (!showAdminExtras) return;
+    if (!canManageEquipment) return;
     apiGet<Array<{ id: string; displayName?: string | null; email?: string | null }>>("/api/workers")
-      .then((list) => setAdminWorkers(Array.isArray(list) ? list : []))
+      .then((list) => setViewAsWorkers(Array.isArray(list) ? list : []))
       .catch(() => {});
-  }, [showAdminExtras]);
-  const adminWorkerName = (id: string) => {
-    const w = adminWorkers.find((x) => x.id === id);
+  }, [canManageEquipment]);
+  const viewAsWorkerName = (id: string) => {
+    const w = viewAsWorkers.find((x) => x.id === id);
     return w?.displayName || w?.email || id.slice(0, 6);
   };
 
@@ -460,16 +505,16 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   const [qrAction, setQrAction] = useState<{ equipmentId: string; slug: string; action: "checkout" | "return"; label: string } | null>(null);
   const [qrActionBusy, setQrActionBusy] = useState(false);
 
-  // Super "act on behalf of a worker" state. When `action === "reserve"`
+  // "Act on behalf" state (`equipment.manage`). When `action === "reserve"`
   // the dialog includes a worker picker (the worker isn't already implied
   // by an active checkout). For the other three actions the current holder
   // is the implied target, so the dialog is just a confirm.
-  const [superActionFor, setSuperActionFor] = useState<
+  const [actOnBehalfFor, setActOnBehalfFor] = useState<
     | { equipment: Equipment; action: "reserve" | "cancel" | "checkout" | "return" }
     | null
   >(null);
-  const [superPickerUserId, setSuperPickerUserId] = useState<string>("");
-  const [superActionBusy, setSuperActionBusy] = useState(false);
+  const [onBehalfUserId, setOnBehalfUserId] = useState<string>("");
+  const [onBehalfBusy, setOnBehalfBusy] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -513,22 +558,22 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
 
   const statusItems = useMemo(
     () =>
-      (forAdmin ? adminStatusStates : workerStatusStates).map((s) => ({
+      (canManageEquipment ? manageStatusStates : workerStatusStates).map((s) => ({
         label: s === "ALL" ? "All Statuses" : prettyStatus(s),
         value: s,
       })),
-    [forAdmin]
+    [canManageEquipment]
   );
   const statusCollection = useMemo(
     () => createListCollection({ items: statusItems }),
     [statusItems]
   );
 
-  // Worker picker collection — Super "act on behalf of" dialog uses this to
+  // Worker picker collection — the "act on behalf" dialog uses this to
   // pick the target worker for a reserve action. Sorted by display name.
-  const superWorkerItems = useMemo(
+  const workerItems = useMemo(
     () =>
-      adminWorkers
+      viewAsWorkers
         .slice()
         .sort((a, b) =>
           (a.displayName || a.email || "").localeCompare(
@@ -539,27 +584,42 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           label: w.displayName || w.email || w.id.slice(0, 8),
           value: w.id,
         })),
-    [adminWorkers],
+    [viewAsWorkers],
   );
-  const superWorkerCollection = useMemo(
-    () => createListCollection({ items: superWorkerItems }),
-    [superWorkerItems],
+  const workerCollection = useMemo(
+    () => createListCollection({ items: workerItems }),
+    [workerItems],
   );
 
   // Main function to load all the items from the API.
   async function load(displayLoading: boolean = true) {
     setLoading(displayLoading);
+    let list: Equipment[];
     try {
-      const list: Equipment[] = await apiGet("/api/equipment/all");
-      setItems(list.sort((a, b) => a.shortDesc.localeCompare(b.shortDesc)));
+      // ONLY THE FETCH IS IN THE TRY.
+      //
+      // The sort used to live in here, so when the comparator threw on a
+      // null `shortDesc` the catch reported "Failed to load equipment" —
+      // pointing at the network for a bug three lines below it, with the
+      // real message ("null is not an object") smuggled in as the cause.
+      // A catch wrapped around rendering logic turns every client-side
+      // crash into a server accusation.
+      list = await apiGet("/api/equipment/all");
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage("Failed to load equipment", err),
       });
       setItems([]);
+      setLoading(false);
+      setHasLoaded(true);
+      return;
+    }
+    try {
+      setItems([...list].sort((a, b) => equipmentLabel(a).localeCompare(equipmentLabel(b))));
     } finally {
       setLoading(false);
+      setHasLoaded(true);
     }
   }
 
@@ -580,8 +640,8 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         setKind(["ALL"]);
         setStatusFilter(["ALL"]);
         setCollectionFilter(null);
-        if (isWorkerView) setLikedOnly(false);
-        if (forAdmin) setWorkerFilter([]);
+        if (canViewEquipment) setLikedOnly(false);
+        if (canManageEquipment) setWorkerFilter([]);
       };
 
       const hl = window.sessionStorage.getItem("highlightCollectionId");
@@ -625,7 +685,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   // worker's holdings and status filters resolve correctly.
   useEffect(() => {
     void load();
-    const settingsPath = showAdminExtras ? "/api/admin/settings" : "/api/settings";
+    const settingsPath = canManageEquipment ? "/api/settings" : "/api/settings";
     apiGet<any[]>(settingsPath)
       .then((list) => {
         if (!Array.isArray(list)) return;
@@ -638,21 +698,21 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       .catch(() => setCollections([]));
     applyHandoffFilters();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showAdminExtras, viewAsUserId]);
+  }, [canManageEquipment, viewAsUserId]);
 
   // Re-apply hand-off filters whenever someone navigates to this tab.
   // The chip click sets sessionStorage *then* dispatches the navigate
   // event, so by the time this handler runs the key is present. Super
   // scope dispatches its own event to keep cross-tab wiring correct
-  // (previously piggybacked on navigate:adminTab which routed super
-  // clicks to the admin inner-tab space).
+  // (previously piggybacked on navigate:staffTab, which routed clicks
+  // into the wrong inner-tab space).
   useEffect(() => {
     const eventName =
-      showSuperExtras
-        ? "navigate:superTab"
-        : showAdminExtras
-          ? "navigate:adminTab"
-          : "navigate:workerTab";
+      canViewReports
+        ? "navigate:staffTab"
+        : canManageEquipment
+          ? "navigate:staffTab"
+          : "navigate:staffTab";
     function handler(ev: Event) {
       const detail = (ev as CustomEvent).detail;
       if (detail?.tab !== "equipment") return;
@@ -661,18 +721,18 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     window.addEventListener(eventName, handler as EventListener);
     return () => window.removeEventListener(eventName, handler as EventListener);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showSuperExtras, showAdminExtras]);
+  }, [canViewReports, canManageEquipment]);
 
-  // Worker-only: load pinned + liked equipment
+  // Self-scoped-only: load pinned + liked equipment
   useEffect(() => {
-    if (!isWorkerView) return;
+    if (!canViewEquipment) return;
     apiGet<string[]>("/api/equipment/pinned")
       .then((ids) => setPinnedIds(new Set(Array.isArray(ids) ? ids : [])))
       .catch(() => {});
     apiGet<string[]>("/api/equipment/liked")
       .then((ids) => setLikedIds(new Set(Array.isArray(ids) ? ids : [])))
       .catch(() => {});
-  }, [isWorkerView]);
+  }, [canViewEquipment]);
 
   // Deep-link: highlight a specific equipment item (from share link)
   useEffect(() => {
@@ -738,7 +798,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
 
   function shareEquipmentLink(equipmentId: string) {
-    const url = `${window.location.origin}/?equipment=${equipmentId}${forAdmin ? "&view=admin" : ""}`;
+    const url = `${window.location.origin}/?equipment=${equipmentId}`;
     navigator.clipboard.writeText(url).then(() => {
       publishInlineMessage({ type: "SUCCESS", text: "Link copied to clipboard." });
     }).catch(() => {
@@ -794,7 +854,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 }
               }}
             >
-              {isWorkerView && (
+              {canViewEquipment && (
                 <>
                   <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setOpenActionMenuId(null); void toggleLike(equipmentId); }}>
                     <Heart size={14} fill={isLiked ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
@@ -846,15 +906,15 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       !!q.trim()
       || kind[0] !== "ALL"
       || statusFilter[0] !== "ALL"
-      || (isWorkerView && likedOnly)
-      || (forAdmin && workerFilter.length > 0)
+      || (canViewEquipment && likedOnly)
+      || (canManageEquipment && workerFilter.length > 0)
       || !!collectionFilter
       || !!highlightId;
     if (hasFilters && !filtersActiveRef.current) {
       setCollectionsCollapsed(true);
     }
     filtersActiveRef.current = hasFilters;
-  }, [q, kind, statusFilter, likedOnly, workerFilter, collectionFilter, highlightId, isWorkerView, forAdmin]);
+  }, [q, kind, statusFilter, likedOnly, workerFilter, collectionFilter, highlightId, canViewEquipment, canManageEquipment]);
   // Once items are loaded, match the slug and show action dialog
   useEffect(() => {
     if (!qrSlugPending.current || items.length === 0) return;
@@ -865,10 +925,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     // Check equipment status to determine action
     if (match.status === "RESERVED") {
       // User has it reserved — offer checkout
-      setQrAction({ equipmentId: match.id, slug, action: "checkout", label: `Check out "${match.shortDesc || match.brand + " " + match.model}"?` });
+      setQrAction({ equipmentId: match.id, slug, action: "checkout", label: `Check out "${equipmentLabel(match)}"?` });
     } else if (match.status === "CHECKED_OUT") {
       // User has it checked out — offer return
-      setQrAction({ equipmentId: match.id, slug, action: "return", label: `Return "${match.shortDesc || match.brand + " " + match.model}"?` });
+      setQrAction({ equipmentId: match.id, slug, action: "return", label: `Return "${equipmentLabel(match)}"?` });
     }
   }, [items]);
 
@@ -890,7 +950,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     const sf = statusFilter[0];
     if (sf !== "ALL") {
       let want: EquipmentStatus[] | null = null;
-      if (forAdmin) {
+      if (canManageEquipment) {
         want = [sf as EquipmentStatus];
       } else {
         switch (sf) {
@@ -942,14 +1002,14 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     }
 
     // Liked-only filter (worker)
-    if (isWorkerView && likedOnly) {
+    if (canViewEquipment && likedOnly) {
       rows = rows.filter((r) => likedIds.has(r.id));
     }
 
     // Worker filter (admin) — show only equipment whose current holder is one of the
     // selected workers. Items with no holder fall out, since the filter is "what does
     // worker X have right now."
-    if (forAdmin && workerFilter.length > 0) {
+    if (canManageEquipment && workerFilter.length > 0) {
       const ids = new Set(workerFilter);
       rows = rows.filter((r) => !!r.holder?.userId && ids.has(r.holder.userId));
     }
@@ -962,11 +1022,11 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, forAdmin, isWorkerView, likedOnly, likedIds, highlightId, workerFilter, collectionFilter, collections]);
+  }, [items, q, kind, statusFilter, canManageEquipment, canViewEquipment, likedOnly, likedIds, highlightId, workerFilter, collectionFilter, collections]);
 
-  // Split into Pinned + Claimed + Available + Unavailable groups (worker view only).
+  // Split into Pinned + Claimed + Available + Unavailable groups (self-scoped view only).
   const groups = useMemo(() => {
-    if (!isWorkerView) {
+    if (!canViewEquipment) {
       return [{ key: "all", label: null as string | null, items: filtered }];
     }
     const pinned: Equipment[] = [];
@@ -985,7 +1045,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     if (available.length > 0) out.push({ key: "available", label: "Available", items: available });
     if (unavailable.length > 0) out.push({ key: "unavailable", label: "Unavailable", items: unavailable });
     return out;
-  }, [filtered, pinnedIds, isWorkerView, me]);
+  }, [filtered, pinnedIds, canViewEquipment, me]);
 
   function openCreate() {
     setEditing(null);
@@ -999,10 +1059,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
 
   async function checkoutVerifiedWithSlug(id: string, slug: string) {
     try {
-      // Admin view-as: bypass the worker's own endpoint and route the
-      // checkout through the super endpoint with the picked worker id.
-      if (viewAsUserId && showAdminExtras) {
-        await apiPost(`/api/super/equipment/${id}/checkout-for/verify`, {
+      // Management view-as: bypass the worker's own endpoint and route the
+      // checkout through the act-on-behalf endpoint with the picked worker id.
+      if (viewAsUserId && canManageEquipment) {
+        await apiPost(`/api/equipment/${id}/checkout-for/verify`, {
           userId: viewAsUserId,
           slug: extractSlug(slug),
         });
@@ -1026,13 +1086,13 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
   // Check-in: no QR slug sent — the server skips the scan verification
   // when the slug is absent (see equipment.returnWithQr). View-as
-  // sends the equipment's own qrSlug through the super endpoint so the
+  // sends the equipment's own qrSlug through the act-on-behalf endpoint so the
   // scan-verify check inside the service still passes.
   async function doReturn(e: Equipment) {
     setStatusButtonBusyId(`equipment-return${e.id}`);
     try {
-      if (viewAsUserId && showAdminExtras) {
-        await apiPost(`/api/super/equipment/${e.id}/return-for/verify`, {
+      if (viewAsUserId && canManageEquipment) {
+        await apiPost(`/api/equipment/${e.id}/return-for/verify`, {
           userId: viewAsUserId,
           slug: e.qrSlug,
         });
@@ -1043,12 +1103,12 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Equipment '${e.qrSlug ?? e.shortDesc}' successfully returned.`,
+        text: `Equipment '${e.qrSlug ?? equipmentLabel(e)}' successfully returned.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage(`Equipment '${e.qrSlug ?? e.shortDesc}' return failed.`, err),
+        text: getErrorMessage(`Equipment '${e.qrSlug ?? equipmentLabel(e)}' return failed.`, err),
       });
     } finally {
       setStatusButtonBusyId("");
@@ -1073,11 +1133,11 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   async function doReserve(e: Equipment, opts?: { groupId?: string | null }) {
     const groupId = opts?.groupId !== undefined ? opts.groupId : reserveForGroupId;
     try {
-      if (viewAsUserId && showAdminExtras) {
-        // Admin view-as: reserve on behalf of the picked worker via
-        // the super endpoint. Group scope is only meaningful for the
+      if (viewAsUserId && canManageEquipment) {
+        // Management view-as: reserve on behalf of the picked worker via
+        // the act-on-behalf endpoint. Group scope is only meaningful for the
         // actual worker (who leads groups), so we drop groupId here.
-        await apiPost(`/api/super/equipment/${e.id}/reserve-for`, {
+        await apiPost(`/api/equipment/${e.id}/reserve-for`, {
           userId: viewAsUserId,
         });
       } else {
@@ -1086,7 +1146,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       notifyEquipmentUpdated();
       await load(false);
       const groupName = groupsAsClaimer.find((g) => g.id === groupId)?.name;
-      const asName = viewAsUserId ? adminWorkerName(viewAsUserId) : null;
+      const asName = viewAsUserId ? viewAsWorkerName(viewAsUserId) : null;
       publishInlineMessage({
         type: "SUCCESS",
         text: asName
@@ -1101,7 +1161,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         text: getErrorMessage(`Equipment '${e.qrSlug}' reserved failed.`, err),
         // POLICIES_REQUIRED is handled by PolicyGateInterceptor's dialog;
         // publishInlineMessage suppresses toasts for that code so the
-        // worker only sees one surface.
+        // user only sees one surface.
         code: (err as { code?: string })?.code,
       });
     }
@@ -1197,8 +1257,8 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       let reserved = 0;
       for (const i of itemsToReserve) {
         try {
-          if (viewAsUserId && showAdminExtras) {
-            await apiPost(`/api/super/equipment/${i.equipmentId}/reserve-for`, {
+          if (viewAsUserId && canManageEquipment) {
+            await apiPost(`/api/equipment/${i.equipmentId}/reserve-for`, {
               userId: viewAsUserId,
             });
           } else {
@@ -1233,8 +1293,8 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
   async function cancel(e: Equipment) {
     try {
-      if (viewAsUserId && showAdminExtras) {
-        await apiPost(`/api/super/equipment/${e.id}/reserve-for/cancel`, {
+      if (viewAsUserId && canManageEquipment) {
+        await apiPost(`/api/equipment/${e.id}/reserve-for/cancel`, {
           userId: viewAsUserId,
         });
       } else {
@@ -1258,7 +1318,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
   async function forceRelease(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${e.id}/release`);
+      await apiPost(`/api/equipment/${e.id}/release`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
@@ -1274,7 +1334,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
   async function startMaintainence(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${e.id}/maintenance/start`);
+      await apiPost(`/api/equipment/${e.id}/maintenance/start`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
@@ -1293,7 +1353,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
   async function endMaintainence(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${e.id}/maintenance/end`);
+      await apiPost(`/api/equipment/${e.id}/maintenance/end`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
@@ -1312,7 +1372,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
   async function retire(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${e.id}/retire`);
+      await apiPost(`/api/equipment/${e.id}/retire`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
@@ -1328,7 +1388,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
   async function unretire(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${e.id}/unretire`);
+      await apiPost(`/api/equipment/${e.id}/unretire`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
@@ -1344,7 +1404,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   }
   async function hardDelete(id: string, slug: string) {
     try {
-      await apiDelete(`/api/admin/equipment/${id}`);
+      await apiDelete(`/api/equipment/${id}`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
@@ -1359,25 +1419,25 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     }
   }
 
-  // ── Super "act on behalf of a worker" handlers ─────────────────────────
-  // These hit the /api/super/equipment/* routes which accept a target
-  // userId in the body. The audit actor remains the calling Super so the
+  // ── "Act on behalf" handlers (`equipment.manage`) ──────────────────────
+  // These hit the /api/equipment/* routes which accept a target
+  // userId in the body. The audit actor remains the calling user so the
   // trail records who pulled the lever. checkout-for and return-for skip
-  // the QR scan (the Super is the override; the equipment's own qrSlug is
+  // the QR scan (a caller with `equipment.manage` is the override; the equipment's own qrSlug is
   // sent server-side to satisfy the verify check).
-  async function superReserveFor(
+  async function reserveForOther(
     e: Equipment,
     userId: string,
     groupId?: string | null,
   ) {
     try {
-      await apiPost(`/api/super/equipment/${e.id}/reserve-for`, {
+      await apiPost(`/api/equipment/${e.id}/reserve-for`, {
         userId,
         ...(groupId ? { groupId } : {}),
       });
       notifyEquipmentUpdated();
       await load(false);
-      const name = adminWorkerName(userId);
+      const name = viewAsWorkerName(userId);
       publishInlineMessage({
         type: "SUCCESS",
         text: `Reserved '${e.qrSlug}' on behalf of ${name}.`,
@@ -1389,18 +1449,18 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       });
     }
   }
-  async function superCancelFor(e: Equipment) {
+  async function cancelForOther(e: Equipment) {
     const uid = e.holder?.userId;
     if (!uid) return;
     try {
-      await apiPost(`/api/super/equipment/${e.id}/reserve-for/cancel`, {
+      await apiPost(`/api/equipment/${e.id}/reserve-for/cancel`, {
         userId: uid,
       });
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Reservation canceled for ${adminWorkerName(uid)}.`,
+        text: `Reservation canceled for ${viewAsWorkerName(uid)}.`,
       });
     } catch (err) {
       publishInlineMessage({
@@ -1409,11 +1469,11 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       });
     }
   }
-  async function superCheckoutFor(e: Equipment) {
+  async function checkoutForOther(e: Equipment) {
     const uid = e.holder?.userId;
     if (!uid) return;
     try {
-      await apiPost(`/api/super/equipment/${e.id}/checkout-for/verify`, {
+      await apiPost(`/api/equipment/${e.id}/checkout-for/verify`, {
         userId: uid,
         slug: e.qrSlug,
       });
@@ -1421,7 +1481,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Checked out '${e.qrSlug}' for ${adminWorkerName(uid)}.`,
+        text: `Checked out '${e.qrSlug}' for ${viewAsWorkerName(uid)}.`,
       });
     } catch (err) {
       publishInlineMessage({
@@ -1430,18 +1490,18 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       });
     }
   }
-  async function superReturnFor(e: Equipment) {
+  async function returnForOther(e: Equipment) {
     const uid = e.holder?.userId;
     if (!uid) return;
     try {
-      await apiPost(`/api/super/equipment/${e.id}/return-for/verify`, {
+      await apiPost(`/api/equipment/${e.id}/return-for/verify`, {
         userId: uid,
       });
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Returned '${e.qrSlug}' for ${adminWorkerName(uid)}.`,
+        text: `Returned '${e.qrSlug}' for ${viewAsWorkerName(uid)}.`,
       });
     } catch (err) {
       publishInlineMessage({
@@ -1482,26 +1542,35 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   // ── Action-visibility helpers ───────────────────────────────────────
   // "Worker" actions (like/pin, reserve/cancel/checkout/return) fire on
   // behalf of a subject worker. Without view-as that subject is the
-  // caller; with an admin view-as picker active it's the picked worker.
+  // caller; with the view-as picker active it's the picked worker.
   // The helpers always compare against `subjectUserId` so the same
   // card affordances appear whether admin is looking at themselves or
   // impersonating.
   const subjectUserId = viewAsUserId ?? me?.id ?? null;
-  const isTrainee = me?.workerType === "TRAINEE";
+  // RESERVE ASKS FOR `inventory.pull`, WHICH IS NOT FIELD CLEARANCE.
+  //
+  // `POST /equipment/:id/reserve` is guarded on `inventory.pull`. This
+  // screen gated the button on `work.claim` instead, and the starter roles
+  // decouple the two on purpose: "May pull inventory" exists for "the
+  // office person who fetches supplies but never runs a visit". That role
+  // therefore got the Reserve button hidden AND was told it was a trainee,
+  // while the endpoint would have accepted them. A UI gate has to name its
+  // own endpoint's capability.
+  const cannotPullInventory = !effScope.can("inventory.pull");
 
-  const canWorkerCheckout = (e: Equipment) =>
-    showWorkerExtras && e.status === "RESERVED" && !!subjectUserId && e.holder?.userId === subjectUserId;
-  const canWorkerCancel = (e: Equipment) =>
-    showWorkerExtras && e.status === "RESERVED" && !!subjectUserId && e.holder?.userId === subjectUserId;
-  const canWorkerReturn = (e: Equipment) =>
-    showWorkerExtras && e.status === "CHECKED_OUT" && !!subjectUserId && e.holder?.userId === subjectUserId;
-  const canWorkerReserve = (e: Equipment) =>
-    showWorkerExtras &&
+  const canSubjectCheckout = (e: Equipment) =>
+    canViewEquipment && e.status === "RESERVED" && !!subjectUserId && e.holder?.userId === subjectUserId;
+  const canSubjectCancel = (e: Equipment) =>
+    canViewEquipment && e.status === "RESERVED" && !!subjectUserId && e.holder?.userId === subjectUserId;
+  const canSubjectReturn = (e: Equipment) =>
+    canViewEquipment && e.status === "CHECKED_OUT" && !!subjectUserId && e.holder?.userId === subjectUserId;
+  const canSubjectReserve = (e: Equipment) =>
+    canViewEquipment &&
     e.status === "AVAILABLE" &&
-    // Trainee gate only applies when the ACTING caller is a trainee —
-    // an admin viewing-as a trainee is still an admin under the hood
-    // and can reserve on their behalf.
-    (!!viewAsUserId || !isTrainee);
+    // The field-clearance gate applies only to the ACTING caller. Somebody
+    // viewing-as an uncleared person still holds their own clearance
+    // underneath and may reserve on that person's behalf.
+    (!!viewAsUserId || !cannotPullInventory);
     // Compliance-policy gating (previously "insurance required") has TWO
     // enforcement layers now:
     //   1. `openReserveConfirm` below does a fast client-side pre-check —
@@ -1529,11 +1598,11 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   async function openReserveConfirm(e: Equipment) {
     const equipmentPolicyIds = e.requiredPolicyIds ?? [];
     // Compliance pre-check runs only when the caller is themselves the
-    // subject of the reservation. Admin view-as skips this — the
+    // subject of the reservation. Management view-as skips this — the
     // super endpoint on the server enforces the picked worker's
-    // compliance, and dispatching the interceptor for the admin's
+    // compliance, and dispatching the interceptor for the manager’s
     // own compliance would be nonsensical.
-    if (equipmentPolicyIds.length > 0 && showWorkerExtras && !viewAsUserId) {
+    if (equipmentPolicyIds.length > 0 && canViewEquipment && !viewAsUserId) {
       try {
         const data = await apiGet<{
           required: Array<{ policyId: string }>;
@@ -1563,43 +1632,57 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
     setReserveChecked(false);
   }
 
-  // Super-tier "act on behalf" buttons — hidden when an admin view-as
+  // The "act on behalf" buttons — hidden when the view-as
   // picker is active because the worker-tier buttons (rewired to route
   // through the same super endpoints under view-as) already cover the
   // same intent without the extra picker dialog.
-  const showSuperOnBehalfButtons = showSuperExtras && !viewAsUserId;
-  const canSuperReserveFor = (e: Equipment) =>
-    showSuperOnBehalfButtons && e.status === "AVAILABLE";
-  const canSuperCancelFor = (e: Equipment) =>
-    showSuperOnBehalfButtons && e.status === "RESERVED" && !!e.holder;
-  const canSuperCheckoutFor = (e: Equipment) =>
-    showSuperOnBehalfButtons && e.status === "RESERVED" && !!e.holder;
-  const canSuperReturnFor = (e: Equipment) =>
-    showSuperOnBehalfButtons && e.status === "CHECKED_OUT" && !!e.holder;
+  // `equipment.manage` — the guard on every on-behalf endpoint
+  // (`reserve-for`, `reserve-for/cancel`, `checkout-for/verify`,
+  // `return-for/verify`). It read `reports.view`, which is a reporting
+  // grant and guards none of them: somebody with reporting but no
+  // equipment authority was offered four buttons the server refuses,
+  // and an equipment manager without reporting lost all four.
+  const showActOnBehalfButtons = canManageEquipment && !viewAsUserId;
+  const canReserveForOther = (e: Equipment) =>
+    showActOnBehalfButtons && e.status === "AVAILABLE";
+  const canCancelForOther = (e: Equipment) =>
+    showActOnBehalfButtons && e.status === "RESERVED" && !!e.holder;
+  const canCheckoutForOther = (e: Equipment) =>
+    showActOnBehalfButtons && e.status === "RESERVED" && !!e.holder;
+  const canReturnForOther = (e: Equipment) =>
+    showActOnBehalfButtons && e.status === "CHECKED_OUT" && !!e.holder;
 
-  const canAdminForceRelease = (e: Equipment) => showAdminExtras && !!e.holder;
-  const canAdminStartMaintenance = (e: Equipment) =>
-    showAdminExtras &&
+  const canForceRelease = (e: Equipment) => canManageEquipment && !!e.holder;
+  const canStartMaintenance = (e: Equipment) =>
+    canManageEquipment &&
     e.status !== "RETIRED" &&
     e.status !== "MAINTENANCE" &&
     !e.holder;
-  const canAdminEndMaintenance = (e: Equipment) =>
-    showAdminExtras && e.status === "MAINTENANCE";
-  const canAdminRetire = (e: Equipment) =>
-    showAdminExtras &&
+  const canEndMaintenance = (e: Equipment) =>
+    canManageEquipment && e.status === "MAINTENANCE";
+  const canRetire = (e: Equipment) =>
+    canManageEquipment &&
     e.status !== "RETIRED" &&
     !e.holder &&
     e.status !== "RESERVED" &&
     e.status !== "CHECKED_OUT";
-  const canAdminUnretire = (e: Equipment) =>
-    showAdminExtras && e.status === "RETIRED";
-  // Hard-delete button is super-only, gated on both the UI (this
-  // helper) and the server (superGuard on DELETE /admin/equipment/:id).
-  // The DeleteDialog previously rendered for admin as shown-but-
-  // disabled with a "must be Super" hint, which was confusing —
-  // hidden outright is cleaner.
-  const canSuperHardDelete = (e: Equipment) =>
-    showSuperExtras && e.status === "RETIRED";
+  const canUnretire = (e: Equipment) =>
+    canManageEquipment && e.status === "RETIRED";
+  // `equipment.capital`, matching `DELETE /equipment/:id`.
+  //
+  // It asked for `equipment.manage` and the comment claimed that matched
+  // the route — true until 2026-10-22, when `equipment.manage` was split
+  // and wiping a machine off the books went to `equipment.capital` with
+  // the rest of the capital decisions. Left alone, an Admin would see a
+  // Delete button that 403s: exactly the drift this comment has now been
+  // wrong about twice (it previously said `equipment.manage` while the
+  // code asked `reports.view`).
+  //
+  // Hidden outright rather than shown-but-disabled — a disabled control
+  // with a hint was the confusing shape this replaced.
+  const canDeleteFromBooks = effScope.can("equipment.capital");
+  const canHardDelete = (e: Equipment) =>
+    canDeleteFromBooks && e.status === "RETIRED";
 
   const isMine = (e: Equipment) =>
     !!me && !!e.holder && e.holder.userId === me.id;
@@ -1711,7 +1794,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
   // paint. Closed, it renders nothing, so the loading view is unchanged.
   const tabHelp = (
         <TabExplainer
-          explainerId={`seedlings:inventoryTab:guideOpen:${showSuperExtras ? "super" : showAdminExtras ? "admin" : "worker"}`}
+          explainerId={`seedlings:inventoryTab:guideOpen:${canViewReports ? "super" : canManageEquipment ? "admin" : "worker"}`}
         >
           <ExplainerText>
             Every piece of equipment, what state it is in, who is holding it and which kits it
@@ -1723,12 +1806,13 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             Some pieces require a <Em>signed policy</Em> before anyone can take them out — if
             you have not signed it, Reserve opens that document before anything else.
           </ExplainerText>
-          {!showAdminExtras && (
-            isTrainee ? (
+          {!canManageEquipment && (
+            cannotPullInventory ? (
               <ExplainerText>
-                As a trainee you can browse, pin and read up on anything, but{" "}
-                <Em>reserving is off</Em> — an admin checks equipment out to you. Nothing here
-                is ever billed to you.
+                You can browse, pin and read up on anything, but{" "}
+                <Em>reserving is off</Em> until someone grants you permission to take equipment
+                out — until then, someone else checks it out to you. Nothing here is ever
+                billed to you.
               </ExplainerText>
             ) : me?.workerType === "EMPLOYEE" ? (
               <ExplainerText>
@@ -1744,12 +1828,12 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 out <Em>when you return it</Em>, from the days you actually had it. If you
                 lead a crew, the reserve picker lets you take a piece out for the crew — the
                 cost then splits across the crew&rsquo;s contractors, and any employees or
-                trainees in it pay nothing.
+                unpaid helpers in it pay nothing.
               </ExplainerText>
             )
           )}
-          {showAdminExtras && (
-            <RoleSection role="Admin">
+          {canManageEquipment && (
+            <CapabilitySection capability="equipment.manage" scope={scope}>
               <ExplainerText>
                 You can edit a piece, <Em>force-release</Em> one a worker still has out, move
                 it in and out of maintenance, and retire or un-retire it. Team Usage below is
@@ -1758,13 +1842,13 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               <ExplainerText>
                 There is no act-on-behalf button for you, but turning on <Em>view-as</Em> for
                 a worker gives you their own reserve and return buttons when you need them.
-                Adding a new piece and deleting a retired one are <Em>super-only</Em> —
+                Adding a new piece and deleting a retired one need the same permission —
                 putting equipment on the books is a capital decision.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
-          {showSuperExtras && (
-            <RoleSection role="Super">
+          {canViewReports && (
+            <CapabilitySection capability="reports.view" scope={scope}>
               <ExplainerText>
                 <Em>Adding a new piece</Em> and permanently deleting one that is already
                 retired are yours alone.
@@ -1775,13 +1859,13 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 them. Insights covers today&rsquo;s fleet state, rental income for the window,
                 the leaderboard and what is sitting idle.
               </ExplainerText>
-            </RoleSection>
+            </CapabilitySection>
           )}
         </TabExplainer>
   );
 
-  if (!isAvail) return <>{tabHelp}<UnavailableNotice /></>;
-  if (loading && items.length === 0) return <>{tabHelp}<LoadingCenter /></>;
+  if (!canViewEquipment) return <>{tabHelp}<UnavailableNotice /></>;
+  if (!hasLoaded || (loading && items.length === 0)) return <>{tabHelp}<LoadingCenter /></>;
 
   return (
     <Box w="full">
@@ -1789,7 +1873,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           worker type because the money story is completely different
           per class: contractors are billed for what they take out,
           employees never are, and trainees cannot reserve at all
-          (see canWorkerReserve + the workerRateBadge below). */}
+          (see canSubjectReserve + the workerRateBadge below). */}
         {tabHelp}
       {/* Top toolbar — tab-level actions only (refresh, scan-to-find,
           admin Add). Section-scoped controls (search / compact /
@@ -1837,12 +1921,12 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         >
           <ScanLine size={14} />
         </Button>
-        {/* Create Equipment — super-only. Bringing new equipment onto
-            the books is a capital-account decision and is gated at
-            both the UI (this branch) and the server (superGuard on
-            POST /admin/equipment). Admins can still edit + retire
-            existing pieces via the card action bands. */}
-        {showSuperExtras && (
+        {/* Create Equipment. Bringing new equipment onto the books is a
+            capital-account decision, gated at both the UI (this branch)
+            and the server (`equipment.manage` on POST /equipment).
+            Editing + retiring existing pieces happens on the card
+            action bands. */}
+        {canViewReports && (
           <Button
             variant="solid"
             size="sm"
@@ -1871,13 +1955,12 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         }}
       >
       {/* Group-claimer reserve scope picker. Shows whenever the caller
-          leads at least one active group (fetched only when the tab
-          exposes worker-tier actions). An admin who's also a worker
-          and leads a group sees this in admin view too — the
-          endpoint returns [] for admin-only users so it's a natural
-          no-op there. Hidden when the admin has view-as active,
-          since group-scope only applies to the acting worker. */}
-      {showWorkerExtras && !viewAsUserId && groupsAsClaimer.length > 0 && (() => {
+          leads at least one active group. Somebody who manages equipment
+          and also leads a crew sees it too — the endpoint returns [] for
+          anyone who leads no crew, so it is a natural no-op. Hidden while
+          view-as is active, since group scope only applies to the person
+          actually acting. */}
+      {canViewEquipment && !viewAsUserId && groupsAsClaimer.length > 0 && (() => {
         const activeGroup = groupsAsClaimer.find((g) => g.id === reserveForGroupId);
         const isUnset = reserveForGroupId == null;
         const isSolo = reserveForGroupId === "";
@@ -1888,7 +1971,11 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         const borderColor = isUnset ? "yellow.strong" : isGroup ? "purple.strong" : "blue.emphasized";
         const headerColor = isUnset ? "yellow.fg" : isGroup ? "purple.fg" : "blue.fg";
         return (
-          <Box mb={3} p={3} bg={bg} borderWidth="2px" borderColor={borderColor} borderRadius="md">
+          // `mt={3}` matches the `<Box mt={3}>` every section below this
+          // uses, so the gap above the picker is the same as the gaps
+          // between Insights, Team Usage and Collections. It had only a
+          // bottom margin, so it sat tight under the toolbar.
+          <Box mt={3} mb={3} p={3} bg={bg} borderWidth="2px" borderColor={borderColor} borderRadius="md">
             <HStack gap={2} mb={2} align="center">
               {isUnset ? (
                 <AlertCircle size={18} color="var(--chakra-colors-yellow-800)" />
@@ -1945,14 +2032,19 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
           </Box>
         );
       })()}
-      {/* Super-only Insights — operations-focused rollups only:
-          today's fleet state, this-window checkouts + rental income
-          + pieces used, the equipment leaderboard, and idle list.
-          Team-usage breakdown lives in its own admin+ section below
-          so admins have access to it too (Super Insights is now
-          reserved for company-operational metrics, not raw per-
-          checkout logs). */}
-      {showSuperExtras && (
+      {/* Insights (`reports.view`) — operations rollups only: today's
+          fleet state, this-window checkouts + rental income + pieces
+          used, the equipment leaderboard, and the idle list. The
+          team-usage breakdown is a SEPARATE section below on
+          `equipment.manage`, so somebody who runs the equipment gets the
+          per-checkout detail without needing a reporting grant, and
+          somebody with reporting gets the company metrics without being
+          handed the raw logs. */}
+      {/* `reports.business`, not `reports.view`: EquipmentInsightsSection
+          reads GET /operations, which is the business-wide rollup. The
+          team half of the old single entitlement stayed on `reports.view`
+          when the two were split on 2026-10-23. */}
+      {canViewBusinessReports && (
         /* Box carries the top margin — Dashboard styles its own frame and
            takes no layout props. A {JSX comment} here would be a second
            child of this parenthesised expression, which does not parse. */
@@ -1962,6 +2054,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             title="Insights"
             icon={BarChart3}
             variant="insights"
+            // Header refresh, as on every other section. The section
+            // already re-runs on an `inventory:refresh` event; this fires
+            // the same one rather than inventing a second path.
+            onRefresh={() => { window.dispatchEvent(new Event("inventory:refresh")); }}
           >
             <EquipmentInsightsSection />
           </Dashboard>
@@ -1969,10 +2065,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       )}
       {/* Admin+ team-usage section — the raw per-checkout log
           from the retired Usage tab, scoped to the whole team.
-          Uses UsageBreakdown in SUPER mode (hits the admin
-          `/api/admin/equipment-usage` endpoint that returns every
+          Uses UsageBreakdown in SUPER mode (hits a caller with equipment authority
+          `/api/equipment-usage` endpoint that returns every
           worker's checkouts) and unlocks the Person group-by. */}
-      {showAdminExtras && (
+      {canManageEquipment && (
         <Box mt={3} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={3}>
           <HStack
             gap={2}
@@ -1988,14 +2084,14 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             </Text>
             <Text fontSize="xs" color="fg.muted">{teamUsageCollapsed ? "▶" : "▼"}</Text>
           </HStack>
-          {!teamUsageCollapsed && <UsageBreakdown purpose="SUPER" />}
+          {!teamUsageCollapsed && <UsageBreakdown shows="team" />}
         </Box>
       )}
-      {/* Worker-only personal usage — hidden for admin/super since
+      {/* Personal usage — hidden for management since
           they get the fleet-wide Team Usage above (which surfaces
           the caller's own history alongside everyone else's under
           Person group-by). Collapsed by default. */}
-      {showWorkerExtras && !showAdminExtras && (
+      {canViewEquipment && !canManageEquipment && (
         <Box mt={3} borderWidth="1px" borderColor="gray.emphasized" borderRadius="md" p={3}>
           <HStack
             gap={2}
@@ -2011,7 +2107,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             </Text>
             <Text fontSize="xs" color="fg.muted">{usageCollapsed ? "▶" : "▼"}</Text>
           </HStack>
-          {!usageCollapsed && <UsageBreakdown purpose="WORKER" />}
+          {!usageCollapsed && <UsageBreakdown shows="mine" />}
         </Box>
       )}
       {collections.length > 0 && (
@@ -2029,7 +2125,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs">{collections.length}</Badge>
               <Text fontSize="xs" color="fg.muted">{collectionsCollapsed ? "▶" : "▼"}</Text>
             </HStack>
-            {showAdminExtras && (
+            {canManageEquipment && (
               <Badge
                 size="sm"
                 colorPalette="blue"
@@ -2038,7 +2134,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 px="2"
                 borderRadius="full"
                 onClick={() => {
-                  const evName = showSuperExtras ? "navigate:superTab" : "navigate:adminTab";
+                  const evName = canViewReports ? "navigate:staffTab" : "navigate:staffTab";
                   window.dispatchEvent(new CustomEvent(evName, { detail: { tab: "collections" } }));
                 }}
               >
@@ -2060,13 +2156,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 const allAvail = total > 0 && available === total;
                 const someAvail = available > 0;
                 const isExpanded = expandedCollections.has(c.id);
-                const equipLabel = (eq: CollectionItem["equipment"]): string => {
-                  if (eq.shortDesc) return eq.shortDesc;
-                  const parts = [eq.brand, eq.model].filter(Boolean);
-                  if (parts.length > 0) return parts.join(" ");
-                  if (eq.type) return eq.type;
-                  return eq.id.slice(-6);
-                };
+                // Delegates to the module-level helper so a blank row reads
+                // identically here and in the main list.
+                const equipLabel = (eq: CollectionItem["equipment"]): string =>
+                  equipmentLabel(eq);
                 return (
                   <Card.Root
                     key={c.id}
@@ -2094,7 +2187,18 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                           >
                             {collectionFilter === c.id ? "Filtered" : "Filter"}
                           </Button>
-                          {isWorkerView && (
+                          {/* SAME CAPABILITY AS THE PER-ITEM RESERVE.
+                              This asked only for `equipment.view`, so the
+                              whole kit grid offered Reserve to somebody who
+                              cannot reserve a single piece. The server held
+                              — every member came back 403 — but the button
+                              fired one request per item and then reported
+                              "nothing reserved" after the fact, which reads
+                              as a system fault rather than a permission the
+                              caller never had. `reserveKit` ends in the same
+                              `POST /equipment/:id/reserve` (`inventory.pull`)
+                              that the single-item button uses. */}
+                          {canViewEquipment && !cannotPullInventory && (
                             <Button
                               size="xs"
                               colorPalette={allAvail ? "green" : someAvail ? "yellow" : "gray"}
@@ -2199,17 +2303,17 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
       </HStack>
       {!equipmentCollapsed && (
       <VStack align="stretch" gap={3}>
-        {/* Admin view-as picker — scopes ONLY the Equipment section
+        {/* View-as picker — scopes ONLY the Equipment section
             (card actions + kit reserve). Insights / Team Usage /
             Collections list are fleet-wide regardless. Lives here
             inside the Equipment frame so it's obvious what it
             affects, not up at the tab level. */}
-        {showAdminExtras && (
+        {canManageEquipment && (
           <HStack gap={2} wrap="wrap" alignItems="center">
-            <AdminViewAsSelector
-              workers={adminWorkers as AdminWorker[]}
+            <ViewAsSelector
+              workers={viewAsWorkers as ViewAsWorker[]}
               selected={viewAsUserIds}
-              // AdminViewAsSelector is multi-select — clicking a new
+              // ViewAsSelector is multi-select — clicking a new
               // worker APPENDS to the array. Inventory only supports
               // one impersonation target at a time, so keep the
               // LAST clicked worker (slice(-1)), not the first —
@@ -2219,10 +2323,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             />
           </HStack>
         )}
-        {showAdminExtras && viewAsUserIds.length > 0 && (
+        {canManageEquipment && viewAsUserIds.length > 0 && (
           <HStack gap={1} wrap="wrap" pl="1" alignItems="center">
             <Text fontSize="xs" color="fg.muted">Acting as:</Text>
-            <AdminViewAsBadges workers={adminWorkers as AdminWorker[]} selected={viewAsUserIds} />
+            <ViewAsBadges workers={viewAsWorkers as ViewAsWorker[]} selected={viewAsUserIds} />
             <Badge
               size="sm"
               colorPalette="red"
@@ -2307,7 +2411,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               </Select.Content>
             </Select.Positioner>
           </Select.Root>
-          {isWorkerView && (
+          {canViewEquipment && (
             <Button
               size="sm"
               variant={likedOnly ? "solid" : "outline"}
@@ -2328,7 +2432,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         </HStack>
         {/* Active-filter chip row — reflects the toolbar's current
             state and offers a ✕ Clear to reset all filters at once. */}
-        {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || (isWorkerView && likedOnly) || (forAdmin && workerFilter.length > 0) || !!collectionFilter || highlightId) && (
+        {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || (canViewEquipment && likedOnly) || (canManageEquipment && workerFilter.length > 0) || !!collectionFilter || highlightId) && (
           <HStack gap={1} wrap="wrap" pl="2">
             {collectionFilter && (() => {
               const c = collections.find((x) => x.id === collectionFilter);
@@ -2351,12 +2455,12 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 {statusItems.find((i) => i.value === statusFilter[0])?.label}
               </Badge>
             )}
-            {!highlightId && isWorkerView && likedOnly && (
+            {!highlightId && canViewEquipment && likedOnly && (
               <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>
             )}
-            {!highlightId && forAdmin && workerFilter.map((id) => (
+            {!highlightId && canManageEquipment && workerFilter.map((id) => (
               <Badge key={id} size="sm" colorPalette="blue" variant="solid">
-                {adminWorkerName(id)}
+                {viewAsWorkerName(id)}
               </Badge>
             ))}
             <Badge
@@ -2369,8 +2473,8 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 setKind(["ALL"]);
                 setStatusFilter(["ALL"]);
                 setCollectionFilter(null);
-                if (isWorkerView) setLikedOnly(false);
-                if (forAdmin) setWorkerFilter([]);
+                if (canViewEquipment) setLikedOnly(false);
+                if (canManageEquipment) setWorkerFilter([]);
               }}
             >
               ✕ Clear
@@ -2484,7 +2588,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   <Box display="flex" flexDirection="column" gap={1} flex="1" minW={0}>
                     <HStack gap={2} alignItems="center" minW={0}>
                       {(() => {
-                        if (canWorkerReserve(e)) {
+                        if (canSubjectReserve(e)) {
                           return (
                             <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.400" color="green.fg" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.500" }} title="Reserve" onClick={(ev: any) => {
                               ev.stopPropagation();
@@ -2492,7 +2596,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                             }}><Hand size={12} /></Box>
                           );
                         }
-                        if (canWorkerCheckout(e)) {
+                        if (canSubjectCheckout(e)) {
                           return (
                             <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.solid" color="blue.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Check Out" onClick={(ev: any) => {
                               ev.stopPropagation();
@@ -2500,7 +2604,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                             }}><ScanLine size={12} /></Box>
                           );
                         }
-                        if (canWorkerReturn(e)) {
+                        if (canSubjectReturn(e)) {
                           return (
                             <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.solid" color="orange.contrast" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Return" onClick={(ev: any) => {
                               ev.stopPropagation();
@@ -2518,8 +2622,8 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                         textOverflow="ellipsis"
                         minW={0}
                         flex="1"
-                        title={e.shortDesc}
-                      >{e.shortDesc}</Text>
+                        title={equipmentLabel(e)}
+                      >{equipmentLabel(e)}</Text>
                     </HStack>
                     <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0} mb={1}>
                       <StatusBadge
@@ -2552,7 +2656,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                       // blue/green = personal rate).
                       const chip = shortBillingChip(resolveBillingMode(e.dailyRate, e.equivalentJobs, equipmentBillingEnabled));
                       const wt = me?.workerType;
-                      const palette = wt === "EMPLOYEE" ? "blue" : wt === "TRAINEE" ? "green" : "orange";
+                      const palette = wt === "EMPLOYEE" ? "blue" : wt === "UNPAID" ? "purple" : "orange";
                       // A contractor's pill comes from the SAME resolved
                       // billing mode the full card and the reserve dialog
                       // use — never from the raw dailyRate. Reading the
@@ -2563,16 +2667,16 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                       // daily cap as if it were a flat daily rate).
                       // Employees and trainees are never billed, so they
                       // keep reading "No charge" regardless of the chip.
-                      const isBillable = wt !== "EMPLOYEE" && wt !== "TRAINEE";
-                      const workerPill = showWorkerExtras
+                      const isBillable = isFeeable(wt);
+                      const workerPill = canViewEquipment
                         ? isBillable && chip
                           ? <Badge key="w" colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">{chip}</Badge>
                           : <Badge key="w" colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
                         : null;
-                      const adminPill = showAdminExtras && chip
+                      const elevatedPill = canManageEquipment && chip
                         ? <Badge key="a" colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor billing">{chip}</Badge>
                         : null;
-                      return <>{workerPill}{adminPill}</>;
+                      return <>{workerPill}{elevatedPill}</>;
                     })()}
                   </HStack>
                 </VStack>
@@ -2582,7 +2686,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
             <Card.Header py="2" px="3" pb="0">
               <HStack justify="space-between" alignItems="flex-start" gap={2}>
               <Box display="flex" flexDirection="column" gap={1} flex="1" minW={0}>
-                <Text fontSize="md" fontWeight="semibold">{e.shortDesc}</Text>
+                <Text fontSize="md" fontWeight="semibold">{equipmentLabel(e)}</Text>
                 <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0} mb={1}>
                   <StatusBadge
                     status={e.status ?? ""}
@@ -2607,7 +2711,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   {e.model ? `${e.model} ` : ""}
                 </Text>
                 <Box mt={1} mb={1}>
-                  <EquipmentPhotos equipmentId={e.id} readOnly={!forAdmin} hasPhotos={e.hasPhotos} />
+                  <EquipmentPhotos equipmentId={e.id} scope={scope} hasPhotos={e.hasPhotos} />
                 </Box>
                 {e.qrSlug && (
                   <HStack gap={1} mt={0} align="center">
@@ -2647,10 +2751,10 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   // Billing display — capabilities ADD by scope:
                   //  • Worker row (always when scope includes worker) —
                   //    shows THIS operator's own rate: contractor sees
-                  //    the daily rate, employee/trainee sees "No charge".
+                  //    the daily rate, a W-2 employee sees "No charge".
                   //  • Admin row (when scope includes admin) — shows
                   //    the CONTRACTOR + EMPLOYEE billing rules for the
-                  //    equipment itself, so admins can audit the
+                  //    equipment itself, so holders of `equipment.manage` can audit the
                   //    rate/cap config at a glance.
                   //
                   // Each row is prefixed with a small role label so a
@@ -2660,7 +2764,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   const chip = shortBillingChip(mode);
                   const wt = me?.workerType;
                   const workerRateBadge = (() => {
-                    if (wt === "TRAINEE") return (
+                    if (wt === "UNPAID") return (
                       <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                         No charge — trainees cannot reserve
                       </Badge>
@@ -2680,13 +2784,13 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   })();
                   return (
                     <VStack align="start" gap={1} mt={0.5} fontSize="xs">
-                      {showWorkerExtras && (
+                      {canViewEquipment && (
                         <HStack gap={2}>
                           <Badge size="xs" variant="subtle" colorPalette="blue">You</Badge>
                           {workerRateBadge}
                         </HStack>
                       )}
-                      {showAdminExtras && (
+                      {canManageEquipment && (
                         <>
                           <HStack gap={2}>
                             <Badge size="xs" variant="subtle" colorPalette="purple">Admin</Badge>
@@ -2719,25 +2823,25 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 statusButtonBusyId={statusButtonBusyId}
                 setStatusButtonBusyId={setStatusButtonBusyId}
                 // Gates
-                showWorkerExtras={showWorkerExtras}
-                showAdminExtras={showAdminExtras}
-                isTrainee={isTrainee}
+                canViewEquipment={canViewEquipment}
+                canManageEquipment={canManageEquipment}
+                cannotPullInventory={cannotPullInventory}
                 viewAsUserId={viewAsUserId}
-                viewAsUserName={viewAsUserId ? adminWorkerName(viewAsUserId) : null}
-                canWorkerCheckout={canWorkerCheckout(e)}
-                canWorkerCancel={canWorkerCancel(e)}
-                canWorkerReturn={canWorkerReturn(e)}
-                canWorkerReserve={canWorkerReserve(e)}
-                canAdminForceRelease={canAdminForceRelease(e)}
-                canAdminStartMaintenance={canAdminStartMaintenance(e)}
-                canAdminEndMaintenance={canAdminEndMaintenance(e)}
-                canAdminRetire={canAdminRetire(e)}
-                canAdminUnretire={canAdminUnretire(e)}
-                canSuperHardDelete={canSuperHardDelete(e)}
-                canSuperReserveFor={canSuperReserveFor(e)}
-                canSuperCancelFor={canSuperCancelFor(e)}
-                canSuperCheckoutFor={canSuperCheckoutFor(e)}
-                canSuperReturnFor={canSuperReturnFor(e)}
+                viewAsUserName={viewAsUserId ? viewAsWorkerName(viewAsUserId) : null}
+                canSubjectCheckout={canSubjectCheckout(e)}
+                canSubjectCancel={canSubjectCancel(e)}
+                canSubjectReturn={canSubjectReturn(e)}
+                canSubjectReserve={canSubjectReserve(e)}
+                canForceRelease={canForceRelease(e)}
+                canStartMaintenance={canStartMaintenance(e)}
+                canEndMaintenance={canEndMaintenance(e)}
+                canRetire={canRetire(e)}
+                canUnretire={canUnretire(e)}
+                canHardDelete={canHardDelete(e)}
+                canReserveForOther={canReserveForOther(e)}
+                canCancelForOther={canCancelForOther(e)}
+                canCheckoutForOther={canCheckoutForOther(e)}
+                canReturnForOther={canReturnForOther(e)}
                 // Handlers
                 onEdit={() => void openEdit(e)}
                 onWorkerCheckout={() => void setScanFor(e.id)}
@@ -2753,17 +2857,17 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   void setToDelete({
                     id: e.id,
                     title: "Delete equipment?",
-                    summary: e.shortDesc,
-                    extra: e.qrSlug,
+                    summary: equipmentLabel(e),
+                    extra: e.qrSlug ?? undefined,
                   })
                 }
-                onSuperReserveFor={() => {
-                  setSuperPickerUserId("");
-                  setSuperActionFor({ equipment: e, action: "reserve" });
+                onReserveForOther={() => {
+                  setOnBehalfUserId("");
+                  setActOnBehalfFor({ equipment: e, action: "reserve" });
                 }}
-                onSuperCancelFor={() => setSuperActionFor({ equipment: e, action: "cancel" })}
-                onSuperCheckoutFor={() => setSuperActionFor({ equipment: e, action: "checkout" })}
-                onSuperReturnFor={() => setSuperActionFor({ equipment: e, action: "return" })}
+                onCancelForOther={() => setActOnBehalfFor({ equipment: e, action: "cancel" })}
+                onCheckoutForOther={() => setActOnBehalfFor({ equipment: e, action: "checkout" })}
+                onReturnForOther={() => setActOnBehalfFor({ equipment: e, action: "return" })}
               />
             </Card.Footer>
             </>
@@ -2804,7 +2908,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         title="Return this equipment?"
         message={
           returnConfirmEquip
-            ? `Check in "${returnConfirmEquip.shortDesc || `${returnConfirmEquip.brand ?? ""} ${returnConfirmEquip.model ?? ""}`.trim() || returnConfirmEquip.qrSlug}" and make it available again.`
+            ? `Check in "${equipmentLabel(returnConfirmEquip)}" and make it available again.`
             : ""
         }
         confirmLabel="Return"
@@ -2838,10 +2942,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               <VStack align="stretch" gap={0.5}>
                 {kitPartialConfirm.available.map((it) => (
                   <Text key={it.id} fontSize="xs" color="green.fg">
-                    • {it.equipment.shortDesc
-                        || [it.equipment.brand, it.equipment.model].filter(Boolean).join(" ")
-                        || it.equipment.type
-                        || it.equipmentId.slice(-6)}
+                    • {equipmentLabel({ ...it.equipment, id: it.equipment.id ?? it.equipmentId })}
                   </Text>
                 ))}
               </VStack>
@@ -2854,10 +2955,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 {kitPartialConfirm.unavailable.map((u) => (
                   <HStack key={u.item.id} gap={2} justify="space-between">
                     <Text fontSize="xs" color="yellow.fg">
-                      • {u.item.equipment.shortDesc
-                          || [u.item.equipment.brand, u.item.equipment.model].filter(Boolean).join(" ")
-                          || u.item.equipment.type
-                          || u.item.equipmentId.slice(-6)}
+                      • {equipmentLabel({ ...u.item.equipment, id: u.item.equipment.id ?? u.item.equipmentId })}
                     </Text>
                     <Badge size="xs" colorPalette="yellow" variant="subtle">{u.reason}</Badge>
                   </HStack>
@@ -2875,17 +2973,17 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         }}
         onCancel={() => setKitPartialConfirm(null)}
       />
-      {showAdminExtras && (
+      {canManageEquipment && (
         <EquipmentDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
           mode={editing ? "UPDATE" : "CREATE"}
-          role="ADMIN"
+          scope={effScope}
           initial={editing ?? undefined}
           onSaved={() => void load()}
         />
       )}
-      {showAdminExtras && (
+      {canDeleteFromBooks && (
         <DeleteDialog
           toDelete={toDelete}
           cancel={() => setToDelete(null)}
@@ -2982,7 +3080,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                 {reserveConfirmEquip && (
                   <VStack align="stretch" gap={3}>
                     <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
-                      <Text fontSize="sm" fontWeight="medium">{reserveConfirmEquip.shortDesc}</Text>
+                      <Text fontSize="sm" fontWeight="medium">{equipmentLabel(reserveConfirmEquip)}</Text>
                       {(reserveConfirmEquip.brand || reserveConfirmEquip.model) && (
                         <Text fontSize="xs" color="fg.muted">
                           {[reserveConfirmEquip.brand, reserveConfirmEquip.model].filter(Boolean).join(" ")}
@@ -3016,7 +3114,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                           <Box mt={1} p={2} bg="green.faint" rounded="md">
                             <Text fontSize="xs" color="green.fg" fontWeight="medium">
                               {wt === "EMPLOYEE" ? "No charge  — equipment covered for employees"
-                                : wt === "TRAINEE" ? "No charge  — equipment covered for employees"
+                                : wt === "UNPAID" ? "No charge — equipment is never billed to unpaid helpers"
                                 : "No rental charge for this equipment"}
                             </Text>
                           </Box>
@@ -3074,16 +3172,16 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
         </Portal>
       </Dialog.Root>
 
-      {/* Super "act on behalf of a worker" dialog. Reserve picks a worker
+      {/* "Act on behalf" dialog (`equipment.manage`). Reserve picks a worker
           from the workers list; the other three actions imply the current
           holder. checkout-for and return-for skip the QR scan since the
-          Super is the override path. */}
+          `equipment.manage` is the override path. */}
       <Dialog.Root
-        open={!!superActionFor}
+        open={!!actOnBehalfFor}
         onOpenChange={(e) => {
           if (!e.open) {
-            setSuperActionFor(null);
-            setSuperPickerUserId("");
+            setActOnBehalfFor(null);
+            setOnBehalfUserId("");
           }
         }}
       >
@@ -3094,57 +3192,57 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
               <Dialog.CloseTrigger />
               <Dialog.Header>
                 <Dialog.Title>
-                  {superActionFor?.action === "reserve" && "Reserve on behalf of a worker"}
-                  {superActionFor?.action === "cancel" && "Cancel reservation on behalf"}
-                  {superActionFor?.action === "checkout" && "Check out on behalf"}
-                  {superActionFor?.action === "return" && "Return on behalf"}
+                  {actOnBehalfFor?.action === "reserve" && "Reserve on behalf of a worker"}
+                  {actOnBehalfFor?.action === "cancel" && "Cancel reservation on behalf"}
+                  {actOnBehalfFor?.action === "checkout" && "Check out on behalf"}
+                  {actOnBehalfFor?.action === "return" && "Return on behalf"}
                 </Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
                 {/* Surface the impersonation warning once a worker is
                     selected — every action in this dialog ("on behalf
-                    of") is a Super acting on someone else's equipment
+                    of") is someone with equipment authority acting on someone else's equipment
                     record. Until they pick, no warning (action is not
                     yet associated with anyone). The role-impersonation
                     side of the banner still fires when applicable. */}
                 <ImpersonationWarning
                   viewAsName={
-                    superPickerUserId
-                      ? (adminWorkers.find((w) => w.id === superPickerUserId)?.displayName
-                          ?? adminWorkers.find((w) => w.id === superPickerUserId)?.email
+                    onBehalfUserId
+                      ? (viewAsWorkers.find((w) => w.id === onBehalfUserId)?.displayName
+                          ?? viewAsWorkers.find((w) => w.id === onBehalfUserId)?.email
                           ?? null)
                       : null
                   }
                 />
-                {superActionFor && (
+                {actOnBehalfFor && (
                   <VStack align="stretch" gap={3}>
                     <Box p={3} bg="gray.faint" rounded="md" borderWidth="1px" borderColor="gray.emphasized">
                       <Text fontSize="sm" fontWeight="medium">
-                        {superActionFor.equipment.shortDesc}
+                        {equipmentLabel(actOnBehalfFor.equipment)}
                       </Text>
-                      {(superActionFor.equipment.brand || superActionFor.equipment.model) && (
+                      {(actOnBehalfFor.equipment.brand || actOnBehalfFor.equipment.model) && (
                         <Text fontSize="xs" color="fg.muted">
-                          {[superActionFor.equipment.brand, superActionFor.equipment.model]
+                          {[actOnBehalfFor.equipment.brand, actOnBehalfFor.equipment.model]
                             .filter(Boolean)
                             .join(" ")}
                         </Text>
                       )}
                       <Text fontSize="xs" color="fg.muted" mt={1}>
-                        QR: {superActionFor.equipment.qrSlug}
+                        QR: {actOnBehalfFor.equipment.qrSlug}
                       </Text>
                     </Box>
 
-                    {superActionFor.action === "reserve" ? (
+                    {actOnBehalfFor.action === "reserve" ? (
                       <>
                         <Text fontSize="sm" color="fg.muted">
-                          Pick the worker this reservation should be recorded for. The audit trail will show you as the Super who performed the action.
+                          Pick the worker this reservation should be recorded for. The audit trail will show you as a caller with equipment authority who performed the action.
                         </Text>
                         <Box>
                           <Text fontSize="xs" fontWeight="semibold" mb={1}>Worker</Text>
                           <Select.Root
-                            collection={superWorkerCollection}
-                            value={superPickerUserId ? [superPickerUserId] : []}
-                            onValueChange={(e) => setSuperPickerUserId(e.value[0] ?? "")}
+                            collection={workerCollection}
+                            value={onBehalfUserId ? [onBehalfUserId] : []}
+                            onValueChange={(e) => setOnBehalfUserId(e.value[0] ?? "")}
                             size="sm"
                             positioning={{ strategy: "fixed", hideWhenDetached: true }}
                           >
@@ -3155,7 +3253,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                             </Select.Control>
                             <Select.Positioner>
                               <Select.Content>
-                                {superWorkerItems.map((it) => (
+                                {workerItems.map((it) => (
                                   <Select.Item key={it.value} item={it.value}>
                                     <Select.ItemText>{it.label}</Select.ItemText>
                                   </Select.Item>
@@ -3168,20 +3266,20 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                     ) : (
                       <Box p={2} bg="purple.faint" rounded="md" borderWidth="1px" borderColor="purple.emphasized">
                         <Text fontSize="sm" color="purple.fg">
-                          {superActionFor.action === "cancel" && "Cancel "}
-                          {superActionFor.action === "checkout" && "Check out "}
-                          {superActionFor.action === "return" && "Return "}
+                          {actOnBehalfFor.action === "cancel" && "Cancel "}
+                          {actOnBehalfFor.action === "checkout" && "Check out "}
+                          {actOnBehalfFor.action === "return" && "Return "}
                           on behalf of{" "}
                           <Text as="span" fontWeight="semibold">
-                            {superActionFor.equipment.holder?.displayName ||
-                              superActionFor.equipment.holder?.email ||
+                            {actOnBehalfFor.equipment.holder?.displayName ||
+                              actOnBehalfFor.equipment.holder?.email ||
                               "the current holder"}
                           </Text>
                           .
                         </Text>
-                        {superActionFor.action === "checkout" && (
+                        {actOnBehalfFor.action === "checkout" && (
                           <Text fontSize="xs" color="purple.fg" mt={1}>
-                            QR scan is bypassed — Super override.
+                            QR scan is bypassed — `equipment.manage` override.
                           </Text>
                         )}
                       </Box>
@@ -3194,44 +3292,44 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
                   <Button
                     variant="ghost"
                     onClick={() => {
-                      setSuperActionFor(null);
-                      setSuperPickerUserId("");
+                      setActOnBehalfFor(null);
+                      setOnBehalfUserId("");
                     }}
-                    disabled={superActionBusy}
+                    disabled={onBehalfBusy}
                   >
                     Cancel
                   </Button>
                   <Button
                     colorPalette="purple"
-                    loading={superActionBusy}
+                    loading={onBehalfBusy}
                     disabled={
-                      superActionFor?.action === "reserve" && !superPickerUserId
+                      actOnBehalfFor?.action === "reserve" && !onBehalfUserId
                     }
                     onClick={async () => {
-                      if (!superActionFor) return;
-                      setSuperActionBusy(true);
+                      if (!actOnBehalfFor) return;
+                      setOnBehalfBusy(true);
                       try {
-                        const { equipment, action } = superActionFor;
+                        const { equipment, action } = actOnBehalfFor;
                         if (action === "reserve") {
-                          await superReserveFor(equipment, superPickerUserId);
+                          await reserveForOther(equipment, onBehalfUserId);
                         } else if (action === "cancel") {
-                          await superCancelFor(equipment);
+                          await cancelForOther(equipment);
                         } else if (action === "checkout") {
-                          await superCheckoutFor(equipment);
+                          await checkoutForOther(equipment);
                         } else if (action === "return") {
-                          await superReturnFor(equipment);
+                          await returnForOther(equipment);
                         }
                       } finally {
-                        setSuperActionBusy(false);
-                        setSuperActionFor(null);
-                        setSuperPickerUserId("");
+                        setOnBehalfBusy(false);
+                        setActOnBehalfFor(null);
+                        setOnBehalfUserId("");
                       }
                     }}
                   >
-                    {superActionFor?.action === "reserve" && "Reserve"}
-                    {superActionFor?.action === "cancel" && "Cancel reservation"}
-                    {superActionFor?.action === "checkout" && "Check out"}
-                    {superActionFor?.action === "return" && "Return"}
+                    {actOnBehalfFor?.action === "reserve" && "Reserve"}
+                    {actOnBehalfFor?.action === "cancel" && "Cancel reservation"}
+                    {actOnBehalfFor?.action === "checkout" && "Check out"}
+                    {actOnBehalfFor?.action === "return" && "Return"}
                   </Button>
                 </HStack>
               </Dialog.Footer>
@@ -3302,7 +3400,7 @@ export default function InventoryTab({ me, purpose = "WORKER", scope }: Inventor
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Equipment Insights section — window-scoped leaderboard + idle list.
-// Sourced from /api/admin/operations (same endpoint the header
+// Sourced from /api/operations (same endpoint the header
 // unclaimed-jobs badge uses). Local date range independent from the
 // rest of the tab, which is not window-scoped.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3363,7 +3461,7 @@ function EquipmentInsightsSection() {
   const periodCollection = useMemo(
     () =>
       createListCollection({
-        items: SUPER_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
+        items: FULL_PERIODS.map((p) => ({ label: p.label, value: periodKey(p) })),
       }),
     [],
   );
@@ -3383,7 +3481,7 @@ function EquipmentInsightsSection() {
         const qs = new URLSearchParams();
         qs.set("from", dateFrom);
         qs.set("to", dateTo);
-        const res = await apiGet<InsightsResponse>(`/api/admin/operations?${qs}`);
+        const res = await apiGet<InsightsResponse>(`/api/operations?${qs}`);
         if (!cancelled) setData(res.equipment);
       } catch {
         if (!cancelled) setData(null);
@@ -3421,7 +3519,7 @@ function EquipmentInsightsSection() {
                 value={[]}
                 onValueChange={(e) => {
                   const k = e.value?.[0];
-                  const next = SUPER_PERIODS.find((p) => periodKey(p) === k);
+                  const next = FULL_PERIODS.find((p) => periodKey(p) === k);
                   if (!next) return;
                   const r = periodToRange(next);
                   setDateFrom(r.from);
@@ -3515,7 +3613,7 @@ function EquipmentInsightsSection() {
                     <HStack gap={1} wrap="wrap" mt={1} px={1}>
                       {data.idle.map((e) => (
                         <Badge key={e.id} size="sm" colorPalette="gray" variant="subtle" fontSize="2xs" px="2" borderRadius="full">
-                          {e.shortDesc ?? "—"}
+                          {equipmentLabel(e)}
                           {(e.brand || e.model) && (
                             <Text as="span" color="fg.muted" ml={1}>
                               ({[e.brand, e.model].filter(Boolean).join(" ")})
@@ -3566,7 +3664,7 @@ function EquipmentLeaderboard({
   ];
   const activeMetric = METRICS.find((m) => m.key === chartMetric) ?? METRICS[0];
   const chartData = leaderboard
-    .map((e) => ({ name: e.shortDesc ?? e.id, value: activeMetric.getter(e) }))
+    .map((e) => ({ name: equipmentLabel(e), value: activeMetric.getter(e) }))
     .sort((a, b) => b.value - a.value);
   const truncName = (n: string) => (n.length > 22 ? n.slice(0, 21) + "…" : n);
   return (
@@ -3630,7 +3728,7 @@ function EquipmentLeaderboard({
                 _hover={{ bg: "gray.faint" }}
               >
                 <VStack align="start" gap={0} flex="1" minW={0}>
-                  <Text fontWeight="medium" truncate>{e.shortDesc ?? "—"}</Text>
+                  <Text fontWeight="medium" truncate>{equipmentLabel(e)}</Text>
                   {(e.brand || e.model) && (
                     <Text color="fg.muted" fontSize="2xs" truncate>
                       {[e.brand, e.model].filter(Boolean).join(" ")}
@@ -3676,17 +3774,14 @@ function EquipmentLeaderboard({
 }
 
 // ─── Usage breakdown ─────────────────────────────────────────────
-// Absorbed from the retired EquipmentUsageTab. Renders a summary
-// strip + a group-by picker (equipment / collection / day, plus
-// Person for admin+super) + expandable checkout rows. Data source
-// depends on scope:
-//   • purpose="WORKER"  → /api/equipment-usage      (own history)
-//   • purpose="SUPER"   → /api/admin/equipment-usage (fleet-wide)
-// Uses its own persisted date range + group-by state so the mount
-// site (Worker Inventory vs Super Insights) doesn't have to thread
-// props through.
+// Renders a summary strip + a group-by picker (equipment / collection /
+// day, plus Person when the caller may see other people's) + expandable
+// checkout rows. Both scopes read /api/equipment-usage; the server decides
+// how much comes back. Uses its own persisted date range + group-by state
+// so the mount site does not have to thread props through.
 
-type UsagePurpose = "WORKER" | "SUPER";
+/** WHOSE usage this breakdown shows — a DATA SCOPE, not an authority. */
+type UsageScope = "mine" | "team";
 type UsagePreset = "all" | "7" | "30" | "90" | "365";
 type UsageGroupBy = "person" | "equipment" | "collection" | "day";
 
@@ -3719,12 +3814,11 @@ function usageRangeForPreset(p: UsagePreset): { from: string; to: string } {
   return { from: bizAddDays(to, -days), to };
 }
 
+// Delegates: this was a third copy of the same fallback chain living a
+// few thousand lines from the others, so a blank row read differently
+// depending on which panel you were looking at.
 function usageEquipmentLabel(e: UsageRow["equipment"]): string {
-  if (e.shortDesc) return e.shortDesc;
-  const parts = [e.brand, e.model].filter(Boolean);
-  if (parts.length > 0) return parts.join(" ");
-  if (e.type) return e.type;
-  return e.id.slice(-6);
+  return equipmentLabel(e);
 }
 
 function usagePersonLabel(u: UsageRow["user"]): string {
@@ -3741,16 +3835,16 @@ function usageDaysOut(c: UsageRow): number {
   return Math.max(1, Math.ceil((end - start) / 86400000));
 }
 
-function UsageBreakdown({ purpose }: { purpose: UsagePurpose }) {
-  const isSuper = purpose === "SUPER";
-  const pfx = `usage_${purpose.toLowerCase()}`;
+function UsageBreakdown({ shows }: { shows: UsageScope }) {
+  const isTeam = shows === "team";
+  const pfx = `usage_${shows}`;
   const [rows, setRows] = useState<UsageRow[]>([]);
   const [collections, setCollections] = useState<UsageCollection[]>([]);
   const [loading, setLoading] = useState(true);
   const [preset, setPreset] = usePersistedState<UsagePreset>(`${pfx}_preset`, "30");
   const [groupBy, setGroupBy] = usePersistedState<UsageGroupBy>(
     `${pfx}_groupBy`,
-    isSuper ? "person" : "equipment",
+    isTeam ? "person" : "equipment",
   );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -3770,7 +3864,7 @@ function UsageBreakdown({ purpose }: { purpose: UsagePurpose }) {
         const qs = new URLSearchParams();
         if (from) qs.set("from", from);
         if (to) qs.set("to", to);
-        const base = isSuper ? "/api/admin/equipment-usage" : "/api/equipment-usage";
+        const base = isTeam ? "/api/equipment-usage" : "/api/equipment-usage";
         const [usage, cols] = await Promise.all([
           apiGet<UsageRow[]>(`${base}?${qs}`),
           apiGet<UsageCollection[]>("/api/equipment-collections"),
@@ -3784,7 +3878,7 @@ function UsageBreakdown({ purpose }: { purpose: UsagePurpose }) {
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [preset, isSuper, refreshTick]);
+  }, [preset, isTeam, refreshTick]);
 
   const equipmentCollections = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -3849,7 +3943,7 @@ function UsageBreakdown({ purpose }: { purpose: UsagePurpose }) {
     return list;
   }, [rows, groupBy, equipmentCollections]);
 
-  const groupModes: { key: UsageGroupBy; label: string }[] = isSuper
+  const groupModes: { key: UsageGroupBy; label: string }[] = isTeam
     ? [
         { key: "person", label: "Person" },
         { key: "equipment", label: "Equipment" },
@@ -3941,7 +4035,7 @@ function UsageBreakdown({ purpose }: { purpose: UsagePurpose }) {
                         {g.rows.map((r) => {
                           const ctx: string[] = [];
                           if (groupBy !== "equipment") ctx.push(usageEquipmentLabel(r.equipment));
-                          if (isSuper && groupBy !== "person") ctx.push(usagePersonLabel(r.user));
+                          if (isTeam && groupBy !== "person") ctx.push(usagePersonLabel(r.user));
                           if (r.group) ctx.push(r.group.name);
                           return (
                             <HStack key={r.id} justify="space-between" gap={2} px={2} py={1.5} borderRadius="md" bg="bg.subtle">

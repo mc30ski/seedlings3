@@ -1,5 +1,4 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { Role as RoleVal } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { services } from "../services";
 import { writeAudit } from "../lib/auditLogger";
@@ -21,8 +20,10 @@ import {
   rotatePromotionHmacSecret,
   loadAllowedDomains,
 } from "../services/promotions";
+import { makeGuards } from "../lib/routeGuards";
 
-// Super-only Promotions endpoints. All CRUD, lifecycle actions, manual
+// Promotions endpoints — `marketing.manage` throughout, except the audit
+// trail, which is `audit.view`. All CRUD, lifecycle actions, manual
 // send + test send, and the opt-out contact table live here.
 
 async function currentUserId(req: any): Promise<string> {
@@ -30,22 +31,28 @@ async function currentUserId(req: any): Promise<string> {
 }
 
 export default async function promotionsRoutes(app: FastifyInstance) {
-  const superGuard = {
-    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-      app.requireRole(req, reply, RoleVal.SUPER),
-  };
+  const { requires } = makeGuards(app);
+  const req_marketingCampaigns = requires("marketing.campaigns");
+  const req_auditView = requires("audit.view");
+  const req_marketingManage = requires("marketing.manage");
+  // `marketing.view` gates team-facing announcements only. The six pure
+  // promotions/vanity CONTENT reads were moved here on 2026-10-13 and moved
+  // BACK on 2026-10-16: `marketing.view` is held by baseline Trainee, and a
+  // read-only promotions view for the whole crew is a surface nobody asked
+  // for. Reading and running campaigns are the same job here, so both sit on
+  // `marketing.manage`.
 
   // ── Allowed domains for the editor's per-campaign domain picker ────
   // Returns the same list the click-handler Host allowlist uses; the
   // editor renders a dropdown so operators can only pick a domain the
   // server will actually accept.
-  app.get("/super/promotions/allowed-domains", superGuard, async () => {
+  app.get("/promotions/allowed-domains", req_marketingCampaigns, async () => {
     const { origins, primaryHostname } = await loadAllowedDomains();
     return { origins, primaryHostname };
   });
 
   // ── LIST ────────────────────────────────────────────────────────────
-  app.get("/super/promotions", superGuard, async () => {
+  app.get("/promotions", req_marketingCampaigns, async () => {
     const rows = await prisma.promotion.findMany({
       orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
       include: {
@@ -108,7 +115,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // ── GET one ─────────────────────────────────────────────────────────
-  app.get("/super/promotions/:id", superGuard, async (req: any, reply: any) => {
+  app.get("/promotions/:id", req_marketingCampaigns, async (req: any, reply: any) => {
     const id = String(req.params.id);
     const p = await prisma.promotion.findUnique({
       where: { id },
@@ -125,7 +132,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // ── CREATE ──────────────────────────────────────────────────────────
-  app.post("/super/promotions", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions", req_marketingCampaigns, async (req: any, reply: any) => {
     const parsed = promotionSavePayloadSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
@@ -188,7 +195,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // ── UPDATE (edit) ───────────────────────────────────────────────────
-  app.patch("/super/promotions/:id", superGuard, async (req: any, reply: any) => {
+  app.patch("/promotions/:id", req_marketingCampaigns, async (req: any, reply: any) => {
     const id = String(req.params.id);
     const existing = await prisma.promotion.findUnique({ where: { id } });
     if (!existing) return reply.code(404).send({ error: "not_found" });
@@ -275,11 +282,11 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // ── LIFECYCLE actions ───────────────────────────────────────────────
-  // POST /super/promotions/:id/start   DRAFT→ACTIVE
-  // POST /super/promotions/:id/pause   ACTIVE→PAUSED
-  // POST /super/promotions/:id/resume  PAUSED→ACTIVE
-  // POST /super/promotions/:id/retire  (any)→CLOSED
-  // POST /super/promotions/:id/duplicate  → new DRAFT
+  // POST /promotions/:id/start   DRAFT→ACTIVE
+  // POST /promotions/:id/pause   ACTIVE→PAUSED
+  // POST /promotions/:id/resume  PAUSED→ACTIVE
+  // POST /promotions/:id/retire  (any)→CLOSED
+  // POST /promotions/:id/duplicate  → new DRAFT
 
   async function transition(
     id: string,
@@ -314,7 +321,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     return { ok: true, promotion: updated };
   }
 
-  app.post("/super/promotions/:id/start", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/:id/start", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     // Fail-closed on CAN-SPAM prerequisites BEFORE flipping to ACTIVE.
     // If footer template or business address is missing, promo emails
@@ -356,7 +363,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     return res.promotion;
   });
 
-  app.post("/super/promotions/:id/pause", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/:id/pause", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     const res = await transition(String(req.params.id), ["ACTIVE"], "PAUSED",
       AUDIT.PROMOTION.PAUSED, uid);
@@ -364,7 +371,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     return res.promotion;
   });
 
-  app.post("/super/promotions/:id/resume", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/:id/resume", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     const res = await transition(String(req.params.id), ["PAUSED"], "ACTIVE",
       AUDIT.PROMOTION.RESUMED, uid);
@@ -372,7 +379,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     return res.promotion;
   });
 
-  app.post("/super/promotions/:id/retire", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/:id/retire", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     const res = await transition(
       String(req.params.id),
@@ -386,7 +393,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     return res.promotion;
   });
 
-  app.post("/super/promotions/:id/duplicate", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/:id/duplicate", req_marketingCampaigns, async (req: any, reply: any) => {
     const src = await prisma.promotion.findUnique({ where: { id: String(req.params.id) } });
     if (!src) return reply.code(404).send({ error: "not_found" });
     const uid = await currentUserId(req);
@@ -434,7 +441,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // ── Manual send burst ───────────────────────────────────────────────
-  app.post("/super/promotions/:id/send-now", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/:id/send-now", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     try {
       const res = await runManualSendBurst({
@@ -448,12 +455,12 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // ── Rotate the HMAC click-tracking secret ──────────────────────────
-  // Super-only maintenance action. The secret is normally auto-managed
+  // A `marketing.manage` maintenance action. The secret is normally auto-managed
   // (auto-generated on first use, invisible in Settings) — rotation is
   // rare (leak suspicion, key-hygiene rotation). Every in-flight promo
   // click URL becomes anonymous after rotation (still redirects; the
   // HMAC no longer verifies, so attribution logs as null).
-  app.post("/super/promotions/rotate-hmac-secret", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/rotate-hmac-secret", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     try {
       const res = await rotatePromotionHmacSecret({ actorUserId: uid });
@@ -464,7 +471,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // ── Send-to-self test ───────────────────────────────────────────────
-  app.post("/super/promotions/:id/test-send", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/:id/test-send", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     const channel = String((req.body ?? {}).channel);
     if (channel !== "email" && channel !== "sms") {
@@ -486,7 +493,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // Includes a per-row click count so the operator can eyeball
   // engagement without leaving the delivery log. Aggregated in a single
   // groupBy query rather than N+1 counts.
-  app.get("/super/promotions/:id/deliveries", superGuard, async (req: any) => {
+  app.get("/promotions/:id/deliveries", req_marketingCampaigns, async (req: any) => {
     const id = String(req.params.id);
     const rows = await prisma.promotionDelivery.findMany({
       where: { promotionId: id },
@@ -517,7 +524,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // column no longer carries the promotion id (it's the canonical
   // scope_verb string now). Metadata always includes promotionId for
   // every AUDIT.PROMOTION.* write path.
-  app.get("/super/promotions/:id/audit", superGuard, async (req: any) => {
+  app.get("/promotions/:id/audit", req_auditView, async (req: any) => {
     const id = String(req.params.id);
     const rows = await prisma.auditEvent.findMany({
       where: {
@@ -534,7 +541,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // ── Contact opt-out table + toggle ─────────────────────────────────
-  app.get("/super/promotions/contacts", superGuard, async () => {
+  app.get("/promotions/contacts", req_marketingCampaigns, async () => {
     const rows = await prisma.clientContact.findMany({
       where: { status: "ACTIVE" },
       orderBy: [{ client: { displayName: "asc" } }, { firstName: "asc" }],
@@ -554,7 +561,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     }));
   });
 
-  app.post("/super/promotions/contacts/:contactId/opt", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/contacts/:contactId/opt", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     const contactId = String(req.params.contactId);
     const body = (req.body ?? {}) as {
@@ -593,7 +600,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // Filters by scope + metadata.contactId JSON path — same rationale as
   // the per-promotion audit above. Every setContactOptOut write includes
   // contactId in metadata.
-  app.get("/super/promotions/contacts/:contactId/history", superGuard, async (req: any) => {
+  app.get("/promotions/contacts/:contactId/history", req_marketingCampaigns, async (req: any) => {
     const contactId = String(req.params.contactId);
     const rows = await prisma.auditEvent.findMany({
       where: {
@@ -611,7 +618,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
 
   // ── Landing page endpoints ─────────────────────────────────────────
   // GET landing page for editing (includes items + presigned image URLs)
-  app.get("/super/promotions/:id/landing", superGuard, async (req: any, reply: any) => {
+  app.get("/promotions/:id/landing", req_marketingCampaigns, async (req: any, reply: any) => {
     const promoId = String(req.params.id);
     const promo = await prisma.promotion.findUnique({
       where: { id: promoId },
@@ -638,7 +645,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // Create-or-ensure landing page for a promotion. Also flips linkKind
   // to LANDING_PAGE. Called when the operator switches from External →
   // Custom landing page in the editor.
-  app.post("/super/promotions/:id/landing", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/:id/landing", req_marketingCampaigns, async (req: any, reply: any) => {
     const promoId = String(req.params.id);
     const promo = await prisma.promotion.findUnique({
       where: { id: promoId },
@@ -664,14 +671,14 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     return page;
   });
 
-  // Mint a short-lived preview URL for a landing page. Super-only.
+  // Mint a short-lived preview URL for a landing page. `marketing.manage`.
   //
   // Exists because a non-ACTIVE promotion's public page deliberately
   // returns an empty shell (slug enumeration would otherwise leak
   // unpublished copy and imagery), which left operators unable to review
   // the page they were building. The token is slug-scoped, expires on its
   // own, and carries no privileges beyond rendering this one page.
-  app.post("/super/promotions/:id/landing/preview-url", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/:id/landing/preview-url", req_marketingCampaigns, async (req: any, reply: any) => {
     const promoId = String(req.params.id);
     const promo = await prisma.promotion.findUnique({
       where: { id: promoId },
@@ -701,13 +708,13 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     };
   });
 
-  // Permanent delete. Super-only, and refused for a promotion with
+  // Permanent delete. `marketing.manage`, and refused for a promotion with
   // delivery history unless the body carries confirm: "APPROVE".
   //
   // Returns 409 NEEDS_APPROVE (not a hard failure) when history exists
   // and no override was given, so the UI can escalate to the typed
   // confirmation rather than dead-ending.
-  app.delete("/super/promotions/:id", superGuard, async (req: any, reply: any) => {
+  app.delete("/promotions/:id", req_marketingCampaigns, async (req: any, reply: any) => {
     const uid = await currentUserId(req);
     const confirm = (req.body ?? {})?.confirm;
     const { hardDeletePromotion } = await import("../services/promotions");
@@ -730,7 +737,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // PATCH landing-page (headline/intro/slug). Slug locked once ACTIVE.
-  app.patch("/super/promotions/landing/:pageId", superGuard, async (req: any, reply: any) => {
+  app.patch("/promotions/landing/:pageId", req_marketingCampaigns, async (req: any, reply: any) => {
     const pageId = String(req.params.pageId);
     const uid = await currentUserId(req);
     const payload = (req.body ?? {}) as { slug?: string; headline?: string; intro?: string };
@@ -743,7 +750,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   });
 
   // ── Landing-page items ─────────────────────────────────────────────
-  app.post("/super/promotions/landing/:pageId/items", superGuard, async (req: any, reply: any) => {
+  app.post("/promotions/landing/:pageId/items", req_marketingCampaigns, async (req: any, reply: any) => {
     const pageId = String(req.params.pageId);
     const body = (req.body ?? {}) as { title?: string; description?: string };
     if (!body.title?.trim()) return reply.code(400).send({ error: "title_required" });
@@ -756,7 +763,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     return item;
   });
 
-  app.patch("/super/promotions/landing/items/:itemId", superGuard, async (req: any) => {
+  app.patch("/promotions/landing/items/:itemId", req_marketingCampaigns, async (req: any) => {
     const itemId = String(req.params.itemId);
     const body = (req.body ?? {}) as { title?: string; description?: string };
     await updateLandingPageItem({
@@ -768,13 +775,13 @@ export default async function promotionsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.delete("/super/promotions/landing/items/:itemId", superGuard, async (req: any) => {
+  app.delete("/promotions/landing/items/:itemId", req_marketingCampaigns, async (req: any) => {
     const itemId = String(req.params.itemId);
     await deleteLandingPageItem({ itemId, actorUserId: await currentUserId(req) });
     return { ok: true };
   });
 
-  app.post("/super/promotions/landing/:pageId/items/reorder", superGuard, async (req: any) => {
+  app.post("/promotions/landing/:pageId/items/reorder", req_marketingCampaigns, async (req: any) => {
     const pageId = String(req.params.pageId);
     const body = (req.body ?? {}) as { itemIds?: string[] };
     const itemIds = Array.isArray(body.itemIds) ? body.itemIds.map(String) : [];
@@ -784,8 +791,8 @@ export default async function promotionsRoutes(app: FastifyInstance) {
 
   // Presigned R2 upload URL for a specific item's image.
   app.post(
-    "/super/promotions/landing/:pageId/items/:itemId/upload-url",
-    superGuard,
+    "/promotions/landing/:pageId/items/:itemId/upload-url",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const pageId = String(req.params.pageId);
       const itemId = String(req.params.itemId);
@@ -813,8 +820,8 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // Confirm upload after the client PUT to R2 succeeds. Persists the
   // key on the item and cleans up any prior image (best-effort).
   app.post(
-    "/super/promotions/landing/items/:itemId/confirm-image",
-    superGuard,
+    "/promotions/landing/items/:itemId/confirm-image",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const itemId = String(req.params.itemId);
       const body = (req.body ?? {}) as { key?: string; contentType?: string };
@@ -832,8 +839,8 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // Delete one photo from an item. Explicit action — uploading a second
   // photo appends rather than replacing, so removal has to be deliberate.
   app.delete(
-    "/super/promotions/landing/photos/:photoId",
-    superGuard,
+    "/promotions/landing/photos/:photoId",
+    req_marketingCampaigns,
     async (req: any) => {
       const { deleteLandingPageItemPhoto } = await import("../services/promotions");
       await deleteLandingPageItemPhoto(String(req.params.photoId), await currentUserId(req));
@@ -844,8 +851,8 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // Reorder an item's photos. Body: { photoIds: string[] } in the desired
   // order. Ids not belonging to the item are ignored by the service.
   app.post(
-    "/super/promotions/landing/items/:itemId/photos/reorder",
-    superGuard,
+    "/promotions/landing/items/:itemId/photos/reorder",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const body = (req.body ?? {}) as { photoIds?: unknown };
       if (!Array.isArray(body.photoIds)) {
@@ -869,7 +876,7 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // unable to show an image at all.
 
   // List a promotion's invoice photos in display order, with signed URLs.
-  app.get("/super/promotions/:id/invoice-photos", superGuard, async (req: any) => {
+  app.get("/promotions/:id/invoice-photos", req_marketingCampaigns, async (req: any) => {
     const { listInvoicePhotos } = await import("../services/promotions");
     return { photos: await listInvoicePhotos(String(req.params.id)) };
   });
@@ -877,8 +884,8 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // Presigned PUT for a new invoice photo. Client uploads straight to R2,
   // then calls confirm below with the returned key.
   app.post(
-    "/super/promotions/:id/invoice-photos/upload-url",
-    superGuard,
+    "/promotions/:id/invoice-photos/upload-url",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const promotionId = String(req.params.id);
       const body = (req.body ?? {}) as { contentType?: string };
@@ -900,8 +907,8 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // Confirm after the client PUT to R2 succeeds. Appends to the promotion's
   // invoice photos.
   app.post(
-    "/super/promotions/:id/invoice-photos/confirm",
-    superGuard,
+    "/promotions/:id/invoice-photos/confirm",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const body = (req.body ?? {}) as { key?: string; contentType?: string };
       if (!body.key) return reply.code(400).send({ error: "key_required" });
@@ -919,8 +926,8 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // Delete one invoice photo. Explicit action — uploading another appends
   // rather than replacing, so removal has to be deliberate.
   app.delete(
-    "/super/promotions/invoice-photos/:photoId",
-    superGuard,
+    "/promotions/invoice-photos/:photoId",
+    req_marketingCampaigns,
     async (req: any) => {
       const { deleteInvoicePhoto } = await import("../services/promotions");
       await deleteInvoicePhoto(String(req.params.photoId), await currentUserId(req));
@@ -932,8 +939,8 @@ export default async function promotionsRoutes(app: FastifyInstance) {
   // order; position 0 becomes the cover beside the promo text. Ids not
   // belonging to this promotion are ignored by the service.
   app.post(
-    "/super/promotions/:id/invoice-photos/reorder",
-    superGuard,
+    "/promotions/:id/invoice-photos/reorder",
+    req_marketingCampaigns,
     async (req: any, reply: any) => {
       const body = (req.body ?? {}) as { photoIds?: unknown };
       if (!Array.isArray(body.photoIds)) {

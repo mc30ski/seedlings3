@@ -12,11 +12,11 @@ that a reader at the callsite can't misinterpret them. Brevity is not
 a virtue when it lets ambiguity in. No one cares about the character
 count; everyone cares about the bugs ambiguous names produce.
 
-**Why:** The `isAdminOnly` field on `JobOccurrence` reads like a
-visibility rule ("only admins can see it"). It's actually an assignment
+**Why:** A boolean on `JobOccurrence` named for a role read like a
+visibility rule ("only holders of `schedule.manage` can see it"). It was actually an assignment
 rule — the checkbox label is `"Administered (workers cannot claim, must
-be assigned)"`. During a client-visibility audit I added a filter
-`isAdminOnly: false` to `/client/jobs` and `/client/upcoming` because
+be assigned)"`. During a client-visibility audit I filtered it out of
+`/client/jobs` and `/client/upcoming` because
 the name suggested that's what it meant. It didn't. Result: legitimate
 completed jobs stopped showing to clients in production. Hours of
 debugging that a name like `requiresAdminAssignment` or
@@ -28,9 +28,8 @@ debugging that a name like `requiresAdminAssignment` or
   behavior, not a shorter approximation. Two seconds of typing beats a
   production bug.
 - Boolean flags: name the specific behavior, not the category. Bad:
-  `isSpecial`, `isRestricted`, `isAdminOnly`. Good:
-  `requiresAdminAssignment`, `workersCannotSelfClaim`,
-  `hiddenFromClientPortal`.
+  `isSpecial`, `isRestricted`, or anything named for a role. Good:
+  `mustBeAssigned`, `workersCannotSelfClaim`, `hiddenFromClientPortal`.
 - Local scoped names (loop indices, single-callsite temporaries) can
   stay short. The rule is scoped to names that will be read at a
   distance from their definition.
@@ -38,6 +37,9 @@ debugging that a name like `requiresAdminAssignment` or
   silently accept the ambiguity because it's inherited; that's how the
   ambiguity turns into a fourth production bug.
 
-**Concrete open example**: `JobOccurrence.isAdminOnly` should be
-renamed to something like `requiresAdminAssignment`. Migration touches
-~30 callsites but is mechanically straightforward.
+**RESOLVED 2026-10-17.** That field is now `JobOccurrence.mustBeAssigned`,
+renamed by a hand-written `ALTER TABLE … RENAME COLUMN` migration —
+`prisma migrate dev` cannot tell a rename from a drop-plus-add and would
+have emitted DROP + ADD, silently resetting every flagged visit to false.
+~30 callsites, mechanical. The schema comment now also says outright: do
+not filter client-facing queries on it.

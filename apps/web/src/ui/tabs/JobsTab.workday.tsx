@@ -225,7 +225,7 @@ function SetEndTimeDialog({
   workday: WorkdaySummary;
   /** When set, the endWorkday call operates on the impersonated
    *  worker's row instead of the caller's. Passed by WorkdayBanner
-   *  in Admin/Super view-as mode. */
+   *  when viewing as another person. */
   viewAsUserId?: string | null;
   onClose: () => void;
   onSaved: () => void;
@@ -825,7 +825,7 @@ export function MileageBanner() {
 
   // Refetch on mount, on focus, and whenever a workday/mileage
   // mutation broadcasts a change. Without the extra triggers, this
-  // list can go stale — e.g., after a reseed or an admin assigning
+  // list can go stale — e.g., after a reseed or someone with `time.manage` assigning
   // a new vehicle mid-session — and the picker would render with
   // fewer options than the DB actually holds.
   const loadVehicles = useCallback(() => {

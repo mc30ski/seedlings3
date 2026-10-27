@@ -5,6 +5,12 @@
 // is printed so the suppression stays visible. Delete this import (and
 // the file) after upgrading to React 19. See the file for full context.
 import "../src/lib/chakraRefWarningSuppression";
+// Leaflet's own stylesheet. It must be global — the library writes class
+// names onto elements it creates itself, so scoping it to the component
+// would leave the tiles unpositioned and the map a stack of images.
+// Imported here rather than in the component because Next only allows
+// global CSS from _app.
+import "leaflet/dist/leaflet.css";
 import type { AppProps } from "next/app";
 import {
   ClerkProvider,
@@ -145,7 +151,7 @@ function AppInner({ Component, pageProps }: AppProps) {
       <InlineMessage />
       {/* Apply minimal, mode-aware padding so the brand/header never sits under the status bar */}
       <Box pt={TOP_PAD}>
-        {/* Global Super "Reveal pre-cutoff history" indicator. Sticks to the
+        {/* Global "Reveal pre-cutoff history" indicator. Sticks to the
             top of every page when engaged; renders nothing otherwise. Lives
             here (above Component) so it survives route changes and can't
             be hidden by any per-tab layout. */}
@@ -235,7 +241,7 @@ export default function MyApp(props: AppProps) {
         <OfflineProvider>
           {/* Business Start Date cutoff — fetches the effective cutoff from
               /me/business-start once Clerk auth resolves, and exposes the
-              Super reveal toggle. See src/lib/businessStartCutoff.tsx. */}
+              the reveal toggle. See src/lib/businessStartCutoff.tsx. */}
           <BusinessStartProvider>
             <AppInner {...props} />
           </BusinessStartProvider>

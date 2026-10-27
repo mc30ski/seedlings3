@@ -106,10 +106,15 @@ type Props = {
   onDone: () => void;
   myId?: string;
   defaultTargetDate?: string;
-  trainee?: boolean;
+  /** Read-only mode: the caller lacks `work.claim`, so they can see the
+   *  summary but not confirm, release or message. It was called `readOnly`,
+   *  after a worker type that no longer exists — and field clearance is a
+   *  capability, so an office person without it landed here too and was
+   *  told they were a readOnly. */
+  readOnly?: boolean;
 };
 
-export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTargetDate, trainee }: Props) {
+export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTargetDate, readOnly }: Props) {
   const today = bizToday();
   const tomorrow = bizTomorrow();
 
@@ -177,8 +182,8 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       setTargetDate(saved.targetDate);
       setConfirmedIds(saved.confirmedIds);
       setReleasedIds(saved.releasedIds);
-    } else if (trainee) {
-      // Trainee mode — show date picker, then go to summary
+    } else if (readOnly) {
+      // Read-only mode — show date picker, then go to summary
       setStep("choose-date");
     } else if (defaultTargetDate) {
       // The launcher stated which day it means — honour it verbatim.
@@ -422,8 +427,8 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   function startWithDate() {
     setStep("loading");
     loadOccurrences(targetDate).then((occs) => {
-      if (trainee) {
-        // Trainee — skip to summary directly
+      if (readOnly) {
+        // Read-only — skip to summary directly
         setStep("summary");
         persist({ step: "summary", targetDate });
       } else if (occs.length > 0) {
@@ -464,7 +469,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
                   <Text fontSize="sm" color="fg.muted">
-                    {trainee
+                    {readOnly
                       ? "Choose a day to view your job summary."
                       : "Choose which day to plan. We'll go through your claimed jobs so you can confirm or release them."}
                   </Text>
@@ -535,7 +540,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       try { localStorage.setItem("seedlings_planWorkday_paused", "1"); } catch {}
                       setStep("idle");
                       onDone();
-                      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
+                      window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "routes", autoAnalyze: true } }));
                     }}
                   >
                     Open Route
@@ -621,7 +626,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                           try { localStorage.setItem("seedlings_planWorkday_paused", "1"); } catch {}
                           setStep("idle");
                           onDone();
-                          window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "equipment" } }));
+                          window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "equipment" } }));
                         }}
                       >
                         Open Equipment
@@ -708,7 +713,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       try { localStorage.setItem("seedlings_planWorkday_paused", "1"); } catch {}
                       setStep("idle");
                       onDone();
-                      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
+                      window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "jobs" } }));
                     }}
                   >
                     Go to Jobs
@@ -726,7 +731,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       try { localStorage.setItem("seedlings_planWorkday_paused", "1"); } catch {}
                       setStep("idle");
                       onDone();
-                      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
+                      window.dispatchEvent(new CustomEvent("navigate:staffTab", { detail: { tab: "routes", autoAnalyze: true } }));
                     }}
                   >
                     Go to Routes
@@ -907,8 +912,8 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>
-                <HStack justify={trainee ? "flex-end" : "space-between"} w="full">
-                  {!trainee && (
+                <HStack justify={readOnly ? "flex-end" : "space-between"} w="full">
+                  {!readOnly && (
                     <Button
                       size="sm"
                       variant="ghost"

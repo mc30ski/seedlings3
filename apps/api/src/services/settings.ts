@@ -3,7 +3,7 @@ import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 
 // Setting keys that are VISIBLE in the Settings tab but NOT editable via the
-// generic PATCH /admin/settings/:key endpoint. These are auto-managed values
+// generic PATCH /settings/:key endpoint. These are auto-managed values
 // (server-generated secrets, computed state) with a dedicated mutation flow
 // elsewhere. The value still appears in the Settings tab (rendered by a
 // specialized card that surfaces the metadata + a dedicated action button
@@ -12,7 +12,7 @@ import { writeAudit } from "../lib/auditLogger";
 // broken state, and the API won't accept a bare PATCH either.
 //
 // Dedicated mutation flows:
-//   PROMOTION_HMAC_SECRET → POST /super/promotions/rotate-hmac-secret
+//   PROMOTION_HMAC_SECRET → POST /promotions/rotate-hmac-secret
 //                           (rendered as a "Rotate" button in Settings tab)
 export const PROTECTED_SETTING_KEYS = new Set<string>([
   "PROMOTION_HMAC_SECRET",

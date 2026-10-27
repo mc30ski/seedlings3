@@ -28,7 +28,7 @@ import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
  *      OTHER but actually used Venmo)
  *   3. Fee    — the processor fee. The estimate auto-recomputes whenever
  *      amount or method changes (formula = grossCharged × feePercent + feeFixed);
- *      the admin can override to match the exact figure that hit the
+ *      a caller with `money.adjust` can override to match the exact figure that hit the
  *      processor statement.
  *   4. Tip    — appears the moment the amount exceeds the invoice.
  *
@@ -66,18 +66,18 @@ type Props = {
   willScheduleNext: boolean;
   /** Called on Approve with the final values. Each field is only included
    *  when it differs from the row's current value, mirroring how the
-   *  backend `/admin/payments/:id/approve` overrides work — only changes
+   *  backend `/payments/:id/approve` overrides work — only changes
    *  are sent. */
   onConfirm: (changes: {
     amountOverride?: number;
     methodOverride?: string;
     feeOverride?: number;
     noteOverride?: string | null;
-    /** YYYY-MM-DD ET. Only set when the admin back-dated the
+    /** YYYY-MM-DD ET. Only set when a caller with `money.adjust` back-dated the
      *  "payment received on" field from today. Backend anchors to
      *  ET-noon; absent = fall through to server's `now()`. */
     paidAtOverride?: string;
-    /** Tip designation. Present only when the admin raised the amount above
+    /** Tip designation. Present only when a caller with `money.adjust` raised the amount above
      *  the invoice AND marked the difference a tip. */
     tip?: {
       amount: number;
@@ -102,14 +102,14 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
   const [methodKey, setMethodKey] = useState("");
   const [feeStr, setFeeStr] = useState("");
   /** Free-text note. Mirrors the "Reconcile Paid" flow on Awaiting
-   *  Payment where the admin can attach a memo at the moment of
+   *  Payment where a caller with `money.adjust` can attach a memo at the moment of
    *  approval (e.g. "client paid via check delivered to my house on
-   *  7/12"). Seeded from the payment's existing note so the admin
+   *  7/12"). Seeded from the payment's existing note so a caller with `money.adjust`
    *  either sees / edits the worker's original text OR starts from
    *  blank if there wasn't one. */
   const [noteStr, setNoteStr] = useState("");
   const [paidAt, setPaidAt] = useState<EtDateKey>(bizToday());
-  /** True once the admin manually edits the fee — pins the value so a
+  /** True once a caller with `money.adjust` manually edits the fee — pins the value so a
    *  later amount/method change doesn't blow away their override. Reset
    *  on dialog open. */
   const [feeManuallyEdited, setFeeManuallyEdited] = useState(false);
@@ -191,7 +191,7 @@ export default function AdjustPaymentDialog({ row, willScheduleNext, onConfirm, 
     return round2(amountNum * selectedMethod.feePercent / 100 + selectedMethod.feeFixed);
   }, [hasFee, selectedMethod, amountValid, amountNum]);
 
-  // When amount or method changes (and the admin hasn't manually edited
+  // When amount or method changes (and the user hasn't manually edited
   // the fee yet), snap fee back to the recomputed estimate. Once they
   // override, leave it alone — they may be matching an actual processor
   // statement value that won't naturally line up with the formula.

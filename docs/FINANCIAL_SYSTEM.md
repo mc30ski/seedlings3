@@ -1,6 +1,6 @@
 # Seedlings Lawn Care — Financial System Reference
 
-**Audience:** Admins and super admins who need to understand how payments, payouts,
+**Audience:** Holders of `money.view` and super holders of `money.view` who need to understand how payments, payouts,
 processor fees, owner earnings, business expenses, and tax exports work.
 
 **Also:** the canonical spec. If code changes ever cause behavior to drift from
@@ -19,7 +19,7 @@ Last updated: 2026-06-08.
 
 ## Contents
 
-1. [The workforce model](#1-the-workforce-model) — W-2 / 1099 / trainee / LLC owner
+1. [The workforce model](#1-the-workforce-model) — W-2 / 1099 / unpaid / LLC owner
 2. [The payment lifecycle](#2-the-payment-lifecycle) — completed → pending → approve/reject/adjust/write-off → closed
 3. [Payout math](#3-payout-math--how-a-workers-share-is-calculated) — per-worker fees; gross → fee → net
 4. [Reconciliation](#4-reconciliation--promised-vs-actual-underpay--overpay) — promised vs. actual, made-whole, pro-rata, shortfall/overage
@@ -45,9 +45,44 @@ determines how they're paid and taxed:
 | Worker type | Tax treatment | Paid via | Notes |
 |---|---|---|---|
 | **EMPLOYEE** | W-2 | Gusto payroll, on a schedule | Made whole on underpaid jobs (see §4) |
-| **TRAINEE** | W-2 | Gusto payroll | Same as employee for pay; cannot start/complete/manage jobs |
 | **CONTRACTOR** | 1099 | Gusto contractor payments, per job | Absorbs a pro-rata share of client underpayment |
+| **UNPAID** | None | Not paid | Real access to the app, no place in payroll — a family member or observer. Must never reach a split, a wage, a payroll row or a tax export |
+| *(not set)* | — | — | Onboarded but not yet classified. Holds **no entitlements at all** and cannot be priced — see "Refusing to guess" below |
 | **LLC Owner** | Owner's draw | Direct draw from the business bank account | A flag, not a worker type — see §8 |
+
+**Worker type is a tax and employment fact, never a permission.** What someone
+may *do* comes from their roles. The two were previously entangled through
+TRAINEE, which was a worker type used to express "not cleared for field work
+yet" — a permission question wearing a payroll answer. Trainees were paid
+exactly like employees, so the type carried no tax meaning of its own. It is
+gone: a trainee is an EMPLOYEE who has not been given the field-clearance
+role. Existing trainees were converted to EMPLOYEE by migration
+`20261012011000_workertype_drop_trainee_add_unpaid`, which audits each one
+first so the former classification stays recoverable from the audit log.
+
+### Refusing to guess
+
+Every worker-class predicate is **positive** — `classify(wt) === "contractor"`,
+never `wt !== "EMPLOYEE"` — and they all live in one place,
+[`packages/money/workerClass.ts`](../packages/money/workerClass.ts).
+
+This is not style. The old rule was literally:
+
+```ts
+rateFor = (wt) => isEmployeeClass(wt) ? margin : contractorFee
+```
+
+which reads a three-way question as binary. Under it, **a worker nobody had
+classified yet was charged a contractor fee on every split** — and the moment
+UNPAID existed, an unpaid family member would have been too, discovered at tax
+time if at all.
+
+So there is no default branch. `rateFor` **throws** for UNPAID and for an
+unset worker type rather than picking a rate, and `classify` is an exhaustive
+switch whose `never` check makes a fourth worker type a *compile error* rather
+than a silent fallthrough somewhere downstream. Callers must exclude unpaid
+people from splits upstream; if `rateFor` throws, the bug is above it. A crash
+is recoverable, a wrong figure on a 1099 is not.
 
 The **LLC Owner** is additive: the owner is also an EMPLOYEE or CONTRACTOR for
 worker-type purposes, and *also* carries an `isOwner` flag. Only one user can
@@ -80,13 +115,13 @@ Job completed by worker
         └── Write off ─────► CLOSED  (collected $0; see §4)
 ```
 
-**Key rule:** a payment is not "real money" until an admin **confirms** it.
+**Key rule:** a payment is not "real money" until someone with `money.view` **confirms** it.
 `confirmed = false` means recorded-but-unverified. The occurrence stays
-`PENDING_PAYMENT` until an admin approves. Cash-basis reporting and all exports
+`PENDING_PAYMENT` until someone with `money.view` approves. Cash-basis reporting and all exports
 key off the **confirmation date** (`confirmedAt`), not the record date.
 
 Only **one** Payment row can exist per job occurrence at a time. To record a
-different payment, an admin must Reject the existing one first.
+different payment, someone with `money.view` must Reject the existing one first.
 
 ---
 
@@ -109,7 +144,8 @@ net_i        = gross_i − fee_i                    (worker i's take-home)
 The **rate** depends on worker type:
 
 - **CONTRACTOR** → "platform fee" / commission, from `CONTRACTOR_PLATFORM_FEE_PERCENT` (default 20%)
-- **EMPLOYEE / TRAINEE** → "business margin", from `EMPLOYEE_BUSINESS_MARGIN_PERCENT` (default 30%)
+- **EMPLOYEE** → "business margin", from `EMPLOYEE_BUSINESS_MARGIN_PERCENT` (default 30%)
+- **UNPAID / unset** → no rate exists; `computeBreakdown` refuses the row (see §1)
 
 The fee/margin is what the **business keeps**; the net is what the **worker
 gets**. On a $100 job with one contractor at a 100% split: $20 commission to
@@ -130,7 +166,7 @@ contract used at admin-approval time.
 When the actual collected amount differs from the invoice:
 
 ### Underpayment (client paid less than invoiced)
-- **Employees / trainees are made whole.** They receive their full *promised*
+- **Employees are made whole.** They receive their full *promised*
   net. The business pays the difference (a "top-up") out of pocket.
 - **Contractors absorb a pro-rata loss.** They receive the lesser of their
   actual net and their promised net — i.e. their share shrinks proportionally
@@ -159,7 +195,7 @@ designated and divided.
   business's cut is exactly the percentage assigned, not that plus a
   rate skimmed off the workers' shares.
 - Default split = the job's `completionSplits` percentages with the
-  business at 0%. A trainee credited 20% of the job defaults to 20% of
+  business at 0%. An employee credited 20% of the job defaults to 20% of
   the tip. Observers are excluded; the operator can override.
 - **Owner tips need no special handling** — the owner's split already
   carries `ownerEarnings: true`, which redirects the money at every
@@ -196,7 +232,7 @@ still works there: the operator supplied an explicit amount, so it's
 carved off the top before the job math runs rather than derived.
 
 ### Write-off (client never paid)
-- Collected = $0. Employees/trainees still receive their promised net.
+- Collected = $0. Employees still receive their promised net.
   Contractors receive $0. The full promised amount lands in `shortfallAmount`.
 
 **`shortfallAmount` and `overageAmount` are internal reporting fields only.**
@@ -209,7 +245,7 @@ cost. See §10.
 Worker pay is on one of two clocks, chosen per occurrence at the moment
 of the payment decision:
 
-- **Employee / trainee (W-2)** — always work-anchored. Wage accrues
+- **Employee (W-2)** — always work-anchored. Wage accrues
   **when the work is done**, is **paid on the regular payroll run for
   the period the work fell in**, regardless of whether or when the
   client pays. The business fronts it. If the client later underpays
@@ -254,7 +290,7 @@ are all stored on the Payment record.
 
 `processorFeeAmount` is computed from the configured rate, which is only an
 **estimate** — a processor's actual fee can land a cent off due to rounding.
-When an admin approves a payment, they can **override the fee** with the
+When someone with `money.view` approves a payment, they can **override the fee** with the
 actual figure from the processor's statement (e.g. Venmo). The override
 updates `processorFeeAmount` and `netReceived` only; because the business
 absorbs the fee, it provably cannot affect any worker payout, split, top-up,
@@ -269,7 +305,7 @@ as zero-fee (the fields are null).
 
 **Payment methods are 100% configuration.** Adding, removing, renaming, or
 re-pricing a method — or changing its instructions, deep link, or where it
-appears — is a Settings edit in **Super → Settings → Payment Methods**. No code
+appears — is a Settings edit in **Settings → Payment Methods**. No code
 change, no migration, no deploy.
 
 > The only exception: introducing a brand-new method that has *never* existed
@@ -341,11 +377,32 @@ flags.
 The "Request Payment from Client" path is gated by this on/off setting
 (default **off**) so it can be rolled out gradually:
 
-- **Off** — the Request Payment button is visible but disabled; the automatic
-  payment-request send on job completion does not fire.
-- **Super admins bypass the gate** — they can always use Request Payment, for
-  testing, regardless of the setting.
+- **Off** — the Request Payment button is visible but disabled, and the
+  automatic payment-request send on job completion does not fire.
 - **On** — Request Payment works for everyone.
+- **Holders of `schedule.manage` bypass the gate** — the dialog's
+  `isOperator` prop, which every callsite passes as
+  `scope.can("schedule.manage")`. They can always use Request Payment
+  regardless of the setting, because a requested payment still lands in the
+  approval queue: the safety is the approval step, not hiding the button.
+
+**It is enforced on the SERVER** (since 2026-10-18). Until then it was read
+only by `AcceptPaymentDialog`, which hid the control — no route consulted it,
+so "off" hid a button and stopped nothing: a direct API call still sent, and
+so did the automatic send on completion. The enforcement points:
+
+| Path | Behaviour when off |
+|---|---|
+| `POST /occurrences/:id/resend-payment-request` | 403 `REQUEST_PAYMENT_DISABLED` |
+| `POST /occurrences/:id/send-payment-request-email` | 403 `REQUEST_PAYMENT_DISABLED` |
+| `GET /occurrences/:id/comms-handoff` | 403 — minting the token IS the request; in CLAIMER mode the worker's device sends that link |
+| `POST /occurrences/:id/complete` | **Skips** the automatic request. Never refuses the completion — a visit must stay finishable with the switch off. |
+
+Two further rules, both gated in `payments-build-gate.test.ts`: the switch
+**fails closed** (a missing Setting row reads as disabled, never as enabled),
+and `schedule.manage` is the *only* bypass, so the server and the dialog
+cannot disagree about who the switch applies to. The gate also fails the
+build if a new handler sends a request, or mints the token, without asking.
 
 ---
 
@@ -356,12 +413,12 @@ tracked **identically** to any worker's — same payout math, same
 PaymentSplit record — with one difference: at export time, owner earnings are
 a **draw**, not a paycheck.
 
-- A super admin sets the `isOwner` flag on exactly one user (Users tab). It is
+- Someone with `money.approve` admin sets the `isOwner` flag on exactly one user (Users tab). It is
   additive to ADMIN/SUPER role and singleton-enforced.
 - When a payment includes the owner as a worker, that PaymentSplit is flagged
   `ownerEarnings = true`.
 - In the app, owner splits display as **"Owner Earnings"** (purple) instead of
-  "Payout" — on job cards, the Money tabs, and the admin payment breakdown.
+  "Payout" — on job cards, the Money tabs, and a caller with `money.view` payment breakdown.
 - **Gusto payroll export excludes owner-earnings splits entirely.** The owner
   takes a draw from the bank; payroll never sees it.
 - **QuickBooks Income export still includes the full payment** — the client
@@ -390,7 +447,7 @@ job and a non-owner-worked job can be compared apples-to-apples).
 
 Equipment owned by the LLC is rented by contractors when they use it on jobs;
 the charge is rental **income** to the business (not an expense). Employees
-and trainees use the same equipment at no cost — their usage is already
+use the same equipment at no cost — their usage is already
 covered by the higher business margin charged on their jobs, so there's no
 actual loss to the business when an employee handles a tool; it's an
 accounting note that the equipment cost is paid for elsewhere.
@@ -425,7 +482,7 @@ exactly at the daily rate.
 `writeCheckoutSplits` (`services/equipment.ts`) materializes per-worker
 `CheckoutSplit` rows at release time using each `GroupMember`'s
 `equipmentCostPercent` (when every worker has one summing to 100) or
-even-split. After allocation, EMPLOYEE / TRAINEE shares are **zeroed**
+even-split. After allocation, EMPLOYEE shares are **zeroed**
 (audit-trail rows are preserved with `amount = 0`). Unbilled shares are
 **not redistributed** to remaining contractors.
 
@@ -450,7 +507,7 @@ is reconstructable.
 The QB Income export emits **one row per contractor `CheckoutSplit`** for
 group rentals (account `Equipment Rental Income`, Schedule C Line 1 by
 default, ref `RENT-{checkoutId}-{userId}`) and a single row per checkout
-for solo rentals. Employee/trainee splits never appear (their `amount`
+for solo rentals. Employee splits never appear (their `amount`
 is 0, filtered by the export's Prisma where clause).
 
 ---
@@ -476,7 +533,7 @@ categorized to a Schedule C line. **It is the ONLY source of deductions.**
 **Processor fees are NOT BusinessExpense entries** — they live on Payment
 records and are reported separately.
 
-The **Accounting tab Cash Flow** view (Super → Money → Accounting) is a
+The **Accounting tab Cash Flow** view (Money → Accounting) is a
 **management view, not a tax document**. It uses the **same filters as the
 QB Income / QB Expenses exports** so the two reconcile to the penny:
 
@@ -488,7 +545,7 @@ QB Income / QB Expenses exports** so the two reconcile to the penny:
 | Row | What it is | Reconciles with |
 |---|---|---|
 | Platform fees (contractors) | Commission the business retained from contractor splits | `Payment.platformFeeAmount` sum |
-| Margin (employees/trainees) | Margin the business retained from employee/trainee splits | `Payment.businessMarginAmount` sum |
+| Margin (employees) | Margin the business retained from employee splits | `Payment.businessMarginAmount` sum |
 | Equipment rentals | Rental charges from contractor checkouts in window | QB Income equipment-rental rows |
 | **Earnings (total)** | Sum of the three above — what the business retained from job operations | — |
 | Business expenses | Operating expenses (EXCLUDES fixed-asset purchases) | QB Expenses BusinessExpense rows |
@@ -560,13 +617,13 @@ These rules MUST hold. Violating them corrupts the tax picture.
 
 ## 11. Settings reference
 
-All in **Super → Settings**. Percentages and rates are read live — never
+All in **Settings**. Percentages and rates are read live — never
 hardcoded.
 
 | Setting | Default | Purpose |
 |---|---|---|
 | `CONTRACTOR_PLATFORM_FEE_PERCENT` | `20` | Commission retained from contractor (1099) splits |
-| `EMPLOYEE_BUSINESS_MARGIN_PERCENT` | `30` | Margin retained from employee/trainee (W-2) splits |
+| `EMPLOYEE_BUSINESS_MARGIN_PERCENT` | `30` | Margin retained from employee (W-2) splits |
 | `HIGH_VALUE_JOB_THRESHOLD` | `200` | Jobs ≥ this price require contractor insurance to claim |
 | `PAYMENT_METHODS` | (4 methods) | The payment-methods taxonomy — see §6 |
 | `REQUEST_PAYMENT_FROM_CLIENT_ENABLED` | `false` | Enables the Request Payment path — see §7a |
@@ -577,12 +634,11 @@ hardcoded.
 | `ZELLE_ADDRESS` | — | Business Zelle address; referenced by the taxonomy |
 | `DEFAULT_PAYMENT_COMMUNICATIONS_MODE` | `SERVER` | Whether payment-request comms are sent by the server or handed off to the claimer's device |
 | `BUSINESS_START_DATE_ENABLED` / `BUSINESS_START_DATE` | `false` / — | Operator-controlled cutoff: when enabled, financial-event rows dated before the cutoff are hidden from every view and export. See `lib/businessStartCutoff.ts` |
-| `QB_INCLUDE_CONTRACT_LABOR` | `true` | When ON, `qb-journal-expenses.csv` emits Contract Labor rows for contractor payment splits. When OFF, the whole Contract Labor section is dropped. Flip OFF once Gusto's QuickBooks integration is configured to post contractor payments to QB directly — the app's rows become duplicative at that point. See `loadIncludeContractLabor()` in `services/exports.ts`. |
-| `EQUIPMENT_BILLING_ENABLED` | `false` (current operator setting; default ON for fresh installs) | Master toggle for equipment billing. When ON, equipment checkouts charge contractors per the equipment's daily rate (employees + trainees always pay $0). When OFF, every release writes `Checkout.rentalCost = 0` regardless of equipment dailyRate or worker type — `rentalDays` + `rentalBreakdown` are still preserved for audit. Currently OFF while the operator finalizes the contractor billing + sales-tax model with a CPA; equipment cost is absorbed into a higher `CONTRACTOR_PLATFORM_FEE_PERCENT`. See `loadEquipmentBillingEnabled()` in `services/equipment.ts`. |
+| `EQUIPMENT_BILLING_ENABLED` | `false` (current operator setting; default ON for fresh installs) | Master toggle for equipment billing. When ON, equipment checkouts charge contractors per the equipment's daily rate (employees always pay $0). When OFF, every release writes `Checkout.rentalCost = 0` regardless of equipment dailyRate or worker type — `rentalDays` + `rentalBreakdown` are still preserved for audit. Currently OFF while the operator finalizes the contractor billing + sales-tax model with a CPA; equipment cost is absorbed into a higher `CONTRACTOR_PLATFORM_FEE_PERCENT`. See `loadEquipmentBillingEnabled()` in `services/equipment.ts`. |
 
 ---
 
-## 12. Exports (Super → Money → Exports)
+## 12. Exports (Money → Exports)
 
 CSV downloads for verifying payroll and bookkeeping before importing into Gusto
 and QuickBooks.
@@ -606,7 +662,7 @@ are *not* all on one date field:
 
 | File | One row per (logical) | Date anchor | Amount |
 |---|---|---|---|
-| `gusto-w2` | W-2 worker (employees + trainees) | **Job completion date** (`JobOccurrence.completedAt`) | **Promised net** for jobs they completed in the window |
+| `gusto-w2` | W-2 worker (employees) | **Job completion date** (`JobOccurrence.completedAt`) | **Promised net** for jobs they completed in the window |
 | `gusto-contractors` | 1099 contractor, paid via client payment | **Payment confirmation** (`Payment.confirmedAt`) | Reconciled `PaymentSplit.amount` (post pro-rata) |
 | `qb-journal-income` | Confirmed payment / equipment rental | `Payment.confirmedAt` / `Checkout.releasedAt` | Full `Payment.amountPaid` or `Checkout.rentalCost` |
 | `qb-journal-expenses` | BusinessExpense (operating) + processor fee + contract labor | `BusinessExpense.date` / `Payment.confirmedAt` | Raw cost / fee / split amount |
@@ -618,13 +674,13 @@ DB state) → same CSV. The `gusto-contractors` export specifically does
 not insert advance rows or any other side effect. Re-run the same
 window any number of times → identical output. Same for `qb-journal-expenses`.
 
-**Contract Labor in `qb-journal-expenses` is transitional.** Gated by
-the `QB_INCLUDE_CONTRACT_LABOR` setting (default ON). While ON, the
-CSV emits Contract Labor rows for contractor splits. Flip OFF once Gusto's
-QuickBooks integration is configured to post contractor payments to
-QB directly — the app's rows become duplicative at that point. The
-in-app "Explain these files" panel on the Exports tab surfaces this
-guidance to the operator.
+**Contract Labor in `qb-journal-expenses` is unconditional.** The CSV always
+emits Contract Labor rows for contractor splits. There was a
+`QB_INCLUDE_CONTRACT_LABOR` setting intended to switch this off once Gusto's
+QuickBooks integration posts contractor payments to QB directly — but no code
+ever read it, so the toggle on the Settings tab did nothing. It was **deleted
+on 2026-10-18** rather than wired up; when Gusto-QB is actually configured,
+add the switch back along with the code that honours it.
 
 **Why the W-2 export is work-anchored, not payment-anchored.** A W-2
 employee's wages accrue when they do the work and must be paid on the regular
@@ -703,13 +759,20 @@ SELECT * FROM "Payment" WHERE "ledgerId" = 'SLC-260605-X7K2';
 
 ### Filenames
 
+Read from `routes/books.ts` (`deliverPlainCsv`), which builds every name as
+`{slug}-{start}_{end}.csv`. All five are guarded on `books.export-tax`.
+
 | Endpoint | Downloaded filename |
 |---|---|
-| `/admin/exports/qb-income.csv` | `qb-journal-income-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` |
-| `/admin/exports/qb-expenses.csv` | `qb-journal-expenses-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` |
-| `/admin/exports/qb-equity.csv` | `qb-equity-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` (legacy 13-col format) |
-| `/admin/exports/qb-fixed-assets.csv` | `qb-fixed-assets-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` (legacy 13-col format) |
-| `/admin/exports/qb-bundle.zip` | All four CSVs in one zip |
+| `/exports/income.csv` | `income-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` |
+| `/exports/expenses.csv` | `expenses-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` |
+| `/exports/capital.csv` | `capital-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` |
+| `/exports/payroll.csv` | `payroll-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` |
+| `/exports/workdays.csv` | `workdays-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` |
+
+The five routes above are the complete export surface — there is no
+QuickBooks-specific export and no bundle route. Only `workdays.csv` is exempt
+from the Business Start Date clamp; it is labour, not money.
 
 ### Idempotent re-import
 
@@ -752,7 +815,7 @@ the payment was *recorded*), not on `PaymentSplit.createdAt`. Reason: splits
 are deleted and recreated at admin approval, so a split's own `createdAt`
 jumps to the approval date; the `Payment` row is created once and never
 recreated, so `Payment.createdAt` is a stable "when recorded" anchor that
-doesn't move when an admin approves.
+doesn't move when someone with `money.view` approves.
 
 ### The Home "Earnings (last 7 days)" tile
 
@@ -760,7 +823,7 @@ The window is the **7 days before today, excluding today** — today's
 not-yet-settled work belongs to the title-bar projection, not here. The tile
 is **worker-type-split**:
 
-| | Employee / trainee | Contractor |
+| | Employee | Contractor |
 |---|---|---|
 | Anchor | Job **completion date** | **Payment record date** (`Payment.createdAt`) |
 | Amount | Promised net for jobs completed in the window | Actual `PaymentSplit.amount` for payments recorded in the window |
@@ -786,17 +849,17 @@ completed this week regardless of earnings.
 
 ## 14. Audit events
 
-Every financial mutation writes an audit event (Super → Audit Log). Payment-
+Every financial mutation writes an audit event (Audit Log). Payment-
 scope verbs:
 
 | Verb | When |
 |---|---|
-| `CREATED` | Payment recorded by a worker/admin |
+| `CREATED` | Payment recorded by a member of staff |
 | `SELF_REPORTED` | Payment self-reported by a client via `/pay/[token]` |
-| `APPROVED` | Admin confirmed a payment |
-| `ADJUSTED` | Admin changed the amount at approval |
-| `REJECTED` | Admin rejected a pending payment |
-| `WRITTEN_OFF` | Admin wrote off an unpaid job |
+| `APPROVED` | A holder of `money.approve` confirmed a payment |
+| `ADJUSTED` | A holder of `money.approve` changed the amount at approval |
+| `REJECTED` | A holder of `money.approve` rejected a pending payment |
+| `WRITTEN_OFF` | A holder of `money.approve` wrote off an unpaid job |
 | `REQUEST_SENT` / `TOKEN_ACCESSED` | Payment-request link sent / opened |
 | `OWNER_EARNINGS_RECORDED` | A payment included owner earnings |
 | `FEE_APPLIED` | A non-zero processor fee was calculated and stored |
@@ -819,7 +882,7 @@ operator-facing summary that surfaces in the Audit Log tab.
 - **Net received** — gross minus the payment processor's fee; what hits the bank.
 - **Promised payout** — what a worker would earn at the full invoice amount;
   snapshotted at job completion.
-- **Made whole** — an employee/trainee receiving their full promised net even
+- **Made whole** — an employee receiving their full promised net even
   when the client underpaid; the business covers the gap.
 - **Pro-rata loss** — a contractor's payout shrinking proportionally with a
   client underpayment.
@@ -829,11 +892,11 @@ operator-facing summary that surfaces in the Audit Log tab.
   reporting only.
 - **Platform fee / commission** — the cut the business retains from a
   contractor's share.
-- **Business margin** — the cut the business retains from an employee/trainee's
+- **Business margin** — the cut the business retains from an employee's
   share.
 - **Processor fee** — what the payment app (Venmo, etc.) charges per
   transaction.
 - **Owner earnings** — job earnings of the LLC owner; tracked like a worker's
   but taken as a draw, excluded from payroll.
-- **Confirmed** — an admin has verified and approved a payment; only then is it
+- **Confirmed** — someone with `money.view` has verified and approved a payment; only then is it
   real revenue.

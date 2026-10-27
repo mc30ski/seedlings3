@@ -111,7 +111,7 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
       const body: Record<string, unknown> = {
         title: title.trim(),
         // Operator-picked wall-clock time interpreted as ET (not browser
-        // local). Otherwise an admin scheduling an event from a non-ET
+        // local). Otherwise someone with `schedule.manage` scheduling an event from a non-ET
         // timezone would shift it by the offset difference.
         startAt: bizInstantFromEtParts(date, eventTime),
         notes: notes.trim() || null,
@@ -119,10 +119,10 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
       };
 
       if (isEdit) {
-        await apiPatch(`/api/admin/events/${editEvent!.id}`, body);
+        await apiPatch(`/api/events/${editEvent!.id}`, body);
         publishInlineMessage({ type: "SUCCESS", text: "Event updated." });
       } else {
-        await apiPost("/api/admin/events", body);
+        await apiPost("/api/events", body);
         publishInlineMessage({ type: "SUCCESS", text: "Event created." });
       }
       // Tell every other JobsTab instance (e.g., admin context vs.

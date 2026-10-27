@@ -2,7 +2,7 @@
 
 // Mulch job estimator. Calculates cubic-yard volume + dollar price from
 // bed dimensions, depth, and the configured pricing rate. Pure client-side
-// math — reads /api/admin/pricing once on mount and never mutates anything.
+// math — reads /api/pricing once on mount and never mutates anything.
 //
 // Pricing source: the `Setting` row with key prefix `pricing_*` whose JSON
 // value carries `jobTag === "MULCH"`. The first such entry is treated as

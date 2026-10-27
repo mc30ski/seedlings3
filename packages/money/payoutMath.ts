@@ -3,7 +3,7 @@
 //
 // Extracted from services/payments.ts so that anything which needs to REASON
 // about payouts computes them with the exact same code that WRITES them.
-// Production payment approval and the Super forecasting tool both call these
+// Production payment approval and the forecasting tool both call these
 // functions; neither is allowed a private copy of the arithmetic.
 //
 // The rule this module exists to enforce: a simulator that reimplements the
@@ -17,13 +17,11 @@
 // and memory/project_payment_math.md.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Structurally identical to Prisma's WorkerType enum. Declared locally so
- *  this package has ZERO dependencies and can be imported from the browser
- *  bundle as readily as from the Fastify server — a Prisma import would drag
- *  the client into the web build for the sake of a three-member string union.
- *  The API passes Prisma's enum straight in; TypeScript accepts it because
- *  the two types are the same set of strings. */
-export type WorkerType = "EMPLOYEE" | "CONTRACTOR" | "TRAINEE";
+/** Re-exported from the one module that decides pay class. Declared there,
+ *  not here, so a new worker type is a compile error in exactly one place. */
+export type { WorkerType } from "./workerClass";
+import type { Rates, WorkerType } from "./workerClass";
+import { isFeeable, isW2, rateFor } from "./workerClass";
 
 
 // ────────────────────────────────────────────────────────────────────
@@ -31,7 +29,9 @@ export type WorkerType = "EMPLOYEE" | "CONTRACTOR" | "TRAINEE";
 // ────────────────────────────────────────────────────────────────────
 
 export type WorkerInput = { userId: string; splitPercent: number; workerType: WorkerType | null };
-export type Rates = { contractorFeePercent: number; employeeMarginPercent: number };
+/** Owned by workerClass — the module that decides pay class owns the rate
+ *  table it reads. Re-exported here so existing importers keep working. */
+export type { Rates } from "./workerClass";
 
 export type PromisedRow = {
   userId: string;
@@ -110,13 +110,9 @@ export function allocateExact(
   return out;
 }
 
-export function isEmployeeClass(wt: WorkerType | null): boolean {
-  return wt === "EMPLOYEE" || wt === "TRAINEE";
-}
-
-export function rateFor(wt: WorkerType | null, rates: Rates): number {
-  return isEmployeeClass(wt) ? rates.employeeMarginPercent : rates.contractorFeePercent;
-}
+/** Re-exported so existing imports keep working. The implementation now
+ *  THROWS for unpaid rather than defaulting into the contractor branch. */
+export { rateFor } from "./workerClass";
 
 export function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -227,8 +223,8 @@ export function reconcileApproval(
       };
     }
 
-    if (isEmployeeClass(p.workerType)) {
-      // Employee/trainee: always paid the promised net. Overage to business.
+    if (isW2(p.workerType)) {
+      // W-2 (EMPLOYEE): always paid the promised net. Overage to business.
       const finalAmount = p.net;
       const topUp = round2(Math.max(0, finalAmount - a.net));
       return {
@@ -272,12 +268,29 @@ export function reconcileApproval(
   // only $40 was actually kept). Using promised: $20 margin + $20
   // overage = $40 ✓. Per-split feeAmount stays as actual (used for
   // per-worker reporting), only these Payment-row aggregates change.
+  // BOTH predicates are positive, and the partition is asserted TOTAL.
+  //
+  // This was `!isEmployeeClass(...)` for the fee side — "not an employee,
+  // therefore a contractor". Two positive filters can instead leave money in
+  // NEITHER bucket, which would be a silent conservation break rather than a
+  // misattribution, so the sum is checked against the whole. Every promised
+  // row is w2 or contractor by construction (rateFor refuses anything else),
+  // and if that ever stops being true this says so instead of losing a cut.
   const platformFeeAmount = round2(
-    promised.filter((p) => !isEmployeeClass(p.workerType)).reduce((sum, p) => sum + p.fee, 0),
+    promised.filter((p) => isFeeable(p.workerType)).reduce((sum, p) => sum + p.fee, 0),
   );
   const businessMarginAmount = round2(
-    promised.filter((p) => isEmployeeClass(p.workerType)).reduce((sum, p) => sum + p.fee, 0),
+    promised.filter((p) => isW2(p.workerType)).reduce((sum, p) => sum + p.fee, 0),
   );
+  const allFees = round2(promised.reduce((sum, p) => sum + p.fee, 0));
+  if (Math.abs(platformFeeAmount + businessMarginAmount - allFees) > 0.011) {
+    throw new Error(
+      `Business cut does not partition: fees ${platformFeeAmount} + margin ` +
+        `${businessMarginAmount} != ${allFees}. A promised row carries a fee ` +
+        `but is neither W-2 nor contractor, so part of the business's cut ` +
+        `belongs to nobody.`,
+    );
+  }
 
   // Business retained delta vs. promised. Promised retained = sum of
   // promised fees (the cut the business would have kept on a perfect

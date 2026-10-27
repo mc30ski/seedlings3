@@ -9,10 +9,10 @@
  * takeover on every navigation, but the first login of the day has something
  * asking to be tapped.
  *
- * NOT VISIBLE TO CLIENTS. The caller gates on worker/admin/super AND on the
+ * NOT VISIBLE TO CLIENTS. The caller gates on staff AND on the
  * active role not being `client`; see the callsite in pages/index.tsx. The
  * title bar is shared with the client shell, so an ungated control here WOULD
- * render for a signed-in ClientContact and for a Super in client view-as.
+ * render for a signed-in ClientContact and for someone with `settings.manage` in client view-as.
  *
  * The seen-stamp is an ET business date key via `bizToday()`, never
  * `new Date().toISOString().slice(0,10)` — a UTC key flips the board back on
@@ -32,7 +32,21 @@ const KEY_PREFIX = "seedlings3:dayboard:seen:";
  * they have never seen reads the same as never having opened it at all. */
 const EVER_PREFIX = "seedlings3:dayboard:ever:";
 
-export default function DayBoardButton({ userId }: { userId?: string | null }) {
+export default function DayBoardButton({
+  userId,
+  label,
+}: {
+  userId?: string | null;
+  /**
+   * Optional text rendered INSIDE the trigger, for the header drawer.
+   *
+   * Inside, not beside: a caption sitting next to the button is not part of
+   * it, so the words — the larger target, and the part that says what the
+   * icon does — were the one place a click did nothing. Passing the label in
+   * keeps one element, one hit area, one accessible name.
+   */
+  label?: string;
+}) {
   const [open, setOpen] = useState(false);
   /** Bumped on every open so the board remounts and replays its entrance —
    *  otherwise the sting only ever runs the first time in a session. */
@@ -105,8 +119,10 @@ export default function DayBoardButton({ userId }: { userId?: string | null }) {
         aria-label={title}
         title={title}
         position="relative"
-        px="1"
+        px={label ? "1.5" : "1"}
         py={1}
+        gap={label ? 1.5 : 0}
+        borderRadius={label ? "md" : undefined}
         display="inline-flex"
         alignItems="center"
         cursor="pointer"
@@ -116,43 +132,57 @@ export default function DayBoardButton({ userId }: { userId?: string | null }) {
         onClick={() => { setRunKey((n) => n + 1); setOpen(true); markSeen(); void loadBoard(); }}
         data-board-motion
       >
-        {/* NEVER OPENED: an expanding ring pushing out from under the icon.
-            This is the one that has to carry across a busy title bar. */}
-        {state === "new" && (
-          <Box
-            position="absolute"
-            top="50%"
-            left="50%"
-            w="22px"
-            h="22px"
-            mt="-11px"
-            ml="-11px"
-            borderRadius="full"
-            pointerEvents="none"
-            css={{ animation: "seedlings-dayboard-halo 2s ease-out infinite" }}
-          />
-        )}
-
+        {/* HALO AND DOT ARE ANCHORED TO THE ICON, not to the button.
+            They used to be absolutely positioned against the trigger, which
+            was the same box as the icon. With a label the trigger is three
+            times wider, so `right: 0` put the unseen-dot out past the end of
+            the word and `left: 50%` centred the halo on the text. This
+            wrapper gives them back the icon-sized frame they were written
+            against, and the unlabelled case is unchanged. */}
         <Box
+          position="relative"
           display="inline-flex"
           css={state === "new" ? { animation: "seedlings-dayboard-nudge 3.4s ease-in-out infinite" } : undefined}
         >
+          {/* NEVER OPENED: an expanding ring pushing out from under the icon.
+              This is the one that has to carry across a busy title bar. */}
+          {state === "new" && (
+            <Box
+              position="absolute"
+              top="50%"
+              left="50%"
+              w="22px"
+              h="22px"
+              mt="-11px"
+              ml="-11px"
+              borderRadius="full"
+              pointerEvents="none"
+              css={{ animation: "seedlings-dayboard-halo 2s ease-out infinite" }}
+            />
+          )}
+
           <Trophy size={16} />
+
+          {state !== "seen" && (
+            <Box
+              position="absolute"
+              top="-2px"
+              right="-2px"
+              borderRadius="full"
+              bg="green.solid"
+              w={state === "new" ? "8px" : "7px"}
+              h={state === "new" ? "8px" : "7px"}
+              borderWidth={state === "new" ? "1.5px" : "0"}
+              borderColor="bg.panel"
+              css={{ animation: "seedlings-dayboard-pulse 1.8s ease-in-out infinite" }}
+            />
+          )}
         </Box>
 
-        {state !== "seen" && (
-          <Box
-            position="absolute"
-            top="2px"
-            right="0"
-            borderRadius="full"
-            bg="green.solid"
-            w={state === "new" ? "8px" : "7px"}
-            h={state === "new" ? "8px" : "7px"}
-            borderWidth={state === "new" ? "1.5px" : "0"}
-            borderColor="bg.panel"
-            css={{ animation: "seedlings-dayboard-pulse 1.8s ease-in-out infinite" }}
-          />
+        {label && (
+          <Box as="span" fontSize="xs" lineHeight="1.2" whiteSpace="nowrap">
+            {label}
+          </Box>
         )}
       </Box>
 

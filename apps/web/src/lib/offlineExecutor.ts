@@ -1,3 +1,14 @@
+//
+// WHAT A CALLER MUST GATE ON: "materials.charge", "schedule.contribute", "work.claim", "work.complete".
+//
+// Every mutation below is guarded server-side by that capability
+// (docs/features/permissions-ROUTE-MAP.md). A transport module cannot gate
+// anything itself — it has no `scope` and no control to hide — so naming
+// the capability here is the fix G15 asks for. The next person calling one
+// of these from a new place can see what the control above it has to
+// check, instead of inheriting whatever gate happened to surround the
+// first callsite.
+
 import { apiPost, apiDelete } from "@/src/lib/api";
 import { setActionExecutor, type QueuedAction } from "./offlineQueue";
 

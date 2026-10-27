@@ -6,7 +6,7 @@
 // add color + glow + sparkle. The goal is "make the worker want to
 // look at this number" without being condescending at the low end.
 //
-// Data: /api/me/hourly-pay?days=N (see routes/worker.ts).
+// Data: /api/me/hourly-pay?days=N (see routes/time.ts).
 
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -74,7 +74,7 @@ export type HourlyPay = {
 type Props = {
   // Optional: when Admin Home views a specific worker via the "View
   // as" picker, pass that worker's id so the card shows their data
-  // instead of the caller's. Admin-only on the server side.
+  // instead of the caller's. Needs `people.manage` on the server side.
   viewAsUserId?: string | null;
   // Optional: display name of the impersonated worker for the header
   // copy ("Earnings for {name}").
@@ -99,7 +99,7 @@ type Props = {
 //     the label + numbers agree with their day-end payroll checks.
 //
 // Workers see the short list — the intent is "how am I doing lately",
-// not year-over-year trend analysis. Admins viewing a specific worker
+// not year-over-year trend analysis. Holders of `schedule.manage` viewing a specific worker
 // via the "View as" picker get the extended list so they can spot
 // longer-arc performance context that the worker themselves doesn't.
 export type Period = {
@@ -111,7 +111,7 @@ export type Period = {
   preset?: "today" | "yesterday";
 };
 
-export const WORKER_PERIODS: Period[] = [
+export const OWN_PERIODS: Period[] = [
   { preset: "today", label: "today" },
   { preset: "yesterday", label: "yesterday" },
   { days: 3, label: "last 3 days" },
@@ -120,25 +120,25 @@ export const WORKER_PERIODS: Period[] = [
   { days: 21, label: "last 3 weeks" },
   { days: 30, label: "last month" },
 ];
-export const ADMIN_EXTRA_PERIODS: Period[] = [
+export const EXTRA_PERIODS: Period[] = [
   { days: 60, label: "last 2 months" },
   { days: 90, label: "last 3 months" },
   { days: 180, label: "last 6 months" },
   { days: 365, label: "last year" },
 ];
-export const ADMIN_PERIODS = [...WORKER_PERIODS, ...ADMIN_EXTRA_PERIODS];
+export const OTHER_PERIODS = [...OWN_PERIODS, ...EXTRA_PERIODS];
 
 /**
- * Everything on record. SUPER surfaces only.
+ * Everything on record. Oversight surfaces only.
  *
  * `days: 0` is not a placeholder — it is the wire value the API already
  * understands. `/me/hourly-pay` reads `days=0` and starts at `new Date(0)`
- * (see routes/worker.ts), so this needed no backend change, and
+ * (see routes/time.ts), so this needed no backend change, and
  * `periodQueryParams` emits it correctly with no special case.
  *
- * Deliberately NOT added to ADMIN_PERIODS: that list also drives the Admin
- * Home pay cards, and all-time there would be a different (larger) claim
- * than the operator asked for.
+ * Deliberately NOT added to OTHER_PERIODS: that list also drives the Home
+ * pay cards, and all-time there would be a different (larger) claim than
+ * the operator asked for.
  */
 export const ALL_TIME_PERIOD: Period = { days: 0, label: "all time" };
 
@@ -196,11 +196,11 @@ export function periodTimeframe(
   };
 }
 
-/** Admin's list plus all-time — for the Super-only Insights sections. */
-export const SUPER_PERIODS: Period[] = [...ADMIN_PERIODS, ALL_TIME_PERIOD];
+/** The wider list plus all-time — for the `reports.view` Insights sections. */
+export const FULL_PERIODS: Period[] = [...OTHER_PERIODS, ALL_TIME_PERIOD];
 
 /**
- * Resolve a Period to the `from`/`to` ET date keys `/admin/operations`
+ * Resolve a Period to the `from`/`to` ET date keys `/operations`
  * expects.
  *
  * The `days === 0` branch must come BEFORE the rolling-window maths below:
@@ -416,8 +416,9 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
 
   // Admin-viewing-a-worker gets the extended list; regular worker
   // Home is capped at 1 month.
-  const isAdminView = !!viewAsUserId;
-  const periods = isAdminView ? ADMIN_PERIODS : WORKER_PERIODS;
+  // Whose card is this — mine, or somebody else's? Not a rank.
+  const isViewingOther = !!viewAsUserId;
+  const periods = isViewingOther ? OTHER_PERIODS : OWN_PERIODS;
 
   // Clamp stale persisted values that fall outside the current allowed
   // list — e.g. a worker previously saw a longer period and later got
@@ -711,7 +712,7 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
                   details={details}
                   period={period}
                   fg={tier.fg}
-                  isAdminContext={!!viewAsUserId}
+                  isViewingOther={!!viewAsUserId}
                 />
               ) : detailsError ? (
                 <Text fontSize="xs" color={tier.fg} opacity={0.7} py={2}>
@@ -801,10 +802,10 @@ export default function WorkerHourlyPayCard({ viewAsUserId, viewAsDisplayName, w
 // so the load always includes it.
 function jumpToOccurrence(
   occId: string,
-  adminContext: boolean,
+  viewingOther: boolean,
   anchorAt: string | null,
 ) {
-  const outer = adminContext ? "admin" : "worker";
+  const outer = viewingOther ? "admin" : "worker";
   window.dispatchEvent(
     new CustomEvent("seedlings:switchTab", { detail: { outer, inner: "jobs" } }),
   );
@@ -825,13 +826,13 @@ function BreakdownPanel({
   details,
   period,
   fg,
-  isAdminContext,
+  isViewingOther,
 }: {
   data: HourlyPay;
   details: HourlyPayDetails;
   period: Period;
   fg: string;
-  isAdminContext: boolean;
+  isViewingOther: boolean;
 }) {
   // Sanity: sum of projected values should equal `data.dollars` within
   // a rounding cent. Same for workday active-ms and `data.hours`.
@@ -926,11 +927,11 @@ function BreakdownPanel({
                   key={j.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => jumpToOccurrence(j.id, isAdminContext, j.completedAt)}
+                  onClick={() => jumpToOccurrence(j.id, isViewingOther, j.completedAt)}
                   onKeyDown={(e: React.KeyboardEvent) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      jumpToOccurrence(j.id, isAdminContext, j.completedAt);
+                      jumpToOccurrence(j.id, isViewingOther, j.completedAt);
                     }
                   }}
                   bg={idx % 2 === 0 ? rowBg : zebra}

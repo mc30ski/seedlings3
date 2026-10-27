@@ -68,10 +68,10 @@ type Props = {
   defaultEstimatedMinutes?: number | null;
   defaultStartedAt?: string | null;
   defaultCompletedAt?: string | null;
-  defaultIsAdminOnly?: boolean;
+  defaultMustBeAssigned?: boolean;
   defaultJobType?: string | null;
   defaultJobTags?: string[] | null;
-  isAdmin?: boolean;
+  canManageSchedule?: boolean;
   /** Pre-selected assignees (carried from previous occurrence) */
   defaultAssignees?: { userId: string; displayName?: string | null }[];
   // optional overrides
@@ -119,10 +119,10 @@ export default function OccurrenceDialog({
   defaultEstimatedMinutes,
   defaultStartedAt,
   defaultCompletedAt,
-  defaultIsAdminOnly,
+  defaultMustBeAssigned,
   defaultJobType,
   defaultJobTags,
-  isAdmin,
+  canManageSchedule,
   defaultAssignees,
   defaultWorkflow,
   defaultOccTitle,
@@ -169,7 +169,7 @@ export default function OccurrenceDialog({
   const [workflow, setWorkflow] = useState(defaultWorkflow ?? "STANDARD");
   // Tasks, reminders, events, followups, and announcements aren't service
   const [isTentative, setIsTentative] = useState(false);
-  const [isAdminOnly, setIsAdminOnly] = useState(false);
+  const [mustBeAssigned, setMustBeAssigned] = useState(false);
   const [occFrequencyDays, setOccFrequencyDays] = useState("");
   const [freqError, setFreqError] = useState("");
   const [jobType, setJobType] = useState("");
@@ -209,7 +209,7 @@ export default function OccurrenceDialog({
       setStatus(defaultStatus ?? "");
       setKind(defaultKind ?? "");
       // New occurrences default both dates to today so the workflow's
-      // Final Step is one click away from "Create Everything" — admins
+      // Final Step is one click away from "Create Everything" — holders of `schedule.manage`
       // almost always mean "today" anyway, and an empty start used to
       // block submit with a warning toast.
       setStartAt(mode === "UPDATE" || defaultStartAt ? toDateInput(defaultStartAt) : toDateInput(new Date().toISOString()));
@@ -222,7 +222,7 @@ export default function OccurrenceDialog({
       setOccTitle(defaultOccTitle ?? "");
       setWorkflow(defaultWorkflow ?? "STANDARD");
       setIsTentative(false);
-      setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
+      setMustBeAssigned(defaultMustBeAssigned ?? (mode === "CREATE" ? true : false));
       setJobType(defaultJobType ?? "");
       setJobTags(defaultJobTags ?? []);
       setOccFrequencyDays(defaultFrequencyDays != null ? String(defaultFrequencyDays) : "");
@@ -246,7 +246,7 @@ export default function OccurrenceDialog({
     // inherit it (de-selectable). UPDATE occurrences keep their own.
     if (mode === "CREATE" && jobId) {
       setIncludeGuidanceNote(true);
-      apiGet<{ guidanceNote?: string | null }>(`/api/admin/jobs/${jobId}`)
+      apiGet<{ guidanceNote?: string | null }>(`/api/jobs/${jobId}`)
         .then((j) => setJobGuidanceNote(j?.guidanceNote ?? null))
         .catch(() => setJobGuidanceNote(null));
     } else {
@@ -305,7 +305,7 @@ export default function OccurrenceDialog({
         ...(selectedAssignees.size > 0 ? { assigneeUserIds: Array.from(selectedAssignees) } : {}),
         workflow,
         ...(isTentative ? { isTentative: true } : {}),
-        ...(isAdminOnly ? { isAdminOnly: true } : {}),
+        ...(mustBeAssigned ? { mustBeAssigned: true } : {}),
         ...(jobType ? { jobType } : {}),
         ...(jobTags.length > 0 ? { jobTags } : {}),
         // Job default guidance description: send it (or explicit null to
@@ -332,7 +332,7 @@ export default function OccurrenceDialog({
       }
 
       if (mode === "CREATE") {
-        const endpoint = createEndpoint ?? `/api/admin/jobs/${jobId}/occurrences`;
+        const endpoint = createEndpoint ?? `/api/jobs/${jobId}/occurrences`;
         const created = await apiPost<{ id: string }>(endpoint, occPayload);
         const newOccId = created?.id;
         // NO CHARGE CREATION HERE. Charges used to be posted one at a
@@ -343,7 +343,7 @@ export default function OccurrenceDialog({
         // Save property photo selections if changed
         if (newOccId && propertyPhotoIds !== null) {
           try {
-            await apiPut(`/api/admin/occurrences/${newOccId}/property-photos`, { propertyPhotoIds });
+            await apiPut(`/api/occurrences/${newOccId}/property-photos`, { propertyPhotoIds });
           } catch (err) { console.error("Failed to save property photos:", err); }
         }
         // NO ADD-ON CREATION HERE — see the note in the body.
@@ -359,7 +359,7 @@ export default function OccurrenceDialog({
         };
         if (status) body.status = status;
         if (kind) body.kind = kind;
-        if (isAdmin) {
+        if (canManageSchedule) {
           // Only send startedAt/completedAt if they differ from defaults to avoid accidental overwrite.
           // Parse the datetime-local inputs as ET wall-clock (see
           // bizParseLocalInputValue) so the round-trip through the
@@ -371,7 +371,7 @@ export default function OccurrenceDialog({
           if (newStartedAt !== origStartedAt) body.startedAt = newStartedAt;
           if (newCompletedAt !== origCompletedAt) body.completedAt = newCompletedAt;
         }
-        body.isAdminOnly = isAdminOnly;
+        body.mustBeAssigned = mustBeAssigned;
         body.jobType = jobType || null;
         body.jobTags = jobTags.length > 0 ? jobTags : null;
         body.frequencyDays = occFrequencyDays !== "" ? Number(occFrequencyDays) : null;
@@ -383,13 +383,13 @@ export default function OccurrenceDialog({
           body.proposalAmount = proposalAmount !== "" ? Number(proposalAmount) : null;
           body.proposalNotes = proposalNotes.trim() || null;
         }
-        await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
+        await apiPatch(`/api/occurrences/${occurrenceId}`, body);
         // NO CHARGE CREATION HERE either — and note the `catch {}` this
         // replaced: a failed charge vanished with no message at all.
         // Save property photo selections if changed
         if (occurrenceId && propertyPhotoIds !== null) {
           try {
-            await apiPut(`/api/admin/occurrences/${occurrenceId}/property-photos`, { propertyPhotoIds });
+            await apiPut(`/api/occurrences/${occurrenceId}/property-photos`, { propertyPhotoIds });
           } catch (err) { console.error("Failed to save property photos:", err); }
         }
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
@@ -436,7 +436,7 @@ export default function OccurrenceDialog({
                       onValueChange={(e) => {
                         const wf = e.value[0] ?? "STANDARD";
                         setWorkflow(wf);
-                        if (mode === "CREATE") setIsAdminOnly(wf === "ESTIMATE");
+                        if (mode === "CREATE") setMustBeAssigned(wf === "ESTIMATE");
                       }}
                       size="sm"
                       positioning={{ strategy: "fixed", hideWhenDetached: true }}
@@ -493,7 +493,7 @@ export default function OccurrenceDialog({
                   // would shift every time the user picks a new option).
                   // The server enforces the same table; this just avoids
                   // letting the user pick a value it will reject.
-                  const allowedStatuses = validNextStatuses(workflow, defaultStatus ?? null, !!isAdmin);
+                  const allowedStatuses = validNextStatuses(workflow, defaultStatus ?? null, !!canManageSchedule);
                   return (
                     <div>
                       <Text mb="1">Status</Text>
@@ -594,7 +594,7 @@ export default function OccurrenceDialog({
                     <Text fontSize="2xs" color="yellow.fg">Enter the time as if one person were completing the job alone. The app will automatically adjust the estimate when multiple workers are assigned.</Text>
                   </Box>
                 </div>
-                {isAdmin && mode === "UPDATE" && (
+                {canManageSchedule && mode === "UPDATE" && (
                   <>
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
@@ -737,8 +737,8 @@ export default function OccurrenceDialog({
                   </Checkbox.Root>
                 )}
                 <Checkbox.Root
-                  checked={isAdminOnly}
-                  onCheckedChange={(e) => setIsAdminOnly(!!e.checked)}
+                  checked={mustBeAssigned}
+                  onCheckedChange={(e) => setMustBeAssigned(!!e.checked)}
                 >
                   <Checkbox.HiddenInput />
                   <Checkbox.Control />

@@ -1,4 +1,5 @@
 "use client";
+import type { WorkerType } from "@repo/money";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Jobs tab's standing reference — what every card type is, what the
@@ -17,15 +18,15 @@
 //     repeating pause on the visit itself.)
 //   • "the Job Service's default team" — a default CREW wins over the
 //     per-user defaults, and an archived default crew leaves it unassigned.
-//   • "Only the claimer can start, complete, accept payment" — or an admin.
-//     And a TRAINEE never can, claimer or not.
+//   • "Only the claimer can start, complete, accept payment" — or someone with `schedule.manage`.
+//     And someone without field clearance never can, claimer or not.
 //   • Claim eligibility was not covered at all: trainees cannot claim,
 //     contractors cannot claim more than 2 days out, a crew lead claims for
 //     the crew, and a high-value job needs the signed policies that gate it.
 //   • "Insured Only" is not a hardcoded insurance check any more. It is the
 //     compliance policies that gate JOB_CLAIM above HIGH_VALUE_JOB_THRESHOLD
 //     — the seeded one happens to be Insurance.
-//   • Reschedule: admins are exempt from the 2-day window but the reason is
+//   • Reschedule: holders of `schedule.manage` are exempt from the 2-day window but the reason is
 //     still required of everyone, and it happens right here, not on Services.
 //   • Card colours: closed Events and Followups have their own paler fills,
 //     "assigned to someone else" is gray.100 (the legend swatch said
@@ -40,7 +41,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Badge, Box, HStack, Text, VStack } from "@chakra-ui/react";
-import TabExplainer, { Em, ExplainerText, RoleSection } from "@/src/ui/components/TabExplainer";
+import type { Scope } from "@/src/lib/scope";
+import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 
 /** Ghost-card fill — mirrors GHOST_CARD_BG in JobsTab. */
 const GHOST_BG = "#7c8698";
@@ -94,7 +96,7 @@ const COLORS: Array<{ name: string; bg: string; border: string; palette: string;
   { name: "Teal", bg: "teal.faint", border: "teal.emphasized", palette: "teal", means: "Assigned to you — or someone else has it actively in progress" },
   { name: "Yellow", bg: "yellow.faint", border: "yellow.emphasized", palette: "yellow", means: "Unassigned — available to claim" },
   { name: "Green", bg: "green.subtle", border: "green.strong", palette: "green", means: "Pending payment — work done, money not in yet" },
-  { name: "Orange", bg: "orange.faint", border: "orange.emphasized", palette: "orange", means: "Tentative — not yet confirmed by an admin" },
+  { name: "Orange", bg: "orange.faint", border: "orange.emphasized", palette: "orange", means: "Tentative — not yet confirmed" },
   { name: "Deep orange", bg: "orange.subtle", border: "orange.strong", palette: "orange", means: "Paused — this visit was started and then stopped. Thicker border, like in-progress" },
   { name: "Pink", bg: "pink.faint", border: "pink.emphasized", palette: "pink", means: "Estimate" },
   { name: "Blue", bg: "blue.faint", border: "blue.emphasized", palette: "blue", means: "Task — yours only" },
@@ -109,30 +111,40 @@ const COLORS: Array<{ name: string; bg: string; border: string; palette: string;
 
 /** The storage key, exported so the out-of-line trigger in the breadcrumb row
  *  targets the same explainer. Two literals would silently drift and the
- *  button would toggle nothing. */
-export function jobsExplainerKey(role: "worker" | "admin" | "super") {
-  return `seedlings:jobsTab:guideOpen:${role}`;
-}
+ *  button would toggle nothing.
+ *
+ *  It took a `role: "worker" | "admin" | "super"` and keyed on it, so three
+ *  variants of one tab each kept their own collapse state. There is one tab
+ *  and one state; the SECTIONS below still vary, on capabilities. */
+export const jobsExplainerKey = () => "seedlings:jobsTab:guideOpen";
 
 export default function JobsExplainer({
-  isAdminView,
-  isSuperView,
+  canManageSchedule,
+  canViewReports,
   workerType,
+  fieldCleared,
+  scope,
 }: {
-  /** Admin-or-super scope — the tab is mounted with purpose="ADMIN" for both. */
-  isAdminView: boolean;
-  /** True only on the Super tab with a real SUPER role. */
-  isSuperView: boolean;
+  /** `schedule.manage` — adds the paragraph about running the schedule. */
+  canManageSchedule: boolean;
+  /** `reports.view` — adds the paragraph about the rollups. These were
+   *  `canManageSchedule` and `canViewReports`, named for two deleted roles and for
+   *  a `purpose` prop that no longer exists. */
+  canViewReports: boolean;
   /** Drives the claim-eligibility paragraph. Trainees and contractors each
    *  have a hard rule the other does not. */
-  workerType?: string | null;
+  workerType?: WorkerType | null;
+  fieldCleared?: boolean;
+  /** Capability answers for the sections below, so the help agrees with
+   *  the route rather than with a surface flag. Absent fails closed. */
+  scope?: Scope;
 }) {
-  const role = isSuperView ? "super" : isAdminView ? "admin" : "worker";
-  const isTrainee = workerType === "TRAINEE";
+  // Clearance is a capability, not a worker type (see lib/scope).
+  const notFieldCleared = fieldCleared === false;
   const isContractor = workerType === "CONTRACTOR";
 
   return (
-    <TabExplainer explainerId={jobsExplainerKey(role)}>
+    <TabExplainer explainerId={jobsExplainerKey()}>
       {/* ── What the feed is, for everyone ── */}
       <ExplainerText>
         Every occurrence you can see on one timeline: service visits, estimates, your own
@@ -140,17 +152,19 @@ export default function JobsExplainer({
         tells you the state at a glance &mdash; the legend is at the bottom.
       </ExplainerText>
 
-      {isTrainee ? (
+      {notFieldCleared ? (
             <ExplainerText>
-              As a trainee you can see and comment, but you cannot <Em>claim</Em> a job, and
-              you cannot start, complete or manage one even when you are on the team — a team
-              lead takes those actions. Ask to be added to an occurrence rather than claiming
-              it.
+              You can see and comment, but you cannot <Em>claim</Em> a job, and you cannot
+              start, complete or manage one even when you are on the team — a team lead takes
+              those actions. Ask to be added to an occurrence rather than claiming it. This is
+              <Em> field clearance</Em>, which is granted with a role; it is not about how you
+              are paid.
             </ExplainerText>
           ) : isContractor ? (
             <ExplainerText>
               As a contractor you can only claim a job <Em>within two days</Em> of today —
-              anything further out has to wait, or be assigned to you by an admin. A job
+              anything further out has to wait, or be assigned to you by someone who runs the
+            schedule. A job
               priced above the high-value threshold also needs the policies that gate
               claiming to be signed and current.
             </ExplainerText>
@@ -161,7 +175,7 @@ export default function JobsExplainer({
               that gate claiming to be signed and current.
             </ExplainerText>
           )}
-      {!isTrainee && (
+      {!notFieldCleared && (
         <ExplainerText>
           If you lead a crew, <Em>Claim for [crew]</Em> takes the whole crew onto the job
           instead of just you. Only the crew&rsquo;s lead can do that, and a job already
@@ -169,10 +183,10 @@ export default function JobsExplainer({
         </ExplainerText>
       )}
 
-      {/* ADDITIVE from here. Each section says only what the role ADDS to
+      {/* ADDITIVE from here. Each section says only what the capability ADDS to
           everything above — the same way the buttons on a card stack. */}
-      {isAdminView && (
-        <RoleSection role="Admin">
+      {canManageSchedule && (
+        <CapabilitySection capability="schedule.manage" scope={scope}>
           <ExplainerText>
             You see every occurrence in the business, not just your own and the unclaimed
             ones &mdash; including team events, which a worker never sees unless they are on
@@ -184,11 +198,11 @@ export default function JobsExplainer({
             card. That row is hidden at the compact densities &mdash; tap a card up to full
             size to reach it.
           </ExplainerText>
-        </RoleSection>
+        </CapabilitySection>
       )}
 
-      {isSuperView && (
-        <RoleSection role="Super">
+      {canViewReports && (
+        <CapabilitySection capability="reports.view" scope={scope}>
           <ExplainerText>
             Three more actions on that same elevated row, and only here:{" "}
             <Em>Reopen</Em> puts a finished, closed, cancelled or awaiting-payment visit back
@@ -198,7 +212,7 @@ export default function JobsExplainer({
           <ExplainerText>
             The <Em>Insights</Em> rollup at the top of the tab is yours alone.
           </ExplainerText>
-        </RoleSection>
+        </CapabilitySection>
       )}
 
       {/* ── Job types ── */}
@@ -230,8 +244,9 @@ export default function JobsExplainer({
         label="Estimate" palette="pink" bg="pink.faint" borderColor="pink.emphasized"
         flow="Assign → Start → Complete → Accept or Reject"
       >
-        A site visit to price work. Estimates are administered by default, so an admin assigns
-        them. After completing, the claimer or an admin accepts or rejects with comments —
+        A site visit to price work. Estimates are administered by default, so they are
+        assigned rather than claimed. After completing, the claimer or anyone who runs the schedule accepts or rejects
+            with comments —
         accepting an estimate opens the workflow that creates the client, property and job from
         it. An estimate can stand alone or hang off an existing job.
       </TypeCard>
@@ -251,32 +266,34 @@ export default function JobsExplainer({
         every other colour. Reminders cannot be rescheduled — move the reminder itself.
       </TypeCard>
 
-      <SectionTitle note="Visible to the people added via Manage Team. Admins see them all.">Team</SectionTitle>
+      <SectionTitle note="Visible to the people added via Manage Team. Anyone who runs the schedule sees them all.">Team</SectionTitle>
 
       <TypeCard
         label="Event" palette="yellow" bg="yellow.muted" borderColor="yellow.strong"
-        flow="Scheduled → Complete (admin) → next created if it repeats"
+        flow="Scheduled → Complete → next created if it repeats"
       >
-        A team-scoped occurrence — a weekly meeting, an equipment inspection. Created by admins
-        only, with an optional exact time, one-off or repeating. Only an admin edits or
-        completes one. A monthly cadence lands on the same day of the month and a yearly one on
+        A team-scoped occurrence — a weekly meeting, an equipment inspection. Created only by
+        someone who runs the schedule, with an optional exact time, one-off or repeating.
+        Only they edit or complete one. A monthly cadence lands on the same day of the month and a yearly one on
         the same date, rather than counting days.
       </TypeCard>
 
       <TypeCard
         label="Followup" palette="red" bg="red.muted" borderColor="red.strong"
-        flow="Scheduled → Complete (admin) → next created if it repeats"
+        flow="Scheduled → Complete → next created if it repeats"
       >
-        A team-scoped follow-up (&ldquo;follow up on Thompson pricing&rdquo;). Created by admins
+        A team-scoped follow-up (&ldquo;follow up on Thompson pricing&rdquo;). Created by whoever runs
+            the schedule
         only. Attach clients and job services to it and the chips navigate straight to them.
-        One-off or repeating, and only an admin edits or completes one.
+        One-off or repeating, and only they edit or complete one.
       </TypeCard>
 
-      <SectionTitle note="Every worker and admin sees these.">Everyone</SectionTitle>
+      <SectionTitle note="Everyone on the team sees these.">Everyone</SectionTitle>
 
       <TypeCard label="Announcement" palette="purple" bg="purple.muted" borderColor="purple.strong">
-        A company-wide notice (&ldquo;office closed Friday&rdquo;). Created by admins only. There
-        is no Complete on an announcement — an admin edits or deletes it, and otherwise it just
+        A company-wide notice (&ldquo;office closed Friday&rdquo;). Created only by someone who
+        runs the schedule. There is no Complete on an announcement — they edit or delete it,
+        and otherwise it just
         falls back down the timeline as newer cards arrive. No team, and it is never counted
         overdue.
       </TypeCard>
@@ -286,10 +303,10 @@ export default function JobsExplainer({
 
       <Concept title="Claimer">
         The first person onto an occurrence becomes its claimer; anyone added afterwards is a
-        worker or an observer. Only the claimer <Em>or an admin</Em> can start, complete, and
-        accept payment, and only the claimer or an admin can add or remove team members. Use
-        Manage Team to hand the claim to someone else. A trainee cannot take these actions
-        under any circumstances.
+        worker or an observer. Only the claimer <Em>or someone who runs the schedule</Em> can
+        start, complete and accept payment, or add and remove team members. Use
+        Manage Team to hand the claim to someone else. Without field clearance these
+        actions are never available, whoever you are.
       </Concept>
 
       <Concept title="Default team">
@@ -300,10 +317,11 @@ export default function JobsExplainer({
       </Concept>
 
       <Concept title="Reschedule">
-        Only the claimer or an admin can reschedule, only while the visit is still scheduled,
+        Only the claimer, or someone who runs the schedule, can reschedule — and only while
+            the visit is still scheduled,
         and never for a task or reminder. A written reason is required from everyone and is
         posted to the card as a comment. Workers are held to <Em>two days</Em> either side of
-        today; admins have no window. The new date keeps the original time of day, and you are
+        today; running the schedule carries no window. The new date keeps the original time of day, and you are
         offered a message to send the client.
       </Concept>
 
@@ -318,18 +336,19 @@ export default function JobsExplainer({
       <SectionTitle note="These modify any card type they are put on.">Flags</SectionTitle>
 
       <Concept title="Administered">
-        Cannot be claimed — an admin has to assign the team. Once assigned, the claimer runs it
+        Cannot be claimed — someone who runs the schedule assigns the team. Once assigned, the claimer runs it
         normally. Estimates are administered by default.
       </Concept>
 
       <Concept title="Tentative">
-        Cannot be claimed or started until an admin confirms it. For scheduling that is not
+        Cannot be claimed or started until someone who runs the schedule confirms it. For scheduling that is not
         settled, or that is waiting on the client.
       </Concept>
 
       <Concept title="Unconfirmed">
         The client has not confirmed the appointment. Work can still be claimed and started —
-        the orange badge is a heads-up, not a block — and the claimer or an admin can mark it
+        the orange badge is a heads-up, not a block — and the claimer, or someone who runs
+            the schedule, can mark it
         confirmed. Auto-created visits start unconfirmed.
       </Concept>
 
@@ -358,7 +377,8 @@ export default function JobsExplainer({
         deep-orange paused card above, which is a worker&rsquo;s timer stopped mid-visit. A
         held repeating visit keeps its normal colour and shows a purple pause circle where the
         action button would be — tap it for the reason, the note, and when to check back. An
-        admin can pause, resume or edit the reason from either this tab or Services; the
+        anyone who runs the schedule can pause, resume or edit the reason from either this
+            tab or Services; the
         actions and dialogs are the same in both.
       </ExplainerText>
 

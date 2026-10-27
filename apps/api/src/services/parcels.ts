@@ -2,7 +2,7 @@
 // Public parcel lookup — county assessor records + overhead imagery.
 //
 // WHY THIS EXISTS
-// Admins pricing a job want to know how big a property actually is. The
+// Holders of `schedule.manage` pricing a job want to know how big a property actually is. The
 // county publishes surveyed parcel geometry and appraisal values for free,
 // and the state publishes 6-inch orthoimagery. Both are open endpoints with
 // no key and no quota.
@@ -453,7 +453,7 @@ export async function resolveParcel(propertyId: string, opts: { force?: boolean 
   if (!cfg.enabled) {
     throw new ServiceError(
       "DISABLED",
-      "Property records are switched off for this business. A Super can turn them back on in Settings, under Property Records.",
+      "Property records are switched off for this business. Someone with settings authority can turn them back on in Settings, under Property Records.",
       400,
     );
   }
@@ -635,7 +635,7 @@ export async function resolveParcel(propertyId: string, opts: { force?: boolean 
  * A browser-usable URL for the property's overhead image.
  *
  * Returns a short-lived SIGNED R2 URL rather than the bytes, because an
- * `<img src>` carries no Clerk token — pointing it at the admin-gated route
+ * `<img src>` carries no Clerk token — pointing it at a caller with `schedule.manage`-gated route
  * 401s and the image silently fails to render. Same pattern the guide assets
  * and property photos already use. The endpoint that hands out the URL stays
  * admin-gated; only the opaque, expiring link reaches the browser.
@@ -802,7 +802,7 @@ export async function parcelImageUrl(propertyId: string): Promise<ParcelImage> {
         : lastKind === "upstream"
           ? `The state's aerial photo service turned the request away${lastUpstream ? ` — it said: "${lastUpstream}"` : ""}. ` +
             `That points to a setting being wrong rather than the service being down, so trying again won't help. ` +
-            `A Super should check the aerial photo address in Settings, under Property Records.`
+            `Someone with settings authority should check the aerial photo address in Settings, under Property Records.`
           : `We couldn't reach the state's aerial photo service at all. That's usually a network problem ` +
             `on this end rather than anything to do with the property — check the connection and try again.`;
     throw new ServiceError("IMAGERY_UNAVAILABLE", message, 502);

@@ -8,11 +8,11 @@ import {
 
 /**
  * Regression guard for the security posture of client view-as. Runs
- * under the `employee` project (a non-Super storage state).
+ * under the `employee` project (an account without `clients.view-as`).
  *
- * A non-Super sending a forged `X-Impersonate-Client-Contact` header
+ * A caller without `clients.view-as` sending a forged `X-Impersonate-Client-Contact` header
  * must be silently ignored — the plugin never applies the swap for
- * non-Super callers, and it does not 4xx (so the feature's existence
+ * callers without it, and it does not 4xx (so the feature's existence
  * isn't leaked via a status code).
  */
 
@@ -26,7 +26,7 @@ test.afterAll(async () => {
   await prisma.$disconnect();
 });
 
-/** Same fetch-in-browser pattern as the admin spec, so Clerk's session
+/** Same fetch-in-browser pattern as a caller with `clients.manage` spec, so Clerk's session
  *  token is attached via Bearer automatically. */
 async function callApi(
   page: Page,
@@ -71,7 +71,7 @@ async function callApi(
   }, { apiBase, opts });
 }
 
-test.describe("Client View-As: non-Super sending the header is silently ignored", () => {
+test.describe("Client View-As: the header is silently ignored without `clients.view-as`", () => {
   test("Employee sending X-Impersonate-Client-Contact does NOT gain access to client data", async ({ page }) => {
     const scratch = await createScratchClientWithContacts(prisma, {
       clientName: "E2E Security Scratch Client",
@@ -116,7 +116,7 @@ test.describe("Client View-As: non-Super sending the header is silently ignored"
         impersonateContact: scratch.contactIds[0],
       });
       // We don't care about the exact status — only that it's NOT
-      // the impersonation 403. If the plugin misfired for a non-Super,
+      // the impersonation 403. If the plugin misfired for such a caller,
       // we'd see code=IMPERSONATION_READONLY.
       const bodyStr = JSON.stringify(res.body);
       expect(bodyStr).not.toContain("IMPERSONATION_READONLY");

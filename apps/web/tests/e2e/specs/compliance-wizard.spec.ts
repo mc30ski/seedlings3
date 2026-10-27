@@ -83,7 +83,7 @@ test.describe("Wizard: Cancel button", () => {
       keyPrefix: "E2E_WIZARD_CANCEL",
       title: "E2E Wizard Cancel",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoWorkerHome(page);
@@ -106,7 +106,7 @@ test.describe("Wizard: Cancel button", () => {
       keyPrefix: "E2E_WIZARD_CANCEL_EVT",
       title: "E2E Wizard Cancel Event",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoWorkerHome(page);
@@ -139,7 +139,7 @@ test.describe("Wizard: successful sign flow", () => {
       keyPrefix: "E2E_WIZARD_SIGN",
       title: "E2E Wizard Sign Complete",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoWorkerHome(page);
@@ -193,7 +193,7 @@ test.describe("Wizard: successful sign flow", () => {
       keyPrefix: "E2E_WIZARD_BANNER_CLEAR",
       title: "E2E Banner Clears After Sign",
       enforcement: "BLOCK",
-      createdByUserId: USERS.super,
+      createdByUserId: USERS.owner,
     });
 
     await gotoWorkerHome(page);

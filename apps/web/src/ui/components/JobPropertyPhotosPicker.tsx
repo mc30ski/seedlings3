@@ -31,7 +31,7 @@ export default function JobPropertyPhotosPicker({ jobId, propertyId, occurrenceI
     async function load() {
       try {
         // Always load all property photos
-        const photos = await apiGet<PropertyPhoto[]>(`/api/admin/properties/${propertyId}/photos`);
+        const photos = await apiGet<PropertyPhoto[]>(`/api/properties/${propertyId}/photos`);
         setAllPhotos(Array.isArray(photos) ? photos : []);
 
         // Load current selections: from occurrence if editing, otherwise from job defaults
@@ -40,7 +40,7 @@ export default function JobPropertyPhotosPicker({ jobId, propertyId, occurrenceI
           const occPhotos = await apiGet<{ id: string }[]>(`/api/occurrences/${occurrenceId}/property-photos`);
           currentIds = (Array.isArray(occPhotos) ? occPhotos : []).map((p) => p.id);
         } else {
-          const defaults = await apiGet<{ propertyPhotoId: string }[]>(`/api/admin/jobs/${jobId}/property-photos`);
+          const defaults = await apiGet<{ propertyPhotoId: string }[]>(`/api/jobs/${jobId}/property-photos`);
           currentIds = (Array.isArray(defaults) ? defaults : []).map((d) => d.propertyPhotoId);
         }
         setSelectedIds(new Set(currentIds));

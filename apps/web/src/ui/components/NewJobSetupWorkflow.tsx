@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { Scope } from "@/src/lib/scope";
 import { parseAddressLine } from "@/src/lib/address";
 import { apiDelete, apiPost } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
@@ -30,13 +31,17 @@ type EstimateDefaults = {
 };
 
 type Props = {
+  /** What the viewer may do. The three dialogs this workflow opens were
+   *  mounted with a hardcoded role, so their fields were
+   *  editable for anybody who reached the workflow. */
+  scope?: Scope;
   active: boolean;
   onDone: () => void;
   onComplete?: (jobId?: string) => void;
   estimateDefaults?: EstimateDefaults | null;
 };
 
-export default function NewJobSetupWorkflow({ active, onDone, onComplete, estimateDefaults }: Props) {
+export default function NewJobSetupWorkflow({ active, onDone, onComplete, estimateDefaults, scope }: Props) {
   const [step, setStep] = useState<Step>("idle");
   const stepRef = useRef<Step>("idle");
 
@@ -146,15 +151,15 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
     try {
       // 1. Create client
       step = 1;
-      log(`Step 1/5 → POST /api/admin/clients`, clientData);
-      const client = await apiPost<{ id: string }>("/api/admin/clients", clientData);
+      log(`Step 1/5 → POST /api/clients`, clientData);
+      const client = await apiPost<{ id: string }>("/api/clients", clientData);
       clientId = client.id;
       log(`Step 1/5 ✓ client.id=${client.id}`);
 
       // 2. Create contact for that client
       step = 2;
-      log(`Step 2/5 → POST /api/admin/clients/${client.id}/contacts`, contactData);
-      const contact = await apiPost<{ id: string }>(`/api/admin/clients/${client.id}/contacts`, contactData);
+      log(`Step 2/5 → POST /api/clients/${client.id}/contacts`, contactData);
+      const contact = await apiPost<{ id: string }>(`/api/clients/${client.id}/contacts`, contactData);
       contactId = contact.id;
       log(`Step 2/5 ✓ contact.id=${contact.id}`);
 
@@ -165,29 +170,29 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
       if (propPayload.pointOfContactId === "__deferred__" || propPayload.pointOfContactId === "NONE") {
         propPayload.pointOfContactId = contact?.id ?? null;
       }
-      log(`Step 3/5 → POST /api/admin/properties`, propPayload);
-      const property = await apiPost<{ id: string }>("/api/admin/properties", propPayload);
+      log(`Step 3/5 → POST /api/properties`, propPayload);
+      const property = await apiPost<{ id: string }>("/api/properties", propPayload);
       propertyId = property.id;
       log(`Step 3/5 ✓ property.id=${property.id}`);
 
       // 4. Create job for that property
       step = 4;
       const jobPayload = { ...jobData, propertyId: property.id };
-      log(`Step 4/5 → POST /api/admin/jobs`, jobPayload);
-      const job = await apiPost<{ id: string }>("/api/admin/jobs", jobPayload);
+      log(`Step 4/5 → POST /api/jobs`, jobPayload);
+      const job = await apiPost<{ id: string }>("/api/jobs", jobPayload);
       jobId = job.id;
       log(`Step 4/5 ✓ job.id=${job.id}`);
 
       // 5. Create occurrence for that job
       step = 5;
-      log(`Step 5/5 → POST /api/admin/jobs/${job.id}/occurrences`, occurrenceData);
-      await apiPost(`/api/admin/jobs/${job.id}/occurrences`, occurrenceData);
+      log(`Step 5/5 → POST /api/jobs/${job.id}/occurrences`, occurrenceData);
+      await apiPost(`/api/jobs/${job.id}/occurrences`, occurrenceData);
       log(`Step 5/5 ✓ occurrence created`);
 
       // 6. If converting a light estimate, link it to the new job
       if (ed?.occurrenceId) {
         try {
-          await apiPost(`/api/admin/occurrences/${ed.occurrenceId}/link-to-job`, { jobId: job.id });
+          await apiPost(`/api/occurrences/${ed.occurrenceId}/link-to-job`, { jobId: job.id });
           log(`Linked light estimate ${ed.occurrenceId} → job ${job.id}`);
         } catch (err) {
           log(`Light-estimate link failed (non-critical)`, err);
@@ -220,10 +225,10 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
         }
       };
       const rolledBack: string[] = [];
-      if (jobId) { await tryDelete(`/api/admin/jobs/${jobId}`, `job ${jobId}`); rolledBack.push("job"); }
-      if (propertyId) { await tryDelete(`/api/admin/properties/${propertyId}`, `property ${propertyId}`); rolledBack.push("property"); }
-      if (contactId && clientId) { await tryDelete(`/api/admin/clients/${clientId}/contacts/${contactId}`, `contact ${contactId}`); rolledBack.push("contact"); }
-      if (clientId) { await tryDelete(`/api/admin/clients/${clientId}`, `client ${clientId}`); rolledBack.push("client"); }
+      if (jobId) { await tryDelete(`/api/jobs/${jobId}`, `job ${jobId}`); rolledBack.push("job"); }
+      if (propertyId) { await tryDelete(`/api/properties/${propertyId}`, `property ${propertyId}`); rolledBack.push("property"); }
+      if (contactId && clientId) { await tryDelete(`/api/clients/${clientId}/contacts/${contactId}`, `contact ${contactId}`); rolledBack.push("contact"); }
+      if (clientId) { await tryDelete(`/api/clients/${clientId}`, `client ${clientId}`); rolledBack.push("client"); }
 
       const rollbackNote = rolledBack.length > 0
         ? ` (rolled back ${rolledBack.join(", ")})`
@@ -245,7 +250,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
           open
           onOpenChange={closeGuard("contact")}
           mode="CREATE"
-          role="ADMIN"
+          scope={scope}
           clientId="__deferred__"
           preventOutsideClose
           deferSave
@@ -264,7 +269,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
           open
           onOpenChange={closeGuard("client")}
           mode="CREATE"
-          role="ADMIN"
+          scope={scope}
           preventOutsideClose
           deferSave
           defaultDisplayName={clientData?.displayName ?? defaultClientName}
@@ -283,7 +288,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
           open
           onOpenChange={closeGuard("property")}
           mode="CREATE"
-          role="ADMIN"
+          scope={scope}
           preventOutsideClose
           deferSave
           deferredClient={clientData ? { id: "__deferred__", displayName: clientData.displayName } : undefined}
@@ -324,7 +329,9 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
           onOpenChange={closeGuard("occurrence")}
           mode="CREATE"
           jobId="__deferred__"
-          isAdmin
+          // Was a bare role flag, i.e. true for anybody who reached this
+          // workflow. It is the capability the dialog's writes need.
+          canManageSchedule={!!scope?.can("schedule.manage")}
           preventOutsideClose
           defaultPrice={jobData?.defaultPrice}
           defaultEstimatedMinutes={jobData?.estimatedMinutes}

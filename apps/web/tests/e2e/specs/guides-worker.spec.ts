@@ -49,20 +49,20 @@ test.beforeEach(async () => {
     tags: ["e2e", "irrigation"],
     contentMarkdown: `# Published\n\n${PUBLISHED_BODY}\n`,
     status: "PUBLISHED",
-    createdById: USERS.admin,
+    createdById: USERS.scheduler,
   });
   pending = await createScratchGuide(prisma, {
     title: PENDING_TITLE,
     summary: "Submitted but not approved",
     contentMarkdown: `# Pending\n\n${PENDING_BODY}\n`,
     status: "PENDING_APPROVAL",
-    createdById: USERS.admin,
+    createdById: USERS.scheduler,
   });
   draft = await createScratchGuide(prisma, {
     title: DRAFT_TITLE,
     contentMarkdown: `# Draft\n\n${DRAFT_BODY}\n`,
     status: "DRAFT",
-    createdById: USERS.admin,
+    createdById: USERS.scheduler,
   });
 });
 
@@ -74,21 +74,22 @@ test.afterAll(async () => {
 test.describe("Education guides — worker view", () => {
   test("a worker can actually navigate to Guides through the UI", async ({ page }) => {
     // Every other spec here stamps localStorage to land on the tab, which
-    // renders it even when the role's catMap has no entry for `guides` —
-    // and that is precisely how it shipped: registered in the worker tab
-    // list, mapped to no category, unreachable by clicking.
-    await gotoGuidesByClicking(page, "worker");
-    // The catalog itself, not a placeholder — placeholders are attributes
-    // and never appear in textContent.
-    const body = (await page.locator("body").textContent()) ?? "";
-    expect(body, "Guides is not reachable from the worker's Records category").toContain(
-      PUBLISHED_TITLE,
-    );
+    // renders it even when no category maps to `guides` — and that is
+    // precisely how it shipped: in the tab list, mapped to no category,
+    // unreachable by clicking.
+    await gotoGuidesByClicking(page);
     await expect(page.getByPlaceholder(/Search guides/i)).toBeVisible();
+    // The catalog itself, not just the tab frame. A one-shot
+    // `body.textContent()` read here caught the list mid-spinner: the tab
+    // had painted, the rows had not. This retries until the row lands.
+    await expect(
+      page.getByText(PUBLISHED_TITLE).first(),
+      "Guides is not reachable from the worker's Records category",
+    ).toBeVisible({ timeout: 20_000 });
   });
 
   test("the catalog lists ONLY published guides", async ({ page }) => {
-    await gotoGuides(page, "worker");
+    await gotoGuides(page);
     // Anchor on the row RENDERING before reading the page. A fixed sleep
     // here was a guess that got shorter as the machine got busier, and it
     // made this assertion fail intermittently on content that arrived a
@@ -107,7 +108,7 @@ test.describe("Education guides — worker view", () => {
   test("the API response itself omits unapproved guides", async ({ page }) => {
     // The access control has to be in the RESPONSE. Asserting on the DOM
     // alone would pass if the client filtered a fuller payload.
-    await gotoGuides(page, "worker");
+    await gotoGuides(page);
 
     const list = await apiAs(page, "GET", "/api/me/guides");
     expect(list.status).toBe(200);
@@ -126,7 +127,7 @@ test.describe("Education guides — worker view", () => {
 
   test("fetching an unapproved guide directly is a 404, not a body", async ({ page }) => {
     // The catalog hiding it is not enough — someone will guess a slug.
-    await gotoGuides(page, "worker");
+    await gotoGuides(page);
 
     for (const g of [pending, draft]) {
       const byId = await apiAs(page, "GET", `/api/me/guides/${g.guideId}`);
@@ -148,7 +149,7 @@ test.describe("Education guides — worker view", () => {
     // Search runs server-side across the body text. A worker searching the
     // exact words of a draft must find nothing — otherwise search is a
     // side channel around the approval gate.
-    await gotoGuides(page, "worker");
+    await gotoGuides(page);
 
     const hit = await apiAs(page, "GET", `/api/me/guides?q=${encodeURIComponent("ZQPUBLISHEDBODY")}`);
     expect(hit.status).toBe(200);
@@ -166,7 +167,7 @@ test.describe("Education guides — worker view", () => {
   test("a worker cannot author, submit, approve or delete", async ({ page }) => {
     // Read-only is the whole contract for this role. Each of these is a
     // separate guard in the routes; a single 403 would not prove the rest.
-    await gotoGuides(page, "worker");
+    await gotoGuides(page);
 
     const attempts: Array<[string, string, any?]> = [
       ["POST", "/api/guides", { title: "E2E worker should not create", categoryKey: "lawn-care" }],
@@ -200,7 +201,7 @@ test.describe("Education guides — worker view", () => {
     // catalog: if it forgets to scope itself, a worker following that
     // link learns the pending guide's title and id — the exact leak the
     // catalog query exists to prevent.
-    await gotoGuides(page, "worker");
+    await gotoGuides(page);
 
     const res = await apiAs(
       page,
@@ -243,7 +244,7 @@ test.describe("Education guides — worker view", () => {
 
   test("a worker cannot reach the inbound-links endpoint", async ({ page }) => {
     // It reports which guides link to a given one, drafts included.
-    await gotoGuides(page, "worker");
+    await gotoGuides(page);
     const res = await apiAs(page, "GET", `/api/guides/${published.slug}/inbound-links`);
     expect(res.status).toBeGreaterThanOrEqual(401);
     expect(res.status).toBeLessThan(404);
@@ -252,7 +253,7 @@ test.describe("Education guides — worker view", () => {
   test("a published cross-reference renders as a link, a hidden one as plain text", async ({
     page,
   }) => {
-    await gotoGuides(page, "worker");
+    await gotoGuides(page);
     await page.getByText("Fertilizing Bermuda grass").first().click();
     // The links resolve through a second request after the body renders,
     // Wait for it to become an actual LINK, not just for the text.
@@ -288,7 +289,7 @@ test.describe("Education guides — worker view", () => {
   test("no unapproved body text reaches the rendered page", async ({ page }) => {
     // Belt and braces on the surface the worker actually looks at,
     // including after opening a guide and running a search in the UI.
-    await gotoGuides(page, "worker");
+    await gotoGuides(page);
     await page.getByText(PUBLISHED_TITLE).first().click();
     await expect(page.getByText(PUBLISHED_BODY, { exact: false })).toBeVisible({ timeout: 30_000 });
 

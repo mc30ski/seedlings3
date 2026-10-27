@@ -17,5 +17,16 @@
       "@/*": ["../web/*"]
     }
   },
-  "include": ["src", "api"]
+  // `prisma` and `scripts` are here because they were NOT, and both rotted.
+  //
+  // prisma: `seed.ts` went on importing a deleted constant. The seed CLEARS
+  // the database before it reaches the line that crashes, so running it
+  // wiped jobs, occurrences and payments.
+  //
+  // scripts: ten of them stopped compiling against the current schema and
+  // nothing said so — including two purge scripts that still referenced the
+  // deleted `UserRole` model. A half-running purge is the same failure shape
+  // as the seed. They are deleted; the survivors are typechecked so the next
+  // one fails loudly instead of at 2am.
+  "include": ["src", "api", "prisma", "scripts"]
 }

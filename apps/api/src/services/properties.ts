@@ -1,5 +1,7 @@
 import { Prisma, PropertyStatus, PropertyKind, JobStatus } from "@prisma/client";
+import { withArea } from "../lib/areaScope";
 import { prisma } from "../db/prisma";
+import { resolvePropertyPoint } from "./parcels";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { ServiceError } from "../lib/errors";
@@ -22,7 +24,145 @@ function like(text?: string) {
     : undefined;
 }
 
+/**
+ * The rows a caller may see on the map: their granted territory, the area
+ * they asked for, and the assignment narrowing for somebody who is not
+ * field-cleared. Identical to what `list()` applies, lifted out so the map
+ * cannot drift into showing a property the list would withhold.
+ */
+function mapScopeWhere(params: {
+  areaWhere?: Record<string, unknown>;
+  areaSubtreePath?: string | "none";
+  assignedToUserId?: string;
+}): Prisma.PropertyWhereInput {
+  const chosen: Prisma.PropertyWhereInput | null =
+    params.areaSubtreePath === "none"
+      ? { areaId: null }
+      : params.areaSubtreePath
+        ? { area: { path: { startsWith: params.areaSubtreePath } } }
+        : null;
+  const assigned: Prisma.PropertyWhereInput | null = params.assignedToUserId
+    ? { jobs: { some: { occurrences: { some: { assignees: { some: { userId: params.assignedToUserId } } } } } } }
+    : null;
+  return {
+    AND: [
+      (params.areaWhere ?? {}) as Prisma.PropertyWhereInput,
+      ...(chosen ? [chosen] : []),
+      ...(assigned ? [assigned] : []),
+    ],
+  };
+}
+
 export const properties: ServicesProperties = {
+  /**
+   * The properties in an area, as map pins.
+   *
+   * A pure read — never geocodes. The map opens on this instantly, however
+   * many points happen to be known, and `unplaced` tells the page how much
+   * is still to come so it can show "12/51 located" rather than a spinner
+   * with no end in sight.
+   */
+  async mapPoints(params: {
+    areaWhere?: Record<string, unknown>;
+    areaSubtreePath?: string | "none";
+    assignedToUserId?: string;
+    /** The area being looked at, so its own point can be returned with the
+     *  pins. That point is not decoration: it is what the area's weather
+     *  forecast is anchored on, and seeing it against the properties is
+     *  the only way to notice it is in the wrong place. */
+    areaId?: string;
+  }) {
+    const where = mapScopeWhere(params);
+    const rows = await prisma.property.findMany({
+      where,
+      select: {
+        id: true, displayName: true, street1: true, city: true,
+        lat: true, lng: true, parcelLookupError: true,
+        area: { select: { id: true, name: true } },
+        client: { select: { displayName: true } },
+      },
+      orderBy: { displayName: "asc" },
+    });
+    const area =
+      params.areaId && params.areaId !== "none"
+        ? await prisma.area.findUnique({
+            where: { id: params.areaId },
+            select: { id: true, name: true, lat: true, lng: true },
+          })
+        : null;
+
+    return {
+      /** The AREA's own point, or null if nobody has set one. Distinct
+       *  from the property pins and labelled as such on the map. */
+      areaCentre: area && area.lat != null && area.lng != null
+        ? { id: area.id, name: area.name, lat: area.lat, lng: area.lng }
+        : null,
+      points: rows,
+      total: rows.length,
+      placed: rows.filter((r) => r.lat != null && r.lng != null).length,
+      /** Still to geocode. Excludes ones already known to be unplaceable —
+       *  those are reported separately so the counter can reach its target
+       *  instead of stalling one short forever. */
+      pending: rows.filter((r) => r.lat == null && !r.parcelLookupError).length,
+      unplaceable: rows.filter((r) => r.lat == null && !!r.parcelLookupError).length,
+    };
+  },
+
+  /**
+   * Geocode the next few unplaced properties in an area.
+   *
+   * SMALL BATCHES, called repeatedly. One address costs about three and a
+   * half seconds against the free Census geocoder, so a request that tried
+   * to do fifty would time out and deliver nothing; a request that does
+   * five returns in a few seconds and the page asks again.
+   *
+   * A failure is RECORDED, not retried forever: an address the geocoder
+   * cannot place gets `parcelLookupError`, which both this and the parcel
+   * lookup skip. Without it the last few would be re-attempted on every
+   * open of the map, for ever, at three seconds each.
+   */
+  async resolveMapPoints(params: {
+    areaWhere?: Record<string, unknown>;
+    areaSubtreePath?: string | "none";
+    assignedToUserId?: string;
+    limit: number;
+  }) {
+    const where = mapScopeWhere(params);
+    const todo = await prisma.property.findMany({
+      where: { AND: [where, { lat: null }, { parcelLookupError: null }] },
+      select: { id: true },
+      orderBy: { displayName: "asc" },
+      take: params.limit,
+    });
+
+    const resolved: Array<{ id: string; lat: number; lng: number }> = [];
+    const failed: string[] = [];
+    // Sequential. The geocoder is a free public service and this is a
+    // background trickle, not a race — hammering it four-wide to shave
+    // seconds off a one-time fill is not a trade worth making.
+    for (const t of todo) {
+      const point = await resolvePropertyPoint(t.id, { persist: true });
+      if (point) {
+        resolved.push({ id: t.id, lat: point.lat, lng: point.lng });
+      } else {
+        failed.push(t.id);
+        // Caches that a PUBLIC address could not be placed, so it is not
+        // retried on every open at three seconds a go. No business state
+        // changes and nothing operator-entered is overwritten.
+        // audit-allow: derived geocoding cache, not an operator action.
+        await prisma.property.update({
+          where: { id: t.id },
+          data: { parcelLookupError: "Could not geocode this address." },
+        }).catch(() => {});
+      }
+    }
+
+    const remaining = await prisma.property.count({
+      where: { AND: [where, { lat: null }, { parcelLookupError: null }] },
+    });
+    return { resolved, failed, remaining };
+  },
+
   async list(params: PropertyListItemParams) {
     const q = (params?.q ?? "").trim();
     const limit = Math.min(Math.max(params?.limit ?? 100, 1), 500);
@@ -44,11 +184,41 @@ export const properties: ServicesProperties = {
       ];
     }
 
+    // ASSIGNMENT, VIA JOBS. Reaches the property through the work on it:
+    // property -> job -> occurrence -> assignee. PropertiesTab drew this
+    // exact set by filtering a full fetch client-side, which left every
+    // address in the network response of somebody who may see four of them.
+    if (params?.assignedToUserId) {
+      where.jobs = {
+        some: {
+          occurrences: {
+            some: { assignees: { some: { userId: params.assignedToUserId } } },
+          },
+        },
+      };
+    }
+
+    // The CHOSEN area, layered on top of the territory the caller may see.
+    // Two separate fragments on purpose: `areaWhere` is what they are
+    // allowed to see and `areaSubtreePath` is what they asked to look at,
+    // and ANDing them means the request can only ever narrow.
+    const chosen: Prisma.PropertyWhereInput | null =
+      params?.areaSubtreePath === "none"
+        ? { areaId: null }
+        : params?.areaSubtreePath
+          ? { area: { path: { startsWith: params.areaSubtreePath } } }
+          : null;
+
     const rows = await prisma.property.findMany({
-      where,
+      // Territory. A Property carries its own `areaId`, so this is a direct
+      // prefix test rather than a hop through a relation.
+      where: withArea(withArea(where, params?.areaWhere ?? {}), chosen ?? {}),
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
       take: limit,
       include: {
+        // The TERRITORY, for the badge on the property card. Name only —
+        // the card states where the property sits; it does not filter.
+        area: { select: { id: true, name: true } },
         client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
         pointOfContact: {
           select: {
@@ -79,8 +249,34 @@ export const properties: ServicesProperties = {
 
   async create(currentUserId: string, payload: PropertyUpsert) {
     return prisma.$transaction(async (tx) => {
+      // WHICH AREA DOES A NEW PROPERTY BELONG TO?
+      //
+      // Nothing used to answer this: `areaId` was never set on create, so
+      // every new property landed in no area and its work appeared in no
+      // area's rollup. Today that is invisible because the seed backfilled
+      // every row and nobody holds an area-scoped grant — it would have
+      // started costing real attribution the first time either changed.
+      // The column's own comment promises the consequence is "warned"; it
+      // was not, anywhere.
+      //
+      // Resolution mirrors `resolveOccurrenceArea`: take what the caller
+      // said, else INHERIT, else leave null honestly rather than guess.
+      // Inheritance here is the client's other properties, and only when
+      // they agree — a client split across two districts has no obvious
+      // answer, and picking one would be inventing data.
+      let areaId: string | null = payload.areaId ?? null;
+      if (!areaId) {
+        const siblings = await tx.property.findMany({
+          where: { clientId: payload.clientId, areaId: { not: null } },
+          select: { areaId: true },
+          distinct: ["areaId"],
+        });
+        if (siblings.length === 1) areaId = siblings[0].areaId;
+      }
+
       const created = await tx.property.create({
         data: {
+          areaId,
           clientId: payload.clientId,
           displayName: payload.displayName,
           kind: payload.kind ?? PropertyKind.SINGLE,
@@ -100,6 +296,12 @@ export const properties: ServicesProperties = {
 
       await writeAudit(tx, AUDIT.PROPERTY.CREATED, currentUserId, {
         propertyId: created.id,
+        // Recorded either way. "Unassigned" is a legal state with a real
+        // consequence (no area rollup counts this property's work), so it
+        // belongs in the trail rather than being inferable only by noticing
+        // an absence later.
+        areaId,
+        areaResolvedBy: payload.areaId ? "caller" : areaId ? "inherited-from-client" : "unassigned",
         clientId: created.clientId,
         displayName: created.displayName,
       });

@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../db/prisma";
-import { getDownloadUrl, getObjectBuffer } from "../lib/r2";
+import { getDownloadUrl, getObjectBuffer, getObjectBufferIfPresent } from "../lib/r2";
 import { stripImageMetadata } from "../lib/stripImageMetadata";
 import * as displays from "../services/displays";
 import { writeAudit } from "../lib/auditLogger";
@@ -16,6 +16,7 @@ import {
   loadPromotionSettings,
   loadAllowedDomains,
 } from "../services/promotions";
+import { capabilitiesForUsers } from "../lib/userCapabilities";
 
 // Simple in-memory sliding-window rate limiter for the unsubscribe
 // endpoints — 30 requests per minute per IP. Sufficient for a small SMB
@@ -320,7 +321,8 @@ export default async function publicRoutes(app: FastifyInstance) {
       }),
       prisma.user.count({
         where: {
-          roles: { some: { role: "WORKER" } },
+          // Anyone on payroll.
+          workerType: { in: ["EMPLOYEE", "CONTRACTOR"] },
           isApproved: true,
         },
       }),
@@ -445,7 +447,7 @@ export default async function publicRoutes(app: FastifyInstance) {
     });
     const reminderMap = new Map(reminders.map((r) => [r.occurrenceId, r]));
 
-    // Filter to only this worker's jobs + unassigned (same logic as worker view)
+    // Filter to only this worker's jobs + unassigned (same logic as self-scoped view)
     let filtered = occurrences.filter((occ) => {
       const assignees = occ.assignees ?? [];
       const isAssigned = assignees.some((a) => a.userId === uid);
@@ -553,7 +555,7 @@ export default async function publicRoutes(app: FastifyInstance) {
       if (occ.proposalAmount != null) desc.push(`Proposal: $${occ.proposalAmount.toFixed(2)}`);
       if (occ.proposalNotes) desc.push(`Proposal Notes: ${occ.proposalNotes}`);
       if (occ.isTentative) desc.push("⚠ Tentative — awaiting confirmation");
-      if (occ.isAdminOnly) desc.push("⚠ Administered — assigned by admin");
+      if (occ.mustBeAssigned) desc.push("⚠ Administered — assigned by admin");
 
       // Linked occurrence (for tasks)
       if (isTask && occ.linkedOccurrence) {
@@ -813,7 +815,7 @@ export default async function publicRoutes(app: FastifyInstance) {
     // CAN-SPAM compliance — pay tokens are commonly forwarded and
     // single-click opt-IN from a shared token would flip a customer's
     // marketing consent without their actual say-so. Re-opt-in now
-    // requires the Super typed-APPROVE flow.
+    // requires the typed-APPROVE flow.
     const { loadInvoicePagePromos } = await import("../services/promotions");
     // A promotion is an ADD-ON to this page. If loading one throws — bad
     // content shape, a presign failure, anything — the client must still be
@@ -883,28 +885,37 @@ export default async function publicRoutes(app: FastifyInstance) {
     if (!method) return reply.code(400).send({ error: "method_required" });
 
     // Defense-in-depth: reject self-reports when the request carries a
-    // worker/admin/super Clerk session. The /pay/[token] page is a
+    // staff Clerk session. The /pay/[token] page is a
     // client-facing self-report form — a worker submitting it would
     // queue an unverified payment without the actual money having
-    // changed hands. Workers/admins should use the in-app
+    // changed hands. Workers/holders of `routes.plan` should use the in-app
     // Accept Payment flow instead. The frontend also blocks this, but
     // any direct API call (curl, custom client) is caught here.
     const clerkUserId = (req as any).auth?.clerkUserId as string | undefined;
     if (clerkUserId) {
       const user = await prisma.user.findUnique({
         where: { clerkUserId },
-        include: { roles: true },
+        
       });
-      // Super is the owner role and overrides every other role — they can
-      // do anything, including testing the client self-report flow even
-      // when they also hold WORKER/ADMIN rows. For anyone else, block
-      // WORKER and ADMIN from self-reporting on a client's behalf (would
-      // queue an unverified payment without money actually changing hands).
-      const isSuper = !!user?.roles?.some((r: any) => r.role === "SUPER");
-      const hasBlockedRole = !!user?.roles?.some((r: any) =>
-        r.role === "WORKER" || r.role === "ADMIN",
-      );
-      if (!isSuper && hasBlockedRole) {
+      // Nobody INTERNAL may self-report on a client's behalf — it would
+      // queue an unverified payment with no money changing hands. The
+      // exception is whoever runs the business, who needs to be able to
+      // exercise the flow.
+      //
+      // Was "is SUPER" vs "holds WORKER or ADMIN". The capability version is
+      // narrower and truer: holding `schedule.view` is what makes somebody
+      // internal, and `settings.manage` is what makes them the operator.
+      // This route is PUBLIC — authenticated by the pay token, with no
+      // guard — so `requireApproved` never runs and `req.principal` does not
+      // exist. There is nothing to read the caller off. It also must not fail
+      // closed the usual way: this check exists to BLOCK internal users, so
+      // an empty capability set would make `isInternal` false and let any
+      // worker self-report on a client's behalf.
+      // caller-read-allow: public token-authenticated route, no principal exists, and failing closed here would fail OPEN for this check.
+      const caps = user ? (await capabilitiesForUsers(prisma, [user.id])).get(user.id) : undefined;
+      const isOperator = !!caps?.has("settings.manage");
+      const isInternal = !!caps?.has("schedule.view");
+      if (!isOperator && isInternal) {
         return reply.code(403).send({
           error: "worker_self_report_forbidden",
           message:
@@ -920,20 +931,33 @@ export default async function publicRoutes(app: FastifyInstance) {
       note: body.note ? String(body.note) : null,
     });
 
-    // Notify admins + super. We dispatch to every approved user with an
-    // admin/super role; the Pending Approval surface in the app handles
+    // Notify holders of `routes.plan` + super. We dispatch to every approved user with an
+    // management role; the Pending Approval surface in the app handles
     // the actual queue. Failures are non-fatal — the payment is recorded
     // regardless.
     //
     // Web-push (free) always fires. SMS/email (Twilio/Resend, paid) only
     // fire when NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL is "true". Default
     // is push-only to keep dev/test cost at zero.
-    // Payment approval is a Super-only responsibility, so only supers are
-    // notified of a payment awaiting approval.
-    const adminUsers = await prisma.user.findMany({
+    // Notify the people who can actually APPROVE it. This selected on
+    // `settings.manage` — "whoever may change how the business runs" —
+    // which is a different entitlement from the one the approve route
+    // checks. Anyone holding `money.approve` without it was the approver
+    // and got no notification; anyone holding `settings.manage` without it
+    // was notified about work they cannot do.
+    const directoryUsers = await prisma.user.findMany({
       where: {
         isApproved: true,
-        roles: { some: { role: "SUPER" as any } },
+        // The entitlement the approve route itself requires.
+        customRoles: {
+          some: {
+            suspendedAt: null,
+            customRole: {
+              suspendedAt: null,
+              entitlements: { some: { entitlement: "money.approve" } },
+            },
+          },
+        },
       },
       select: { id: true },
     });
@@ -942,7 +966,7 @@ export default async function publicRoutes(app: FastifyInstance) {
     });
     const allowSmsEmail = smsEmailSetting?.value === "true";
     const { notifyWorker } = await import("../lib/notifications");
-    for (const u of adminUsers) {
+    for (const u of directoryUsers) {
       notifyWorker(
         u.id,
         `New payment to approve: $${resolved.amountDue.toFixed(2)} (${method}) at ${resolved.propertyLabel}.`,
@@ -1087,8 +1111,8 @@ export default async function publicRoutes(app: FastifyInstance) {
   // without their actual say-so, and the audit log would misleadingly
   // record "client_self_invoice_page" as the source.
   //
-  // The safe re-opt-in path is Super-manual with typed APPROVE + reason
-  // (see /super/promotions/contacts/:contactId/opt in routes/promotions.ts).
+  // The safe re-opt-in path is manual with typed APPROVE + reason
+  // (see /promotions/contacts/:contactId/opt in routes/promotions.ts).
   // A proper double-opt-in flow (confirmation link via the channel being
   // opted into) can be built later; until then, no automatic opt-in.
   //
@@ -1202,7 +1226,7 @@ export default async function publicRoutes(app: FastifyInstance) {
     const slug = String(req.params.slug ?? "");
     if (!slug) return reply.code(400).send({ error: "missing_slug" });
     // Operator preview — a slug-scoped, short-lived HMAC token minted by
-    // the Super-only endpoint below. Lets the operator see their own
+    // the entitlement-gated endpoint below. Lets the operator see their own
     // unpublished page without making it public: the token can't be
     // guessed, expires on its own, and is bound to this one slug, so it
     // grants nothing anywhere else. Anyone without it still gets the
@@ -1430,7 +1454,7 @@ export default async function publicRoutes(app: FastifyInstance) {
   // Unauthenticated by design. A display is a device bolted to a wall with no
   // keyboard and nobody standing at it; a user session would expire and need a
   // human to walk over. What replaces it: a device-generated secret, a code a
-  // Super approves from their phone, and a long-lived token that only ever
+  // The operator approves from their phone, and a long-lived token that only ever
   // buys a board payload. See services/displays.ts and the Display model.
   // ───────────────────────────────────────────────────────────────────────────
 
@@ -1609,7 +1633,7 @@ export default async function publicRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "not_found" });
     }
 
-    const obj = await getObjectBuffer(photo.r2Key);
+    const obj = await getObjectBufferIfPresent(photo.r2Key);
     if (!obj?.bytes) return reply.code(404).send({ error: "not_found" });
 
     const { buffer } = stripImageMetadata(obj.bytes, photo.contentType ?? obj.contentType);
@@ -1689,7 +1713,7 @@ export default async function publicRoutes(app: FastifyInstance) {
     // wrong bucket and 404'd. It looked healthy only because the seed rows
     // borrowed keys that happen to exist in BOTH, which is exactly the kind
     // of fixture that hides a bug instead of exposing it.
-    const obj = await getObjectBuffer(photo.r2Key, "promotion-images");
+    const obj = await getObjectBufferIfPresent(photo.r2Key, "promotion-images");
     if (!obj?.bytes) return reply.code(404).send({ error: "not_found" });
 
     const { buffer } = stripImageMetadata(obj.bytes, photo.contentType ?? obj.contentType);
@@ -1729,7 +1753,7 @@ export default async function publicRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "not_found" });
     }
 
-    const obj = await getObjectBuffer(photo.r2Key, "promotion-images");
+    const obj = await getObjectBufferIfPresent(photo.r2Key, "promotion-images");
     if (!obj?.bytes) return reply.code(404).send({ error: "not_found" });
 
     const { buffer } = stripImageMetadata(obj.bytes, photo.contentType ?? obj.contentType);

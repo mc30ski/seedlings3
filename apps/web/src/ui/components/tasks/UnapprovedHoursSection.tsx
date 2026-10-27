@@ -121,7 +121,7 @@ export default function UnapprovedHoursSection() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await apiGet<UnapprovedHoursRow[]>("/api/admin/occurrences/unapproved-hours");
+      const list = await apiGet<UnapprovedHoursRow[]>("/api/occurrences/unapproved-hours");
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({
@@ -143,7 +143,7 @@ export default function UnapprovedHoursSection() {
   async function approve(row: UnapprovedHoursRow) {
     setBusyId(row.id);
     try {
-      await apiPost(`/api/admin/occurrences/${row.id}/approve-hours`, {});
+      await apiPost(`/api/occurrences/${row.id}/approve-hours`, {});
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
       publishInlineMessage({ type: "SUCCESS", text: "Hours approved for payroll." });
       await load();

@@ -6,8 +6,8 @@
 // state withholding, net pay, per person. Two things must never regress:
 //
 //   1. A worker can see their OWN row and nobody else's.
-//   2. An ADMIN looking at another worker gets hours / gross / net ONLY.
-//      The tax breakdown is Super-only.
+//   2. Someone with `payroll.view` looking at another worker gets hours / gross / net ONLY.
+//      The tax breakdown needs `payroll.manage`.
 //
 // Both are decisions recorded in docs/features/payroll.md before any code
 // existed. This gate is what stops a later refactor quietly undoing them.
@@ -21,7 +21,7 @@
 // another.
 //
 // WHAT BREAKS IF THIS GATE IS IGNORED
-// A worker sees a colleague's net pay, or an admin sees withholding they
+// A worker sees a colleague's net pay, or someone with `payroll.view` sees withholding they
 // were never meant to. Neither is recoverable by an apology.
 //
 // WIRED VIA `test:build-gate` in package.json + turbo build.dependsOn test.
@@ -33,26 +33,27 @@ import { readFileSync } from "fs";
 import { join, resolve } from "path";
 import {
   fieldsFor,
-  ADMIN_VISIBLE_FIELDS,
+  OPERATOR_VISIBLE_FIELDS,
   ALL_NUMERIC_FIELDS,
   EMPLOYER_SIDE_FIELDS,
-  WORKER_VISIBLE_FIELDS,
+  SELF_VISIBLE_FIELDS,
 } from "./payroll";
+import { guardEntitlement } from "../lib/guardIntrospection";
 
 const REPO_ROOT = resolve(__dirname, "../../../..");
 const SERVICE_SRC = readFileSync(join(REPO_ROOT, "apps/api/src/services/payroll.ts"), "utf8");
 const ROUTES_SRC = readFileSync(join(REPO_ROOT, "apps/api/src/routes/payroll.ts"), "utf8");
 
 /**
- * Everything an admin must NOT receive about another worker. Spelled out
+ * Everything someone with `payroll.view` must NOT receive about another worker. Spelled out
  * rather than derived, so adding a new tax column to the model does not
- * silently widen what an admin can see — the new field is absent from
- * ADMIN_VISIBLE_FIELDS by default and this list is the explicit record of
+ * silently widen what someone with `payroll.view` can see — the new field is absent from
+ * OPERATOR_VISIBLE_FIELDS by default and this list is the explicit record of
  * intent.
  */
 /**
  * The withholding side — a worker's own pay-stub data. They see all of it;
- * an admin sees none of it for someone else.
+ * someone with `payroll.view` sees none of it for someone else.
  */
 const EMPLOYEE_SIDE_TAX_FIELDS = [
   "employeeTaxes",
@@ -79,22 +80,22 @@ const TAX_AND_EMPLOYER_FIELDS = [
 ] as const;
 
 describe("payroll build gate — admin projection", () => {
-  it("an admin receives ONLY hours / gross / net / check amount", () => {
-    expect([...ADMIN_VISIBLE_FIELDS].sort()).toEqual(
+  it("someone with payroll access receives ONLY hours / gross / net / check amount", () => {
+    expect([...OPERATOR_VISIBLE_FIELDS].sort()).toEqual(
       ["checkAmount", "grossEarnings", "netPay", "regularHours"].sort(),
     );
   });
 
-  it("an admin receives NO tax or employer-cost field", () => {
-    const admin = fieldsFor({ kind: "admin" });
+  it("the operator payload carries NO tax or employer-cost field", () => {
+    const admin = fieldsFor({ kind: "operator" });
     for (const f of TAX_AND_EMPLOYER_FIELDS) {
       expect(admin, `admin must not receive ${f}`).not.toContain(f);
     }
   });
 
-  it("the TEAM TOTAL employer cost is super-only too", () => {
-    // The per-entry projection withholds employerCost from an admin, but
-    // listPeriods also ships a period-level aggregate. Handing an admin the
+  it("the TEAM TOTAL employer cost needs `payroll.manage` too", () => {
+    // The per-entry projection withholds employerCost from someone with `payroll.view`, but
+    // listPeriods also ships a period-level aggregate. Handing someone with `payroll.view` the
     // aggregate would have returned, through the back door, exactly the
     // figure fieldsFor() withholds — and on a three-person payroll an
     // aggregate is close enough to per-person to matter.
@@ -106,20 +107,20 @@ describe("payroll build gate — admin projection", () => {
       SERVICE_SRC,
       "listPeriods must gate teamTotals.employerCost on viewer.kind === 'super'",
     ).toMatch(
-      /\.\.\.\(viewer\.kind === "super"\s*\?\s*\{\s*employerCost:/,
+      /\.\.\.\(viewer\.kind === "manager"\s*\?\s*\{\s*employerCost:/,
     );
   });
 
-  it("an admin does not receive the pay rate", () => {
+  it("someone with payroll access does not receive the pay rate", () => {
     // Wage is already a worker-sensitive field elsewhere in the app; the
     // admin payroll view is about reconciling amounts, not rates.
-    expect(fieldsFor({ kind: "admin" })).not.toContain("regularRate");
+    expect(fieldsFor({ kind: "operator" })).not.toContain("regularRate");
   });
 
   it("a worker receives their OWN full WITHHOLDING breakdown", () => {
     // It is their own pay-stub data. The hours/gross/net restriction is
-    // about an ADMIN looking at someone else, not about a worker's own row.
-    const worker = fieldsFor({ kind: "worker", userId: "u1" });
+    // about someone with `payroll.view` looking at someone else, not about a worker's own row.
+    const worker = fieldsFor({ kind: "self", userId: "u1" });
     for (const f of EMPLOYEE_SIDE_TAX_FIELDS) {
       expect(worker, `worker must receive their own ${f}`).toContain(f);
     }
@@ -134,7 +135,7 @@ describe("payroll build gate — admin projection", () => {
     //
     // These are the company's books, not a pay stub. Gusto draws the same
     // line: an employee's own account does not show them either.
-    const worker = fieldsFor({ kind: "worker", userId: "u1" });
+    const worker = fieldsFor({ kind: "self", userId: "u1" });
     for (const f of EMPLOYER_SIDE_FIELDS) {
       expect(worker, `worker must NOT receive ${f} — that is the company's book`).not.toContain(f);
     }
@@ -146,7 +147,7 @@ describe("payroll build gate — admin projection", () => {
     // belonging to the employer has to be declared in EMPLOYER_SIDE_FIELDS
     // to be withheld. The reverse default would silently hide pay-stub
     // data every time the parser gained a column.
-    expect([...WORKER_VISIBLE_FIELDS].sort()).toEqual(
+    expect([...SELF_VISIBLE_FIELDS].sort()).toEqual(
       ALL_NUMERIC_FIELDS.filter(
         (f) => !(EMPLOYER_SIDE_FIELDS as readonly string[]).includes(f),
       ).sort(),
@@ -157,9 +158,9 @@ describe("payroll build gate — admin projection", () => {
     // The original bug was a default: `admin ? ADMIN : ALL` made
     // "everything" the else-branch, so `super` and `worker` silently
     // shared it. Each kind must name its own list.
-    const worker = fieldsFor({ kind: "worker", userId: "u1" });
-    const admin = fieldsFor({ kind: "admin" });
-    const su = fieldsFor({ kind: "super" });
+    const worker = fieldsFor({ kind: "self", userId: "u1" });
+    const admin = fieldsFor({ kind: "operator" });
+    const su = fieldsFor({ kind: "manager" });
     expect(su).toEqual(ALL_NUMERIC_FIELDS);
     expect(worker).not.toEqual(ALL_NUMERIC_FIELDS);
     expect(admin).not.toEqual(ALL_NUMERIC_FIELDS);
@@ -167,30 +168,30 @@ describe("payroll build gate — admin projection", () => {
     expect(admin.length).toBeLessThan(worker.length);
   });
 
-  it("a super receives the full breakdown", () => {
-    const su = fieldsFor({ kind: "super" });
+  it("the manager payload carries the full breakdown", () => {
+    const su = fieldsFor({ kind: "manager" });
     for (const f of TAX_AND_EMPLOYER_FIELDS) {
       expect(su).toContain(f);
     }
   });
 
-  it("the admin field list is a strict subset of all fields", () => {
-    for (const f of ADMIN_VISIBLE_FIELDS) expect(ALL_NUMERIC_FIELDS).toContain(f);
-    expect(ADMIN_VISIBLE_FIELDS.length).toBeLessThan(ALL_NUMERIC_FIELDS.length);
+  it("the operator field list is a strict subset of all fields", () => {
+    for (const f of OPERATOR_VISIBLE_FIELDS) expect(ALL_NUMERIC_FIELDS).toContain(f);
+    expect(OPERATOR_VISIBLE_FIELDS.length).toBeLessThan(ALL_NUMERIC_FIELDS.length);
   });
 
   it("projection is decided by viewer kind, never defaulted to full", () => {
     // A refactor that made `fieldsFor` return everything for an unknown
     // viewer would pass the tests above while leaking in production.
-    expect(fieldsFor({ kind: "admin" })).not.toEqual(ALL_NUMERIC_FIELDS);
-    expect(fieldsFor({ kind: "admin" }).length).toBe(ADMIN_VISIBLE_FIELDS.length);
+    expect(fieldsFor({ kind: "operator" })).not.toEqual(ALL_NUMERIC_FIELDS);
+    expect(fieldsFor({ kind: "operator" }).length).toBe(OPERATOR_VISIBLE_FIELDS.length);
   });
 });
 
 describe("payroll build gate — worker query scoping", () => {
   it("listEntries scopes a worker to their own userId", () => {
     // The worker branch must constrain the Prisma `where`, not post-filter.
-    expect(SERVICE_SRC).toMatch(/if \(viewer\.kind === "worker"\) \{\s*where\.userId = viewer\.userId;/);
+    expect(SERVICE_SRC).toMatch(/if \(viewer\.kind === "self"\) \{\s*where\.userId = viewer\.userId;/);
   });
 
   it("listPeriods scopes a worker by their own entries", () => {
@@ -209,15 +210,15 @@ describe("payroll build gate — worker query scoping", () => {
     // the forUserId branch must be the two arms of ONE if/else, so there is
     // no path where a worker viewer reaches forUserId.
     expect(SERVICE_SRC).toMatch(
-      /if \(viewer\.kind === "worker"\) \{\s*where\.userId = viewer\.userId;\s*\} else if \(forUserId\) \{\s*where\.userId = forUserId;\s*\}/,
+      /if \(viewer\.kind === "self"\) \{\s*where\.userId = viewer\.userId;\s*\} else if \(forUserId\) \{\s*where\.userId = forUserId;\s*\}/,
     );
   });
 
-  it("an unmatched row is never shown to an admin", () => {
+  it("an unmatched row never reaches the operator payload", () => {
     // No confirmed owner means the number is unattributed; showing it in a
-    // per-worker admin view would imply an attribution that does not exist.
+    // per-worker management view would imply an attribution that does not exist.
     expect(SERVICE_SRC).toMatch(
-      /viewer\.kind === "admin" \? entries\.filter\(\(e\) => e\.userId !== null\)/,
+      /viewer\.kind === "operator" \? entries\.filter\(\(e\) => e\.userId !== null\)/,
     );
   });
 });
@@ -227,11 +228,14 @@ describe("payroll build gate — route guards", () => {
     const meRoutes = [...ROUTES_SRC.matchAll(/app\.get\("(\/me\/payroll[^"]*)",\s*(\w+)/g)];
     expect(meRoutes.length).toBeGreaterThanOrEqual(3);
     for (const [, path, guard] of meRoutes) {
-      expect(guard, `${path} must use workerGuard`).toBe("workerGuard");
+      // OWNERSHIP: "my own payroll" is never an entitlement — it would be
+      // one every person holds, which is not a check. `approvedUser` is
+      // named for what it does so nobody mistakes it for a capability.
+      expect(guard, `${path} must use approvedUser`).toBe("approvedUser");
     }
   });
 
-  it("every /me/payroll route builds a WORKER viewer, never admin or super", () => {
+  it("every /me/payroll route builds a SELF viewer, never an operator or manager", () => {
     // The reduced-projection surfaces live under /payroll/*. If a /me route
     // ever constructed an operator viewer it would hand a worker the whole
     // team's data.
@@ -242,26 +246,63 @@ describe("payroll build gate — route guards", () => {
     expect(meBlock.length).toBeGreaterThan(0);
     expect(meBlock).not.toMatch(/operatorViewer/);
     expect(meBlock).not.toMatch(/kind:\s*"(admin|super)"/);
-    expect(meBlock).toMatch(/kind:\s*"worker"/);
+    expect(meBlock).toMatch(/kind:\s*"self"/);
   });
 
-  it("operator read surfaces require at least ADMIN", () => {
+  it("operator read surfaces require payroll.view — except the identity queue", () => {
+    /**
+     * THE IDENTITY QUEUE IS NOT AN ORDINARY READ.
+     *
+     * docs/features/payroll.md: the unmatched-name queue "surfaces in three
+     * places, all `payroll.manage`". An unmatched row is a Gusto name the system
+     * could not attach to a person — real wages belonging to nobody — and
+     * matching one decides whose pay that was. That is administration.
+     *
+     * This gate used to require `payroll.view` for every `GET /payroll/*`,
+     * which locked in a widening introduced during the cord-cut: the route
+     * had been `superGuard`'d, and `payroll.view` sits in the tier, so
+     * asserting it here made the gate enforce the bug. A spec caught the
+     * escalation; this assertion had been agreeing with it.
+     */
+    const SUPER_ONLY_READS: Record<string, string> = {
+      "/payroll/identities/unmatched": "payroll.manage",
+    };
+
     const ops = [...ROUTES_SRC.matchAll(/app\.get\("(\/payroll\/[^"]*)",\s*(\w+)/g)];
     expect(ops.length).toBeGreaterThanOrEqual(2);
+    let sawSuperOnly = 0;
     for (const [, path, guard] of ops) {
-      expect(["adminGuard", "superGuard"], `${path}`).toContain(guard);
+      const want = SUPER_ONLY_READS[path] ?? "payroll.view";
+      if (SUPER_ONLY_READS[path]) sawSuperOnly++;
+      // The CAPABILITY, not a role: this stays true when payroll.view is
+      // granted to a bookkeeper who is not someone with `payroll.view`, which is the point.
+      expect(
+        guardEntitlement(ROUTES_SRC, guard),
+        `${path} must require ${want}`,
+      ).toBe(want);
     }
+    // The exception list must still describe a route that exists, or a
+    // rename would turn it into a silent hole.
+    expect(sawSuperOnly, "the identity-queue route was not found — did it move?")
+      .toBe(Object.keys(SUPER_ONLY_READS).length);
   });
 
-  it("EVERY payroll mutation is Super-only", () => {
-    // Import, identity link/unlink, and archive all rewrite what workers
-    // see about their own pay. None of them is an admin-level action.
+  it("EVERY payroll mutation requires payroll.manage", () => {
+    // Import, identity link/unlink, and archive all rewrite what workers see
+    // about their own pay, so they need the managing capability and not just
+    // the reading one. Phrased as a capability rather than a rank
+    // because the operator may delegate payroll without delegating
+    // everything else — and a role-phrased gate would have had to be
+    // relaxed the first time they did.
     const mutations = [
       ...ROUTES_SRC.matchAll(/app\.(post|delete|patch|put)\("([^"]*)",\s*(\w+)/g),
     ];
     expect(mutations.length).toBeGreaterThanOrEqual(4);
     for (const [, verb, path, guard] of mutations) {
-      expect(guard, `${verb.toUpperCase()} ${path} must be superGuard`).toBe("superGuard");
+      expect(
+        guardEntitlement(ROUTES_SRC, guard),
+        `${verb.toUpperCase()} ${path} must require payroll.manage`,
+      ).toBe("payroll.manage");
     }
   });
 });

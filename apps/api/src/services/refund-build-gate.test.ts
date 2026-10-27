@@ -22,7 +22,9 @@ import { readFileSync } from "fs";
 import { join, resolve } from "path";
 
 const REPO_ROOT = resolve(__dirname, "../../../..");
-const ADMIN = readFileSync(join(REPO_ROOT, "apps/api/src/routes/admin.ts"), "utf8");
+// The ledger create/update handlers live in routes/books.ts since the
+// role-named route files were split by resource.
+const ADMIN = readFileSync(join(REPO_ROOT, "apps/api/src/routes/books.ts"), "utf8");
 const CURRENCY = readFileSync(
   join(REPO_ROOT, "apps/web/src/ui/components/CurrencyInput.tsx"), "utf8",
 );

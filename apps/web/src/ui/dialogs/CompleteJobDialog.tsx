@@ -389,7 +389,7 @@ export default function CompleteJobDialog({
                         </Text>
                       ))}
                     </VStack>
-                    <Text fontSize="2xs" color="fg.muted" mt={1}>Invoice charges are managed on the Admin Services tab.</Text>
+                    <Text fontSize="2xs" color="fg.muted" mt={1}>Invoice charges are managed on a caller with schedule authority Services tab.</Text>
                   </Box>
                 )}
               </VStack>

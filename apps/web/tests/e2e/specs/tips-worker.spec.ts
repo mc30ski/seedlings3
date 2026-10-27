@@ -48,9 +48,9 @@ test("a worker never sees the crew's tip total, only their own share", async ({ 
 
   await page.goto("/");
   await page.evaluate(() => {
-    localStorage.setItem("seedlings_topTab", JSON.stringify("worker"));
-    localStorage.setItem("seedlings_workerTab", JSON.stringify("jobs"));
-    localStorage.setItem("seedlings_workerCategory", JSON.stringify("Work"));
+    localStorage.setItem("seedlings_topTab", JSON.stringify("staff"));
+    localStorage.setItem("seedlings_staffTab", JSON.stringify("jobs"));
+    localStorage.setItem("seedlings_staffCategory", JSON.stringify("Work"));
     localStorage.setItem("seedlings_lastAppOpenedAt", new Date().toISOString());
   });
   await page.goto("/");
@@ -83,12 +83,12 @@ test("the API itself redacts other workers' tips, not just the UI", async ({ pag
   // reproduce (it 401s), and intercepting the real call tests the real path.
   await page.goto("/");
   await page.evaluate(() => {
-    localStorage.setItem("seedlings_topTab", JSON.stringify("worker"));
-    localStorage.setItem("seedlings_workerTab", JSON.stringify("jobs"));
-    localStorage.setItem("seedlings_workerCategory", JSON.stringify("Work"));
+    localStorage.setItem("seedlings_topTab", JSON.stringify("staff"));
+    localStorage.setItem("seedlings_staffTab", JSON.stringify("jobs"));
+    localStorage.setItem("seedlings_staffCategory", JSON.stringify("Work"));
     localStorage.setItem("seedlings_lastAppOpenedAt", new Date().toISOString());
     // Pin a wide window and ALL statuses. The tipped fixture is a CLOSED
-    // job, which the default forward-looking worker view doesn't reliably
+    // job, which the default forward-looking self-scoped view doesn't reliably
     // include — relying on that made this spec pass by coincidence.
     localStorage.setItem("seedlings_wjobs_status", JSON.stringify(["ALL"]));
     localStorage.setItem("seedlings_wjobs_datePreset", JSON.stringify(null));
@@ -112,8 +112,9 @@ test("the API itself redacts other workers' tips, not just the UI", async ({ pag
   // tips ride the same rows, so a teammate's tip is visible on a job you
   // worked together. That is existing, deliberate behaviour — peek
   // redaction (lib/observerRedaction.ts) only strips financials for jobs
-  // the caller is NOT assigned to, and trainee redaction only fires for
-  // TRAINEE callers.
+  // the caller is NOT assigned to, and the other redaction fires only for
+  // callers WITHOUT field clearance (it was keyed on a removed worker
+  // type, which no longer exists).
   //
   // The guarantee that MUST hold is therefore narrower: no split for a job
   // this worker isn't on. That's what a leak would look like.

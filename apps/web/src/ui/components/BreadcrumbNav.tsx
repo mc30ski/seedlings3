@@ -42,11 +42,16 @@ type Props = {
   headerLeft?: React.ReactNode;
   /** Content rendered at the right edge of the row (e.g., share-link icon) */
   headerRight?: React.ReactNode;
-  /** Hide the outer (role) tab pill and its cross-role jump chips. Role
+  /** Hide the outer SHELL pill and its cross-shell jump chips. Shell
    *  selection lives outside the breadcrumb now (see RoleChip in the
    *  header). Keep the outer tabs prop to drive innerTabs lookup and the
    *  header-slot render — only the pill UI is suppressed. */
   hideOuterTab?: boolean;
+  /** Bump to remount the active tab without changing which tab it is.
+   *  Taking a perspective changes what the SERVER answers, so everything
+   *  already fetched is stale — this is how the open tab re-asks without
+   *  reloading the page. */
+  contentGeneration?: number;
 };
 
 function isVisible(v?: boolean | (() => boolean)): boolean {
@@ -65,6 +70,7 @@ export default function BreadcrumbNav({
   headerLeft,
   headerRight,
   hideOuterTab,
+  contentGeneration,
 }: Props) {
   const [outerOpen, setOuterOpen] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
@@ -133,16 +139,17 @@ export default function BreadcrumbNav({
   // Resolve active inner tab within the category
   const activeInnerResolved = categoryTabs.find((t) => t.value === innerValue) ?? categoryTabs[0] ?? activeInner ?? visibleInner[0];
 
-  // Cross-role targets: for a given inner-tab value, which OTHER outer
-  // tabs (Worker/Admin/Super) contain the same tab AND are visible to
-  // this user. Drives the small role-jump chips inside the inner-tab
-  // dropdown so the user can hop from e.g. Worker→Pricing straight to
-  // Admin→Pricing without rebuilding their navigation path.
+  // Cross-shell targets: for a given inner-tab value, which OTHER outer
+  // SHELLS contain the same tab AND are visible to this user. There are two
+  // — `client` and `staff` — so in practice this finds the customer-portal
+  // twin of a staff tab, or the reverse. Drives the small jump chips inside
+  // the inner-tab dropdown so somebody who is both staff and a customer can
+  // hop across without rebuilding their navigation path.
   //
-  // Equivalence is the inner value string — same value across roles =
+  // Equivalence is the inner value string — same value across shells =
   // same conceptual tab. No per-tab annotation needed; new shared tabs
-  // become role-jumpable automatically the moment they're registered
-  // under the same value in multiple outer entries.
+  // become jumpable automatically the moment they are registered under the
+  // same value in both shells.
   function computeCrossRoleTargets(innerVal: string): {
     outerValue: string;
     label: string;
@@ -372,10 +379,10 @@ export default function BreadcrumbNav({
           css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}
         >
         {headerLeft}
-        {/* Level 1: Outer (Client/Worker/Admin/Super) — hidden when the
-            parent provides an out-of-breadcrumb role selector (see
-            RoleChip in the app header). Suppressed via hideOuterTab so
-            the pill doesn't duplicate the header chip. */}
+        {/* Level 1: the shell (Client / Staff) — hidden when the parent
+            provides an out-of-breadcrumb selector (see RoleChip in the app
+            header). Suppressed via hideOuterTab so the pill doesn't
+            duplicate the header chip. */}
         {!hideOuterTab && (
           <Box position="relative" ref={outerRef}>
             <HStack
@@ -533,8 +540,12 @@ export default function BreadcrumbNav({
       {/* Header slot (alerts, workflows) */}
       {activeOuter?.headerSlot}
 
-      {/* Active tab content — key forces remount on tab switch */}
-      <Box key={`${activeOuter?.value}-${activeInnerResolved?.value}`}>
+
+      {/* Active tab content — the key forces a remount on tab switch, and
+          on any bump of `contentGeneration`. The second is what lets a
+          perspective change refetch the open tab without reloading the
+          page: nothing else re-asks for a tab's own data. */}
+      <Box key={`${activeOuter?.value}-${activeInnerResolved?.value}-${contentGeneration ?? 0}`}>
         {activeInnerResolved?.content}
       </Box>
     </Box>
