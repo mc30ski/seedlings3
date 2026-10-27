@@ -56,13 +56,31 @@ export default async function peopleRoutes(app: FastifyInstance) {
     const q = (req.query || {}) as {
       approved?: string; // "true" | "false"
       roleKey?: string;
+      hasWorkerType?: string; // "true" — excludes customer-only logins
+      role?: string; // DEAD. See below.
     };
     const approved =
       q.approved === "true" ? true : q.approved === "false" ? false : undefined;
 
+    // A FILTER THIS ROUTE DOES NOT UNDERSTAND IS A BUG, NOT A NO-OP.
+    //
+    // `role=WORKER` named the deleted `Role` enum. This route quietly
+    // ignored it, so six callers believed they were asking for staff and
+    // were handed every customer login as well — including the pay-per-hour
+    // cards, which rendered customers as team members. Silence is what made
+    // it survive: the response was still a plausible list of people.
+    if (q.role !== undefined) {
+      throw app.httpErrors.badRequest(
+        "`role` is not a filter on this route — the Role enum is deleted. " +
+          "Use `hasWorkerType=true` to exclude customer logins, `roleKey=<key>` " +
+          "for holders of one role, or GET /workers for who can be given work.",
+      );
+    }
+
     const rows = await services.users.list({
       approved,
       roleKey: q.roleKey,
+      hasWorkerType: q.hasWorkerType === "true",
     });
 
     // SAME RULE AS `GET /users/:id`, AND A WORSE LEAK TO BEGIN WITH.

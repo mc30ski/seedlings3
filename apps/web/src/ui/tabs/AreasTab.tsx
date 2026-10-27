@@ -107,7 +107,10 @@ export default function AreasTab({ scope }: { scope: Scope }) {
         // The picker needs the role catalogue; a caller without `roles.view`
         // still gets the tree, just no assignment control.
         apiGet<RoleOption[]>("/api/roles").catch(() => [] as RoleOption[]),
-        apiGet<UserOption[]>("/api/users?approved=true").catch(() => [] as UserOption[]),
+        // STAFF ONLY — an area grant on a login with no worker type is the
+        // dormant grant the database refuses outright (G45), so offering a
+        // customer here could only ever end in an error.
+        apiGet<UserOption[]>("/api/users?approved=true&hasWorkerType=true").catch(() => [] as UserOption[]),
         // Tier names are a suggestion list. Failing to load them must not
         // block the tree — the field falls back to free text.
         apiGet<Array<{ key: string; value: string }>>("/api/settings").catch(

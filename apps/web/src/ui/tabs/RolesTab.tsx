@@ -8,10 +8,11 @@
  * operator could not define one, and "there are no roles, only capabilities"
  * was true in the database and unreachable from the app.
  *
- * THREE THINGS, ONE SCREEN, because they answer one question between them:
- *   · the list      — what roles exist
- *   · the editor    — what a role grants, and what it inherits
- *   · the matrix    — every role against every capability, at a glance
+ * FOUR THINGS, ONE SCREEN, because they answer one question between them:
+ *   · the list         — what roles exist
+ *   · the editor       — what a role grants, and what it inherits
+ *   · Capabilities     — every role against every capability, at a glance
+ *   · People           — who holds what, the same table read the other way
  *
  * The matrix is GENERATED from the same two sources the server uses: the
  * entitlement vocabulary from `GET /entitlements`, and each role's resolved
@@ -22,7 +23,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Box, Button, Card, Checkbox, HStack, Icon, Input, Portal, Select, Spinner, Table, Text, Textarea, VStack, createListCollection } from "@chakra-ui/react";
-import { Check, ChevronDown, ChevronUp, Plus, Shield, Users as UsersIcon, X } from "lucide-react";
+import { Check, CheckCircle2, ChevronDown, ChevronUp, KeyRound, ListOrdered, Plus, Shield, Users as UsersIcon, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/src/lib/api";
 import { PERSPECTIVE_ICONS } from "@repo/permissions";
 import { perspectiveIconFor } from "@/src/lib/perspectiveIcons";
@@ -30,6 +31,8 @@ import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/Inlin
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import type { Scope } from "@/src/lib/scope";
+import { payClassLabel } from "@/src/lib/paymentMath";
+import { isCustomerOnly } from "@/src/lib/people";
 
 type EntitlementGroup = {
   group: string;
@@ -66,12 +69,14 @@ type Holder = {
 
 export default function RolesTab({ scope }: { scope: Scope }) {
   const mayDefine = scope.can("roles.define");
+  /** `GET /users` returns `roleGrants`/`capabilities` only to `people.manage`. */
+  const maySeeHolders = scope.can("people.manage");
 
   const [groups, setGroups] = useState<EntitlementGroup[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"editor" | "matrix" | "perspectives">("editor");
+  const [view, setView] = useState<"editor" | "matrix" | "people" | "perspectives">("editor");
   const [titles, setTitles] = useState<string[]>([]);
 
   const load = useCallback(async () => {
@@ -151,19 +156,34 @@ export default function RolesTab({ scope }: { scope: Scope }) {
           variant={view === "matrix" ? "solid" : "outline"}
           onClick={() => setView("matrix")}
         >
-          Matrix
+          <KeyRound size={14} /> Capabilities
         </Button>
+        {maySeeHolders && (
+          <Button
+            size="sm"
+            variant={view === "people" ? "solid" : "outline"}
+            onClick={() => setView("people")}
+          >
+            <UsersIcon size={14} /> People
+          </Button>
+        )}
         <Button
           size="sm"
           variant={view === "perspectives" ? "solid" : "outline"}
           onClick={() => setView("perspectives")}
         >
-          Perspective order
+          <ListOrdered size={14} /> Perspective order
         </Button>
       </HStack>
 
       {view === "matrix" ? (
         <EntitlementMatrix groups={groups} roles={roles} />
+      ) : view === "people" && maySeeHolders ? (
+        <PeopleRoles
+          groups={groups}
+          roles={roles}
+          onOpenRole={(roleId) => { setSelectedId(roleId); setView("editor"); }}
+        />
       ) : view === "perspectives" ? (
         <PerspectiveOrder roles={roles} mayDefine={mayDefine} onChanged={load} />
       ) : (
@@ -1100,6 +1120,315 @@ function PerspectiveOrder({
  * from one the role writes itself, so "where do I change this?" has an
  * answer without opening the editor.
  */
+type DirectoryUser = {
+  id: string;
+  displayName: string | null;
+  email: string | null;
+  workerType: string | null;
+  isApproved?: boolean;
+  /** Only present when the caller holds `people.manage` — see GET /users. */
+  roleGrants?: Array<{
+    roleId: string;
+    key: string | null;
+    name: string;
+    areaId: string | null;
+    areaName: string | null;
+    isTemporary: boolean;
+  }>;
+  capabilities?: string[];
+  /** An ACTIVE ClientContact for this Clerk id — a customer's login. */
+  isClientContact?: boolean;
+};
+
+/**
+ * WHO HOLDS WHAT — the matrix read the other way round.
+ *
+ * The matrix answers "what does this role grant". This answers "what can
+ * this person actually do", which is the question asked when somebody says a
+ * button is missing. Both are generated from the same two server sources the
+ * matrix uses, so neither can drift into a second opinion.
+ *
+ * It needs `people.manage`: `GET /users` strips `roleGrants` and
+ * `capabilities` from the response for anyone below that, so the view has
+ * nothing to show and the sub-tab is not offered. The gate names the
+ * capability of the endpoint it calls, not a role.
+ */
+function PeopleRoles({
+  groups,
+  roles,
+  onOpenRole,
+}: {
+  groups: EntitlementGroup[];
+  roles: RoleRow[];
+  onOpenRole: (roleId: string) => void;
+}) {
+  const [users, setUsers] = useState<DirectoryUser[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  // CUSTOMERS ARE HIDDEN BY DEFAULT, and that is not cosmetic. A client
+  // contact's login is an ordinary User row with no worker type, so on this
+  // screen it is indistinguishable from a staff account nobody finished
+  // setting up. In production twenty of twenty-seven logins are customers:
+  // shown by default they bury the handful of real gaps under rows that are
+  // working exactly as intended.
+  const [showCustomers, setShowCustomers] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const rows = await apiGet<DirectoryUser[]>("/api/users");
+        if (live) setUsers(rows);
+      } catch (err) {
+        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't load people.", err) });
+        if (live) setUsers([]);
+      } finally {
+        if (live) setLoading(false);
+      }
+    })();
+    return () => { live = false; };
+  }, []);
+
+  const roleById = useMemo(() => new Map(roles.map((r) => [r.id, r])), [roles]);
+  const copyOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of groups) for (const e of g.entitlements) m.set(e.id, e.copy);
+    return m;
+  }, [groups]);
+
+  const all = useMemo(
+    () => [...(users ?? [])].sort((a, b) =>
+      (a.displayName ?? a.email ?? "").localeCompare(b.displayName ?? b.email ?? "")),
+    [users],
+  );
+  // One definition, shared with UsersTab — see lib/people.ts. A customer who
+  // ALSO works for you has a worker type and is staff here too, badge and all.
+  const customerOnly = all.filter(isCustomerOnly);
+  const sorted = showCustomers ? all : all.filter((u) => !isCustomerOnly(u));
+
+  if (loading) {
+    return <Box py={8} textAlign="center"><Spinner /></Box>;
+  }
+
+  // Only STAFF can be "missing" a role. A customer holding none is the
+  // system working: their portal is gated on being a client contact, which
+  // never consults roles.
+  const roleless = all.filter((u) => !isCustomerOnly(u) && (u.roleGrants ?? []).length === 0);
+
+  return (
+    <VStack align="stretch" gap={3}>
+      <HStack gap={3} wrap="wrap">
+        <Text fontSize="sm" color="fg.muted">
+          {sorted.length} {sorted.length === 1 ? "person" : "people"}
+        </Text>
+        {roleless.length > 0 && (
+          <Badge colorPalette="orange" variant="subtle">
+            {roleless.length} staff hold no role
+          </Badge>
+        )}
+        {customerOnly.length > 0 && (
+          <Checkbox.Root
+            size="sm"
+            checked={showCustomers}
+            onCheckedChange={(e) => setShowCustomers(!!e.checked)}
+          >
+            <Checkbox.HiddenInput />
+            <Checkbox.Control />
+            <Checkbox.Label>
+              <Text fontSize="xs" color="fg.muted">
+                Show {customerOnly.length} customer {customerOnly.length === 1 ? "login" : "logins"}
+              </Text>
+            </Checkbox.Label>
+          </Checkbox.Root>
+        )}
+      </HStack>
+
+      {/* AN AREA GRANT IS NOT A SMALLER COMPANY-WIDE GRANT, and the count
+          must not imply it is. `GET /users` resolves `capabilities` from
+          company-wide grants only, because what an area grant permits
+          depends on the area of the RECORD being acted on and there is no
+          record here. Area roles are listed, badged with their area, and
+          left out of the number. */}
+      <Text fontSize="xs" color="fg.muted">
+        Capability counts cover company-wide grants. A role granted in one area is
+        shown with that area and is not counted, because what it allows depends on
+        where the work is.
+      </Text>
+
+      <Box overflowX="auto">
+        <Table.Root size="sm" stickyHeader>
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeader minW="48">Person</Table.ColumnHeader>
+              <Table.ColumnHeader whiteSpace="nowrap">Pay class</Table.ColumnHeader>
+              <Table.ColumnHeader minW="56">Roles</Table.ColumnHeader>
+              <Table.ColumnHeader textAlign="right" whiteSpace="nowrap">Capabilities</Table.ColumnHeader>
+              <Table.ColumnHeader />
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {sorted.map((u) => {
+              const grants = u.roleGrants ?? [];
+              const customerOnlyRow = isCustomerOnly(u);
+              const isOpen = expanded === u.id;
+              return (
+                <Fragment key={u.id}>
+                  <Table.Row
+                    cursor="pointer"
+                    onClick={() => setExpanded(isOpen ? null : u.id)}
+                  >
+                    <Table.Cell>
+                      <HStack gap={1.5} wrap="wrap">
+                        <Text fontSize="sm">{u.displayName ?? u.email ?? u.id}</Text>
+                        {u.isClientContact && (
+                          <Badge
+                            size="sm"
+                            variant="subtle"
+                            colorPalette="cyan"
+                            title="This login belongs to a customer — an active client contact"
+                          >
+                            Customer
+                          </Badge>
+                        )}
+                      </HStack>
+                      {u.email && u.displayName && (
+                        <Text fontSize="2xs" color="fg.muted">{u.email}</Text>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      {/* The same label the rest of the app uses, so a pay
+                          class reads identically here and on a visit card.
+                          An untyped CUSTOMER is not a gap — it is what a
+                          customer looks like — so it is not flagged. */}
+                      <Text
+                        fontSize="xs"
+                        color={u.workerType ? "fg.muted" : customerOnlyRow ? "fg.muted" : "orange.fg"}
+                      >
+                        {u.workerType
+                          ? payClassLabel(u.workerType as Parameters<typeof payClassLabel>[0])
+                          : customerOnlyRow ? "Customer login" : "No worker type"}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {grants.length === 0 ? (
+                        customerOnlyRow ? (
+                          <Text fontSize="xs" color="fg.muted">—</Text>
+                        ) : (
+                          <Badge colorPalette="orange" variant="subtle" size="sm">No roles</Badge>
+                        )
+                      ) : (
+                        <HStack gap={1} wrap="wrap">
+                          {grants.map((g) => (
+                            <Badge
+                              key={`${g.roleId}:${g.areaId ?? "all"}`}
+                              size="sm"
+                              variant={g.areaId ? "outline" : "subtle"}
+                              colorPalette={g.areaId ? "purple" : "teal"}
+                              title={g.areaId
+                                ? `Granted in ${g.areaName} only${g.isTemporary ? " (temporary)" : ""}`
+                                : "Granted company-wide"}
+                            >
+                              {g.name}{g.areaId ? ` · ${g.areaName}` : ""}
+                              {g.isTemporary ? " ·  temp" : ""}
+                            </Badge>
+                          ))}
+                        </HStack>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell textAlign="right">
+                      <Text fontSize="sm" fontVariantNumeric="tabular-nums">
+                        {(u.capabilities ?? []).length}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell textAlign="right">
+                      <Icon as={isOpen ? ChevronUp : ChevronDown} boxSize={4} color="fg.muted" />
+                    </Table.Cell>
+                  </Table.Row>
+
+                  {isOpen && (
+                    <Table.Row>
+                      <Table.Cell colSpan={5} bg="bg.muted">
+                        {grants.length === 0 ? (
+                          customerOnlyRow ? (
+                            <Text fontSize="sm" color="fg.muted">
+                              A customer&rsquo;s login. It needs no role: the client portal is
+                              gated on being an active contact, which never looks at roles, and
+                              the staff app is closed to anyone with no worker type. If this
+                              person also works for you, set a worker type FIRST and then grant
+                              a role — a grant made the other way round lies dormant until the
+                              worker type appears, and the database refuses it.
+                            </Text>
+                          ) : (
+                            <Text fontSize="sm" color="fg.muted">
+                              No role, so no capability — every screen past sign-in is empty
+                              for this account. Grant a role from the Roles view, after
+                              setting a worker type.
+                            </Text>
+                          )
+                        ) : (
+                          <VStack align="stretch" gap={3}>
+                            {grants.map((g) => {
+                              const role = roleById.get(g.roleId);
+                              const own = new Set(role?.own ?? []);
+                              const effective = role?.effective ?? [];
+                              return (
+                                <Box key={`${g.roleId}:${g.areaId ?? "all"}`}>
+                                  <HStack gap={2} mb={1} wrap="wrap">
+                                    <Button
+                                      size="xs"
+                                      variant="outline"
+                                      onClick={() => onOpenRole(g.roleId)}
+                                    >
+                                      <Shield size={12} /> {g.name}
+                                    </Button>
+                                    {g.areaId && (
+                                      <Text fontSize="xs" color="purple.fg">
+                                        in {g.areaName} only
+                                      </Text>
+                                    )}
+                                    <Text fontSize="xs" color="fg.muted">
+                                      {effective.length} {effective.length === 1 ? "capability" : "capabilities"}
+                                    </Text>
+                                  </HStack>
+                                  {effective.length === 0 ? (
+                                    <Text fontSize="xs" color="fg.muted">Grants nothing.</Text>
+                                  ) : (
+                                    <HStack gap={1} wrap="wrap">
+                                      {effective.map((id) => (
+                                        <Badge
+                                          key={id}
+                                          size="sm"
+                                          variant="subtle"
+                                          colorPalette={own.has(id) ? "green" : "blue"}
+                                          title={`${id} — ${own.has(id) ? "granted by this role" : "inherited"}`}
+                                        >
+                                          {copyOf.get(id) ?? id}
+                                        </Badge>
+                                      ))}
+                                    </HStack>
+                                  )}
+                                </Box>
+                              );
+                            })}
+                            <Text fontSize="2xs" color="fg.muted">
+                              Green is granted by the role itself, blue is inherited from the
+                              role it builds on.
+                            </Text>
+                          </VStack>
+                        )}
+                      </Table.Cell>
+                    </Table.Row>
+                  )}
+                </Fragment>
+              );
+            })}
+          </Table.Body>
+        </Table.Root>
+      </Box>
+    </VStack>
+  );
+}
+
 function EntitlementMatrix({ groups, roles }: { groups: EntitlementGroup[]; roles: RoleRow[] }) {
   // EVERY ROLE, including the ladder.
   //
@@ -1156,18 +1485,32 @@ function EntitlementMatrix({ groups, roles }: { groups: EntitlementGroup[]; role
                     const ownIt = r.own.includes(e.id);
                     return (
                       <Table.Cell key={r.id} textAlign="center">
+                        {/* GREEN YES, RED NO — and the yes still says which
+                            KIND of yes. Colour alone used to carry that
+                            (green granted here, blue inherited), so turning
+                            every tick green would have thrown the
+                            distinction away. It moves to the GLYPH instead:
+                            a ringed tick is granted by this role, a bare
+                            tick is inherited. The "no" was `fg.subtle` at
+                            12px, which is why the grid read as mostly
+                            blank. */}
                         {has ? (
                           <Box
                             as="span"
-                            color={ownIt ? "green.fg" : "blue.fg"}
-                            title={ownIt ? "Granted by this role" : "Inherited"}
+                            color="green.fg"
+                            title={ownIt ? "Granted by this role" : "Inherited from the role it builds on"}
                             display="inline-flex"
                           >
-                            <Check size={14} />
+                            {ownIt ? <CheckCircle2 size={16} /> : <Check size={16} />}
                           </Box>
                         ) : (
-                          <Box as="span" color="fg.subtle" display="inline-flex">
-                            <X size={12} />
+                          <Box
+                            as="span"
+                            color="red.fg"
+                            title="Not granted"
+                            display="inline-flex"
+                          >
+                            <X size={15} />
                           </Box>
                         )}
                       </Table.Cell>
@@ -1179,21 +1522,29 @@ function EntitlementMatrix({ groups, roles }: { groups: EntitlementGroup[]; role
           ))}
         </Table.Body>
       </Table.Root>
-      <HStack gap={4} mt={2}>
+      <HStack gap={4} mt={2} wrap="wrap">
         <HStack gap={1}>
           <Box as="span" color="green.fg" display="inline-flex">
-            <Check size={12} />
+            <CheckCircle2 size={14} />
           </Box>
           <Text fontSize="xs" color="fg.muted">
             granted by this role
           </Text>
         </HStack>
         <HStack gap={1}>
-          <Box as="span" color="blue.fg" display="inline-flex">
-            <Check size={12} />
+          <Box as="span" color="green.fg" display="inline-flex">
+            <Check size={14} />
           </Box>
           <Text fontSize="xs" color="fg.muted">
             inherited
+          </Text>
+        </HStack>
+        <HStack gap={1}>
+          <Box as="span" color="red.fg" display="inline-flex">
+            <X size={14} />
+          </Box>
+          <Text fontSize="xs" color="fg.muted">
+            not granted
           </Text>
         </HStack>
       </HStack>

@@ -1614,7 +1614,7 @@ function UploadOnBehalfDialog({
   useEffect(() => {
     void (async () => {
       try {
-        const rows = await apiGet<UserPickerRow[]>("/api/users?role=WORKER&approved=true");
+        const rows = await apiGet<UserPickerRow[]>("/api/users?approved=true&hasWorkerType=true");
         setUsers(rows);
       } catch {
         setUsers([]);
@@ -1838,7 +1838,7 @@ function GrantExceptionDialog({
   useEffect(() => {
     void (async () => {
       try {
-        const rows = await apiGet<UserPickerRow[]>("/api/users?role=WORKER&approved=true");
+        const rows = await apiGet<UserPickerRow[]>("/api/users?approved=true&hasWorkerType=true");
         setUsers(rows);
       } catch {
         setUsers([]);

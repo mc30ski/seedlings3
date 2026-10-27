@@ -334,6 +334,19 @@ export type DirectoryUserRow = User & {
     isTemporary: boolean;
   }>;
   /**
+   * DOES THIS LOGIN BELONG TO A CUSTOMER?
+   *
+   * An ACTIVE `ClientContact` for their Clerk id — the same rule `/me` uses,
+   * and it never consults roles. A customer's login is an ordinary `User`
+   * row with no `workerType`, so without this flag the directory cannot
+   * tell one from a staff account that was never set up, and reads twenty
+   * customers as twenty broken employees.
+   *
+   * It is NOT the opposite of "worker": a customer may also work for you.
+   * Such an account has a worker type and roles AND this flag set.
+   */
+  isClientContact: boolean;
+  /**
    * What this person can do EVERYWHERE — their company-wide grants,
    * flattened through inheritance, suspension already applied.
    *
@@ -351,6 +364,9 @@ export type ServicesUsers = {
     /** Filter to people holding this role, by its stable key
      *  ("seedlings.worker"). Was a `Role` enum value. */
     roleKey?: string;
+    /** Only people with a worker type — i.e. not a customer-only login.
+     *  The payroll gate, which is the staff/customer boundary. */
+    hasWorkerType?: boolean;
   }): Promise<DirectoryUserRow[]>;
   // Reserved + checked-out items (flat list used by AdminUsers UI)
   listHoldings(): Promise<UserHolding[]>;

@@ -48,3 +48,22 @@ is the only way to verify a non-field persona.
 **Data-testid convention**: components under test expose `data-testid="<component-name>"` plus behavior-relevant `data-*` attributes so tests can select without brittle CSS selectors. Example: `ComplianceBanner` exposes `data-severity`, `data-blocking-count`, `data-recommended-count`.
 
 Related: [[reference-feature-specs]], [[feedback-run-tests-trigger]].
+
+## The suite does NOT start the dev server (learned 2026-10-27)
+
+`playwright.config.ts` has **no `webServer` block**. Nothing on `:3000` means
+all 11 persona sign-ins fail at `page.goto("/sign-in")` with
+`net::ERR_CONNECTION_REFUSED`, the 347 dependent tests report
+**"did not run"**, and it is easy to read that as a pass. Start
+`npm run dev` from the repo root first (web :3000, API :8080) and wait for
+both ports.
+
+Two ways the result lies about itself:
+- Piping the run through `tail` reports TAIL's exit code, not Playwright's —
+  11 failures came back as exit 0. See
+  [[feedback_verify_exit_codes_not_pipe_tail]].
+- Backgrounding with `nohup … &` inside an already-backgrounded call detaches
+  the suite; it is killed when the wrapper returns, and reports
+  `347 did not run` / `2 passed` with exit 0.
+
+Always read the explicit `N passed` / `N failed` / `N did not run` line.

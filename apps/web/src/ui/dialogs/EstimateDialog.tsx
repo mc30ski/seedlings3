@@ -169,7 +169,7 @@ export default function EstimateDialog({ open, onOpenChange, onCreated, myId, ed
     (async () => {
       try {
         const [workerList, jobList] = await Promise.all([
-          apiGet<WorkerLite[]>("/api/users?role=WORKER&approved=true"),
+          apiGet<WorkerLite[]>("/api/workers"),
           apiGet<JobListItem[]>("/api/jobs?status=ALL"),
         ]);
         setWorkers(Array.isArray(workerList) ? workerList : []);

@@ -19,6 +19,21 @@ export const users: ServicesUsers = {
   async list(params) {
     const where: any = {};
     if (params?.approved !== undefined) where.isApproved = params.approved;
+    // STAFF ONLY — the payroll gate, which is the customer/worker boundary.
+    //
+    // A customer's login is an ordinary `User` row with no `workerType`, so
+    // an unfiltered directory is a staff list with the customers mixed in.
+    // Every picker that asks "who works here" was getting all of them: the
+    // crew picker, the default-crew picker, the estimate picker, both
+    // compliance pickers and the pay-per-hour cards, because they passed a
+    // `role=WORKER` parameter this route stopped reading when the `Role`
+    // enum was deleted — the filter was silently ignored and nobody saw a
+    // change, because the list still looked like a list of people.
+    //
+    // `workerType IS NOT NULL` and nothing cleverer: it is the same question
+    // `can()` asks before it walks anybody's roles. A customer who also
+    // works for you HAS a worker type and belongs in these lists.
+    if (params?.hasWorkerType) where.workerType = { not: null };
     // Filter by the role's stable KEY, not an enum value. Inheritance is
     // respected: asking for "seedlings.worker" includes anyone holding Admin
     // or Super, because those build on it — which is what the old role
@@ -85,6 +100,22 @@ export const users: ServicesUsers = {
         entitlements: { select: { entitlement: true } },
       },
     });
+    // WHICH OF THESE LOGINS ARE CUSTOMERS. Same rule as `/me`: an ACTIVE
+    // ClientContact for the Clerk id. One query for the page, not one per
+    // row — this is the directory, and a findUnique per person is how a
+    // 40-person list becomes 40 round trips to a serverless Postgres.
+    const contactClerkIds = new Set(
+      (
+        await prisma.clientContact.findMany({
+          where: {
+            status: "ACTIVE",
+            clerkUserId: { in: rows.map((r) => r.clerkUserId).filter(Boolean) },
+          },
+          select: { clerkUserId: true },
+        })
+      ).map((c) => c.clerkUserId as string),
+    );
+
     const rolesById = new Map(
       roleRows.map((r) => [
         r.id,
@@ -141,7 +172,12 @@ export const users: ServicesUsers = {
       });
 
       const { customRoles: _c, areaAssignments: _a, ...user } = u as typeof u & Record<string, unknown>;
-      return { ...(user as typeof u), roleGrants: [...companyWide, ...areaScoped], capabilities };
+      return {
+        ...(user as typeof u),
+        roleGrants: [...companyWide, ...areaScoped],
+        capabilities,
+        isClientContact: contactClerkIds.has(u.clerkUserId),
+      };
     });
   },
 

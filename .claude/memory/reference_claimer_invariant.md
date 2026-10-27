@@ -61,3 +61,44 @@ join as "not on payroll" would demote a whole team over a missing `select`.
 Gate: G33 in `claimer-invariant-build-gate.test.ts`. Boundary refusal is
 `canHoldPaidSeat` in `changeAssigneeRole`; `setWorkerType` vacates open paid
 seats when someone leaves payroll, and leaves COMPLETED work alone.
+
+## The WEB had eleven copies of the rule (2026-10-27)
+
+The server rule is one line in `updateOccurrenceStatus`. The web wrote it out
+at **eleven** callsites, and **four** were wrong — found only because a
+production visit showed three different answers on one screen:
+
+- the card line said David (an OBSERVER) was "Claimer - Lead Worker"
+- the Manage Team dialog badged Michael "Claimer"
+- the API considered the visit to have **no claimer**
+
+Two defects. `JobsTab.tsx` and `ServicesTab.tsx` computed
+`assignedById === userId` without `&& role !== "observer"`, and tested that
+flag FIRST in the label ternary, so a self-assigned observer could never even
+render as "Observer". Worse, `TeamMemberList.getClaimerUserId` ended
+`?? nonObservers[0]` — when nobody had self-assigned it **invented** a
+claimer, which is precisely the broken state the invariant exists to surface.
+A guessed claimer makes "workers, no claimer" look normal.
+
+Now: **one definition**, `assigneeIsClaimer` in
+`apps/web/src/ui/tabs/JobsTab.utils.ts`, and the gate's "server and UI still
+agree" test forbids `assignedById === ` anywhere else under `apps/web/src`.
+That test used to pin ONE literal in `JobsTab.tsx` — which proved nothing
+about the other ten copies. Don't weaken it back to a single-literal check.
+
+**Fallbacks are the trap, not the missing half.** A caller that needs a
+person to act as (a view-as target, a "lead" name on a collapsed card) picks
+its own fallback at the callsite and must not call the result "Claimer".
+
+**You could never claim a visit yourself.** `TeamMemberList` gates its whole
+control row on `!isMe`, so Make Claimer appeared on everyone's card but
+yours. Invisible for as long as the dialog pretended you already were the
+claimer. Your own card now gets a **Claim** button; `reassign-claimer` always
+accepted your own id.
+
+**Where leaderless rows came from in prod:** completing a visit generates the
+next one and copies the default crew, taking `assigneeSource[0]` as claimer
+with no role check (`jobs.ts:339`). If a job's default crew lists an observer
+first, the visit is born with an observer nominated — then repaired by
+`enforceAssigneeInvariants`. Correct by cleanup, not by construction. The
+rows that shipped predate the enforcer (first commit 2026-09-30).

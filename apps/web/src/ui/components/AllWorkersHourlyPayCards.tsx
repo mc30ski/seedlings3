@@ -25,6 +25,7 @@ import {
 import { ChevronsUpDown, Sparkles } from "lucide-react";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import { apiGet } from "@/src/lib/api";
+import { isPaid } from "@repo/money";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import {
   FULL_PERIODS,
@@ -107,13 +108,28 @@ export default function AllWorkersHourlyPayCards({ periodOverride, workerIds }: 
     let cancelled = false;
     (async () => {
       try {
-        const list = await apiGet<Array<any>>("/api/users?approved=true&role=WORKER");
+        // TWO FILTERS, BECAUSE THIS CARD ASKS A MONEY QUESTION.
+        //
+        // `hasWorkerType=true` keeps customer logins out of the response — they were
+        // arriving here and rendering as team members with a blank hourly
+        // rate, because the old `role=WORKER` parameter named the deleted
+        // `Role` enum and the route ignored it.
+        //
+        // `isPaid` then answers the question the card actually asks. A rate
+        // only means something for someone the money system can price:
+        // `rateFor` REFUSES a worker with no pay class rather than guessing,
+        // so an UNPAID helper belongs on a visit but not on a pay card.
+        // Taken from @repo/money, the one module that decides worker class —
+        // never re-derived here, and never by negation (G30).
+        const list = await apiGet<Array<any>>("/api/users?approved=true&hasWorkerType=true");
         if (cancelled) return;
-        const mapped: WorkerListItem[] = (Array.isArray(list) ? list : []).map((u) => ({
-          id: String(u.id),
-          displayName: u.displayName ?? null,
-          workerType: u.workerType ?? null,
-        }));
+        const mapped: WorkerListItem[] = (Array.isArray(list) ? list : [])
+          .filter((u) => isPaid(u.workerType))
+          .map((u) => ({
+            id: String(u.id),
+            displayName: u.displayName ?? null,
+            workerType: u.workerType ?? null,
+          }));
         // Filter client-side: the subset comes from the Home picker, which
         // already chose from this same approved-worker list.
         const wanted = new Set(workerIds ?? []);
