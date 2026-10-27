@@ -105,7 +105,9 @@ export default function NotifyTab() {
   async function loadUsers() {
     try {
       const list = await apiGet<RecipientUser[]>(
-        "/api/users?approved=true",
+        // STAFF ONLY. This is the recipient list for team notifications;
+        // unfiltered it offered every customer login as a target.
+        "/api/users?approved=true&hasWorkerType=true",
       );
       setUsers(Array.isArray(list) ? list : []);
     } catch {

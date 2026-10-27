@@ -65,7 +65,11 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
     setShowRecalcPrompt(false);
     (async () => {
       try {
-        const list = await apiGet<WorkerLite[]>("/api/users?role=WORKER&approved=true");
+        // GET /workers, not the directory: it filters to `work.claim`, which
+        // excludes a customer login by construction (the payroll gate makes
+        // `can()` false before it walks any role). The old
+        // `?role=WORKER` was read by nothing and offered every customer.
+        const list = await apiGet<WorkerLite[]>("/api/workers");
         setWorkers(Array.isArray(list) ? list : []);
       } catch { setWorkers([]); }
     })();

@@ -192,7 +192,10 @@ export default function VehiclesTab({ scope }: { scope: Scope }) {
     // writes, from the one module that decides worker class — so the list
     // and the endpoint cannot disagree about who is eligible.
     if (!canManageFleet) return;
-    apiGet<any[]>("/api/users?includeInactive=false")
+    // `includeInactive` was read by nothing either. The `isPaid` filter
+    // below was already doing the real work; `hasWorkerType=true` now keeps the
+    // customers out of the response in the first place.
+    apiGet<any[]>("/api/users?approved=true&hasWorkerType=true")
       .then((raw) => {
         if (!Array.isArray(raw)) return;
         setWorkers(

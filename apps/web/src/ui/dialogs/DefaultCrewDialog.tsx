@@ -89,7 +89,9 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
     setSelectedGroupId(currentGroup?.id ?? "");
     (async () => {
       try {
-        const list = await apiGet<WorkerLite[]>("/api/users?role=WORKER&approved=true");
+        // GET /workers — see AssigneeDialog. A default crew propagates to
+        // every generated visit, so a customer here would recur.
+        const list = await apiGet<WorkerLite[]>("/api/workers");
         setWorkers(Array.isArray(list) ? list : []);
       } catch { setWorkers([]); }
       try {

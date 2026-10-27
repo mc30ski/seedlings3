@@ -42,6 +42,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import type { Scope } from "@/src/lib/scope";
 import { holds } from "@/src/lib/roles";
+import { isCustomerOnly } from "@/src/lib/people";
 // `readOnly` forces the directory to render with no mutation surface —
 // no approve, no worker-type change, no delete — regardless of what the
 // caller holds. Pending sign-ups still render, with identity badges only,
@@ -95,6 +96,9 @@ type ApiUser = {
   email?: string | null;
   displayName?: string | null;
   isApproved: boolean;
+  /** An ACTIVE ClientContact for this login's Clerk id — from GET /users.
+   *  The authoritative customer test; see lib/people.ts. */
+  isClientContact?: boolean;
   /**
    * Which roles this person holds, as the server resolved them. Replaces
    * `roles: { role: Role }[]` — the UserRole table it came from is deleted,
@@ -624,9 +628,20 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
   // starter role from Trainee upward holds it, and a client holds nothing.
   // The old test named two enum values, which is why a
   // Trainee — who held neither — would have landed in Clients.
+  // THE BOUNDARY IS THE PAYROLL GATE, NOT ROLE ABSENCE.
+  //
+  // These read `holdsAnyRole(u)`: hold nothing, be filed as a customer. A
+  // new hire holds nothing, so every staff account awaiting its first grant
+  // landed under Clients — where this tab hides the role controls, so the
+  // one screen that grants a first role would not grant it to the people
+  // who needed one. Four production accounts were stuck there.
+  //
+  // `isCustomerOnly` asks the real question (no worker type AND an active
+  // client contact) and lives in lib/people.ts, shared with the Roles →
+  // People view so the two screens cannot disagree about who is a customer.
   const isPendingUser = (u: ApiUser): boolean => !u.isApproved;
-  const isTeamUser = (u: ApiUser): boolean => u.isApproved && holdsAnyRole(u);
-  const isClientUser = (u: ApiUser): boolean => u.isApproved && !holdsAnyRole(u);
+  const isTeamUser = (u: ApiUser): boolean => u.isApproved && !isCustomerOnly(u);
+  const isClientUser = (u: ApiUser): boolean => u.isApproved && isCustomerOnly(u);
 
   const pendingUsers = useMemo(() => filtered.filter(isPendingUser), [filtered]);
   // Team gets the worker-specific filters layered on top. Clients and
@@ -1000,9 +1015,15 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
       )}
       {!loading && filtered.length > 0 && (() => {
         const renderUserCard = (u: ApiUser) => {
-          const staff = holdsAnyRole(u);
           const isMe = !!me?.id && u.id === me.id;
-          const isClient = u.isApproved && !staff;
+          // Same rule as the section split above — a roleless staff account
+          // is staff, and must keep its role-granting controls.
+          const isClient = u.isApproved && isCustomerOnly(u);
+          // Kept separate and named for what it asks. The old single `staff`
+          // flag meant "holds a role" but was READ as "is staff" in eight
+          // places, which is how a new hire lost the controls that would
+          // have made them one.
+          const hasRole = holdsAnyRole(u);
           const showDecline = !u.isApproved && !isMe;
 
           const isConfirming = confirm?.userId === u.id;
@@ -1095,11 +1116,11 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                       </Badge>
                     ))}
                     {u.isOwner && <Badge colorPalette="purple" variant="solid">LLC Owner</Badge>}
-                    {u.isApproved && !staff && <Badge colorPalette="green">Client</Badge>}
+                    {isClient && <Badge colorPalette="green">Client</Badge>}
                     {isEmployee && <Badge colorPalette="blue">Employee</Badge>}
                     {isContractor && <Badge colorPalette="orange">Contractor</Badge>}
                     {notFieldCleared && <Badge colorPalette="cyan">No field clearance</Badge>}
-                    {!u.workerType && staff && <Badge colorPalette="gray" variant="outline">Unclassified</Badge>}
+                    {!u.workerType && !isClient && <Badge colorPalette="gray" variant="outline">Unclassified</Badge>}
                     {/* Compliance chip. Sourced from the bulk
                         /policies/user-compliance endpoint. Counts
                         BLOCK-enforcement policies where the worker is
@@ -1283,7 +1304,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                               />
                             )}
                             {u.isApproved &&
-                              !staff &&
+                              !hasRole &&
                               !isMe &&
                               !isConfirming && (
                                 <Button
@@ -1304,7 +1325,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                       </>
                     )}
                     {/* Worker type & W-9 — available for all users including self */}
-                    {staff && u.workerType !== "UNPAID" && (
+                    {!isClient && u.workerType !== "UNPAID" && (
                       <Button
                         size={{ base: "xs", md: "sm" }}
                         onClick={() => promptWorkerType(u.id, "UNPAID")}
@@ -1322,7 +1343,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                         Set Unpaid
                       </Button>
                     )}
-                    {staff && u.workerType !== "CONTRACTOR" && (
+                    {!isClient && u.workerType !== "CONTRACTOR" && (
                       <Button
                         size={{ base: "xs", md: "sm" }}
                         onClick={() => promptWorkerType(u.id, "CONTRACTOR")}
@@ -1332,7 +1353,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                         Set Contractor
                       </Button>
                     )}
-                    {staff && u.workerType !== "EMPLOYEE" && (
+                    {!isClient && u.workerType !== "EMPLOYEE" && (
                       <Button
                         size={{ base: "xs", md: "sm" }}
                         onClick={() => promptWorkerType(u.id, "EMPLOYEE")}
@@ -1342,7 +1363,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                         Set Employee
                       </Button>
                     )}
-                    {staff && u.workerType != null && (
+                    {!isClient && u.workerType != null && (
                       <Button
                         size={{ base: "xs", md: "sm" }}
                         onClick={() => promptWorkerType(u.id, null)}
@@ -1381,7 +1402,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                     Read-only mode renders the switches in their current
                     state but disabled, so holders of people authority can see what's granted
                     without being able to mutate it. */}
-                {staff && (() => {
+                {!isClient && (() => {
                   const open = permsOpen.has(u.id);
                   return (
                     <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.emphasized">

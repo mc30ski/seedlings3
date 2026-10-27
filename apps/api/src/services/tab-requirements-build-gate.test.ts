@@ -174,6 +174,9 @@ describe("G44 — tab visibility table", () => {
     expect(empty, "`[]` reads as both 'needs nothing' and 'nobody' — use ALWAYS").toEqual([]);
   });
 
+  /** Capabilities RolesTab checks to decide what it may show at all. */
+  const SELF_GATES = new Set(["roles.define", "roles.view", "people.manage"]);
+
   it("G36 — the role screens render from the vocabulary, not a local list", () => {
     // A capability must appear in exactly one badged row on a screen, and
     // the cheap way to break that is to hand-write the list. Uniqueness of
@@ -192,9 +195,14 @@ describe("G44 — tab visibility table", () => {
     const literals = [...src.matchAll(/"([a-z][a-z.-]+)"/g)]
       .map((m) => m[1])
       .filter((e) => known.has(e))
-      // The screen legitimately NAMES the two capabilities it gates itself
-      // on — that is a check, not a rendered list.
-      .filter((e) => e !== "roles.define" && e !== "roles.view");
+      // The screen legitimately NAMES the capabilities it gates ITSELF on —
+      // that is a check, not a rendered list. `people.manage` joined them
+      // when the People sub-tab landed: `GET /users` strips `roleGrants`
+      // and `capabilities` below that, so the view must ask for the
+      // capability of the endpoint it calls. Add to this set only for a
+      // gate; a capability that reaches the SCREEN must still come from
+      // the fetched vocabulary.
+      .filter((e) => !SELF_GATES.has(e));
     expect(literals, "hardcoded entitlement ids — render from the fetched groups")
       .toEqual([]);
   });
