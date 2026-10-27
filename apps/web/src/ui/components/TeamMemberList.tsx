@@ -264,6 +264,31 @@ export default function TeamMemberList({
             )}
           </HStack>
         )}
+
+        {/* CLAIMING IT YOURSELF.
+            The controls above are hidden on your own card (`!isMe`), so the
+            one person who could never be offered the claim was you — you
+            could hand the visit to anybody else and not take it. That was
+            invisible for as long as the dialog filled in the first worker as
+            claimer when nobody had self-assigned: it said you already were
+            one. With that guess gone, a visit whose claimer was lost leaves
+            you assigned, unable to start it, and with no way to fix it from
+            here. `reassign-claimer` already accepts your own id. */}
+        {showRoleControls && isMe && showMakeClaimer && !isClaimerRow && !isObs
+          && !observerOnly && onMakeClaimer && (
+          <HStack gap={1} mt={1}>
+            <Button
+              size="xs"
+              variant="outline"
+              colorPalette="teal"
+              loading={busyId === m.userId}
+              disabled={busyId !== ""}
+              onClick={() => onMakeClaimer(m.userId)}
+            >
+              Claim
+            </Button>
+          </HStack>
+        )}
       </Box>
     );
   }
