@@ -24,6 +24,7 @@ import {
   useDialogError,
 } from "@/src/ui/components/DialogErrorAlert";
 import TeamMemberList, { type TeamMember } from "@/src/ui/components/TeamMemberList";
+import { assigneeIsClaimer } from "@/src/ui/tabs/JobsTab.utils";
 
 type WorkerLite = {
   id: string;
@@ -222,7 +223,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
       setMembers((prev) => prev.map((m) => {
         if (m.userId !== userId) return m;
         if (newRole === "observer") return { ...m, role: "observer", assignedById: null };
-        const claimer = prev.find((x) => x.assignedById === x.userId && x.role !== "observer");
+        const claimer = prev.find((x) => assigneeIsClaimer(x));
         return { ...m, role: null, assignedById: claimer?.userId ?? userId };
       }));
       publishInlineMessage({ type: "SUCCESS", text: newRole === "observer" ? "Changed to observer." : "Changed to worker." });
