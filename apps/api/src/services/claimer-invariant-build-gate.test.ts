@@ -163,10 +163,50 @@ describe("[build-gate] an occurrence is UNCLAIMED or has exactly one claimer", (
   it("server and UI still agree on what a claimer is", () => {
     const server = fs.readFileSync(path.join(API_SRC, "services", "jobs.ts"), "utf8");
     expect(server).toMatch(/assignee\?\.assignedById === currentUserId && assignee\?\.role !== "observer"/);
-    const tab = path.join(WEB_SRC, "ui", "tabs", "JobsTab.tsx");
-    if (fs.existsSync(tab)) {
-      expect(fs.readFileSync(tab, "utf8")).toMatch(/myAssignee\.assignedById === myId/);
+
+    // THE WEB HAS EXACTLY ONE DEFINITION, AND NOBODY RE-DERIVES IT.
+    //
+    // This used to assert a single literal inside JobsTab.tsx, which proved
+    // only that ONE of the web's copies matched the server. There were
+    // eleven, and three had dropped the `role !== "observer"` half. The
+    // result reached production: on a visit whose only self-assigned row was
+    // an OBSERVER, the card line rendered that observer as "Claimer - Lead
+    // Worker", the Manage Team dialog badged a different person "Claimer"
+    // (it filled in the first worker when nobody had self-assigned), and the
+    // API considered the visit to have no claimer at all and refused Start
+    // with NOT_CLAIMER. Three answers, one screen.
+    //
+    // Pinning one copy cannot catch that, so the rule is now: the helper
+    // holds the definition, and the expression appears nowhere else.
+    const helper = path.join(WEB_SRC, "ui", "tabs", "JobsTab.utils.ts");
+    expect(fs.existsSync(helper), "the shared claimer helper is gone").toBe(true);
+    expect(
+      fs.readFileSync(helper, "utf8"),
+      "assigneeIsClaimer must carry the server's rule, both halves",
+    ).toMatch(
+      /export function assigneeIsClaimer[\s\S]{0,240}?a\.assignedById === a\.userId && a\.role !== "observer"/,
+    );
+
+    // Any other comparison of assignedById to a user id is the rule written
+    // out again — correct today, one edit away from dropping a half.
+    const REDERIVED = /assignedById === /;
+    const offenders: string[] = [];
+    for (const file of walk(WEB_SRC)) {
+      if (path.resolve(file) === path.resolve(helper)) continue;
+      fs.readFileSync(file, "utf8").split("\n").forEach((line, i) => {
+        const t = line.trim();
+        if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return;
+        if (REDERIVED.test(line)) {
+          offenders.push(`${path.relative(WEB_SRC, file)}:${i + 1}  ${t.slice(0, 80)}`);
+        }
+      });
     }
+    expect(
+      offenders,
+      "Use `assigneeIsClaimer` from JobsTab.utils instead of comparing " +
+        "`assignedById` by hand — a copy that omits `role !== \"observer\"` " +
+        "labels an observer as the claimer while the API refuses their Start.",
+    ).toEqual([]);
   });
 });
 

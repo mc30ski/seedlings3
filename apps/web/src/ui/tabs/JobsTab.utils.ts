@@ -36,11 +36,34 @@ export function effectiveMinutes(occ: {
   return Math.max(0, (endMs - startMs - paused) / 60000);
 }
 
+/**
+ * WHO THE CLAIMER IS. One rule, and it mirrors the API exactly — see
+ * `updateOccurrenceStatus` in `apps/api/src/services/jobs.ts`, which throws
+ * NOT_CLAIMER on anything else.
+ *
+ * Self-assigned (`assignedById === userId`) AND NOT AN OBSERVER. Both halves
+ * matter. The rule was reimplemented at seven callsites and two of them
+ * dropped the observer half, which is not a cosmetic slip: a self-assigned
+ * observer then rendered as "Claimer - Lead Worker" while the API treated
+ * the visit as having no claimer at all, so the card contradicted the Manage
+ * Team dialog on the same screen and neither matched what Start would do.
+ *
+ * There is NO fallback here on purpose. "Nobody is the claimer" is a real,
+ * meaningful state — an occurrence with workers and no claimer is the broken
+ * state `enforceAssigneeInvariants` exists to prevent — and a UI that guesses
+ * a claimer when there is none hides exactly the thing the operator needs to
+ * see. Callers that need a person to act as (a view-as target, a "lead" name
+ * on a collapsed card) pick their own fallback explicitly, at the callsite,
+ * and must not label the result "Claimer".
+ */
+export function assigneeIsClaimer(a: { assignedById?: string | null; userId: string; role?: string | null }): boolean {
+  return a.assignedById === a.userId && a.role !== "observer";
+}
+
 /** Sort order used to display assignees consistently: claimer first,
  *  active assignees next, observers last. */
 export function assigneeSortOrder(a: { assignedById?: string | null; userId: string; role?: string | null }): number {
-  const isClaimer = a.assignedById === a.userId && a.role !== "observer";
-  if (isClaimer) return 0;
+  if (assigneeIsClaimer(a)) return 0;
   if (a.role === "observer") return 2;
   return 1;
 }

@@ -12,6 +12,7 @@ import {
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { isPaid, type WorkerType } from "@repo/money";
+import { assigneeIsClaimer } from "@/src/ui/tabs/JobsTab.utils";
 
 export type TeamMember = {
   userId: string;
@@ -87,13 +88,23 @@ export type TeamMemberListProps = {
 function getClaimerUserId(members: TeamMember[]): string | null {
   const nonObservers = members.filter((m) => m.role !== "observer");
   if (nonObservers.length === 0) return null;
-  // If assignedById data exists, claimer is the one who assigned themselves
+
   const hasAssignedById = members.some((m) => m.assignedById);
   if (hasAssignedById) {
-    const claimer = nonObservers.find((m) => m.assignedById === m.userId);
-    return claimer?.userId ?? nonObservers[0].userId;
+    // NO FALLBACK. The caller passed the signal, so trust it: when nobody
+    // self-assigned there IS no claimer, and this says so.
+    //
+    // It used to return `?? nonObservers[0]`, which badged whoever happened
+    // to sort first as "Claimer". On a visit with workers and no claimer the
+    // dialog therefore told the operator they were the claimer, while the
+    // card beside it named someone else and `updateOccurrenceStatus` would
+    // refuse Start with NOT_CLAIMER for anyone without `schedule.manage`.
+    // The guess concealed the one state worth surfacing.
+    return nonObservers.find((m) => assigneeIsClaimer(m))?.userId ?? null;
   }
-  // Otherwise first non-observer is the claimer
+  // No row carries `assignedById` at all — this caller did not load the
+  // signal, so nothing can be concluded either way. Keep the long-standing
+  // first-worker guess rather than claiming those teams are unclaimed.
   return nonObservers[0].userId;
 }
 
@@ -170,7 +181,7 @@ export default function TeamMemberList({
 
   function renderMemberCard(m: TeamMember, isMe: boolean) {
     const isObs = m.role === "observer";
-    const isClaimer = !isObs && claimerId === m.userId;
+    const isClaimerRow = !isObs && claimerId === m.userId;
     const seat = paidSeatState(m.user?.workerType);
     const observerOnly = seat === "observer-only";
 
@@ -181,23 +192,23 @@ export default function TeamMemberList({
         py={1.5}
         rounded="md"
         borderWidth="1px"
-        borderColor={isObs ? "blue.emphasized" : isClaimer ? "teal.emphasized" : "gray.emphasized"}
-        bg={isObs ? "blue.faint" : isClaimer ? "teal.faint" : undefined}
+        borderColor={isObs ? "blue.emphasized" : isClaimerRow ? "teal.emphasized" : "gray.emphasized"}
+        bg={isObs ? "blue.faint" : isClaimerRow ? "teal.faint" : undefined}
       >
         <HStack justify="space-between" align="center">
           <VStack align="start" gap={0.5}>
             <Text
               fontSize="sm"
-              fontWeight={isClaimer ? "medium" : "normal"}
-              color={isObs ? "blue.fg" : isClaimer ? "teal.fg" : undefined}
+              fontWeight={isClaimerRow ? "medium" : "normal"}
+              color={isObs ? "blue.fg" : isClaimerRow ? "teal.fg" : undefined}
             >
               {m.user?.displayName ?? m.user?.email ?? m.userId}
               {isMe && <Box as="span" fontWeight="normal" color="teal.fg"> (you)</Box>}
             </Text>
             <HStack gap={1}>
-              {isClaimer && <Badge size="sm" colorPalette="teal" variant="solid" fontSize="2xs" px="1.5" borderRadius="full">Claimer</Badge>}
+              {isClaimerRow && <Badge size="sm" colorPalette="teal" variant="solid" fontSize="2xs" px="1.5" borderRadius="full">Claimer</Badge>}
               {isObs && <Badge size="sm" colorPalette="blue" variant="solid" fontSize="2xs" px="1.5" borderRadius="full">Observer</Badge>}
-              {!isClaimer && !isObs && <Badge size="sm" colorPalette="gray" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full">Worker</Badge>}
+              {!isClaimerRow && !isObs && <Badge size="sm" colorPalette="gray" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full">Worker</Badge>}
               {isObs && observerOnly && (
                 <Badge size="sm" colorPalette="purple" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full">
                   Not on payroll
@@ -205,7 +216,7 @@ export default function TeamMemberList({
               )}
             </HStack>
           </VStack>
-          {isMe && !isClaimer && onLeave ? (
+          {isMe && !isClaimerRow && onLeave ? (
             <Button size="xs" variant="ghost" colorPalette="red" loading={busyId === m.userId} disabled={busyId !== ""} onClick={onLeave}>
               Leave
             </Button>
@@ -215,10 +226,10 @@ export default function TeamMemberList({
               variant="ghost"
               colorPalette="red"
               loading={busyId === m.userId}
-              disabled={busyId !== "" || (isClaimer && !allowRemoveClaimer)}
-              title={isClaimer && !allowRemoveClaimer ? "Make someone else the claimer first" : undefined}
+              disabled={busyId !== "" || (isClaimerRow && !allowRemoveClaimer)}
+              title={isClaimerRow && !allowRemoveClaimer ? "Make someone else the claimer first" : undefined}
               onClick={() => {
-                if (isClaimer && allowRemoveClaimer) {
+                if (isClaimerRow && allowRemoveClaimer) {
                   setConfirmRemoveClaimer(m.userId);
                 } else {
                   onRemove(m.userId);
@@ -231,12 +242,12 @@ export default function TeamMemberList({
         </HStack>
         {showRoleControls && !isMe && (
           <HStack gap={1} mt={1}>
-            {showMakeClaimer && !isClaimer && !isObs && !observerOnly && onMakeClaimer && (
+            {showMakeClaimer && !isClaimerRow && !isObs && !observerOnly && onMakeClaimer && (
               <Button size="xs" variant="outline" colorPalette="teal" disabled={busyId !== ""} onClick={() => onMakeClaimer(m.userId)}>
                 Make Claimer
               </Button>
             )}
-            {!isClaimer && onToggleRole && (
+            {!isClaimerRow && onToggleRole && (
               <Button
                 size="xs"
                 variant="outline"

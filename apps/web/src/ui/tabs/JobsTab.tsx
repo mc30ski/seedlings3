@@ -26,6 +26,7 @@ import {
   crewPool,
   materialChargeTotal,
   materialCostTotal,
+  assigneeIsClaimer,
 } from "@/src/ui/tabs/JobsTab.utils";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
@@ -2605,7 +2606,7 @@ export default function JobsTab({
     let actionViewAsName: string | null = effectiveViewAsName;
     if (!actionViewAsName && canManageSchedule) {
       const activeAssignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
-      const claimer = activeAssignees.find((a: any) => a.assignedById === a.userId);
+      const claimer = activeAssignees.find((a: any) => assigneeIsClaimer(a));
       const target = claimer ?? activeAssignees[0] ?? null;
       const name = target?.user?.displayName ?? target?.user?.email ?? null;
       if (name) actionViewAsName = name;
@@ -4871,7 +4872,7 @@ export default function JobsTab({
             const isUnassigned = assignees.filter((a) => a.role !== "observer").length === 0;
             const isAssignedToOthers = !isUnassigned && !isAssignedToMe;
 
-            const isClaimer = !!myAssignee && !isObserver && myAssignee.assignedById === myId;
+            const isClaimer = !!myAssignee && assigneeIsClaimer(myAssignee);
 
             // Team icon rule — fires iff:
             //   1. peekActive (button on + context makes sense)
@@ -6423,7 +6424,7 @@ export default function JobsTab({
                     // name — the previous "1 assigned" fallback was missing
                     // info that's right there on the row.
                     const activeAssignees = assignees.filter((a: any) => a.role !== "observer");
-                    const lead = activeAssignees.find((a: any) => a.assignedById === a.userId) ?? activeAssignees[0];
+                    const lead = activeAssignees.find((a: any) => assigneeIsClaimer(a)) ?? activeAssignees[0];
                     const others = Math.max(0, activeAssignees.length - 1);
                     // Group-claimed: show just the group name + crew size. Workers
                     // can expand the card to see who's on it.
@@ -7646,7 +7647,7 @@ export default function JobsTab({
                         <Text fontSize="xs" fontWeight="semibold" color="teal.fg">
                           {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
                             const name = a.user?.displayName ?? a.user?.email ?? a.userId;
-                            const isCl = a.assignedById === a.userId && a.role !== "observer";
+                            const isCl = assigneeIsClaimer(a);
                             const role = isCl ? "Claimer - Lead Worker" : a.role === "observer" ? "Observer" : "Worker";
                             return `${name} (${role})`;
                           }).join(", ")}
@@ -8024,7 +8025,7 @@ export default function JobsTab({
                     {!isUnassigned && (
                       <VStack align="start" gap={0}>
                         {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
-                          const isClaimer = a.assignedById === a.userId;
+                          const isClaimerRow = assigneeIsClaimer(a);
                           const isMe = a.userId === myId;
                           return (
                             <Text
@@ -8041,7 +8042,7 @@ export default function JobsTab({
                               </span>
                               {a.user?.workerType ? ` · ${payClassLabel(a.user.workerType)}` : ""}
                               {isMe ? " (you)" : ""}
-                              {isClaimer ? " · Claimer - Lead Worker" : a.role === "observer" ? " · Observer" : " · Worker"}
+                              {isClaimerRow ? " · Claimer - Lead Worker" : a.role === "observer" ? " · Observer" : " · Worker"}
                             </Text>
                           );
                         })}
@@ -10410,7 +10411,7 @@ export default function JobsTab({
           assignedGroup={(manageOccurrence as any).assignedGroup ?? null}
           onChanged={() => void load(false)}
           canManageSchedule={canManageSchedule}
-          isClaimer={!!(me?.id && (manageOccurrence.assignees ?? []).some((a: any) => a.userId === me.id && a.assignedById === me.id && a.role !== "observer"))}
+          isClaimer={!!(me?.id && (manageOccurrence.assignees ?? []).some((a: any) => a.userId === me.id && assigneeIsClaimer(a)))}
         />
       )}
 
@@ -11163,7 +11164,7 @@ export default function JobsTab({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
             workerType: a.user?.workerType,
-            isClaimer: a.assignedById === a.userId,
+            isClaimer: assigneeIsClaimer(a),
           }))}
           completionSplits={(acceptPaymentOcc as any).completionSplits ?? null}
           onAccepted={async (result: any) => {

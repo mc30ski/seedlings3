@@ -75,7 +75,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import ManageInvoiceChargesDialog from "@/src/ui/dialogs/ManageInvoiceChargesDialog";
 import { outstandingInvoiceAmount } from "@/src/ui/components/InvoiceAlreadySentNote";
-import { occInEditableState, totalPrice } from "@/src/ui/tabs/JobsTab.utils";
+import { assigneeIsClaimer, occInEditableState, totalPrice } from "@/src/ui/tabs/JobsTab.utils";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, onEventSearchRun, navigateToProfile } from "@/src/lib/bus";
 import { suggestedEquipment, parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
@@ -2303,13 +2303,13 @@ export default function ServicesTab({
                             ) : (
                               <VStack align="start" gap={0}>
                                 {occ.assignees.map((a) => {
-                                  const isClaimer = a.assignedById === a.userId;
+                                  const isClaimerRow = assigneeIsClaimer(a);
                                   return (
                                     <Text
                                       key={a.userId}
                                       fontSize="xs"
-                                      fontWeight={isClaimer ? "medium" : "normal"}
-                                      color={isClaimer ? "teal.fg" : "fg.muted"}
+                                      fontWeight={isClaimerRow ? "medium" : "normal"}
+                                      color={isClaimerRow ? "teal.fg" : "fg.muted"}
                                     >
                                       <span
                                         style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
@@ -2317,7 +2317,7 @@ export default function ServicesTab({
                                       >
                                         {a.user.displayName ?? a.user.email ?? a.userId}
                                       </span>
-                                      {isClaimer ? " · Claimer" : a.role === "observer" ? " · Observer" : " · Worker"}
+                                      {isClaimerRow ? " · Claimer" : a.role === "observer" ? " · Observer" : " · Worker"}
                                     </Text>
                                   );
                                 })}
@@ -3568,7 +3568,7 @@ export default function ServicesTab({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
             workerType: a.user?.workerType,
-            isClaimer: a.assignedById === a.userId,
+            isClaimer: assigneeIsClaimer(a),
           }))}
           isOperator={canManageSchedule}
           onAccepted={(_result) => {
