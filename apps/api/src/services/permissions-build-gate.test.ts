@@ -292,13 +292,37 @@ describe("[G12, G14, G17, G22, G26] area invariants", () => {
     ).not.toMatch(/area\.update\([\s\S]*?data:\s*\{[^}]*parentId/);
   });
 
-  it.skipIf(!hasAreas())("G17 — no permission check reads AreaMembership", () => {
-    const perm = hasPerm() ? read(PERM) : "";
+  it.skipIf(!hasAreas())("G17 — there is no informational 'home area' to mistake for a grant", () => {
+    // WHAT THIS USED TO SAY, AND WHY IT CHANGED.
+    //
+    // `AreaMembership` was "this person usually works here" — informational,
+    // granting nothing. G17 asserted that no permission check read it,
+    // because a check there would silently restrict where somebody is
+    // ALLOWED to work rather than merely describing where they usually do.
+    //
+    // The model was never used. Not one line of `apps/api`, `apps/web` or
+    // `packages` ever read or wrote it, so the table sat empty in every
+    // environment while the permissions model grew up around it. It was
+    // dropped on 2026-10-28 (`drop_dead_area_membership`).
+    //
+    // The rule is now stronger and cheaper to keep: the concept must not
+    // come back. A second area relation on User whose name says "where they
+    // are" is exactly the shape that invites a permission check — the next
+    // person sees two area tables and reasonably assumes both are consulted.
+    // There is ONE area relation that means anything, `AreaAssignment`, and
+    // it grants. If you need somewhere to record a home base, that is
+    // `User.homeBaseAddress`, which no authorization path reads either.
     expect(
-      perm,
-      "Home areas are informational. A check here silently restricts where " +
-        "people may work.",
-    ).not.toMatch(/AreaMembership|areaMembership/);
+      schema(),
+      "AreaMembership was dead and was dropped. Do not reintroduce an " +
+        "informational area relation — AreaAssignment is the only one, and " +
+        "it grants. A home base goes on User.homeBaseAddress.",
+    ).not.toMatch(/AreaMembership/);
+
+    const perm = hasPerm() ? read(PERM) : "";
+    expect(perm, "no permission check may consult a home area").not.toMatch(
+      /AreaMembership|areaMembership/,
+    );
   });
 
   it.skipIf(!hasAreas())("G26 — at most one isSystem role per user", () => {

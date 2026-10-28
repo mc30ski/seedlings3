@@ -139,6 +139,26 @@ export async function setPerspective(
 /** Fired after a perspective is taken or cleared. See `setPerspective`. */
 export const PERSPECTIVE_CHANGED_EVENT = "seedlings3:perspective-changed";
 
+/**
+ * Fired when the SIGNED-IN PERSON'S OWN capability set may have changed,
+ * as opposed to the lens they are looking through.
+ *
+ * `/api/me` is fetched once at load, so what the app believes you may do
+ * is a snapshot. A grant that lands after that snapshot is invisible until
+ * something refetches: the role builder goes on saying "you don't hold
+ * this" about a capability you now hold, which reads as a bug in the
+ * builder rather than a stale cache. That happened for real when a
+ * migration granted two capabilities mid-session.
+ *
+ * Deliberately NOT a poll — the app does not poll — and deliberately
+ * lighter than PERSPECTIVE_CHANGED_EVENT: this refetches `me` and nothing
+ * else, because the data on screen is still answering the right question.
+ * Fire it at the moments the app can actually know: granting or revoking a
+ * role on yourself, and opening the screen whose whole subject is what
+ * roles grant.
+ */
+export const CAPABILITIES_CHANGED_EVENT = "seedlings3:capabilities-changed";
+
 /** Details of the currently active client "View as" session. Stored as
  *  JSON in localStorage so we can render the banner without hitting the
  *  API again. */

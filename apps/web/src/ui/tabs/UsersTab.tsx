@@ -43,6 +43,7 @@ import {
 import type { Scope } from "@/src/lib/scope";
 import { holds } from "@/src/lib/roles";
 import { isCustomerOnly } from "@/src/lib/people";
+import { CAPABILITIES_CHANGED_EVENT } from "@/src/lib/impersonation";
 // `readOnly` forces the directory to render with no mutation surface —
 // no approve, no worker-type change, no delete — regardless of what the
 // caller holds. Pending sign-ups still render, with identity badges only,
@@ -683,6 +684,18 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
    * call leaves them demoted by what the operator clicked as a promotion.
    * `POST /users/:id/roles/move` does both halves in one transaction.
    */
+  /**
+   * Your own grants just moved, so what the app believes you may do is out
+   * of date until `/api/me` is asked again. Only fires for YOUR row —
+   * changing somebody else's roles does not change yours. Without it the
+   * screen you just used to grant yourself a capability goes on insisting
+   * you do not hold it.
+   */
+  function announceIfMine(userId: string) {
+    if (!me?.id || userId !== me.id) return;
+    try { window.dispatchEvent(new Event(CAPABILITIES_CHANGED_EVENT)); } catch { /* no listener is survivable */ }
+  }
+
   async function addRole(userId: string, roleId: string, roleName: string, move = false) {
     try {
       if (move) {
@@ -692,6 +705,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
         await apiPost(`/api/users/${userId}/roles`, { customRoleId: roleId });
         publishInlineMessage({ type: "SUCCESS", text: `Granted ${roleName}` });
       }
+      announceIfMine(userId);
       load();
     } catch (err) {
       publishInlineMessage({
@@ -708,6 +722,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
         type: "SUCCESS",
         text: `Removed ${roleName}`,
       });
+      announceIfMine(userId);
       load();
     } catch (err: any) {
       // Detect a 409 regardless of fetch wrapper
