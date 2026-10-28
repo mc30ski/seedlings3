@@ -75,6 +75,26 @@ export type SurfaceTokens = {
   "accent.solid": string;
   "accent.emphasis": string;
   "accent.muted": string;
+  /**
+   * THE BRAND FILL IN THE TITLE BAR — the "My Roles" chip, and anything
+   * else that says "this is the app" rather than "this is an action" or
+   * "this is a status".
+   *
+   * Usually the same as `accent.solid`, and deliberately a SEPARATE token
+   * rather than an alias. Light is why: its accent is blue (#3182ce,
+   * the primary-action colour) but its title bar is sage and its logo is a
+   * leaf, so the identity chip is green there and blue would be wrong.
+   * A theme only needs to diverge when its brand hue differs from its
+   * action hue; the rest state the accent twice, which is the cost of the
+   * one theme that needs the distinction.
+   *
+   * Must clear 3:1 against `chrome.header` — it is a filled pill sitting on
+   * that bar, and WCAG's non-text minimum applies. `identityFg` is its ink
+   * and must clear 4.5:1 against `identity`.
+   */
+  "chrome.identity": string;
+  "chrome.identityEmphasis": string;
+  "chrome.identityFg": string;
 };
 
 // `fg.muted` and `fg.subtle` are the two secondary inks, and both sat below
@@ -95,6 +115,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "border.default": "#e2e8f0", "border.emphasis": "#cbd5e0",
     "fg.default": "#1a202c", "fg.muted": "#647185", "fg.subtle": "#6d7783", "fg.onAccent": "#ffffff",
     "accent.solid": "#3182ce", "accent.emphasis": "#2b6cb0", "accent.muted": "#ebf8ff",
+    "chrome.identity": "#16a34a", "chrome.identityEmphasis": "#116932", "chrome.identityFg": "#ffffff",
   },
   // Panels sit ABOVE the page, not below — that is what makes depth read dark.
   dark: {
@@ -104,6 +125,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "border.default": "#2d3544", "border.emphasis": "#3d4759",
     "fg.default": "#e8ecf1", "fg.muted": "#9aa5b5", "fg.subtle": "#768191", "fg.onAccent": "#0b0e12",
     "accent.solid": "#4a9eff", "accent.emphasis": "#7ab8ff", "accent.muted": "#16283d",
+    "chrome.identity": "#4a9eff", "chrome.identityEmphasis": "#7ab8ff", "chrome.identityFg": "#0b0e12",
   },
   spring: {
     "surface.page": "#e6f4e0", "surface.panel": "#f8fdf6", "surface.raised": "#ffffff",
@@ -112,6 +134,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "border.default": "#aed69f", "border.emphasis": "#8cc077",
     "fg.default": "#1f2e18", "fg.muted": "#5a6b52", "fg.subtle": "#666f60", "fg.onAccent": "#ffffff",
     "accent.solid": "#68b030", "accent.emphasis": "#386018", "accent.muted": "#dff2dc",
+    "chrome.identity": "#87cf4f", "chrome.identityEmphasis": "#6fb53a", "chrome.identityFg": "#111111",
   },
   // The rust accent backs off from the logo's #ff6038: that sits between status
   // orange and status red, so a primary button in it reads as a warning.
@@ -122,6 +145,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "border.default": "#ddc48a", "border.emphasis": "#c2a05e",
     "fg.default": "#2e1d18", "fg.muted": "#6b544a", "fg.subtle": "#7b6a64", "fg.onAccent": "#ffffff",
     "accent.solid": "#c2410c", "accent.emphasis": "#883028", "accent.muted": "#ffe8d8",
+    "chrome.identity": "#f69a74", "chrome.identityEmphasis": "#e87f54", "chrome.identityFg": "#111111",
   },
   // SUMMER — a sand ground under an ocean-teal bar. Warm where Spring is
   // green and Fall is rust, so the four seasons stay distinguishable at a
@@ -135,6 +159,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "fg.default": "#2b1f0a", "fg.muted": "#7a6647", "fg.subtle": "#807054",
     "fg.onAccent": "#ffffff",
     "accent.solid": "#0d7e8d", "accent.emphasis": "#0a6a78", "accent.muted": "#dff3f5",
+    "chrome.identity": "#52ddef", "chrome.identityEmphasis": "#2fc8dc", "chrome.identityFg": "#111111",
   },
   // WINTER — deep, cold and BOLD, not a pale wash. Built from a supplied
   // palette: azure #0474c4 · slate #5379ae · teal #2c444c · ice #a8c4ec ·
@@ -154,6 +179,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "fg.default": "#262b40", "fg.muted": "#2f4a6b", "fg.subtle": "#385173",
     "fg.onAccent": "#ffffff",
     "accent.solid": "#0474c4", "accent.emphasis": "#06457f", "accent.muted": "#d5e4f8",
+    "chrome.identity": "#3cabfb", "chrome.identityEmphasis": "#1f93e8", "chrome.identityFg": "#111111",
   },
   // RETRO — 80s pastels on slate. The reference palette has exactly ONE dark
   // value (#3d405b), so that becomes the panel and the page goes a shade
@@ -171,6 +197,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "fg.default": "#eef0ff", "fg.muted": "#b9bcd8", "fg.subtle": "#9a9ec2",
     "fg.onAccent": "#2b2d42",
     "accent.solid": "#bdb2ff", "accent.emphasis": "#d4ccff", "accent.muted": "#343a63",
+    "chrome.identity": "#4729ff", "chrome.identityEmphasis": "#3a1fe0", "chrome.identityFg": "#ffffff",
   },
   // COFFEEHOUSE — parchment under an espresso bar. Deliberately browner and
   // quieter than Fall, which is cream under RUST: the two would otherwise
@@ -183,6 +210,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "fg.default": "#2a1c12", "fg.muted": "#7d6550", "fg.subtle": "#7d6b58",
     "fg.onAccent": "#ffffff",
     "accent.solid": "#a9622c", "accent.emphasis": "#83491f", "accent.muted": "#f0e0cc",
+    "chrome.identity": "#a9622c", "chrome.identityEmphasis": "#83491f", "chrome.identityFg": "#ffffff",
   },
   // ESPRESSO — the dark roast. Same hues as Coffeehouse, inverted: the browns
   // become the ground and the crema becomes the ink.
@@ -194,6 +222,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "fg.default": "#f2e8dc", "fg.muted": "#b09a86", "fg.subtle": "#96806a",
     "fg.onAccent": "#1c1512",
     "accent.solid": "#c98a4b", "accent.emphasis": "#e0a468", "accent.muted": "#3a2a1c",
+    "chrome.identity": "#c98a4b", "chrome.identityEmphasis": "#e0a468", "chrome.identityFg": "#1c1512",
   },
   // URBAN — concrete greys with one acid-yellow signal. The palette is
   // almost entirely neutral (#141414 · #444444 · #979797 · #d6d6d6), so the
@@ -209,6 +238,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "fg.default": "#ededed", "fg.muted": "#979797", "fg.subtle": "#7f7f7f",
     "fg.onAccent": "#141414",
     "accent.solid": "#e2e800", "accent.emphasis": "#c3c800", "accent.muted": "#2a2c00",
+    "chrome.identity": "#e2e800", "chrome.identityEmphasis": "#c3c800", "chrome.identityFg": "#141414",
   },
   // JELLY — orchid and periwinkle. The supplied colours are all light, so the
   // two violets are deepened for the title bar (white on #8866de is 4.20:1)
@@ -221,6 +251,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "fg.default": "#2d1040", "fg.muted": "#5a2a72", "fg.subtle": "#6b3d85",
     "fg.onAccent": "#2d1040",
     "accent.solid": "#dd68e3", "accent.emphasis": "#c44ecb", "accent.muted": "#f7e4fb",
+    "chrome.identity": "#efb6f1", "chrome.identityEmphasis": "#e29ae5", "chrome.identityFg": "#111111",
   },
   // JUICE — citrus. Every colour in this palette is too light to carry white
   // text (the best is 2.63:1), so the whole theme runs on DARK ink over warm
@@ -234,6 +265,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "fg.default": "#3d2000", "fg.muted": "#8a5a10", "fg.subtle": "#92631b",
     "fg.onAccent": "#3d2000",
     "accent.solid": "#ffbf00", "accent.emphasis": "#e0a400", "accent.muted": "#fff2cf",
+    "chrome.identity": "#574100", "chrome.identityEmphasis": "#3f2f00", "chrome.identityFg": "#ffffff",
   },
   // FUNKADELIC — neon on deep violet. The one theme that is not trying to be
   // quiet, so it is grounded DARK and lets the colours do the shouting.
@@ -254,6 +286,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     // Mint carries the primary action — it is the brightest thing in the
     // palette (13:1 on the ground) so a button never gets lost in the noise.
     "accent.solid": "#00f0a5", "accent.emphasis": "#00c98a", "accent.muted": "#0a3a2c",
+    "chrome.identity": "#00f0a5", "chrome.identityEmphasis": "#00c98a", "chrome.identityFg": "#14002e",
   },
   contrast: {
     "surface.page": "#ffffff", "surface.panel": "#ffffff", "surface.raised": "#ffffff",
@@ -262,6 +295,7 @@ export const SURFACES: Record<ThemeId, SurfaceTokens> = {
     "border.default": "#000000", "border.emphasis": "#000000",
     "fg.default": "#000000", "fg.muted": "#000000", "fg.subtle": "#1a1a1a", "fg.onAccent": "#ffffff",
     "accent.solid": "#0033cc", "accent.emphasis": "#001f7a", "accent.muted": "#ffffff",
+    "chrome.identity": "#1f57ff", "chrome.identityEmphasis": "#0033cc", "chrome.identityFg": "#ffffff",
   },
 };
 

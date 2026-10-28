@@ -23,10 +23,10 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Box, Button, Card, Checkbox, HStack, Icon, Input, Portal, Select, Spinner, Table, Text, Textarea, VStack, createListCollection } from "@chakra-ui/react";
-import { Check, CheckCircle2, ChevronDown, ChevronUp, KeyRound, ListOrdered, Plus, Shield, Users as UsersIcon, X } from "lucide-react";
+import { Check, CheckCircle2, ChevronDown, ChevronUp, KeyRound, Plus, Shield, Users as UsersIcon, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/src/lib/api";
 import { PERSPECTIVE_ICONS, PERSPECTIVE_ICONS_COMMON, PERSPECTIVE_ICONS_MORE } from "@repo/permissions";
-import { perspectiveIconFor } from "@/src/lib/perspectiveIcons";
+import { PerspectiveGlyph, preloadAllIcons } from "@/src/lib/perspectiveIcons";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
@@ -80,7 +80,7 @@ export default function RolesTab({ scope }: { scope: Scope }) {
   /** Set once the reader taps a role, so the editor knows to scroll into
    *  view on a phone — the automatic first selection must not. */
   const pickedRef = useRef(false);
-  const [view, setView] = useState<"editor" | "matrix" | "people" | "perspectives">("editor");
+  const [view, setView] = useState<"editor" | "matrix" | "people">("editor");
   const [titles, setTitles] = useState<string[]>([]);
 
   const load = useCallback(async () => {
@@ -187,13 +187,6 @@ export default function RolesTab({ scope }: { scope: Scope }) {
             <UsersIcon size={14} /> People
           </Button>
         )}
-        <Button
-          size="sm"
-          variant={view === "perspectives" ? "solid" : "outline"}
-          onClick={() => setView("perspectives")}
-        >
-          <ListOrdered size={14} /> Perspective order
-        </Button>
       </HStack>
 
       {view === "matrix" ? (
@@ -204,8 +197,6 @@ export default function RolesTab({ scope }: { scope: Scope }) {
           roles={roles}
           onOpenRole={(roleId) => { setSelectedId(roleId); setView("editor"); }}
         />
-      ) : view === "perspectives" ? (
-        <PerspectiveOrder roles={roles} mayDefine={mayDefine} onChanged={load} />
       ) : (
         <HStack align="start" gap={4} wrap={{ base: "wrap", lg: "nowrap" }}>
           <RoleList
@@ -214,6 +205,7 @@ export default function RolesTab({ scope }: { scope: Scope }) {
             selectedId={selectedId}
             onSelect={(id) => { pickedRef.current = true; setSelectedId(id); }}
             mayDefine={mayDefine}
+            onReordered={load}
             onCreated={async (id) => {
               await load();
               setSelectedId(id);
@@ -293,6 +285,7 @@ function RoleList({
   onSelect,
   mayDefine,
   onCreated,
+  onReordered,
 }: {
   roles: RoleRow[];
   titles: string[];
@@ -300,11 +293,109 @@ function RoleList({
   onSelect: (id: string) => void;
   mayDefine: boolean;
   onCreated: (id: string) => void;
+  onReordered: () => void | Promise<void>;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [copyFromId, setCopyFromId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  /**
+   * TWO GROUPS, AND THE SPLIT IS `isPerspective` — NOT "has an order".
+   *
+   * This list used to be one flat run of whatever `GET /roles` returned,
+   * which is `ORDER BY perspectiveOrder ASC, name ASC`. Postgres sorts
+   * NULLs LAST, so a role flagged as a perspective but never placed fell
+   * into the alphabetical tail among the non-perspectives — while the
+   * "Viewing as" menu sorts `?? 0` and put the same role at the very TOP,
+   * above the whole ladder. Dev had Coordinator in both places at once.
+   * Grouping on the flag puts it where it belongs and shows that it is
+   * unplaced, instead of hiding the contradiction in two sort orders.
+   *
+   * Perspectives are sorted the way the MENU sorts them, so this list is
+   * a preview of that menu rather than a second opinion about it.
+   */
+  const [pending, setPending] = useState<string[] | null>(null);
+  const perspectives = useMemo(() => {
+    const live = roles.filter((r) => r.isPerspective);
+    if (pending) {
+      const by = new Map(live.map((r) => [r.id, r]));
+      const out = pending.map((id) => by.get(id)).filter(Boolean) as RoleRow[];
+      if (out.length === live.length) return out;
+    }
+    return [...live].sort((a, b) => (a.perspectiveOrder ?? 0) - (b.perspectiveOrder ?? 0));
+  }, [roles, pending]);
+  const others = useMemo(
+    () => roles.filter((r) => !r.isPerspective).sort((a, b) => a.name.localeCompare(b.name)),
+    [roles],
+  );
+
+  /**
+   * A move saves itself, DEBOUNCED, and does not refetch on success.
+   *
+   * The first cut awaited the save and then reloaded the whole list on
+   * every arrow press. Moving a perspective from the bottom to the top
+   * meant a round trip and a full re-render between each step, and the
+   * list jumped under the finger — unusable for exactly the thing the
+   * control exists to do.
+   *
+   * Two changes fix it. The local order is authoritative while you click,
+   * so the arrows respond at the speed of the DOM. And a SUCCESSFUL save
+   * reloads nothing: the endpoint rewrites the whole list as a dense 1..n
+   * from the array we just sent, so on success the server agrees with what
+   * is already on screen and refetching could only redraw the same thing.
+   * A failure is the one case that reloads, because then the screen is
+   * the thing that is wrong.
+   *
+   * Debounced rather than per-press so a run of six clicks is one write
+   * and one audit entry describing the move that was actually made,
+   * instead of six describing the journey.
+   */
+  const pendingRef = useRef<string[] | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flush = useCallback(async () => {
+    const ids = pendingRef.current;
+    if (!ids) return;
+    try {
+      await apiPut("/api/roles/perspectives/order", { roleIds: ids });
+    } catch (err: any) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Could not save the order.", err),
+      });
+      pendingRef.current = null;
+      setPending(null);
+      await onReordered();
+    }
+  }, [onReordered]);
+
+  // Don't lose the last move to a navigation. The timer is short, but
+  // "clicked an arrow then immediately tapped another tab" is the normal
+  // way to finish, and without this that move is silently dropped.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        void flush();
+      }
+    };
+  }, [flush]);
+
+  function move(index: number, direction: "up" | "down") {
+    const to = direction === "up" ? index - 1 : index + 1;
+    if (to < 0 || to >= perspectives.length) return;
+    const next = [...perspectives];
+    [next[index], next[to]] = [next[to], next[index]];
+    const ids = next.map((r) => r.id);
+    setPending(ids);
+    pendingRef.current = ids;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      void flush();
+    }, 700);
+  }
 
   const copyCollection = createListCollection({
     items: [
@@ -432,9 +523,36 @@ function RoleList({
           </Button>
         ))}
 
-      {roles.map((r) => (
+      {([
+        ["Perspectives", perspectives, true] as const,
+        ["Other roles", others, false] as const,
+      ]).map(([heading, group, ordered]) =>
+        group.length === 0 ? null : (
+        <Box key={heading}>
+          <Text
+            fontSize="2xs"
+            textTransform="uppercase"
+            letterSpacing="wide"
+            color="fg.muted"
+            mb={1}
+            mt={heading === "Other roles" ? 2 : 0}
+          >
+            {heading}
+            {ordered && mayDefine ? " · the \u201cViewing as\u201d order" : ""}
+          </Text>
+          <VStack align="stretch" gap={2}>
+      {group.map((r, i) => (
+        /* THE ARROWS SIT OUTSIDE THE ROW, not inside it. The row is
+           `as="button"`, and a button inside a button is invalid HTML —
+           the browser closes the outer one, so the second arrow lands
+           outside the card and the row stops being tappable where you
+           expect. An HStack with the card as one child and the arrows as
+           another keeps both hit targets honest, which matters most on a
+           phone where they are 4mm apart. */
+        <HStack key={r.id} gap={1} align="stretch">
         <Box
-          key={r.id}
+          flex="1"
+          minW={0}
           as="button"
           textAlign="left"
           p={2.5}
@@ -476,7 +594,36 @@ function RoleList({
             )}
           </HStack>
         </Box>
+        {ordered && mayDefine && (
+          <VStack gap={0.5} justify="center" flexShrink={0}>
+            <Button
+              size="2xs"
+              variant="outline"
+              px={1}
+              aria-label={`Move ${r.name} up`}
+              disabled={i === 0}
+              onClick={() => void move(i, "up")}
+            >
+              <ChevronUp size={12} />
+            </Button>
+            <Button
+              size="2xs"
+              variant="outline"
+              px={1}
+              aria-label={`Move ${r.name} down`}
+              disabled={i === group.length - 1}
+              onClick={() => void move(i, "down")}
+            >
+              <ChevronDown size={12} />
+            </Button>
+          </VStack>
+        )}
+        </HStack>
       ))}
+          </VStack>
+        </Box>
+        ),
+      )}
     </VStack>
   );
 }
@@ -752,8 +899,16 @@ function RoleEditor({
           a tinted, tappable row. */}
       <Box
         ref={headerRef}
-        bg="blue.solid"
-        color="blue.contrast"
+        // THEMED, NOT BLUE. `blue.solid` is a fixed hue with a light/dark
+        // pair — it renders the same blue in all 14 themes, so this bar sat
+        // bright blue inside Funkadelic's magenta chrome and Espresso's
+        // browns. A filled title bar is CHROME, not status, so it takes the
+        // theme's own accent. `fg.onAccent` is the ink tuned per theme to
+        // sit on it (near-black on Dark's pale blue, white on Spring's
+        // green) — `blue.contrast` is white always, which fails on the
+        // light-accent themes.
+        bg="accent.solid"
+        color="fg.onAccent"
         rounded="lg"
         px="3"
         py="2"
@@ -909,7 +1064,6 @@ function RoleEditor({
                     p={showAllIcons ? 1.5 : undefined}
                   >
                     {shownIcons.map((key) => {
-                      const IconCmp = perspectiveIconFor(key);
                       const chosen = perspectiveIcon === key;
                       return (
                         <Box
@@ -925,14 +1079,22 @@ function RoleEditor({
                           p={1.5}
                           rounded="md"
                           borderWidth="1px"
-                          borderColor={chosen ? "blue.emphasized" : "border.emphasis"}
-                          bg={chosen ? "blue.faint" : "bg.panel"}
-                          color={chosen ? "blue.fg" : "fg.muted"}
+                          borderColor={chosen ? "accent.solid" : "border.emphasis"}
+                          bg={chosen ? "accent.muted" : "bg.panel"}
+                          // NOT `accent.solid` — the gate is right, a solid is a
+                          // fill and its ink is `fg.onAccent`, which belongs on
+                          // accent.solid, not on accent.muted. There is no
+                          // `accent.fg`, so the chosen glyph takes the theme's
+                          // full ink; the accent border and fill already carry
+                          // the selection, and `fg.default` is legible on
+                          // `accent.muted` in every theme because both are
+                          // tuned to the same ground.
+                          color={chosen ? "fg.default" : "fg.muted"}
                           cursor={mayDefine ? "pointer" : "not-allowed"}
-                          _hover={mayDefine ? { bg: chosen ? "blue.subtle" : "gray.faint" } : undefined}
+                          _hover={mayDefine ? { bg: chosen ? "accent.muted" : "gray.faint" } : undefined}
                           display="inline-flex"
                         >
-                          {IconCmp ? <Icon as={IconCmp} boxSize={4} /> : null}
+                          <PerspectiveGlyph iconKey={key} boxSize={4} />
                         </Box>
                       );
                     })}
@@ -945,7 +1107,10 @@ function RoleEditor({
                       size="xs"
                       variant="ghost"
                       px={1}
-                      onClick={() => setShowAllIcons((v) => !v)}
+                      onClick={() => {
+                        if (!showAllIcons) preloadAllIcons();
+                        setShowAllIcons((v) => !v);
+                      }}
                     >
                       {showAllIcons ? "Show fewer" : `Show ${PERSPECTIVE_ICONS_MORE.length} more`}
                     </Button>
@@ -1216,156 +1381,6 @@ function RoleEditor({
         }}
         onCancel={() => setConfirm(null)}
       />
-    </VStack>
-  );
-}
-
-/**
- * The order the perspective dropdown is drawn in.
- *
- * ONE SAVE FOR THE WHOLE LIST. `perspectiveOrder` is a free integer per
- * role, so editing one number at a time cannot keep a total order — two
- * roles collide, a gap opens, and a role flagged as a perspective but never
- * placed has `null`, which the dropdown's sort
- * (`(a.perspectiveOrder ?? 0) - (b.perspectiveOrder ?? 0)`) puts at the TOP,
- * above the whole ladder. Dev had exactly that: "Coordinator" sorting above
- * Trainee because nobody had given it a number.
- *
- * So the server takes the entire ordered list and rewrites it as a dense
- * 1..n. Moving a row is a local swap plus a save of everything.
- *
- * The order is COMPANY-WIDE, not per person. Everybody who can reach a
- * given perspective sees it in this position.
- */
-function PerspectiveOrder({
-  roles,
-  mayDefine,
-  onChanged,
-}: {
-  roles: RoleRow[];
-  mayDefine: boolean;
-  onChanged: () => void | Promise<void>;
-}) {
-  // Sorted the way the DROPDOWN sorts, not the way Postgres does: `null`
-  // first, so an unplaced role is shown where it actually appears rather
-  // than tidied to the end of this list and nowhere else.
-  const initial = useMemo(
-    () =>
-      roles
-        .filter((r) => r.isPerspective)
-        .sort((a, b) => (a.perspectiveOrder ?? 0) - (b.perspectiveOrder ?? 0)),
-    [roles],
-  );
-  const [order, setOrder] = useState<RoleRow[]>(initial);
-  const [saving, setSaving] = useState(false);
-  useEffect(() => setOrder(initial), [initial]);
-
-  const dirty =
-    order.length !== initial.length ||
-    order.some((r, i) => r.id !== initial[i]?.id) ||
-    initial.some((r) => r.perspectiveOrder == null);
-
-  function move(index: number, direction: "up" | "down") {
-    const to = direction === "up" ? index - 1 : index + 1;
-    if (to < 0 || to >= order.length) return;
-    const next = [...order];
-    [next[index], next[to]] = [next[to], next[index]];
-    setOrder(next);
-  }
-
-  async function save() {
-    setSaving(true);
-    try {
-      await apiPut("/api/roles/perspectives/order", { roleIds: order.map((r) => r.id) });
-      await onChanged();
-      publishInlineMessage({ type: "SUCCESS", text: "Perspective order saved." });
-    } catch (err: any) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Could not save the order.", err) });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (order.length === 0) {
-    return (
-      <Box p={4} borderWidth="1px" rounded="md" bg="bg.panel">
-        <Text fontSize="sm" color="fg.muted">
-          No role is offered as a perspective yet. Turn one on in the role editor and it
-          will appear here to be placed.
-        </Text>
-      </Box>
-    );
-  }
-
-  return (
-    <VStack align="stretch" gap={3} maxW="520px">
-      <Box>
-        <Text fontSize="sm" color="fg.muted">
-          The order these appear in the &ldquo;Viewing as&rdquo; menu, for everyone. A
-          person is only offered the ones they hold or inherit, but the order is the same
-          for all.
-        </Text>
-      </Box>
-      <VStack align="stretch" gap={1}>
-        {order.map((r, i) => (
-          <HStack
-            key={r.id}
-            px={3}
-            py={2}
-            borderWidth="1px"
-            borderColor="border.emphasis"
-            rounded="md"
-            bg="bg.panel"
-            gap={2}
-          >
-            <Text fontSize="xs" color="fg.muted" w="20px" fontVariantNumeric="tabular-nums">
-              {i + 1}
-            </Text>
-            <Text fontSize="sm" flex="1">
-              {r.name}
-            </Text>
-            {r.perspectiveOrder == null && (
-              <Badge size="sm" colorPalette="orange" variant="subtle">
-                unplaced
-              </Badge>
-            )}
-            {mayDefine && (
-              <HStack gap={1}>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  aria-label={`Move ${r.name} up`}
-                  disabled={i === 0}
-                  onClick={() => move(i, "up")}
-                >
-                  <ChevronUp size={14} />
-                </Button>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  aria-label={`Move ${r.name} down`}
-                  disabled={i === order.length - 1}
-                  onClick={() => move(i, "down")}
-                >
-                  <ChevronDown size={14} />
-                </Button>
-              </HStack>
-            )}
-          </HStack>
-        ))}
-      </VStack>
-      {mayDefine && (
-        <HStack gap={2}>
-          <Button size="sm" colorPalette="blue" loading={saving} disabled={!dirty} onClick={() => void save()}>
-            Save order
-          </Button>
-          {dirty && (
-            <Button size="sm" variant="ghost" disabled={saving} onClick={() => setOrder(initial)}>
-              Reset
-            </Button>
-          )}
-        </HStack>
-      )}
     </VStack>
   );
 }

@@ -20,7 +20,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, HStack, Icon, Text } from "@chakra-ui/react";
 import { Check, ChevronDown, Eye, Home } from "lucide-react";
-import { perspectiveIconFor } from "@/src/lib/perspectiveIcons";
+import { PerspectiveGlyph, useIconComponent } from "@/src/lib/perspectiveIcons";
 
 /** The two shells. Was four — three of them the same staff app. */
 export type RoleValue = "client" | "staff";
@@ -83,9 +83,12 @@ export default function RoleChip({ perspectives, activeRoleId, onPick, otherShel
   //   a lens  → that role's chosen icon
   //   Client  → a house, the customer-facing pages
   //   My Roles → an eye, matching its bar
-  const ChipIcon = inClientShell
-    ? Home
-    : (perspectiveIconFor(active?.icon) ?? Eye);
+  // `useIconComponent` so a role wearing any of the ~1,850 icons draws its
+  // own glyph, not the generic eye. Common icons resolve on the first
+  // frame; anything else appears once the lazy catalogue lands, and `Eye`
+  // holds the space until then — which is also what an unset icon gets.
+  const resolvedChipIcon = useIconComponent(inClientShell ? null : active?.icon);
+  const ChipIcon = inClientShell ? Home : (resolvedChipIcon ?? Eye);
   // In the customer shell the chip names the SHELL, not the lens. A
   // perspective narrows staff capabilities and none of them is what is on
   // screen, so naming the lens there would describe a view you had left.
@@ -93,22 +96,39 @@ export default function RoleChip({ perspectives, activeRoleId, onPick, otherShel
 
   return (
     <Box position="relative" ref={ref} flexShrink={0}>
-      {/* Solid dark-green chip — matches the darker tones of the leaf
-          logo, giving the header a cohesive "brand green" identity
-          without blending into the header's soft-green gradient (the
-          chip is several shades darker). Distinct from every other
-          header pill (blue inner tabs, teal categories, purple queue,
-          amber on-clock, red alerts). Reads as an "identity / acting
-          as" marker at a glance. */}
+      {/* THE BRAND FILL, which is per-theme and is GREEN on Light.
+          This was `green.600` / `green.700` with white ink — raw ramp
+          values, which are one colour forever. The comment that justified
+          them reasoned entirely about Light: "matches the leaf logo",
+          "doesn't blend into the header's soft-green gradient". Light is
+          the only theme with a sage header, so on Funkadelic this chip sat
+          green inside magenta chrome and on Espresso green on brown.
+
+          `accent.solid` was the obvious fix and it is the WRONG one here:
+          Light's accent is blue, so the chip stopped being green in the one
+          theme whose logo and title bar are. Identity and action are two
+          different jobs that happen to share a colour in thirteen themes.
+          `chrome.identity` is the brand one — see its doc comment in
+          themeTokens.ts.
+
+          Light keeps the EXACT green that shipped, #16a34a with white ink.
+          Worth knowing: that pairing is 3.3:1, under AA for a label this
+          size, and the pill is 2.54:1 against the sage bar, under the 3:1
+          WCAG asks of a non-text element. Both are inherited, not new.
+          Either is a one-line fix in themeTokens.ts — darken the fill to
+          #116932 (white ink 6.8:1) or keep the fill and switch the ink to
+          #111111 (5.7:1) — but changing it changes the look of the single
+          most recognisable control in the app, so it is the operator's
+          call, not a silent correction. */}
       <HStack
         as="button"
         gap={1}
         px={2.5}
         py={1}
         rounded="full"
-        bg={open ? "green.700" : "green.600"}
-        color="white"
-        _hover={{ bg: "green.700" }}
+        bg={open ? "chrome.identityEmphasis" : "chrome.identity"}
+        color="chrome.identityFg"
+        _hover={{ bg: "chrome.identityEmphasis" }}
         shadow="sm"
         cursor="pointer"
         onClick={() => setOpen((v) => !v)}
@@ -235,12 +255,11 @@ export default function RoleChip({ perspectives, activeRoleId, onPick, otherShel
                   {isActive && <Check size={14} />}
                 </Box>
                 <Box w="16px" flexShrink={0} display="inline-flex" alignItems="center">
-                  {(() => {
-                    const IconCmp = perspectiveIconFor(o.icon);
-                    return IconCmp ? (
-                      <Icon as={IconCmp} boxSize={4} color={isActive ? "blue.fg" : "fg.muted"} />
-                    ) : null;
-                  })()}
+                  <PerspectiveGlyph
+                    iconKey={o.icon}
+                    boxSize={4}
+                    color={isActive ? "blue.fg" : "fg.muted"}
+                  />
                 </Box>
                 <Text
                   fontSize="sm"

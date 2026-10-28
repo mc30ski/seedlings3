@@ -84,7 +84,25 @@ light values.
    `bg.panel` but no ink inherited `chrome.headerFg` — white labels on a white
    panel in High contrast, Spring and Fall. A panel that paints a background
    must state its ink.
-7. **Anything the boot script sets once.** `--seedlings-boot-bg` is an inline
+7. **A FIXED HUE USED FOR CHROME.** `blue.*`, `green.*` etc. are status
+   namespaces and are the same hue in all 14 themes (they carry only a
+   `{base, dark}` pair). That is correct for *status* — green means done,
+   red means danger, everywhere. It is wrong for *chrome*: the Roles and
+   Areas editor title bars were `blue.solid`, and the "My Roles" chip in the
+   title bar was a raw `green.600`, justified by a comment reasoning
+   entirely about Light ("matches the leaf logo", "doesn't blend into the
+   header's soft-green gradient" — Light is the only theme with a sage
+   header). On Funkadelic that was a blue bar and a green chip inside
+   magenta chrome. **The test is what the colour MEANS: status stays fixed,
+   brand/chrome takes `accent.solid` with `fg.onAccent` as its ink.** Not
+   gated — a gate would have to know which is which, and both look
+   identical in source. Found by eye, 2026-10-28.
+
+   Note while fixing: there is no `accent.fg`. `fg.onAccent` is the ink for
+   `accent.solid` only. Ink on `accent.muted` is `fg.default`, and using
+   `accent.solid` as a text colour fails the existing solid-as-ink gate.
+
+8. **Anything the boot script sets once.** `--seedlings-boot-bg` is an inline
    style on `<html>`; only the boot script wrote it, so switching theme live
    re-skinned every card and left the page on the previous colour.
 
