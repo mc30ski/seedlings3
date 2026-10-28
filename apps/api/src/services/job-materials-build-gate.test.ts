@@ -4905,10 +4905,31 @@ describe("[build-gate] Home's vehicle summary is per-driver and self-hiding", ()
     for (const wire of ["onRefresh=", "refreshing=", "collapsedSummarySlot=", "timeframe="]) {
       expect(frame, `the frame must pass ${wire}`).toContain(wire);
     }
-    // Per-person surfaces are hidden in the team views — matching the two
-    // pay sections directly above it.
-    expect(frame, "hidden in the aggregate and subset team views")
-      .toMatch(/!isAggregate && !isSubset/);
+    // POLICY CHANGED, DELIBERATELY. This asserted the opposite: that the
+    // section is hidden in the team views, "matching the two pay sections
+    // directly above it".
+    //
+    // That rule meant holding `people.manage` + `reports.view` REPLACED
+    // your own Home. With nobody picked, Home switched to the rollup and MY
+    // ACTIVITIES, MY EARNINGS, MY VEHICLES and the begin/finish hero all
+    // disappeared — so an owner who also works the route lost the button
+    // that starts their day, and got it back only by dropping to a
+    // narrower perspective. Holding more took away what you are entitled
+    // to. Operator decision, 2026-10-27: your sections always render, and
+    // the team rollup sits BELOW them behind a divider.
+    //
+    // The hazard the old rule guarded against is real — a self-scoped card
+    // adrift in a team roster reads as if it describes the team — and is
+    // handled by separation plus the "My" prefix, not by suppression. What
+    // must stay true is that the personal sections read PERSONAL data:
+    // `selfS` / `mySummary`, never the rollup in `s`.
+    const H2 = web("ui/tabs/HomeTab.tsx").replace(/\s+/g, " ");
+    expect(frame, "the personal sections are no longer hidden in team views")
+      .not.toMatch(/!isAggregate && !isSubset/);
+    expect(H2, "the hero must read the personal summary in team modes")
+      .toMatch(/const selfS = \(\(isAggregate \|\| isSubset\) && !viewAsUserId\) \? mySummary : s;/);
+    expect(H2, "…and the earnings card too")
+      .toMatch(/isAggregate \|\| isSubset\) && !viewAsUserId \? mySummary\?\.weeklyCompleted/);
   });
 
   it("the timeframe list widens when inspecting somebody else", () => {
