@@ -19,13 +19,14 @@
  *     everywhere does not become narrower by also being assigned to Durham.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Badge,
   Box,
   Button,
   Card,
   HStack,
+  Icon,
   Input,
   Portal,
   Select,
@@ -95,6 +96,9 @@ export default function AreasTab({ scope }: { scope: Scope }) {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Set once the reader taps an area, so the detail knows to scroll into
+   *  view on a phone — an automatic selection must not. */
+  const pickedRef = useRef(false);
   const [showRetired, setShowRetired] = useState(false);
   const [tierNames, setTierNames] = useState<string[]>([]);
 
@@ -317,7 +321,7 @@ export default function AreasTab({ scope }: { scope: Scope }) {
                     pr={2}
                     py={1.5}
                     cursor="pointer"
-                    onClick={() => setSelectedId(a.id)}
+                    onClick={() => { pickedRef.current = true; setSelectedId(a.id); }}
                   >
                     <HStack justify="space-between" gap={2}>
                       <HStack gap={1.5} minW={0}>
@@ -365,6 +369,7 @@ export default function AreasTab({ scope }: { scope: Scope }) {
           {selected && (
             <AreaDetail
               key={selected.id}
+              scrollOnMount={pickedRef.current}
               area={selected}
               // A SOLE ROOT IS NOT A PLACE. Same test the lens picker uses
               // to leave it out: its path prefixes every area, so it is the
@@ -593,7 +598,10 @@ function AreaDetail({
   tierNames,
   scope,
   onChanged,
+  scrollOnMount,
 }: {
+  /** True when this panel opened because somebody tapped an area. */
+  scrollOnMount?: boolean;
   area: Area;
   /** The one root of a single-rooted tree — "All areas" in the stock setup. */
   isSoleRoot: boolean;
@@ -605,6 +613,21 @@ function AreaDetail({
   onChanged: () => void | Promise<void>;
 }) {
   const mayManage = scope.can("areas.manage");
+
+  /**
+   * Bring the panel into view on a phone — see RoleEditor, same reasoning.
+   * The detail renders BELOW the whole tree there, so a tap changed
+   * something off-screen. Only on a deliberate pick: an area is selected
+   * automatically, and scrolling on that would jump past the tree every
+   * time the tab is opened.
+   */
+  const headerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!scrollOnMount) return;
+    if (typeof window === "undefined") return;
+    if (window.innerWidth >= 992) return; // Chakra's `lg`, where tree and detail sit side by side
+    headerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [scrollOnMount]);
   const [name, setName] = useState(area.name);
   const [tier, setTier] = useState(area.tier ?? "");
   // Held as STRINGS, not numbers. These are text boxes: an operator midway
@@ -684,6 +707,36 @@ function AreaDetail({
 
   return (
     <VStack align="stretch" gap={3} flex="1" minW={0}>
+      {/* WHERE THE TREE ENDS AND THE DETAIL BEGINS — the same band the role
+          editor uses, for the same reason: on a phone the two stack, and
+          this panel opened on a bare name Input, so a tap added an
+          unlabelled card to a column of cards. Solid rather than tinted, so
+          a filled title bar never reads as another tappable row. */}
+      <Box
+        ref={headerRef}
+        bg="blue.solid"
+        color="blue.contrast"
+        rounded="lg"
+        px="3"
+        py="2"
+      >
+        <HStack gap={2} align="center" minW={0}>
+          <Icon as={MapPin} boxSize={4} flexShrink={0} />
+          <Box minW={0}>
+            <Text
+              fontSize="2xs"
+              textTransform="uppercase"
+              letterSpacing="wide"
+              lineHeight="1.2"
+            >
+              {mayManage ? "Editing area" : "Area details"}
+            </Text>
+            <Text fontSize="sm" fontWeight="semibold" truncate>
+              {area.name}
+            </Text>
+          </Box>
+        </HStack>
+      </Box>
       <Card.Root variant="outline">
         <Card.Body py="3" px="3">
           <VStack align="stretch" gap={2}>
@@ -988,7 +1041,19 @@ function AreaProperties({ areaId, areaName }: { areaId: string; areaName: string
   // geographically wants the map every time; somebody reconciling a list
   // wants the list. Persisted so neither has to re-pick on every area.
   const [view, setView] = usePersistedState<"list" | "map">("areasTab_propView", "list");
-  const [rows, setRows] = useState<Array<{ id: string; displayName: string; city: string | null; areaId: string | null }> | null>(null);
+  // `displayName` ALONE DOES NOT IDENTIFY A PROPERTY. Ninety of the
+  // ninety-three in production are called "Main House", so the list read as
+  // one name repeated down the page with a city beside it. The client and
+  // the street were in the response all along — `GET /properties` includes
+  // `client` and every Property scalar — and the row simply dropped them.
+  const [rows, setRows] = useState<Array<{
+    id: string;
+    displayName: string;
+    street1: string | null;
+    city: string | null;
+    areaId: string | null;
+    client?: { id: string; displayName: string | null } | null;
+  }> | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -1055,20 +1120,31 @@ function AreaProperties({ areaId, areaName }: { areaId: string; areaName: string
                     and hands over the id, which that tab narrows to a
                     single row. Listing a property without a way to reach
                     it just moves the search somewhere else. */}
-                <Text
+                <Box
                   as="button"
                   textAlign="left"
-                  fontSize="sm"
-                  color="blue.fg"
+                  minW={0}
                   cursor="pointer"
-                  truncate
-                  _hover={{ textDecoration: "underline" }}
                   onClick={() =>
-                    openEventSearch("areasTabToPropertiesTabSearch", r.displayName, r.id)
+                    // SEARCH FOR SOMETHING FINDABLE. This handed over
+                    // `displayName`, so Properties opened on a search for
+                    // "Main House" and ninety matches. The street is the
+                    // one field that is actually distinct; the id still
+                    // narrows it to the single row.
+                    openEventSearch(
+                      "areasTabToPropertiesTabSearch",
+                      r.street1 || r.displayName,
+                      r.id,
+                    )
                   }
                 >
-                  {r.displayName}
-                </Text>
+                  <Text fontSize="sm" color="blue.fg" truncate _hover={{ textDecoration: "underline" }}>
+                    {r.client?.displayName ?? r.displayName}
+                  </Text>
+                  <Text fontSize="2xs" color="fg.muted" truncate>
+                    {[r.street1, r.displayName].filter(Boolean).join(" · ")}
+                  </Text>
+                </Box>
                 <HStack gap={2} flexShrink={0}>
                   {r.city && <Text fontSize="2xs" color="fg.muted">{r.city}</Text>}
                   {/* A row from a CHILD area is marked, so "8 properties"

@@ -1336,6 +1336,29 @@ export default function HomePage() {
           categoryIcon: AiOutlineTeam,
         },
         {
+          // Areas — the place tree, and who looks after each branch. A role
+          // held in an area is the same role, confined to it.
+          //
+          // DIRECTORY, NOT SYSTEM. An Area is a named grouping of
+          // PROPERTIES, which is the same shape of thing as a Group (a
+          // named grouping of people) sitting two rows below. The page is
+          // mostly a name, a tier, a centre point and "Properties in X" —
+          // record maintenance, not configuration — and "which properties
+          // are in Pittsboro?" is a question nobody takes to System. The
+          // assignment panel stays on the tab; a category is navigation,
+          // and `areas.manage` still guards every mutation on it.
+          value: "areas",
+          label: "Areas",
+          icon: FiMapPin,
+          content: wrapWithInlineMessage(
+            <AreasTab
+              scope={scopeBase}
+            />
+          ),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
+        {
           // Users. One directory: UsersTab renders the trimmed Team
           // roster without `people.manage`, the full directory with it,
           // and gates approving on `people.approve` and the role picker
@@ -1654,20 +1677,6 @@ export default function HomePage() {
           icon: FiShield,
           content: wrapWithInlineMessage(
             <RolesTab
-              scope={scopeBase}
-            />
-          ),
-          category: "System",
-          categoryIcon: FiSettings,
-        },
-        {
-          // Areas — the place tree, and who looks after each branch. A role
-          // held in an area is the same role, confined to it.
-          value: "areas",
-          label: "Areas",
-          icon: FiMapPin,
-          content: wrapWithInlineMessage(
-            <AreasTab
               scope={scopeBase}
             />
           ),

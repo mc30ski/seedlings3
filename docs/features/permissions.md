@@ -434,9 +434,10 @@ user is created or their type changes, then live as ordinary grants — see
 | `displays.manage` | Pair and revoke wall screens |
 | `identity.link` | Connect a login to a client record |
 | `clients.view-as` | Look at the app as one of your clients sees it |
+| `areas.view` | See the area tree and what is in each one |
 | `areas.manage` | Create, rename, retire and reorganise areas |
 
-**65 entitlements.**
+**66 entitlements.**
 
 **Symmetry is deliberate and applied completely.** Every family carries both
 verbs even where `view` is rarely granted, for two reasons. Irregularity

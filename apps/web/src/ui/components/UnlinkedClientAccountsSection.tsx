@@ -125,22 +125,33 @@ export default function UnlinkedClientAccountsSection({ onReady, scope }: {
               No unlinked accounts — every signed-in client matches a contact on file.
             </Text>
           )}
+          {/* STACKS ON A PHONE. An email address is one unbroken string —
+              `admin+newhire@seedlingslawncare.com` — and beside a ~150px
+              button on a 390px screen there is nowhere for it to go: it ran
+              straight under the button. Narrow gets a column so the address
+              has the full width; `sm` and up keeps the original row.
+              `truncate` and `flexShrink` are the belt and braces for the row
+              case, where a longer address would otherwise reach the button
+              again. */}
           <VStack align="stretch" gap={2}>
             {users.map((u) => (
               <HStack
                 key={u.clerkUserId}
                 justify="space-between"
-                align="start"
+                align={{ base: "stretch", sm: "start" }}
+                flexDirection={{ base: "column", sm: "row" }}
                 gap={2}
                 borderWidth="1px"
                 borderColor="gray.emphasized"
                 borderRadius="md"
                 p={2}
               >
-                <VStack align="start" gap={0.5} minW={0} flex={1}>
+                <VStack align="start" gap={0.5} minW={0} flex={1} w="full">
                   <Text fontSize="sm" fontWeight="medium">{userLabel(u)}</Text>
                   {u.email && (
-                    <Text fontSize="xs" color="fg.muted">{u.email}</Text>
+                    <Text fontSize="xs" color="fg.muted" truncate maxW="full" title={u.email}>
+                      {u.email}
+                    </Text>
                   )}
                   <Text fontSize="xs" color="fg.muted">Signed up {daysAgoLabel(u.createdAt)}</Text>
                 </VStack>
@@ -148,6 +159,8 @@ export default function UnlinkedClientAccountsSection({ onReady, scope }: {
                 <Button
                   size="xs"
                   colorPalette="orange"
+                  flexShrink={0}
+                  alignSelf={{ base: "flex-start", sm: "auto" }}
                   onClick={() => setPickerFor(u)}
                 >
                   <Link2 size={12} /> Link to contact

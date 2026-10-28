@@ -139,7 +139,13 @@ export const TAB_REQUIREMENTS = {
   settings: ["settings.view", "settings.manage"],
   displays: ["displays.manage"],
   roles: ["roles.view"],
-  areas: ["areas.manage"],
+  // `areas.view`, NOT `areas.manage` — and only the one, because the rule is
+  // that a tab names the capability of the endpoint it calls. Listing both
+  // would reopen the tab for a manage-only holder whose `GET /areas` then
+  // 403s behind it, which is the silent-refusal shape this table exists to
+  // prevent. Everyone who holds `areas.manage` also holds `areas.view`
+  // through Admin; see install-starter-roles.ts.
+  areas: ["areas.view"],
 
   // ── No capability distinguishes these ───────────────────────────────
   // Guides reads `/me/guides`, which is an OWNERSHIP route: the guides

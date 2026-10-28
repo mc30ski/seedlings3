@@ -158,9 +158,18 @@ export function OpsStatusCounts({ rows }: { rows: WorkerOccurrence[] }) {
   const metrics = useMemo(() => computeOpsMetrics(rows), [rows]);
   const items: Array<{ label: string; count: number; palette: BannerPalette }> = [
     { label: "In progress", count: metrics.byStatus.IN_PROGRESS, palette: "green" },
+    // TWO PAUSES, TWO COLOURS, and they are different things: "Paused" is a
+    // worker's timer stopped mid-visit; "Repeating paused" is the whole
+    // repeating series held. Purple here is not decoration — it is the same
+    // purple as the pause icon on the row and as
+    // `occurrenceStatusColor("STREAM_PAUSED")`, so the count and the thing
+    // it counts look alike.
     { label: "Paused", count: metrics.byStatus.PAUSED, palette: "yellow" },
+    { label: "Repeating paused", count: metrics.byStatus.STREAM_PAUSED, palette: "purple" },
     { label: "Pending payment", count: metrics.byStatus.PENDING_PAYMENT, palette: "orange" },
-    { label: "Canceled", count: metrics.byStatus.CANCELED, palette: "gray" },
+    // Canceled is not a neutral outcome and was sharing grey with Closed,
+    // which is. Red matches `occurrenceStatusColor("CANCELED")`.
+    { label: "Canceled", count: metrics.byStatus.CANCELED, palette: "red" },
     { label: "Closed", count: metrics.byStatus.CLOSED, palette: "gray" },
   ];
   return (
@@ -176,8 +185,16 @@ export function OpsStatusCounts({ rows }: { rows: WorkerOccurrence[] }) {
 }
 
 function computeOpsMetrics(rows: WorkerOccurrence[]): OpsMetrics {
+  // EVERY status in the enum gets a slot, because the counter below is
+  // `if (byStatus[occ.status] !== undefined)` — a status missing from this
+  // seed is not counted as zero, it is SILENTLY DROPPED.
+  //
+  // STREAM_PAUSED was missing. A held repeating visit therefore appeared on
+  // the list with its purple pause icon while every count on the tab said
+  // there were none, and "0 Paused" sat directly above a visibly paused
+  // job. Add new JobOccurrenceStatus members here when they are introduced.
   const byStatus: Record<string, number> = {
-    SCHEDULED: 0, IN_PROGRESS: 0, PAUSED: 0, COMPLETED: 0,
+    SCHEDULED: 0, IN_PROGRESS: 0, PAUSED: 0, STREAM_PAUSED: 0, COMPLETED: 0,
     PENDING_PAYMENT: 0, CLOSED: 0, CANCELED: 0, ARCHIVED: 0,
     PROPOSAL_SUBMITTED: 0, ACCEPTED: 0, REJECTED: 0,
   };
@@ -294,10 +311,11 @@ function OpsExpandedDetails({ metrics }: { metrics: OpsMetrics }) {
     { key: "SCHEDULED",          label: "Scheduled",          color: "blue",   icon: Clock },
     { key: "IN_PROGRESS",        label: "In progress",        color: "green",  icon: PlayCircle },
     { key: "PAUSED",             label: "Paused",             color: "orange", icon: PauseCircle },
+    { key: "STREAM_PAUSED",      label: "Repeating paused",   color: "purple", icon: PauseCircle },
     { key: "COMPLETED",          label: "Completed",          color: "green",  icon: CheckCircle2 },
     { key: "PENDING_PAYMENT",    label: "Pending payment",    color: "orange", icon: CreditCard },
     { key: "CLOSED",             label: "Closed",             color: "gray",   icon: CheckCircle2 },
-    { key: "CANCELED",           label: "Canceled",           color: "gray",   icon: Ban },
+    { key: "CANCELED",           label: "Canceled",           color: "red",    icon: Ban },
     { key: "ARCHIVED",           label: "Archived",           color: "gray",   icon: Archive },
     { key: "PROPOSAL_SUBMITTED", label: "Proposal submitted", color: "purple", icon: ScrollText },
   ];

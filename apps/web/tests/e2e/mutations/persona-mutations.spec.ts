@@ -247,7 +247,9 @@ persona("owner", () => {
 
   test("creates an area at the top level", async ({ page }) => {
     const name = `${stamp()} Area`;
-    await goto(page, "staff", "areas", "Areas", "System");
+    // Areas moved from System to Directory (2026-10-28) — it is a grouping
+    // of properties, which is what Directory holds.
+    await goto(page, "staff", "areas", "Areas", "Directory");
     await page.getByRole("button", { name: /New area/i }).click();
     await page.getByPlaceholder("Area name").fill(name);
     await page.getByRole("button", { name: "Create", exact: true }).click();
