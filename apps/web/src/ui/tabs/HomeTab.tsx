@@ -271,6 +271,16 @@ export default function HomeTab({
   subsetUserIds: propSubsetUserIds,
 }: Props) {
   const [summary, setSummary] = useState<Summary | null>(null);
+  /**
+   * MY numbers, when the page-wide `summary` is somebody else's.
+   *
+   * In a team mode `load()` fetches the aggregate, so every figure in
+   * `summary` describes the roster. The self sections stay on screen now,
+   * and feeding them that object would print the team's week under a
+   * heading that says "My". Fetched only in those modes; otherwise
+   * `summary` already is mine.
+   */
+  const [mySummary, setMySummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   // Whether the scoped worker's workday has already begun. The hero CTA
   // ("Prepare for work day") walks someone THROUGH starting their day, so
@@ -487,6 +497,17 @@ export default function HomeTab({
   }
 
   useEffect(() => {
+    if (!(aggregate || isSubset) || viewAsUserId) { setMySummary(null); return; }
+    let cancelled = false;
+    apiGet<Summary>("/api/dashboard-summary")
+      .then((mine) => { if (!cancelled) setMySummary(mine); })
+      // A failed personal summary must not blank the page; the self cards
+      // simply render empty rather than borrowing the team's figures.
+      .catch(() => { if (!cancelled) setMySummary(null); });
+    return () => { cancelled = true; };
+  }, [aggregate, isSubset, viewAsUserId]);
+
+  useEffect(() => {
     void load();
     const onVisible = () => { if (document.visibilityState === "visible") void load(); };
     window.addEventListener("visibilitychange", onVisible);
@@ -602,8 +623,18 @@ export default function HomeTab({
   const s = summary;
   if (!s) return null;
 
-  const hasJobsToday = (s.todayRemaining ?? 0) > 0;
-  const hasActive = s.activeWork > 0;
+  // THE HERO IS A PERSONAL CARD, SO IT READS A PERSONAL SUMMARY.
+  //
+  // In a team mode the page-wide `s` is the ROLLUP, and every figure below
+  // feeds your greeting, your money strip and your begin/finish button. Left
+  // on `s` they would print the team's day under "Good evening, Michael" —
+  // which is the confusion the 2026-08-24 revert was right about. `null`
+  // while the personal summary is still in flight reads as zero, never as
+  // somebody else's number.
+  const selfS = ((isAggregate || isSubset) && !viewAsUserId) ? mySummary : s;
+
+  const hasJobsToday = (selfS?.todayRemaining ?? 0) > 0;
+  const hasActive = (selfS?.activeWork ?? 0) > 0;
 
   // Hero CTA derived from time of day:
   // - Active work in progress → always "Resume" (regardless of time)
@@ -629,20 +660,20 @@ export default function HomeTab({
   type HeroMode = "resume" | "begin" | "finish" | "planTomorrow" | "wrap";
   const heroMode: HeroMode = (() => {
     if (hasActive) return "resume";
-    if (isLateEvening) return hasJobsToday ? "finish" : (s.tomorrow > 0 ? "planTomorrow" : "wrap");
-    if (isEvening) return s.tomorrow > 0 ? "planTomorrow" : (hasJobsToday ? "finish" : "wrap");
+    if (isLateEvening) return hasJobsToday ? "finish" : ((selfS?.tomorrow ?? 0) > 0 ? "planTomorrow" : "wrap");
+    if (isEvening) return (selfS?.tomorrow ?? 0) > 0 ? "planTomorrow" : (hasJobsToday ? "finish" : "wrap");
     // Morning / midday
-    return hasJobsToday ? "begin" : (s.tomorrow > 0 ? "planTomorrow" : "wrap");
+    return hasJobsToday ? "begin" : ((selfS?.tomorrow ?? 0) > 0 ? "planTomorrow" : "wrap");
   })();
 
   const greetingSubtitle = hasActive
     ? "You have work in progress."
-    : isLateEvening && s.todayRemaining === 0
+    : isLateEvening && (selfS?.todayRemaining ?? 0) === 0
       ? "Wrapped up for the day."
-      : s.todayRemaining > 0
-        ? `You have ${s.todayRemaining} job${s.todayRemaining === 1 ? "" : "s"} left today${(s.todayObserverRemaining ?? 0) > 0 ? ` (${s.todayObserverRemaining} as observer)` : ""}.`
-        : s.tomorrow > 0
-          ? `Nothing left today — ${s.tomorrow} tomorrow.`
+      : (selfS?.todayRemaining ?? 0) > 0
+        ? `You have ${selfS?.todayRemaining ?? 0} job${(selfS?.todayRemaining ?? 0) === 1 ? "" : "s"} left today${(selfS?.todayObserverRemaining ?? 0) > 0 ? ` (${selfS?.todayObserverRemaining} as observer)` : ""}.`
+        : (selfS?.tomorrow ?? 0) > 0
+          ? `Nothing left today — ${selfS?.tomorrow ?? 0} tomorrow.`
           : "You're caught up. Nothing on your plate.";
 
   // Today's money strip — the big 3-column indicator that answers
@@ -661,8 +692,8 @@ export default function HomeTab({
   // nothing is priced today so the strip doesn't render an empty $0 row.
   // Values captured outside the function so TS keeps the non-null
   // narrowing on `s` (function scope re-widens the closure otherwise).
-  const heroEarned = s.todayEarnedAmount ?? 0;
-  const heroRemaining = s.todayPotentialAmount ?? 0;
+  const heroEarned = selfS?.todayEarnedAmount ?? 0;
+  const heroRemaining = selfS?.todayPotentialAmount ?? 0;
   const heroCanMake = heroEarned + heroRemaining;
   function todaysMoneyStrip(theme: "orange" | "green"): React.ReactNode {
     if (heroCanMake <= 0) return null;
@@ -782,7 +813,7 @@ export default function HomeTab({
   const heroSection = (
     <>
       {/* Hero CTA: Resume active work (any time) */}
-      {!isAggregate && heroMode === "resume" && (
+      {heroMode === "resume" && (
         <Card.Root
           variant="elevated"
           cursor="pointer"
@@ -843,7 +874,7 @@ export default function HomeTab({
           stops propagation, so the numbers stay tappable-but-inert, and the
           click is armed only when the workflow is actually available
           (`canBeginWorkday`) rather than on every render of the card. */}
-      {!isAggregate && (heroMode === "begin" || heroMode === "finish") && (
+      {(heroMode === "begin" || heroMode === "finish") && (
         <Card.Root
           variant="outline"
           bg="green.faint"
@@ -926,7 +957,7 @@ export default function HomeTab({
       )}
 
       {/* Hero CTA: Plan tomorrow — evening pivot, no work left today */}
-      {!isAggregate && heroMode === "planTomorrow" && (
+      {heroMode === "planTomorrow" && (
         <Card.Root
           variant="outline"
           cursor={isViewingOther ? "default" : "pointer"}
@@ -1022,7 +1053,7 @@ export default function HomeTab({
       )}
 
       {/* Hero: Wrap up — quiet end-of-day state. Combines greeting + status into one card. */}
-      {!isAggregate && heroMode === "wrap" && (
+      {heroMode === "wrap" && (
         <Card.Root variant="outline" bg="gray.faint" borderColor="gray.emphasized" position="relative">
           <Card.Body px={3} py={2}>
             <HStack gap={3}>
@@ -1143,7 +1174,10 @@ export default function HomeTab({
             mode — see MyDashboard). Hidden in subset (N workers)
             and aggregate (0 workers, admin scope) modes because
             everything in it is a single-user surface. */}
-        {(!scope.can("people.view") || !!viewAsUserId || (!isAggregate && !isSubset)) && (
+        {/* ALWAYS. Your own day does not stop existing because you can also
+            see the team's — see the divider below. When a single other
+            worker is selected this shows THEIRS, exactly as before. */}
+        {(
           <MyDashboard
             onRefresh={refreshActivities}
             refreshing={activitiesRefreshing}
@@ -1181,6 +1215,112 @@ export default function HomeTab({
             borderLeftWidth replaces the 1px baseline rather than adding to
             it, so the frame's total width is unchanged — same trick the
             Dashboard stripe uses. */}
+
+        {/* Approximate pay-per-hour card — worker's own on their Home,
+            OR the impersonated worker's when Admin Home is viewing a
+            single worker via the "View as" picker (so holders of team access can see
+            exactly what that worker sees). Hidden in aggregate /
+            subset views since those already show a per-worker table
+            below. */}
+        {/* MY EARNINGS. In a team mode `s` holds the ROLLUP, so this reads
+            from `mySummary` instead — showing the team's completed work
+            under a card titled "My" is the precise confusion the
+            2026-08-24 revert was reacting to. */}
+        <WorkerHourlyPayCard
+          viewAsUserId={viewAsUserId ?? null}
+          viewAsDisplayName={viewAsDisplayName ?? null}
+          weeklyCompleted={
+            ((isAggregate || isSubset) && !viewAsUserId
+              ? mySummary?.weeklyCompleted
+              : s.weeklyCompleted) ?? []
+          }
+        />
+
+        {/* MY PAYDAY — what Gusto actually paid, deliberately adjacent to the
+            approximate-pay card above. The two numbers disagree by design;
+            putting them side by side with clear labels is more honest than
+            separating them and letting the mismatch read as a bug. Same
+            single-user gate as that card — payroll is per-person, so it has
+            no meaning in the aggregate/subset team views. Renders nothing
+            when the worker has no payroll on record (every contractor,
+            today). */}
+        {(
+          <PayrollHomeSection
+            viewAsUserId={viewAsUserId ?? null}
+            viewAsDisplayName={viewAsDisplayName ?? null}
+            isOwner={!!me?.isOwner}
+            // Named for the capability the equity endpoint is guarded on
+            // (`GET /business-expenses` → books.view), not for a role.
+            canSeeEquity={scope.can("books.view")}
+          />
+        )}
+
+        {/* Team pay-per-hour — one mini card per worker, side by side,
+            over the timeframe chosen in its own picker.
+
+            THE one and only team pay surface. Two used to sit here: this,
+            and "Today's hourly pay" — same earnings math, different hours
+            rule, so they disagreed for anyone still on the clock. The
+            operator's read was right: if two panels showing one worker's
+            $/hr can disagree, that is a bug, not a feature. Merged
+            2026-08-27 — today became a value in this section's timeframe
+            picker, and the hours rule was unified server-side.
+
+            `isAggregate` covers BOTH All Workers and a subset of N — the
+            two cases where comparing workers side by side is the point.
+            The subset case came from the panel this replaced, which is why
+            `workerIds` exists. A single selected worker is excluded: a
+            roster of one is not a roster, and it would duplicate the MY
+            EARNINGS card directly above. */}
+
+        {/* MY VEHICLES — per-vehicle driving over the section's own
+            timeframe, for whichever worker the page is scoped to.
+
+            Same single-user gate as the two pay sections above: "my
+            vehicles" has no meaning averaged across a team, and the
+            aggregate/subset views already have their own per-worker
+            surfaces. Under a single-worker view-as it shows THAT worker's
+            vehicles — the endpoint takes viewAsUserId for exactly that.
+
+            Self-hiding twice over: the frame is dropped entirely when the
+            scoped worker has no assigned vehicle (`hasVehicles`), so a
+            worker who never drives gets no empty section — matching the
+            MileageStrip's rule directly above. */}
+        {myVehiclesApi?.hasVehicles !== false && (
+          <Dashboard
+            storageKey="seedlings:homeTab:myVehiclesOpen"
+            title="My vehicles"
+            icon={Truck}
+            variant="neutral"
+            onRefresh={myVehiclesApi?.refresh}
+            refreshing={!!myVehiclesApi?.loading}
+            collapsedSummarySlot={myVehiclesApi?.summary}
+            timeframe={myVehiclesApi?.timeframe}
+          >
+            <MyVehiclesSection
+              viewAsUserId={viewAsUserId ?? null}
+              onReady={setMyVehiclesApi}
+            />
+          </Dashboard>
+        )}
+
+        {/* ── THE TEAM, BELOW YOUR OWN DAY ──────────────────────────────
+            Everything above this line is YOURS. Holding people.manage
+            used to replace it: with nobody picked, Home switched to the
+            team rollup and MY ACTIVITIES, MY EARNINGS, MY PAYDAY, MY
+            VEHICLES and the begin/finish hero all vanished — so an owner
+            who also works the route lost the button that starts the day,
+            and got it back only by dropping to a narrower perspective.
+            Holding MORE took away what you are entitled to.
+
+            The 2026-08-24 revert that made team modes purely team-scoped
+            was right about the hazard and wrong about the remedy: a
+            self-scoped card floating in a team roster reads as if it
+            describes the team. The fix is separation, not suppression —
+            your sections stay together at the top, the team rollup sits
+            under this divider, and every card keeps the "My" prefix that
+            says whose number it is. */}
+
         {isAggregate && (
           <Dashboard
             storageKey="seedlings:homeTab:teamOverviewOpen"
@@ -1477,91 +1617,10 @@ export default function HomeTab({
           </Dashboard>
         )}
 
-        {/* Approximate pay-per-hour card — worker's own on their Home,
-            OR the impersonated worker's when Admin Home is viewing a
-            single worker via the "View as" picker (so holders of team access can see
-            exactly what that worker sees). Hidden in aggregate /
-            subset views since those already show a per-worker table
-            below. */}
-        {!isAggregate && !isSubset && (
-          <WorkerHourlyPayCard
-            viewAsUserId={viewAsUserId ?? null}
-            viewAsDisplayName={viewAsDisplayName ?? null}
-            weeklyCompleted={s.weeklyCompleted ?? []}
-          />
-        )}
-
-        {/* MY PAYDAY — what Gusto actually paid, deliberately adjacent to the
-            approximate-pay card above. The two numbers disagree by design;
-            putting them side by side with clear labels is more honest than
-            separating them and letting the mismatch read as a bug. Same
-            single-user gate as that card — payroll is per-person, so it has
-            no meaning in the aggregate/subset team views. Renders nothing
-            when the worker has no payroll on record (every contractor,
-            today). */}
-        {!isAggregate && !isSubset && (
-          <PayrollHomeSection
-            viewAsUserId={viewAsUserId ?? null}
-            viewAsDisplayName={viewAsDisplayName ?? null}
-            isOwner={!!me?.isOwner}
-            // Named for the capability the equity endpoint is guarded on
-            // (`GET /business-expenses` → books.view), not for a role.
-            canSeeEquity={scope.can("books.view")}
-          />
-        )}
-
-        {/* Team pay-per-hour — one mini card per worker, side by side,
-            over the timeframe chosen in its own picker.
-
-            THE one and only team pay surface. Two used to sit here: this,
-            and "Today's hourly pay" — same earnings math, different hours
-            rule, so they disagreed for anyone still on the clock. The
-            operator's read was right: if two panels showing one worker's
-            $/hr can disagree, that is a bug, not a feature. Merged
-            2026-08-27 — today became a value in this section's timeframe
-            picker, and the hours rule was unified server-side.
-
-            `isAggregate` covers BOTH All Workers and a subset of N — the
-            two cases where comparing workers side by side is the point.
-            The subset case came from the panel this replaced, which is why
-            `workerIds` exists. A single selected worker is excluded: a
-            roster of one is not a roster, and it would duplicate the MY
-            EARNINGS card directly above. */}
         {isAggregate && (
           <AllWorkersHourlyPayCards
             workerIds={isSubset ? (subsetUserIds ?? []) : undefined}
           />
-        )}
-
-        {/* MY VEHICLES — per-vehicle driving over the section's own
-            timeframe, for whichever worker the page is scoped to.
-
-            Same single-user gate as the two pay sections above: "my
-            vehicles" has no meaning averaged across a team, and the
-            aggregate/subset views already have their own per-worker
-            surfaces. Under a single-worker view-as it shows THAT worker's
-            vehicles — the endpoint takes viewAsUserId for exactly that.
-
-            Self-hiding twice over: the frame is dropped entirely when the
-            scoped worker has no assigned vehicle (`hasVehicles`), so a
-            worker who never drives gets no empty section — matching the
-            MileageStrip's rule directly above. */}
-        {!isAggregate && !isSubset && myVehiclesApi?.hasVehicles !== false && (
-          <Dashboard
-            storageKey="seedlings:homeTab:myVehiclesOpen"
-            title="My vehicles"
-            icon={Truck}
-            variant="neutral"
-            onRefresh={myVehiclesApi?.refresh}
-            refreshing={!!myVehiclesApi?.loading}
-            collapsedSummarySlot={myVehiclesApi?.summary}
-            timeframe={myVehiclesApi?.timeframe}
-          >
-            <MyVehiclesSection
-              viewAsUserId={viewAsUserId ?? null}
-              onReady={setMyVehiclesApi}
-            />
-          </Dashboard>
         )}
 
 
