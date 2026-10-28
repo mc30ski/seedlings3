@@ -95,10 +95,14 @@ export default function ClientsTab({ me, scope }: ClientsTabProps) {
   const canViewAsClient = effScope.can("clients.view-as");
 
   const pfx = canManageClients ? "aclients" : "wclients";
-  // Not cleared for field work: sees only what they are assigned to.
-  // Clearance is a capability — see isFieldCleared(), which asks for
-  // `work.claim`.
-  const notFieldCleared = !canManageClients && !isFieldCleared(me);
+  // WHO SEES THE WHOLE BOOK. Three different people do, for three reasons:
+  // they edit it (`clients.manage`), they work it (`work.claim`, via
+  // isFieldCleared), or they watch it without doing either
+  // (`clients.view-all`). The third was missing, so every read-only
+  // oversight role was narrowed to "the customers you are assigned to" —
+  // which, for somebody who works no visits, is none of them.
+  const notFieldCleared =
+    !canManageClients && !isFieldCleared(me) && !scope?.can?.("clients.view-all");
   const [restrictedClientIds, setRestrictedClientIds] = useState<Set<string> | null>(null);
 
   // Variables for filtering the items.

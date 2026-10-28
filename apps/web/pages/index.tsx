@@ -1787,7 +1787,14 @@ export default function HomePage() {
               the "what you cannot do yet is" scaffolding. Phrase it as what
               to DO rather than a list of refusals; if you add a fourth
               clause, take one out. */}
-          {notFieldCleared && scopeCan("schedule.view") && (
+          {/* NOT FOR AN OVERSIGHT READER. The sentence says "you only see
+              those", which stopped being true for anybody holding
+              `schedule.view-all`: they are not field-cleared and never will
+              be, and they now see the whole board. Leaving it up told a
+              bookkeeper their empty-looking list was a permission limit
+              when it was not. */}
+          {notFieldCleared && scopeCan("schedule.view")
+            && !scopeCan("schedule.view-all") && (
             <Box mb={2} p={{ base: 2, md: 3 }} bg="blue.faint" borderWidth="1px" borderColor="blue.emphasized" rounded="md">
               <HStack gap={2} align="start">
                 <Box flexShrink={0} pt="0.5"><AlertTriangle size={14} color="var(--chakra-colors-blue-500)" /></Box>

@@ -193,7 +193,15 @@ const LADDER: StarterRole[] = [
       // work for anybody running the schedule. Granted HERE rather than on
       // Super so Super and District Lead both inherit it — a role holding
       // `areas.manage` without this would open the Areas tab onto a 403.
-      "areas.view"
+      "areas.view",
+      // SEEING THE WHOLE BOARD, SAID OUT LOUD. Admin already saw every
+      // visit and every customer, but only as a side effect of being
+      // field-cleared through Worker and holding `clients.manage` — take
+      // Field Clearance out of the chain and the oversight would have gone
+      // with it, which is not what anybody would have intended. These name
+      // the visibility directly, and they are what an oversight role that
+      // does no field work is built from.
+      "schedule.view-all", "clients.view-all"
     ],
     perspectiveOrder: 3,
   },

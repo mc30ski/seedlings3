@@ -203,11 +203,20 @@ export function redactOccurrenceForTrainee(occ: any, callerUserId: string): any 
 export function redactUnclearedFieldsForCaller(
   occurrences: any[],
   callerUserId: string,
-  callerFieldCleared: boolean,
+  /**
+   * May this caller see what the OTHER people on a visit are paid?
+   *
+   * Was `callerFieldCleared`, which named one answer rather than the
+   * question. Two unrelated things make it true — you are on the crew
+   * (`work.claim`), or the money is your job (`money.view`) — and with the
+   * old name the second was invisible: a bookkeeper, whose entire purpose
+   * is looking at money, was redacted because they do not mow lawns.
+   */
+  callerMaySeeCrewPay: boolean,
   callerCanManageSchedule: boolean,
 ): any[] {
   if (callerCanManageSchedule) return occurrences;
-  if (callerFieldCleared) return occurrences;
+  if (callerMaySeeCrewPay) return occurrences;
   for (const occ of occurrences) {
     // Don't double-redact observer rows (already stripped to a heavier
     // shape). The `_observerRedacted` hint set in

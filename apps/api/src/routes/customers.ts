@@ -618,7 +618,19 @@ export default async function customerRoutes(app: FastifyInstance) {
    * `clients.manage` is the office path that never had the restriction.
    */
   async function assignedScopeFor(req: any): Promise<string | undefined> {
-    if (callerCan(req, "clients.manage") || callerCan(req, "work.claim")) {
+    // THREE WAYS TO SEE THE WHOLE BOOK, and they are three different
+    // people: you edit it (`clients.manage`), you work it (`work.claim`),
+    // or you watch it and do neither (`clients.view-all`). The third was
+    // missing, so a read-only oversight role — a bookkeeper, an owner's
+    // partner — was scoped to "the customers you are assigned to", which
+    // for somebody who works no visits is none of them. The tab filters on
+    // the same three; this is the half that matters, because without it
+    // the rows never leave the server.
+    if (
+      callerCan(req, "clients.manage") ||
+      callerCan(req, "work.claim") ||
+      callerCan(req, "clients.view-all")
+    ) {
       return undefined;
     }
     return currentUserId(req);
