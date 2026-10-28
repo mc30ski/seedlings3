@@ -52,6 +52,7 @@ split (JobsTab ~11k LOC).
 - [Prisma migrations required — never db push](feedback_prisma_migrations.md) — schema changes go through `migrate dev`.
 - [Migrate must bypass the Neon pooler](reference_migrate_needs_direct_url.md) — `directUrl`/`DIRECT_URL` added 2026-10-23. Set BOTH vars when overriding `DATABASE_URL`, or you migrate dev while the output says production.
 - [Apply migrations to dev immediately](feedback_apply_migration_to_dev_immediately.md) — never let code land while dev DB is on the old schema.
+- [No placeholder text in migrations](feedback_no_placeholder_text_in_migrations.md) — a user-facing label written by a migration is permanent; later passes refuse to overwrite it.
 - [Never edit an applied migration](feedback_never_edit_applied_migrations.md) — frozen once run; write a NEW one. Editing causes checksum drift.
 - [Always audit every mutation](feedback_audit_every_mutation.md) — every state change writes an AuditEvent in the SAME edit. Destructive paths snapshot first.
 - [Audit system mechanics](reference_audit_system.md) — `writeAudit(tx, AUDIT.SCOPE.VERB, actor, meta)`. AuditScope/Verb are Prisma enums, so a new scope needs a migration.

@@ -58,7 +58,7 @@ type Area = {
   lng: number | null;
   retiredAt: string | null;
   depth: number;
-  _count: { properties: number; occurrences: number; assignments: number; memberships: number };
+  _count: { properties: number; occurrences: number; assignments: number };
 };
 
 type Assignment = {

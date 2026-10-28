@@ -39,7 +39,7 @@ export const areas = {
       select: {
         id: true, name: true, tier: true, parentId: true, path: true, lat: true, lng: true,
         retiredAt: true,
-        _count: { select: { properties: true, occurrences: true, assignments: true, memberships: true } },
+        _count: { select: { properties: true, occurrences: true, assignments: true } },
       },
     });
     return rows.map((r) => ({

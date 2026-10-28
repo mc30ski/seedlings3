@@ -85,7 +85,7 @@ import DisplaysTab from "@/src/ui/tabs/DisplaysTab";
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
-import { setPerspective, PERSPECTIVE_CHANGED_EVENT, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
+import { setPerspective, CAPABILITIES_CHANGED_EVENT, PERSPECTIVE_CHANGED_EVENT, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
 import RolesTab from "@/src/ui/tabs/RolesTab";
 import AreasTab from "@/src/ui/tabs/AreasTab";
 
@@ -873,6 +873,12 @@ export default function HomePage() {
       })();
     };
     window.addEventListener(PERSPECTIVE_CHANGED_EVENT, onPerspectiveChanged);
+    // Capabilities changed, not the lens: refetch `me` and stop there. No
+    // content remount, because every response on screen was fetched as the
+    // same person asking the same question — only what they are ALLOWED to
+    // do has moved.
+    const onCapabilitiesChanged = () => { void refreshMe(); };
+    window.addEventListener(CAPABILITIES_CHANGED_EVENT, onCapabilitiesChanged);
     // THE AREA LENS NEEDS EXACTLY THE SAME TREATMENT, for the same reason:
     // every response on screen was fetched through the outgoing lens, so
     // each one may be answering about a district nobody is looking at any
@@ -883,6 +889,7 @@ export default function HomePage() {
     window.addEventListener(AREA_LENS_CHANGED_EVENT, onPerspectiveChanged);
     return () => {
       window.removeEventListener(PERSPECTIVE_CHANGED_EVENT, onPerspectiveChanged);
+      window.removeEventListener(CAPABILITIES_CHANGED_EVENT, onCapabilitiesChanged);
       window.removeEventListener(AREA_LENS_CHANGED_EVENT, onPerspectiveChanged);
     };
   }, [refreshMe]);

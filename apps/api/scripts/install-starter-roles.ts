@@ -141,7 +141,14 @@ const LADDER: StarterRole[] = [
     ladderRung: true,
     perspectiveIcon: "user",
     name: "Worker",
-    description: "A trainee who is cleared for field work.",
+    // SAYS WHAT IT DOES. This read "A trainee who is cleared for field
+    // work" — the only rung defined by reference to another, so it needed
+    // you to know what a Trainee is AND what clearance means, and landed
+    // on neither. The three things Worker adds are named instead.
+    description:
+      "The everyday field role. Everything a Trainee sees, plus the clearance " +
+      "to act on it: pick up a visit or hand it back, start and finish it, " +
+      "take payment at the door, and take equipment out for the job.",
     inheritsKey: "seedlings.trainee",
     adds: FIELD_CLEARANCE,
     perspectiveOrder: 2,

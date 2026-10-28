@@ -25,7 +25,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { Badge, Box, Button, Card, Checkbox, HStack, Icon, Input, Portal, Select, Spinner, Table, Text, Textarea, VStack, createListCollection } from "@chakra-ui/react";
 import { Check, CheckCircle2, ChevronDown, ChevronUp, KeyRound, ListOrdered, Plus, Shield, Users as UsersIcon, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/src/lib/api";
-import { PERSPECTIVE_ICONS } from "@repo/permissions";
+import { PERSPECTIVE_ICONS, PERSPECTIVE_ICONS_COMMON, PERSPECTIVE_ICONS_MORE } from "@repo/permissions";
 import { perspectiveIconFor } from "@/src/lib/perspectiveIcons";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -33,6 +33,7 @@ import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplaine
 import type { Scope } from "@/src/lib/scope";
 import { payClassLabel } from "@/src/lib/paymentMath";
 import { isCustomerOnly } from "@/src/lib/people";
+import { CAPABILITIES_CHANGED_EVENT } from "@/src/lib/impersonation";
 
 type EntitlementGroup = {
   group: string;
@@ -103,6 +104,16 @@ export default function RolesTab({ scope }: { scope: Scope }) {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // THE ONE SCREEN WHERE A STALE ANSWER LOOKS LIKE A BUG. Every checkbox
+  // here is locked or unlocked by what YOU hold, and `/api/me` is a
+  // snapshot taken at page load — so a grant that landed since (a
+  // migration, another admin, your own grant on the Users tab) leaves the
+  // builder saying "you don't hold this" about something you do. One
+  // request on open, not a poll.
+  useEffect(() => {
+    try { window.dispatchEvent(new Event(CAPABILITIES_CHANGED_EVENT)); } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
@@ -508,7 +519,15 @@ function RoleEditor({
     role.inheritsFromId ?? null,
   );
   /** Capabilities this save would take away from the person doing it. */
-  const [selfLoss, setSelfLoss] = useState<string[] | null>(null);
+  const [confirmSave, setConfirmSave] = useState(false);
+  const [showAllIcons, setShowAllIcons] = useState(false);
+  /** The entitlement's own words, from `GET /entitlements`. Falls back to
+   *  the id so an unknown one is still named rather than blank. */
+  const copyFor = useCallback(
+    (id: string) =>
+      groups.flatMap((g) => g.entitlements).find((e) => e.id === id)?.copy ?? id,
+    [groups],
+  );
   // Same rule as inheritance: edited here, applied on Save. These two wrote
   // straight through as well, so the page had three fields that committed
   // on touch and three that waited — with no way to tell which was which.
@@ -516,6 +535,22 @@ function RoleEditor({
   const [perspectiveIcon, setPerspectiveIconState] = useState<string | null>(
     role.perspectiveIcon ?? null,
   );
+
+  /**
+   * The common icons, plus whichever one is already chosen.
+   *
+   * Without that second half a role wearing an icon from the "more" tier
+   * would open with nothing highlighted — which reads as "no icon set" and
+   * invites picking a different one by accident. The chosen icon is always
+   * on screen, wherever in the catalogue it came from.
+   */
+  const shownIcons = useMemo(() => {
+    if (showAllIcons) return [...PERSPECTIVE_ICONS] as string[];
+    const common = [...PERSPECTIVE_ICONS_COMMON] as string[];
+    return perspectiveIcon && !common.includes(perspectiveIcon)
+      ? [...common, perspectiveIcon]
+      : common;
+  }, [showAllIcons, perspectiveIcon]);
 
   const parent = inheritsFromId
     ? roles.find((r) => r.id === inheritsFromId) ?? null
@@ -583,11 +618,59 @@ function RoleEditor({
     ],
   });
 
-  /** Save, unless it would cost the editor something — then ask first. */
+  /**
+   * WHAT THIS SAVE ACTUALLY DOES, computed before anybody commits to it.
+   *
+   * `own` is absolute — the editor sends the whole set — so the change is
+   * the difference from what the role held when it loaded. Everyone holding
+   * the role gains or loses these the moment Save lands.
+   */
+  const addedEnts = useMemo(
+    () => [...own].filter((e) => !(role.own ?? []).includes(e)).sort(),
+    [own, role.own],
+  );
+  const removedEnts = useMemo(
+    () => (role.own ?? []).filter((e) => !own.has(e)).sort(),
+    [own, role.own],
+  );
+  const detailChanges = useMemo(() => {
+    const out: string[] = [];
+    if (name !== role.name) out.push(`renamed to "${name}"`);
+    if (description !== (role.description ?? "")) out.push("description changed");
+    if (inheritsFromId !== (role.inheritsFromId ?? null)) {
+      const to = roles.find((r) => r.id === inheritsFromId)?.name ?? "nothing";
+      out.push(`now inherits ${to}`);
+    }
+    if (isPerspective !== role.isPerspective) {
+      out.push(isPerspective ? "offered as a perspective" : "no longer a perspective");
+    }
+    if (perspectiveIcon !== (role.perspectiveIcon ?? null)) out.push("icon changed");
+    return out;
+  }, [name, description, inheritsFromId, isPerspective, perspectiveIcon, role, roles]);
+
+  /**
+   * ASK BEFORE EVERY SAVE, not only the one that costs the editor.
+   *
+   * Save used to apply the moment it was clicked, naming nothing. A role
+   * list and its editor stack on a phone, so it is possible to be editing
+   * one role while reading another — and a save then rewrites the wrong
+   * role's entire grant, silently, for everybody holding it. That happened:
+   * the baseline role picked up sixteen capabilities it should never have,
+   * including the company P&L and everyone's payroll, and nothing on screen
+   * said so. The dialog names the role and lists what moves.
+   *
+   * The self-loss warning stays as its own, louder step — losing your own
+   * access is a different kind of mistake from changing somebody else's.
+   */
   function requestSave() {
     if (saving) return;
-    if (wouldLose.length > 0) {
-      setSelfLoss(wouldLose);
+    // ONE DIALOG. The self-loss warning used to be its own, and it took
+    // precedence — so a save that both cost the editor something AND
+    // rewrote the role showed the warning and hid the diff, which is the
+    // half that says what is actually happening. Now the diff always
+    // shows, and losing your own access is a red block inside it.
+    if (addedEnts.length || removedEnts.length || detailChanges.length) {
+      setConfirmSave(true);
       return;
     }
     void save();
@@ -808,8 +891,24 @@ function RoleEditor({
                   <Text fontSize="xs" color="fg.muted" mb={1.5}>
                     Icon in the picker
                   </Text>
-                  <HStack gap={1} wrap="wrap">
-                    {PERSPECTIVE_ICONS.map((key) => {
+                  {/* Capped and scrollable ONLY when expanded. The two
+                      hundred icons behind "Show more" are dozens of rows on
+                      a phone, which would push Save and everything under it
+                      off the screen — the collapsed twenty are two rows and
+                      need no box. The cap does NOT grow with the catalogue:
+                      a taller box just moves the same problem. `title` names
+                      each glyph, since nothing is labelled. */}
+                  <HStack
+                    gap={1}
+                    wrap="wrap"
+                    maxH={showAllIcons ? "11rem" : undefined}
+                    overflowY={showAllIcons ? "auto" : undefined}
+                    borderWidth={showAllIcons ? "1px" : undefined}
+                    borderColor={showAllIcons ? "border.emphasis" : undefined}
+                    rounded={showAllIcons ? "md" : undefined}
+                    p={showAllIcons ? 1.5 : undefined}
+                  >
+                    {shownIcons.map((key) => {
                       const IconCmp = perspectiveIconFor(key);
                       const chosen = perspectiveIcon === key;
                       return (
@@ -838,9 +937,19 @@ function RoleEditor({
                       );
                     })}
                   </HStack>
-                  <Text fontSize="xs" color="fg.subtle" mt={1}>
-                    Click the chosen one again to clear it.
-                  </Text>
+                  <HStack gap={2} mt={1}>
+                    <Text fontSize="xs" color="fg.subtle">
+                      Click the chosen one again to clear it.
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      px={1}
+                      onClick={() => setShowAllIcons((v) => !v)}
+                    >
+                      {showAllIcons ? "Show fewer" : `Show ${PERSPECTIVE_ICONS_MORE.length} more`}
+                    </Button>
+                  </HStack>
                 </Box>
               )}
             </Box>
@@ -1002,22 +1111,83 @@ function RoleEditor({
           is no in-app break-glass by design — recovery is re-running
           install-starter-roles against the database — so the last moment
           anyone can catch it is here. */}
+      {/* WHAT MOVES, IN THE ROLE'S OWN WORDS.
+          A NODE, not a string: `message` renders in one Text, so newlines
+          collapse and sixteen capabilities arrive as a single run-on
+          paragraph — which is exactly the wall of words nobody reads
+          before clicking Save. The ids are exact and the copy is the role
+          builder's own, so the line read here is the line that was ticked. */}
       <ConfirmDialog
-        open={selfLoss !== null}
-        title="This removes access from you"
-        message={
-          `Saving this takes ${selfLoss?.length === 1 ? "a capability" : `${selfLoss?.length} capabilities`} ` +
-          `away from your own account: ${(selfLoss ?? []).join(", ")}. ` +
-          `If this role is how you hold them, you lose them the moment you save — ` +
-          `including the ability to come back to this screen and undo it.`
+        open={confirmSave}
+        title={`Save changes to ${role.name}?`}
+        message=""
+        messageNode={
+          <VStack align="stretch" gap={2}>
+            <Text fontSize="sm">
+              {typeof role.holders === "number" && role.holders > 0
+                ? `${role.holders} ${role.holders === 1 ? "person holds" : "people hold"} ${role.name}, and anything that inherits it. This takes effect immediately.`
+                : `Nobody holds ${role.name} yet, so this changes what it will grant when somebody does.`}
+            </Text>
+            {detailChanges.length > 0 && (
+              <Text fontSize="sm" color="fg.muted">Also: {detailChanges.join(", ")}.</Text>
+            )}
+            {wouldLose.length > 0 && (
+              <Box borderWidth="1px" borderColor="red.emphasized" bg="red.faint" rounded="md" p={2}>
+                <Text fontSize="sm" color="red.fg">
+                  This takes {wouldLose.length === 1 ? "a capability" : `${wouldLose.length} capabilities`} away from
+                  your own account: {wouldLose.join(", ")}. If this role is how you hold
+                  {wouldLose.length === 1 ? " it" : " them"}, you lose
+                  {wouldLose.length === 1 ? " it" : " them"} the moment you save — including the
+                  ability to come back to this screen and undo it.
+                </Text>
+              </Box>
+            )}
+            {(addedEnts.length > 0 || removedEnts.length > 0) && (
+              <Box maxH="56" overflowY="auto" borderWidth="1px" borderColor="border" rounded="md" p={2}>
+                {removedEnts.length > 0 && (
+                  <>
+                    <Text fontSize="2xs" fontWeight="semibold" color="red.fg" textTransform="uppercase" letterSpacing="wide">
+                      Removing {removedEnts.length}
+                    </Text>
+                    <VStack align="stretch" gap={0.5} mb={removedEnts.length && addedEnts.length ? 2 : 0}>
+                      {removedEnts.map((e) => (
+                        <HStack key={e} gap={1.5} align="start">
+                          <Text fontSize="sm" color="red.fg" lineHeight="1.3">&minus;</Text>
+                          <Box minW={0}>
+                            <Text fontSize="sm" lineHeight="1.3">{copyFor(e)}</Text>
+                            <Text fontSize="2xs" color="fg.muted" fontFamily="mono">{e}</Text>
+                          </Box>
+                        </HStack>
+                      ))}
+                    </VStack>
+                  </>
+                )}
+                {addedEnts.length > 0 && (
+                  <>
+                    <Text fontSize="2xs" fontWeight="semibold" color="green.fg" textTransform="uppercase" letterSpacing="wide">
+                      Adding {addedEnts.length}
+                    </Text>
+                    <VStack align="stretch" gap={0.5}>
+                      {addedEnts.map((e) => (
+                        <HStack key={e} gap={1.5} align="start">
+                          <Text fontSize="sm" color="green.fg" lineHeight="1.3">+</Text>
+                          <Box minW={0}>
+                            <Text fontSize="sm" lineHeight="1.3">{copyFor(e)}</Text>
+                            <Text fontSize="2xs" color="fg.muted" fontFamily="mono">{e}</Text>
+                          </Box>
+                        </HStack>
+                      ))}
+                    </VStack>
+                  </>
+                )}
+              </Box>
+            )}
+          </VStack>
         }
-        confirmLabel="Save anyway"
-        confirmColorPalette="red"
-        onConfirm={() => {
-          setSelfLoss(null);
-          void save();
-        }}
-        onCancel={() => setSelfLoss(null)}
+        confirmLabel={wouldLose.length ? "Save anyway" : "Save"}
+        confirmColorPalette={wouldLose.length || removedEnts.length ? "red" : "blue"}
+        onConfirm={() => { setConfirmSave(false); void save(); }}
+        onCancel={() => setConfirmSave(false)}
       />
       <ConfirmDialog
         open={confirm !== null}

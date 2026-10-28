@@ -549,8 +549,6 @@ model User {
   customRolesGranted UserCustomRole[] @relation("UserCustomRoleGrantor")
   customRolesCreated CustomRole[]     @relation("CustomRoleCreator")
 
-  /// Informational home areas. Grant nothing (G17).
-  areaMemberships        AreaMembership[] @relation("AreaMembershipUser")
   /// Roles held within an area's subtree. These DO grant.
   areaAssignments        AreaAssignment[] @relation("AreaAssignmentUser")
   areaAssignmentsGranted AreaAssignment[] @relation("AreaAssignmentGrantor")
@@ -4644,7 +4642,6 @@ model Area {
   createdAt DateTime  @default(now())
 
   assignments AreaAssignment[]
-  memberships AreaMembership[]
   properties  Property[]
   occurrences JobOccurrence[]
   jobDefaults Job[] // Job.defaultArea
@@ -4654,18 +4651,6 @@ model Area {
   @@index([retiredAt])
 }
 
-/// "This person usually works here." INFORMATIONAL ONLY.
-/// Grants nothing, and no permission check may read it (G17): a check here
-/// would silently restrict where people are allowed to work.
-model AreaMembership {
-  userId String
-  areaId String
-  user   User   @relation("AreaMembershipUser", fields: [userId], references: [id], onDelete: Cascade)
-  area   Area   @relation(fields: [areaId], references: [id], onDelete: Cascade)
-
-  @@id([userId, areaId])
-  @@index([areaId])
-}
 
 /// A role held WITHIN one area's subtree. This is what actually grants.
 model AreaAssignment {
