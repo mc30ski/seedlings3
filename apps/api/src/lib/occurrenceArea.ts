@@ -76,3 +76,7 @@ export async function resolveOccurrenceArea(
   // 4. Nobody has said.
   return null;
 }
+
+// deploy-probe 2026-10-28 — delete this line; it exists only to give the
+// Vercel build something to see. One per app, because seedlings3-web and
+// seedlings3-api are separate projects rooted at apps/web and apps/api.
