@@ -86,6 +86,12 @@ type RoleOption = {
    *  grouping. `own`, not `effective`: a role inheriting Trainee would carry
    *  13 effective capabilities while granting one of its own. */
   own?: string[];
+  /** What HOLDING it actually gives, inheritance resolved — the server
+   *  computes it on `GET /roles`. Needed to answer "does this grant
+   *  people.grant-roles", which a role can do by inheriting, without
+   *  owning it. Walking the chain here would be a second opinion about
+   *  what a role means. */
+  effective?: string[];
   /** Null means it stands on nothing, so holding it alone gives only its own
    *  capabilities — an add-on, not a self-sufficient role. */
   inheritsFromId?: string | null;
@@ -734,9 +740,54 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
    * somebody edits it.
    */
   const [revokeRoleConfirm, setRevokeRoleConfirm] = useState<
-    { userId: string; roleId: string; roleName: string; displayName: string } | null
+    {
+      userId: string;
+      roleId: string;
+      roleName: string;
+      displayName: string;
+      /** Removing this would leave NOBODY able to grant roles in the app. */
+      lastWayIn?: boolean;
+    } | null
   >(null);
   const canGrantRoles = !!scope?.can?.("people.grant-roles");
+
+  /**
+   * WOULD THIS REMOVAL CLOSE THE DOOR BEHIND US?
+   *
+   * `people.grant-roles` is the capability that hands out every other one.
+   * `customRoles.revoke` does not defend it — it deletes the grant and
+   * returns — so if the last holder loses it, nobody can grant anything
+   * from inside the app again and the way back is
+   * `apps/api/scripts/grant-role.ts` at a terminal.
+   *
+   * That is recoverable, which is why this warns rather than refuses: an
+   * operator is allowed to do deliberate things to their own account. It is
+   * not obvious, which is why the warning makes them type.
+   *
+   * Reads `capabilities`, the set the SERVER resolved through inheritance,
+   * rather than re-deriving it from role names here — the directory must
+   * not hold a second opinion about what a role grants.
+   */
+  function isLastWayIn(userId: string, roleId: string): boolean {
+    const target = items.find((x) => x.id === userId);
+    if (!target) return false;
+    const grantsIt = (target.capabilities ?? []).includes("people.grant-roles");
+    if (!grantsIt) return false;
+    // Do they hold it through some OTHER role as well? Then this one going
+    // changes nothing about the door.
+    const viaOthers = (target.roleGrants ?? [])
+      .filter((g) => g.roleId !== roleId && !g.areaId)
+      .some((g) => (roleCatalogue.find((r) => r.id === g.roleId)?.effective ?? [])
+        .includes("people.grant-roles"));
+    if (viaOthers) return false;
+    // Anybody else still holding it company-wide?
+    return !items.some(
+      (other) =>
+        other.id !== userId &&
+        other.isApproved &&
+        (other.capabilities ?? []).includes("people.grant-roles"),
+    );
+  }
 
   function promptWorkerType(userId: string, workerType: string | null) {
     setWorkerTypeConfirm({ userId, workerType });
@@ -1169,7 +1220,21 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                     flexWrap="wrap"
                     justify="flex-start"
                   >
-                    {isMe ? null : (
+                    {/* YOUR OWN CARD GETS THE ROLE SECTION TOO.
+                        This was `{isMe ? null : …}`, which hid the whole
+                        block from you — so the one person who holds
+                        `people.grant-roles` could grant a role to anybody
+                        except themselves, and had to reach for
+                        `scripts/grant-role.ts` to change their own. Nothing
+                        about `people.grant-roles` says "other people":
+                        somebody trusted to put a role on anyone is trusted
+                        to take one off themselves.
+                        The approve/decline branch below is unreachable for
+                        yourself anyway — you are signed in, so approved —
+                        and Delete carries its own `!isMe`. What self-
+                        service needs is not a hidden control but a louder
+                        confirmation, which is what `lastWayIn` builds. */}
+                    {(
                       <>
                         {!u.isApproved ? (
                           <>
@@ -1249,6 +1314,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                                     roleId,
                                     roleName,
                                     displayName: u.displayName || u.email || "this user",
+                                    lastWayIn: isLastWayIn(u.id, roleId),
                                   })
                                 }
                               />
@@ -1669,15 +1735,36 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
         title={revokeRoleConfirm ? `Remove ${revokeRoleConfirm.roleName}?` : "Remove role?"}
         message={
           revokeRoleConfirm
-            ? `Take ${revokeRoleConfirm.roleName} away from ${revokeRoleConfirm.displayName}? ` +
-              `They lose everything that role grants, including anything it inherits, ` +
-              `and any screen that needed it disappears for them. Their account stays and ` +
-              `the role can be granted again. If they are holding equipment this will be refused ` +
-              `until it is released.`
+            ? (revokeRoleConfirm.lastWayIn
+                ? `${revokeRoleConfirm.roleName} is the last thing granting ` +
+                  `"put a role on a person" to anyone in this business. Take it away and ` +
+                  `NOBODY can grant a role from inside the app again — including this one, ` +
+                  `back to ${revokeRoleConfirm.displayName}. The only way back in is running ` +
+                  `apps/api/scripts/grant-role.ts at a terminal with database access. ` +
+                  `Everything else that role grants goes too.`
+                : `Take ${revokeRoleConfirm.roleName} away from ${revokeRoleConfirm.displayName}? ` +
+                  `They lose everything that role grants, including anything it inherits, ` +
+                  `and any screen that needed it disappears for them. Their account stays and ` +
+                  `the role can be granted again. If they are holding equipment this will be refused ` +
+                  `until it is released.`)
             : ""
         }
-        confirmLabel="Remove role"
+        confirmLabel={revokeRoleConfirm?.lastWayIn ? "Remove it anyway" : "Remove role"}
         confirmColorPalette="red"
+        /* THE SECOND APPROVAL. An ordinary revoke is one click behind this
+           dialog. The one that leaves nobody able to grant roles asks the
+           operator to type the words as well — the same device the prod
+           migration script uses for the irreversible step. It is a warning
+           and not a refusal because it IS recoverable, and because an
+           operator is allowed to do deliberate things to their own
+           account. */
+        requiredInputValue={revokeRoleConfirm?.lastWayIn ? "LOCK ME OUT" : undefined}
+        inputLabel={
+          revokeRoleConfirm?.lastWayIn
+            ? "Type LOCK ME OUT to confirm"
+            : undefined
+        }
+        inputPlaceholder={revokeRoleConfirm?.lastWayIn ? "LOCK ME OUT" : undefined}
         onConfirm={async () => {
           const target = revokeRoleConfirm;
           setRevokeRoleConfirm(null);
