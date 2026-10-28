@@ -204,6 +204,7 @@ export const ENTITLEMENT_GROUPS = [
       // Admin role, so every admin
       // could impersonate any client.
       { id: "clients.view-as", copy: "Look at the app as one of your clients sees it" },
+      { id: "areas.view", copy: "See the area tree and what is in each one" },
       { id: "areas.manage", copy: "Create, rename, retire and reorganise areas" },
     ],
   },

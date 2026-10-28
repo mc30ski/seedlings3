@@ -53,18 +53,22 @@ reschedule visits". Gated as **G18**.
 > **`expenses.charge` has NO enforcing route today.** Stored, displayed,
 > checked nowhere. Step 2 must add the check to business-expense creation.
 
-## areas.manage  (9)
+## areas.manage  (7)
 | | |
 |---|---|
 | `DELETE` | `/area-assignments/:x` |
-| `GET` | `/area-assignments` |
-| `GET` | `/areas` |
 | `PATCH` | `/areas/:x` |
 | `PATCH` | `/properties/:x/area` |
 | `POST` | `/area-assignments` |
 | `POST` | `/areas/:x/retire` |
 | `POST` | `/areas/:x/unretire` |
 | `POST` | `/areas` |
+
+## areas.view  (2)
+| | |
+|---|---|
+| `GET` | `/area-assignments` |
+| `GET` | `/areas` |
 
 ## audit.view  (4)
 | | |

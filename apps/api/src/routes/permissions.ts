@@ -60,6 +60,11 @@ export default async function permissionRoutes(app: FastifyInstance) {
   const rolesView = requires("roles.view");
   const grantRoles = requires("people.grant-roles");
   const areasManage = requires("areas.manage");
+  // READING THE TREE IS NOT REARRANGING IT. `areas` was the only noun in the
+  // catalogue with a `manage` and no `view`, so the only way to look at the
+  // territory was to hold the power to retire it. Every other read/write
+  // noun — clients, equipment, books, people, time, timeline — has the pair.
+  const areasView = requires("areas.view");
   const scheduleManage = requires("schedule.manage");
 
   // ── The vocabulary ──────────────────────────────────────────────────────
@@ -232,7 +237,7 @@ export default async function permissionRoutes(app: FastifyInstance) {
 
   // ── Areas ───────────────────────────────────────────────────────────────
 
-  app.get("/areas", areasManage, async () => services.areas.list());
+  app.get("/areas", areasView, async () => services.areas.list());
 
   app.post("/areas", areasManage, async (req: any) => {
     const uid = await currentUserId(req);
@@ -273,7 +278,7 @@ export default async function permissionRoutes(app: FastifyInstance) {
 
   // ── Who looks after where ───────────────────────────────────────────────
 
-  app.get("/area-assignments", areasManage, async (req: any) =>
+  app.get("/area-assignments", areasView, async (req: any) =>
     services.areas.assignments({
       userId: typeof req.query?.userId === "string" ? req.query.userId : undefined,
       areaId: typeof req.query?.areaId === "string" ? req.query.areaId : undefined,

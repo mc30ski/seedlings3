@@ -21,7 +21,7 @@
  * which drifted from the first.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Box, Button, Card, Checkbox, HStack, Icon, Input, Portal, Select, Spinner, Table, Text, Textarea, VStack, createListCollection } from "@chakra-ui/react";
 import { Check, CheckCircle2, ChevronDown, ChevronUp, KeyRound, ListOrdered, Plus, Shield, Users as UsersIcon, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/src/lib/api";
@@ -76,6 +76,9 @@ export default function RolesTab({ scope }: { scope: Scope }) {
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Set once the reader taps a role, so the editor knows to scroll into
+   *  view on a phone — the automatic first selection must not. */
+  const pickedRef = useRef(false);
   const [view, setView] = useState<"editor" | "matrix" | "people" | "perspectives">("editor");
   const [titles, setTitles] = useState<string[]>([]);
 
@@ -143,7 +146,13 @@ export default function RolesTab({ scope }: { scope: Scope }) {
         </Box>
       ) : (
       <>
-      <HStack gap={2}>
+      {/* WRAPS, because four labelled buttons do not fit a phone.
+          At 390px the row ran to 528px and took the WHOLE PAGE sideways
+          with it — the header scrolled off too, so the app looked broken
+          rather than the row looking long. A horizontally scrolling tab
+          strip was the other option and was rejected: an off-screen tab
+          nobody knows to scroll for is a tab that does not exist. */}
+      <HStack gap={2} wrap="wrap">
         <Button
           size="sm"
           variant={view === "editor" ? "solid" : "outline"}
@@ -192,7 +201,7 @@ export default function RolesTab({ scope }: { scope: Scope }) {
             roles={roles}
             titles={titles}
             selectedId={selectedId}
-            onSelect={setSelectedId}
+            onSelect={(id) => { pickedRef.current = true; setSelectedId(id); }}
             mayDefine={mayDefine}
             onCreated={async (id) => {
               await load();
@@ -202,6 +211,7 @@ export default function RolesTab({ scope }: { scope: Scope }) {
           {selected && (
             <RoleEditor
               key={selected.id}
+              scrollOnMount={pickedRef.current}
               role={selected}
               roles={roles}
               groups={groups}
@@ -468,7 +478,10 @@ function RoleEditor({
   mayDefine,
   onChanged,
   onDeleted,
+  scrollOnMount,
 }: {
+  /** True when this editor opened because somebody tapped a role. */
+  scrollOnMount?: boolean;
   role: RoleRow;
   roles: RoleRow[];
   groups: EntitlementGroup[];
@@ -538,6 +551,26 @@ function RoleEditor({
       .filter((e) => !after.has(e))
       .filter((e) => scope.can(e as never));
   }, [own, parent, role.effective, scope]);
+
+  /**
+   * Bring the editor into view on a phone.
+   *
+   * The editor renders BELOW the entire role list there, so tapping a role
+   * changed something off-screen: the page did not move and the tap looked
+   * like it had done nothing. Desktop is side-by-side and needs no scroll,
+   * hence the width check. `key={selected.id}` on this component means a
+   * remount per selection, so a mount effect fires on every pick.
+   */
+  const headerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Only when the reader PICKED one. The first role is selected
+    // automatically on load, so scrolling on every mount would jump a
+    // phone past the list to the editor each time the tab is opened.
+    if (!scrollOnMount) return;
+    if (typeof window === "undefined") return;
+    if (window.innerWidth >= 992) return; // Chakra's `lg`, where the two sit side by side
+    headerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [scrollOnMount]);
 
   const inheritCollection = createListCollection({
     items: [
@@ -621,6 +654,47 @@ function RoleEditor({
 
   return (
     <VStack align="stretch" gap={3} flex="1" minW={0}>
+      {/* WHERE THE LIST ENDS AND THE EDITOR BEGINS.
+          On a phone these two stack, and the editor opened on a bare name
+          Input — so a tap on a role added an unlabelled card to a pile of
+          identical cards and the page read as one continuous list.
+
+          SOLID, not tinted. The first version used the same `blue.faint`
+          as the selected row, on the theory that a shared colour ties
+          "this one" to "this is what you are editing". It did the
+          opposite: the row, this header and the company-wide holder badge
+          were then three different things wearing one colour, and nothing
+          said which was a control and which was a title. The hue still
+          links them; the WEIGHT is what separates a filled title bar from
+          a tinted, tappable row. */}
+      <Box
+        ref={headerRef}
+        bg="blue.solid"
+        color="blue.contrast"
+        rounded="lg"
+        px="3"
+        py="2"
+      >
+        <HStack gap={2} align="center" minW={0}>
+          <Icon as={Shield} boxSize={4} flexShrink={0} />
+          <Box minW={0}>
+            <Text
+              fontSize="2xs"
+              textTransform="uppercase"
+              letterSpacing="wide"
+              lineHeight="1.2"
+              // No opacity dimming. White on this blue is 5.1:1, but at 85%
+              // it falls to ~3.9:1 — under AA for text this small. The size,
+              // the caps and the tracking already mark it as an eyebrow.
+            >
+              {mayDefine ? "Editing role" : "Role details"}
+            </Text>
+            <Text fontSize="sm" fontWeight="semibold" truncate>
+              {role.name}
+            </Text>
+          </Box>
+        </HStack>
+      </Box>
       <Card.Root variant="outline">
         <Card.Body py="3" px="3">
           <VStack align="stretch" gap={3}>
@@ -631,9 +705,18 @@ function RoleEditor({
               disabled={!mayDefine}
               placeholder="Role name"
             />
+            {/* GROWS TO ITS CONTENT. At a fixed `rows={2}` any description
+                longer than two lines was sliced through the middle of the
+                third — District Lead's reads "…for the" and then a row of
+                half-height letters. A textarea scrolls, so nothing was
+                lost, but a clipped glyph reads as a broken box rather than
+                as more text, and this field is the one place the person
+                granting a role finds out what it is for. */}
             <Textarea
               size="sm"
               rows={2}
+              autoresize
+              maxH="40"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               disabled={!mayDefine}
@@ -878,12 +961,22 @@ function RoleEditor({
                     {/* A territorial grant is not a company-wide one, and a
                         reader who cannot tell them apart will misread a
                         boundary as absolute. */}
+                    {/* "Everywhere" answered the wrong question — everywhere
+                        WHAT? It means the grant is not tied to an area, which
+                        is only obvious once you have seen the other variant.
+                        Named for the thing it is, with the explanation on
+                        hover for the reader who has not. */}
                     <Badge
                       size="sm"
                       variant="subtle"
                       colorPalette={h.scope === "global" ? "blue" : "purple"}
+                      title={
+                        h.scope === "global"
+                          ? "Held across the whole business — not limited to any area"
+                          : `Held only in ${h.areaName ?? "this area"}, and in the areas beneath it`
+                      }
                     >
-                      {h.scope === "global" ? "Everywhere" : `${h.areaName ?? "an area"} only`}
+                      {h.scope === "global" ? "Company-wide" : `${h.areaName ?? "an area"} only`}
                     </Badge>
                     {h.suspendedAt && (
                       <Badge size="sm" variant="subtle" colorPalette="orange">

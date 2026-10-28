@@ -187,7 +187,13 @@ const LADDER: StarterRole[] = [
       // business-wide half is `reports.business`, granted on Super.
       "payroll.view", "people.manage", "reports.view", "roles.view", "schedule.manage", "supplies.hold",
       "timeline.view",
-      "time.approve"
+      "time.approve",
+      // READ THE TERRITORY. Rearranging it stays on Super
+      // (`areas.manage`); seeing which properties sit where is day-to-day
+      // work for anybody running the schedule. Granted HERE rather than on
+      // Super so Super and District Lead both inherit it — a role holding
+      // `areas.manage` without this would open the Areas tab onto a 403.
+      "areas.view"
     ],
     perspectiveOrder: 3,
   },
