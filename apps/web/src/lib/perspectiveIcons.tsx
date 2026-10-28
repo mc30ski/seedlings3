@@ -2,247 +2,48 @@
  * The one place a perspective's icon KEY becomes a drawable component.
  *
  * The database stores keys (`PERSPECTIVE_ICONS` in @repo/permissions) so
- * that no row points into a UI library. This map is the other half. It is
- * typed as a complete `Record` over the key union, so adding a key without
- * a component is a build error rather than a blank space in the picker.
+ * that no row points into a UI library.
  *
- * MOSTLY LUCIDE, DELIBERATELY NOT ONLY. The icons that shipped before
- * the roles refactor were react-icons, and the lucide equivalents are
- * used here wherever one exists, because lucide is what the rest of this
- * app draws with. `user-key` is the exception: lucide has no person
- * holding a key, and the nearest it offers (`UserCog`, a person with a
- * gear) was tried and is not the same picture. `react-icons` is already
- * a dependency and this header already draws Feather and Grommet icons
- * side by side, so the real rule is "the right glyph", not "one set".
+ * TWO TIERS, FOR BUNDLE SIZE, NOT FOR TASTE.
+ *
+ * The catalogue is every icon lucide ships — about 1,850. Importing them
+ * all by name would put roughly a megabyte of JavaScript in front of every
+ * first paint, because this map is reachable from the header chip, which is
+ * always on screen. So:
+ *
+ *   · the twenty COMMON keys, plus the handful of legacy aliases, are
+ *     imported statically and resolve synchronously — the chip draws on the
+ *     first frame with no flash and no request;
+ *   · everything else resolves from `lib/allLucideIcons`, a single async
+ *     chunk fetched the first time anything asks for an icon outside that
+ *     set. One chunk, shared: a picker rendering 1,835 glyphs triggers one
+ *     module load, not 1,835.
+ *
+ * `useIconComponent` is how a component asks, because the answer can arrive
+ * a frame late. `perspectiveIconFor` is the synchronous form and is honest
+ * about its limit: it returns null for anything outside the static set.
+ *
+ * MOSTLY LUCIDE, DELIBERATELY NOT ONLY. `user-key` is the exception:
+ * lucide has no person holding a key, and the nearest it offers (`UserCog`,
+ * a person with a gear) was tried and is not the same picture. `react-icons`
+ * is already a dependency, so the rule is "the right glyph", not "one set".
  */
+import { useEffect, useState } from "react";
+import { Icon } from "@chakra-ui/react";
 import {
-  Ambulance,
-  Archive,
-  AtSign,
-  Award,
-  Axe,
-  BadgeCheck,
-  BadgePercent,
-  Banknote,
-  BanknoteArrowDown,
-  BanknoteArrowUp,
-  Barcode,
-  Beer,
-  Bell,
-  Bike,
-  Binoculars,
-  BookCheck,
-  Bookmark,
-  BookOpen,
-  Boxes,
-  Briefcase,
-  BriefcaseBusiness,
-  Bug,
-  Building,
-  Building2,
-  Bus,
-  Cake,
-  Calculator,
-  CalendarCheck,
-  CalendarClock,
-  CalendarDays,
-  Camera,
-  Car,
-  Caravan,
-  Carrot,
-  ChartColumn,
-  ChartLine,
-  ChartNoAxesColumn,
-  ChartPie,
-  ChartSpline,
-  CircleAlert,
-  CircleCheck,
-  CircleDollarSign,
-  ClipboardCheck,
-  ClipboardList,
-  Clock,
-  Cloud,
-  CloudLightning,
-  CloudRain,
-  CloudSnow,
-  CloudSun,
-  Clover,
-  Coffee,
-  Cog,
-  Coins,
-  Compass,
-  Construction,
-  Contact,
-  Container,
-  CreditCard,
-  Crown,
-  CupSoda,
-  Database,
-  Dog,
-  DollarSign,
-  DoorOpen,
-  Drill,
-  Droplets,
-  Eye,
-  Factory,
-  Fence,
-  FileCheck,
-  FileClock,
-  FileLock,
-  FilePen,
-  FileSearch,
-  FileSignature,
-  FileSpreadsheet,
-  FileText,
-  Filter,
-  Fingerprint,
-  FireExtinguisher,
-  Flag,
-  Flower2,
-  Folder,
-  Forklift,
-  Fuel,
-  Gauge,
-  Gavel,
-  Gift,
-  Glasses,
-  Globe,
-  GraduationCap,
-  Hammer,
-  HandCoins,
-  Handshake,
-  HardHat,
-  Headset,
-  Heart,
-  History,
-  Home,
-  Hotel,
-  IdCard,
-  Inbox,
-  Info,
-  Key,
-  KeyRound,
-  Landmark,
-  LandPlot,
-  Laptop,
-  LayoutDashboard,
-  Leaf,
-  Library,
-  LifeBuoy,
-  Lightbulb,
-  Link,
-  ListChecks,
-  Lock,
-  Mail,
-  Map,
-  MapPin,
-  Megaphone,
-  MessageSquare,
-  Microscope,
-  Mountain,
-  Navigation,
-  Newspaper,
-  OctagonAlert,
-  Package,
-  PackageCheck,
-  PackageOpen,
-  Paintbrush,
-  PaintRoller,
-  Paperclip,
-  PencilRuler,
-  Percent,
-  Phone,
-  PhoneCall,
-  PiggyBank,
-  Pin,
-  Pizza,
-  Plane,
-  Presentation,
-  Printer,
-  Projector,
-  Puzzle,
-  QrCode,
-  Radar,
-  Receipt,
-  ReceiptText,
-  RefreshCw,
-  Rocket,
-  Route,
-  Rss,
-  Ruler,
-  Scale,
-  Scan,
-  ScanEye,
-  School,
-  Scissors,
-  ScrollText,
-  Search,
-  SearchCheck,
-  Server,
-  Settings,
-  Share2,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  ShoppingBag,
-  ShoppingCart,
-  Shovel,
-  Shrub,
-  Signature,
-  Siren,
-  Sliders,
-  Smartphone,
-  Sparkles,
-  Split,
-  SprayCan,
-  Sprout,
-  SquarePen,
-  Stamp,
-  Star,
-  Stethoscope,
-  Store,
-  Sun,
-  Table,
-  Target,
-  Thermometer,
-  Ticket,
-  Timer,
-  Tractor,
-  TrainFront,
-  TreeDeciduous,
-  TreePine,
-  TrendingDown,
-  TrendingUp,
-  TriangleAlert,
-  Trophy,
-  Truck,
-  TruckElectric,
-  Umbrella,
-  Unlock,
-  User,
-  UserCheck,
-  UserCog,
-  UserMinus,
-  UserPlus,
-  UserRoundSearch,
-  Users,
-  UserX,
-  Utensils,
-  Wallet,
-  Warehouse,
-  Waves,
-  Wheat,
-  Wifi,
-  Wind,
-  Wrench,
-  Zap,
-  ZoomIn,
+  Banknote, Briefcase, Building2, Calculator, ChartNoAxesColumn, ClipboardList,
+  Eye, Flower2, GraduationCap, HardHat, Home, Key, Leaf, Share2, Shield,
+  ShieldCheck, Star, TreeDeciduous, Truck, User, UserCog, Users, Wrench,
 } from "lucide-react";
 // The original Admin icon, kept because nothing in lucide draws it.
 import { GrUserAdmin } from "react-icons/gr";
-import type { PerspectiveIcon } from "@repo/permissions";
 
-export const PERSPECTIVE_ICON_COMPONENTS: Record<PerspectiveIcon, React.ElementType> = {
+/**
+ * Resolved synchronously, always in the main bundle: the twenty offered
+ * before "Show more", plus the four legacy aliases whose keys are not
+ * lucide names and so cannot be resolved by the lazy path.
+ */
+export const PERSPECTIVE_ICON_COMPONENTS: Record<string, React.ElementType> = {
   home: Home,
   user: User,
   "user-cog": UserCog,
@@ -263,247 +64,110 @@ export const PERSPECTIVE_ICON_COMPONENTS: Record<PerspectiveIcon, React.ElementT
   star: Star,
   "graduation-cap": GraduationCap,
   "hard-hat": HardHat,
-  // Behind "Show more" in the picker. Same standing once chosen — the
-  // tiering is which ones are offered first, not which ones are real.
-  scale: Scale,
-  search: Search,
-  "clipboard-check": ClipboardCheck,
-  receipt: Receipt,
-  sprout: Sprout,
+  // Legacy aliases. Not lucide spellings, kept because a role in the
+  // database may already wear one. Each duplicates a glyph the picker
+  // offers under its real name, so none of them appear in the picker.
   tree: TreeDeciduous,
-  scissors: Scissors,
-  "map-pin": MapPin,
-  route: Route,
-  calendar: CalendarDays,
-  phone: Phone,
-  lock: Lock,
-  // People and roles
-  "user-check": UserCheck,
-  "user-plus": UserPlus,
-  "id-card": IdCard,
-  handshake: Handshake,
-  // Standing and recognition
-  crown: Crown,
-  award: Award,
-  trophy: Trophy,
-  gavel: Gavel,
-  "badge-check": BadgeCheck,
-  // Places and premises
-  building: Building,
-  factory: Factory,
-  store: Store,
-  warehouse: Warehouse,
-  landmark: Landmark,
-  // Paper and records
-  folder: Folder,
-  "file-text": FileText,
-  archive: Archive,
-  inbox: Inbox,
-  "book-open": BookOpen,
-  printer: Printer,
-  signature: Signature,
-  // Money
-  "dollar-sign": DollarSign,
-  coins: Coins,
-  "credit-card": CreditCard,
-  wallet: Wallet,
-  "piggy-bank": PiggyBank,
-  "trending-up": TrendingUp,
-  "chart-pie": ChartPie,
-  percent: Percent,
-  "hand-coins": HandCoins,
-  // Time
-  "calendar-check": CalendarCheck,
-  "calendar-clock": CalendarClock,
-  clock: Clock,
-  timer: Timer,
-  history: History,
-  // Talking to people
-  "phone-call": PhoneCall,
-  "message-square": MessageSquare,
-  mail: Mail,
-  megaphone: Megaphone,
-  bell: Bell,
-  headset: Headset,
-  // Vehicles and the road
-  car: Car,
-  bus: Bus,
-  bike: Bike,
-  plane: Plane,
-  forklift: Forklift,
-  tractor: Tractor,
-  fuel: Fuel,
-  // Tools and maintenance
-  hammer: Hammer,
-  drill: Drill,
-  settings: Settings,
-  sliders: Sliders,
-  gauge: Gauge,
-  zap: Zap,
-  lightbulb: Lightbulb,
-  "spray-can": SprayCan,
-  // Where things are
-  map: Map,
-  navigation: Navigation,
-  compass: Compass,
-  globe: Globe,
-  "land-plot": LandPlot,
-  // Weather and ground
-  "tree-pine": TreePine,
   flower2: Flower2,
-  sun: Sun,
-  "cloud-sun": CloudSun,
-  "cloud-rain": CloudRain,
-  droplets: Droplets,
-  thermometer: Thermometer,
-  // Keys and locks
-  unlock: Unlock,
-  "key-round": KeyRound,
-  fingerprint: Fingerprint,
-  "shield-alert": ShieldAlert,
-  // Status and attention
-  "circle-check": CircleCheck,
-  "circle-alert": CircleAlert,
-  "triangle-alert": TriangleAlert,
-  info: Info,
-  heart: Heart,
-  sparkles: Sparkles,
-  target: Target,
-  // Lists and screens
-  "list-checks": ListChecks,
-  "layout-dashboard": LayoutDashboard,
-  filter: Filter,
-  "refresh-cw": RefreshCw,
-  database: Database,
-  // Odds and ends
-  package: Package,
-  boxes: Boxes,
-  coffee: Coffee,
-  camera: Camera,
-  // Oversight and inspection
-  "scan-eye": ScanEye,
-  "search-check": SearchCheck,
-  "file-search": FileSearch,
-  binoculars: Binoculars,
-  microscope: Microscope,
-  glasses: Glasses,
-  "zoom-in": ZoomIn,
-  radar: Radar,
-  "file-check": FileCheck,
-  "book-check": BookCheck,
-  // Selling and the storefront
-  "shopping-cart": ShoppingCart,
-  "shopping-bag": ShoppingBag,
-  "badge-percent": BadgePercent,
-  ticket: Ticket,
-  barcode: Barcode,
-  "qr-code": QrCode,
-  gift: Gift,
-  scan: Scan,
-  // Contracts and the law
-  "file-signature": FileSignature,
-  "file-pen": FilePen,
-  stamp: Stamp,
-  "scroll-text": ScrollText,
-  "file-lock": FileLock,
-  // Hiring and the team
-  "user-round-search": UserRoundSearch,
-  "user-minus": UserMinus,
-  "user-x": UserX,
-  contact: Contact,
-  "briefcase-business": BriefcaseBusiness,
-  // Training and knowledge
-  library: Library,
-  presentation: Presentation,
-  projector: Projector,
-  "square-pen": SquarePen,
-  "pencil-ruler": PencilRuler,
-  // Numbers and reporting
-  "chart-column": ChartColumn,
-  "chart-line": ChartLine,
-  "chart-spline": ChartSpline,
-  "trending-down": TrendingDown,
-  table: Table,
-  "file-spreadsheet": FileSpreadsheet,
-  // Banking and billing
-  "banknote-arrow-up": BanknoteArrowUp,
-  "banknote-arrow-down": BanknoteArrowDown,
-  "circle-dollar-sign": CircleDollarSign,
-  "receipt-text": ReceiptText,
-  "file-clock": FileClock,
-  split: Split,
-  // The building and the site
   building2: Building2,
-  hotel: Hotel,
-  school: School,
-  fence: Fence,
-  "door-open": DoorOpen,
-  construction: Construction,
-  // Trades and the shop
-  "paint-roller": PaintRoller,
-  paintbrush: Paintbrush,
-  ruler: Ruler,
-  axe: Axe,
-  shovel: Shovel,
-  cog: Cog,
-  // Growing things
-  shrub: Shrub,
-  clover: Clover,
-  carrot: Carrot,
-  wheat: Wheat,
-  bug: Bug,
-  dog: Dog,
-  // Ground and water
-  mountain: Mountain,
-  waves: Waves,
-  wind: Wind,
-  "cloud-lightning": CloudLightning,
-  "cloud-snow": CloudSnow,
-  umbrella: Umbrella,
-  // Moving things
-  "truck-electric": TruckElectric,
-  caravan: Caravan,
-  container: Container,
-  "package-check": PackageCheck,
-  "package-open": PackageOpen,
-  "train-front": TrainFront,
-  // Screens and systems
-  server: Server,
-  cloud: Cloud,
-  wifi: Wifi,
-  smartphone: Smartphone,
-  laptop: Laptop,
-  // Safety and the first-aid kit
-  siren: Siren,
-  "fire-extinguisher": FireExtinguisher,
-  "life-buoy": LifeBuoy,
-  "octagon-alert": OctagonAlert,
-  ambulance: Ambulance,
-  stethoscope: Stethoscope,
-  // Getting the word out
-  rss: Rss,
   share2: Share2,
-  "at-sign": AtSign,
-  link: Link,
-  newspaper: Newspaper,
-  // Rest and refreshment
-  "cup-soda": CupSoda,
-  pizza: Pizza,
-  utensils: Utensils,
-  cake: Cake,
-  beer: Beer,
-  // Odds and ends two
-  puzzle: Puzzle,
-  rocket: Rocket,
-  flag: Flag,
-  bookmark: Bookmark,
-  paperclip: Paperclip,
-  pin: Pin,
 };
 
-/** Null for no icon and for a key this build does not know — a row
- *  written by a newer deploy must not crash an older one. */
+/**
+ * Null for no icon, and for a key outside the static set — a row written by
+ * a newer deploy must not crash an older one. Use `useIconComponent` where
+ * the full catalogue matters; this only sees what is already in the bundle.
+ */
 export function perspectiveIconFor(key?: string | null): React.ElementType | null {
   if (!key) return null;
-  return (PERSPECTIVE_ICON_COMPONENTS as Record<string, React.ElementType>)[key] ?? null;
+  return PERSPECTIVE_ICON_COMPONENTS[key] ?? null;
+}
+
+/**
+ * One in-flight load, shared by every caller.
+ *
+ * Kept at module scope rather than inside the hook so that a grid of 1,835
+ * icons mounting in the same frame produces exactly one `import()`. Once
+ * settled, `loaded` answers synchronously, so later renders never flash.
+ */
+type Resolver = (key: string) => React.ElementType | null;
+let loaded: Resolver | null = null;
+let inFlight: Promise<Resolver> | null = null;
+
+function loadAll(): Promise<Resolver> {
+  if (loaded) return Promise.resolve(loaded);
+  if (!inFlight) {
+    inFlight = import("./allLucideIcons")
+      .then((m) => {
+        loaded = m.lucideByKebab;
+        return loaded;
+      })
+      .catch((err) => {
+        // Reset so a transient network failure is retried by the next
+        // render rather than wedging every icon for the session.
+        inFlight = null;
+        throw err;
+      });
+  }
+  return inFlight;
+}
+
+/**
+ * The component for a key, resolving the lazy catalogue if it has to.
+ *
+ * Returns null while loading, so callers render nothing (or their own
+ * fallback) for that frame. An icon arriving a beat late beats a spinner
+ * the size of a glyph, and for anything common it never happens at all.
+ */
+export function useIconComponent(key?: string | null): React.ElementType | null {
+  const staticHit = perspectiveIconFor(key);
+  const [resolved, setResolved] = useState<React.ElementType | null>(() =>
+    key && !staticHit && loaded ? loaded(key) : null,
+  );
+
+  useEffect(() => {
+    if (!key || staticHit) return;
+    if (loaded) {
+      setResolved(loaded(key));
+      return;
+    }
+    let live = true;
+    loadAll()
+      .then((resolve) => { if (live) setResolved(resolve(key)); })
+      .catch(() => { if (live) setResolved(null); });
+    return () => { live = false; };
+  }, [key, staticHit]);
+
+  return staticHit ?? resolved;
+}
+
+/** Warm the chunk ahead of a grid, so the picker opens filled in. */
+export function preloadAllIcons(): void {
+  void loadAll().catch(() => {});
+}
+
+/**
+ * Draw a perspective icon by key.
+ *
+ * A component rather than a function because resolving outside the common
+ * set needs a hook, and hooks cannot be called from inside a `.map()`.
+ * Every instance shares the one module load, so a grid of these costs one
+ * request however many cells it has.
+ */
+export function PerspectiveGlyph({
+  iconKey,
+  fallback,
+  boxSize = 4,
+  color,
+}: {
+  iconKey?: string | null;
+  /** Drawn when the key is empty or unknown. Omit to draw nothing. */
+  fallback?: React.ElementType;
+  boxSize?: number;
+  color?: string;
+}) {
+  const resolved = useIconComponent(iconKey);
+  const Cmp = resolved ?? fallback;
+  if (!Cmp) return null;
+  return <Icon as={Cmp} boxSize={boxSize} color={color} />;
 }

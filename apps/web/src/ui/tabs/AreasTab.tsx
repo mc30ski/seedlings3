@@ -714,8 +714,16 @@ function AreaDetail({
           a filled title bar never reads as another tappable row. */}
       <Box
         ref={headerRef}
-        bg="blue.solid"
-        color="blue.contrast"
+        // THEMED, NOT BLUE. `blue.solid` is a fixed hue with a light/dark
+        // pair — it renders the same blue in all 14 themes, so this bar sat
+        // bright blue inside Funkadelic's magenta chrome and Espresso's
+        // browns. A filled title bar is CHROME, not status, so it takes the
+        // theme's own accent. `fg.onAccent` is the ink tuned per theme to
+        // sit on it (near-black on Dark's pale blue, white on Spring's
+        // green) — `blue.contrast` is white always, which fails on the
+        // light-accent themes.
+        bg="accent.solid"
+        color="fg.onAccent"
         rounded="lg"
         px="3"
         py="2"

@@ -1113,14 +1113,25 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
           const notFieldCleared = !(u.capabilities ?? []).includes("work.claim");
           const displayName = u.displayName || u.email;
           // WHETHER THE EDITABLE "ROLES" SECTION IS ON SCREEN for this row.
-          // It is the same condition the section itself is rendered under,
-          // kept here because the badge strip below has to know: with both
-          // showing, every role appeared twice on the same card, once as a
-          // status chip and once as a removable one a few pixels below.
-          // Not a copy of the rule by choice — the section sits inside a
-          // branch too deep to lift, so the two must be changed together.
+          //
+          // THE SECTION ITSELF NOW USES THIS VALUE, rather than restating
+          // the condition. It used to be a hand-kept copy with a comment
+          // saying "the two must be changed together" — and then they
+          // weren't. Dropping `isMe` from the section, so an operator could
+          // manage their own roles, left the `!isMe` here, so on your own
+          // card every role rendered twice: once as a status chip up here
+          // and again as a removable chip a few pixels below, in two
+          // different colour schemes. A duplicated condition with a comment
+          // asking people to remember is not a mechanism; one expression
+          // used in both places is.
+          //
+          // The parts: a read-only Directory has no controls; `meReady`
+          // gates on knowing who the viewer is; a pending sign-up shows
+          // approve/decline instead; a client holds no staff roles; and
+          // `people.grant-roles` is the capability the grant endpoint is
+          // guarded on.
           const rolesSectionShown =
-            !readOnly && meReady && !isMe && u.isApproved && !isClient && canGrantRoles;
+            !readOnly && meReady && u.isApproved && !isClient && canGrantRoles;
 
           return (
             <Box
@@ -1316,7 +1327,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                                 them worked. What a person holds is now the
                                 badges below, each removable, plus a picker
                                 of everything they do not hold yet. */}
-                            {!isClient && canGrantRoles && (
+                            {rolesSectionShown && (
                               <RoleGrantControls
                                 user={u}
                                 catalogue={roleCatalogue}
