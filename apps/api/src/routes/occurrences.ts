@@ -1727,11 +1727,30 @@ Respond ONLY with valid JSON in this exact format:
     // payment splits, promised payouts and processor fees — the perspective showed
     // more than it claimed to. Resolve the CALLER from their principal; only
     // resolve somebody ELSE from the database.
-    const effectiveNotCleared = !(
-      uid === callerUid
-        ? callerCan(req, "work.claim")
-        : await userCan(prisma, uid, "work.claim")
-    );
+    //
+    // TWO WAYS TO SEE THE WHOLE BOARD, and they are different people.
+    // `work.claim` is "you do this work, so you see the visits you are on
+    // and the rest of the day around them". `schedule.view-all` is "you
+    // watch the operation without working it" — a bookkeeper, an owner's
+    // partner, anyone read-only. Before it existed, NOT being field-cleared
+    // was taken to mean junior, so every oversight role was handed a feed
+    // containing only its own assignments, which for somebody who works no
+    // visits is an empty page. Resolved through the same caller/other
+    // split as everything else here, so a narrowed perspective narrows it.
+    const effectiveHolds = async (
+      e: Parameters<typeof callerCan>[1],
+    ): Promise<boolean> =>
+      uid === callerUid ? callerCan(req, e) : await userCan(prisma, uid, e);
+    // KEPT APART ON PURPOSE. Field clearance answers "whose pay may you
+    // see" — the redaction below strips other workers' splits, promised
+    // payouts and processor fees from anyone who is not cleared.
+    // `schedule.view-all` answers a different question, "which visits
+    // exist for you", and says nothing about money. Folding the two into
+    // one flag would have handed every oversight reader the whole team's
+    // pay as a side effect of being allowed to see the calendar.
+    const effectiveFieldCleared = await effectiveHolds("work.claim");
+    const effectiveSeesEveryVisit = await effectiveHolds("schedule.view-all");
+    const effectiveNotCleared = !(effectiveFieldCleared || effectiveSeesEveryVisit);
     const [pins, likes, reminders, observedAssignments] = await Promise.all([
       prisma.pinnedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
       prisma.likedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
@@ -1834,10 +1853,18 @@ Respond ONLY with valid JSON in this exact format:
     // expense costs (business-internal financial data). Order matters
     // — observer redaction is heavier and runs first; trainee
     // redaction skips occurrences already observer-redacted.
+    // TWO REASONS TO SEE A SPLIT, AND THEY ARE INDEPENDENT: you are on the
+    // crew (`work.claim`), or the money is your job (`money.view`). Keyed
+    // on clearance alone, the person whose entire role is the money was
+    // the one person redacted — while every field worker saw it. NOT
+    // `schedule.view-all`: seeing which visits exist says nothing about
+    // whether you may see what people earn.
+    const effectiveMaySeeCrewPay =
+      effectiveFieldCleared || (await effectiveHolds("money.view"));
     redactUnclearedFieldsForCaller(
       filtered as any[],
       uid,
-      !effectiveNotCleared,
+      effectiveMaySeeCrewPay,
       effectiveCanManageSchedule,
     );
     // Peek redaction: for the Worker Jobs "Team" toggle. Any occ that
@@ -1928,10 +1955,21 @@ Respond ONLY with valid JSON in this exact format:
     // Per-occurrence trainee redaction — strip other workers' splits,
     // completion percentages, promised payouts, processor fees, and
     // expense costs. Keeps the caller's own split visible.
+    // `inventory.pull` IS NOT FIELD CLEARANCE, and reading it here was the
+    // FOURTH copy of that mistake — the sibling call in `GET /occurrences`
+    // carries a comment naming the first three. The starter Field Clearance
+    // role grants claim, complete and pull together, so the wrong read
+    // never showed; the grantable "May pull inventory" role exists for the
+    // office person who fetches supplies and runs no visits, and this
+    // handed exactly that person the redaction bypass — other workers'
+    // splits, promised payouts, processor fees and expense costs.
+    //
+    // Same rule as the sibling: on the crew (`work.claim`) or the money is
+    // your job (`money.view`).
     redactUnclearedFieldsForCaller(
       occs as any[],
       uid,
-      callerCan(req, "inventory.pull"),
+      callerCan(req, "work.claim") || callerCan(req, "money.view"),
       canManageSchedule,
     );
     return occs;
@@ -2904,7 +2942,13 @@ Respond ONLY with valid JSON in this exact format:
       if (!assignee) throw app.httpErrors.forbidden("You are not assigned to this job.");
       const isClaimer = assignee.assignedById === uid && assignee.role !== "observer";
       if (!isClaimer) throw app.httpErrors.forbidden("Only the claimer can accept payments.");
-      if (!callerCan(req, "inventory.pull"))
+      // `work.complete`, whose copy is "Start a visit, finish it, and take
+      // payment at the door" — this is the door. It read `inventory.pull`,
+      // the fifth copy of that mistake: invisible while Field Clearance
+      // granted claim, complete and pull together, and wrong the moment an
+      // operator grants the first two without the third, when the claimer
+      // can finish the visit and then be refused the money. See G48.
+      if (!callerCan(req, "work.complete"))
         throw app.httpErrors.forbidden("You are not cleared to accept payments.");
     }
     const body = req.body || {};

@@ -329,12 +329,14 @@ user is created or their type changes, then live as ordinary grants — see
 | Entitlement | Copy shown in the UI |
 |---|---|
 | `schedule.view` | See the calendar, jobs and visits |
+| `schedule.view-all` | See every visit, not only the ones you are on |
 | `schedule.contribute` | Add notes, photos and guidance to a visit |
 | `schedule.manage` | Create, move and reschedule visits, and assign who does them |
 | `crews.view` | See crews and who is on them |
 | `crews.manage` | Build and change crews |
 | `routes.plan` | Plan and optimise the driving order for a day |
 | `clients.view` | See customers, properties and contacts |
+| `clients.view-all` | See every customer and property, not only the ones you work |
 | `clients.contribute` | Add photos and notes to a property |
 | `clients.manage` | Add and edit customers, properties and contacts |
 | `estimates.create` | Write and send quotes |
@@ -437,7 +439,7 @@ user is created or their type changes, then live as ordinary grants — see
 | `areas.view` | See the area tree and what is in each one |
 | `areas.manage` | Create, rename, retire and reorganise areas |
 
-**66 entitlements.**
+**68 entitlements.**
 
 **Symmetry is deliberate and applied completely.** Every family carries both
 verbs even where `view` is rarely granted, for two reasons. Irregularity

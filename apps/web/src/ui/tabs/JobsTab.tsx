@@ -1634,6 +1634,18 @@ export default function JobsTab({
   // whatever their worker type implied.
   const notFieldCleared =
     viewAsFieldCleared !== undefined ? !viewAsFieldCleared : !isFieldCleared(me);
+  /**
+   * SEES THE WHOLE BOARD WITHOUT RUNNING IT.
+   *
+   * The two filters below narrow to "mine" for anybody without
+   * `schedule.manage`, and to "only mine" again for anybody without field
+   * clearance. Both are right for a worker and wrong for an oversight
+   * role: a bookkeeper or an owner's partner works no visits, so both
+   * branches leave them an empty page. `schedule.view-all` is the
+   * capability that says "show the whole board", and it grants no power to
+   * change any of it. The server applies the same rule to the feed.
+   */
+  const seesEveryVisit = !!scope?.can?.("schedule.view-all");
   // ═════════════════════════════════════════════════════════════════════
   // TEAM / PEEK MODEL — see docstring block below every field.
   // ═════════════════════════════════════════════════════════════════════
@@ -1984,7 +1996,12 @@ export default function JobsTab({
       // would see every teammate's price/splits/payouts (the whole
       // point of the Team toggle is to give workers a view-only peek).
       // Omitted when not in self-scoped view → the full schedule.
-      if (!canManageSchedule) qs.set("selfScoped", "1");
+      // …unless the reader oversees the schedule. `selfScoped` asks the
+      // SERVER to cut the feed down to the caller's own work, so leaving it
+      // on would undo the client-side fix above one layer lower. An
+      // oversight role still gets the peek redaction on teammates'
+      // financials, which is a separate question from which visits exist.
+      if (!canManageSchedule && !seesEveryVisit) qs.set("selfScoped", "1");
       // When admin is impersonating a single worker, ask the API to attach that
       // worker's reminders/pins/likes instead of the manager’s. Without this the DUE
       // filter (which keys off attached reminders) would show the manager’s reminders
@@ -1995,7 +2012,7 @@ export default function JobsTab({
       // Same scoping params as the feed (selfScoped / viewAsUserId), minus
       // the date range — see `expiredGhostCount`.
       const countQs = new URLSearchParams();
-      if (!canManageSchedule) countQs.set("selfScoped", "1");
+      if (!canManageSchedule && !seesEveryVisit) countQs.set("selfScoped", "1");
       if (canManageSchedule && viewAsUserIds?.length === 1) countQs.set("viewAsUserId", viewAsUserIds[0]);
       void apiGet<{ expiringSoon: number; expired: number }>(
         `/api/occurrences/ghost-expiry-counts${countQs.toString() ? `?${countQs}` : ""}`,
@@ -2024,7 +2041,7 @@ export default function JobsTab({
           if (hitsViewAs) return true;
           return peekActive;
         });
-      } else if (!canManageSchedule && myId) {
+      } else if (!canManageSchedule && !seesEveryVisit && myId) {
         if (notFieldCleared) {
           // Trainees only see jobs they are assigned to (no unassigned/
           // claimable). Timeline events (workflow=EVENT) need
@@ -2420,7 +2437,7 @@ export default function JobsTab({
           if (notFieldCleared) return assignees.some((a) => idSet.has(a.userId));
           return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId));
         });
-      } else if (!canManageSchedule && myId) {
+      } else if (!canManageSchedule && !seesEveryVisit && myId) {
         if (notFieldCleared) {
           list = list.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId));
         } else {

@@ -2244,3 +2244,78 @@ describe("[G47] the area lens", () => {
     ).toEqual([]);
   });
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G48 — `inventory.pull` IS NOT FIELD CLEARANCE.
+//
+// It has now been read as one FOUR times. The starter Field Clearance role
+// grants `work.claim`, `work.complete` and `inventory.pull` together, so
+// for as long as those travelled as a bundle the wrong read was invisible —
+// every holder of one held all three. The grantable "May pull inventory"
+// role broke the bundle ON PURPOSE: it exists for the office person who
+// fetches supplies and runs no visits.
+//
+// Each time, the consequence was the same and silent: that person was
+// treated as field-cleared and handed the uncleared-redaction BYPASS —
+// other workers' payment splits, completion percentages, promised payouts,
+// processor fees and expense costs. The fourth copy was found on
+// `GET /occurrences/mine` on 2026-10-28, forty lines from a comment that
+// named the first three.
+//
+// Clearance is `work.claim`. Seeing what the crew is paid is
+// `work.claim || money.view` — being on the crew, or the money being your
+// job. Fetching a mower is neither.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("[G48] inventory.pull is not a clearance test", () => {
+  /** Lines where the entitlement decides who may see something. */
+  const SUSPECT = /(cleared|redact|bypass|maySee|canSee|visib)/i;
+
+  function sources(): string[] {
+    return [
+      ...walk(path.join(API, "routes"), /\.ts$/),
+      ...walk(path.join(API, "services"), /\.ts$/),
+      ...walk(path.join(API, "lib"), /\.ts$/),
+      ...walk(path.join(WEB, "src"), /\.tsx?$/),
+    ].filter((f) => !/\.test\.tsx?$/.test(f));
+  }
+
+  it("catches one when shown one", () => {
+    // The gate reads its own detector back, so a regex that quietly stops
+    // matching cannot pass by finding nothing.
+    expect(SUSPECT.test('      callerCan(req, "inventory.pull"),  // callerFieldCleared')).toBe(true);
+    expect(SUSPECT.test('const cleared = can("inventory.pull");')).toBe(true);
+    expect(SUSPECT.test('redactUnclearedFieldsForCaller(rows, uid, pull, admin)')).toBe(true);
+    // …and leaves an honest use alone: actually pulling inventory.
+    expect(SUSPECT.test('if (!callerCan(req, "inventory.pull")) throw forbidden')).toBe(false);
+  });
+
+  it("no clearance or redaction decision reads inventory.pull", () => {
+    const files = sources();
+    expect(files.length, "no source files were read").toBeGreaterThan(50);
+
+    const offenders: string[] = [];
+    for (const f of files) {
+      const lines = read(f).split("\n");
+      lines.forEach((line, i) => {
+        if (!line.includes("inventory.pull")) return;
+        const t = line.trim();
+        if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return;
+        // The decision may name the entitlement on this line, or take it as
+        // an argument whose meaning is set by the line above — both show up
+        // within a line of the word that gives the game away.
+        const context = [lines[i - 1] ?? "", line, lines[i + 1] ?? ""].join(" ");
+        if (SUSPECT.test(context)) {
+          offenders.push(`${path.relative(path.join(API, "../../.."), f)}:${i + 1}  ${t.slice(0, 76)}`);
+        }
+      });
+    }
+    expect(
+      offenders,
+      "`inventory.pull` is permission to fetch equipment, not field " +
+        "clearance and not permission to see what the crew is paid. " +
+        "Clearance is `work.claim`; crew pay is `work.claim || money.view`. " +
+        "Read it only to decide whether somebody may take equipment out.",
+    ).toEqual([]);
+  });
+});

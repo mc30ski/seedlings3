@@ -64,7 +64,11 @@ const inArea = (areaPath: string, name: string, ...entitlements: Entitlement[]):
 });
 
 describe("the entitlement vocabulary", () => {
-  it("has 66 entitlements, unique, grouped", () => {
+  it("has 68 entitlements, unique, grouped", () => {
+    // 68 since `schedule.view-all` and `clients.view-all` split WATCHING
+    // the operation from working it: not being field-cleared used to
+    // mean 'sees only their own', which made every read-only oversight
+    // role an empty page.
     // 66 since `areas.view` split off `areas.manage` — reading the
     // territory is not rearranging it, and `areas` was the only noun
     // in the vocabulary with a manage and no view.
@@ -105,7 +109,7 @@ describe("the entitlement vocabulary", () => {
     // `content.manage` — education.md makes approving a guide `content.approve`
     // ("Holders of `schedule.manage` cannot publish their own work, deliberately") and both tiers
     // had been pointed at one entitlement.
-    expect(ENTITLEMENTS).toHaveLength(66);
+    expect(ENTITLEMENTS).toHaveLength(68);
     // Uniqueness measured against the array itself, not a second copy of
     // the number. Two hardcoded counts for one fact drift: this one still
     // said 60 after the line above was updated to 61, and the failure
