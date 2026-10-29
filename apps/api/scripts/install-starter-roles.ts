@@ -517,17 +517,41 @@ async function installStarterSettings(
   }> = [
     {
       key: "PORTFOLIO_TIER_NAMES",
-      // Zone sits below Route: a route is a journey, a zone is a patch.
-      value: JSON.stringify(["Region", "District", "Territory", "Route", "Zone"]),
-      // What this list used to be. An existing database keeps its own
-      // value — the operator may have replaced the whole vocabulary — but
-      // one left exactly as shipped is still ours to extend. Same
-      // reasoning as the role-description placeholder above: replace only
-      // what we know we wrote.
-      supersedes: [JSON.stringify(["Region", "District", "Territory", "Route"])],
+      // A SPINE AND TWO CROSS-CUTTING KINDS.
+      //
+      // State → Market → District → Zone nest, in that order. Route and
+      // Book do NOT: they sit at the lowest node containing everything
+      // they touch, and a property belongs to one AS WELL AS its zone,
+      // which is what many-to-many membership is for.
+      //
+      // Dropped from the old list: "Region", which only earns a place
+      // above State and can be typed when a business is that size; and
+      // "Territory", which means "district" to some people and "a rep's
+      // patch" to others — two words for one rung is exactly the
+      // confusion this list exists to prevent.
+      //
+      // Each entry carries its own help text, shown under the picker, so
+      // the distinction between a Zone and a Route is answered where the
+      // choice is made rather than in a document nobody opens.
+      value: JSON.stringify([
+        { name: "State", description: "A legal boundary. Payroll tax, licensing, insurance and wage floors change here — not just the map." },
+        { name: "Market", description: "A metro and the area it commutes to. The unit you open or close, and the unit two of them compete for investment." },
+        { name: "District", description: "One person's span of accountability. This is the rung a lead is usually granted on." },
+        { name: "Zone", description: "A patch with a boundary — a town, a postcode, a subdivision. Contiguous; you could draw it on a map." },
+        { name: "Route", description: "A journey. What one crew drives in a day, in order. Sequence is what makes it a route; if the order does not matter, it is a zone." },
+        { name: "Book", description: "A set of accounts one person keeps, wherever they are. Defined by who does the work, not by where it is." },
+      ]),
+      // Every value we have shipped. One still matching exactly is ours to
+      // replace; a vocabulary somebody has edited does not match and is
+      // left alone. Same reasoning as the role-description placeholder.
+      supersedes: [
+        JSON.stringify(["Region", "District", "Territory", "Route"]),
+        JSON.stringify(["Region", "District", "Territory", "Route", "Zone"]),
+      ],
       description:
-        "What a level of the portfolio tree is called where you operate. Array of " +
-        "strings. Suggestions only — Portfolio.tier accepts any text.",
+        "What a level of the portfolio tree is called where you operate. An array " +
+        "of { name, description }; the description is shown under the picker. " +
+        "Suggestions only — Portfolio.tier accepts any text.",
     },
     {
       key: "MANAGER_TITLES",
@@ -574,7 +598,13 @@ async function installStarterSettings(
       // a vocabulary somebody has edited does not match, and is left
       // alone. Anything else needs a human.
       if (supersedes?.includes(existing.value) && existing.value !== data.value) {
-        await prisma.setting.update({ where: { key: row.key }, data: { value: data.value } });
+        // The description goes with it. It documents the SHAPE of the value
+        // ("an array of strings" vs "an array of { name, description }"),
+        // so leaving it behind on an upgrade is leaving a lie on the row.
+        await prisma.setting.update({
+          where: { key: row.key },
+          data: { value: data.value, description: data.description },
+        });
         upgraded++;
         log(`  setting ${row.key} extended (was still the shipped default)`);
       }

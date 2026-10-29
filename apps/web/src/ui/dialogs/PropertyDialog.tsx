@@ -8,6 +8,7 @@ import {
   Button,
   Dialog,
   HStack,
+  Icon,
   Input,
   Portal,
   Select,
@@ -16,6 +17,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
+import { AlertTriangle } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiPut } from "@/src/lib/api";
 import AddressSearchField from "@/src/ui/components/AddressSearchField";
 import {
@@ -151,6 +153,33 @@ export default function PropertyDialog({
   );
   const mayRetag = !!scope?.can("portfolios.manage");
 
+  /**
+   * WHAT "DECIDE FROM THIS CLIENT'S OTHER PROPERTIES" WILL ACTUALLY DO.
+   *
+   * That option is the create default, and it is silent when it resolves
+   * to nothing — which is exactly what happens for a BRAND NEW client,
+   * because there are no other properties to inherit from. The new-job
+   * workflow creates a client, a property and a job in one pass, so its
+   * property landed in no portfolio every single time, invisible to every
+   * scoped reader, with nothing on screen saying so. The audit recorded
+   * `portfoliosResolvedBy: "none"` and nobody reads the audit looking for
+   * an absence they do not know about.
+   *
+   * So the dialog says, before you save, what the rule is going to decide.
+   *
+   * It mirrors `properties.create` in the API: a sibling's membership is a
+   * SET, siblings in nothing are ignored, and inheritance happens only
+   * when the remaining sets AGREE exactly — a client split across two
+   * portfolios has no obvious answer and picking one invents data. If that
+   * rule ever changes, change it here too; the two are deliberately the
+   * same three lines so the difference is easy to see.
+   */
+  type InheritPreview =
+    | { kind: "loading" }
+    | { kind: "none"; why: "new-client" | "no-siblings" | "disagree" }
+    | { kind: "inherits"; names: string[] };
+  const [inheritPreview, setInheritPreview] = useState<InheritPreview>({ kind: "loading" });
+
   const clientItems = useMemo(() => {
     const items = clients.map((c) => ({
       label: clientLabel(c.displayName) || c.id,
@@ -285,6 +314,51 @@ export default function PropertyDialog({
     setAreaValue(mode === "CREATE" ? ["INHERIT"] : initialAreaIds);
     return () => { cancelled = true; };
   }, [open, initialAreaIds, mode]);
+
+  // Resolve the inherit preview whenever the chosen client changes.
+  useEffect(() => {
+    if (!open || mode !== "CREATE") return;
+    const cid = clientValue[0];
+    let cancelled = false;
+    // A DEFERRED CLIENT DOES NOT EXIST YET, so there is nothing to ask the
+    // server and nothing for it to inherit. This is the new-job workflow's
+    // path, and it is the one that always resolved to nothing.
+    if (!cid) { setInheritPreview({ kind: "none", why: "no-siblings" }); return; }
+    if (cid === "__deferred__") { setInheritPreview({ kind: "none", why: "new-client" }); return; }
+    setInheritPreview({ kind: "loading" });
+    (async () => {
+      try {
+        const res = await apiGet<any>(`/api/properties?clientId=${encodeURIComponent(cid)}&limit=500`);
+        const all = Array.isArray(res) ? res : (res?.items ?? res?.properties ?? []);
+        const siblings = all.filter((x: any) => x.id !== (initial as any)?.id);
+        const sets: string[][] = siblings
+          .map((x: any) =>
+            ((x.portfolios ?? []) as any[])
+              .map((m) => m?.portfolio?.id)
+              .filter((v: unknown): v is string => typeof v === "string")
+              .sort(),
+          )
+          .filter((ids: string[]) => ids.length > 0);
+        if (cancelled) return;
+        if (sets.length === 0) { setInheritPreview({ kind: "none", why: "no-siblings" }); return; }
+        const distinct = new Set(sets.map((ids) => ids.join("\u0000")));
+        if (distinct.size !== 1) { setInheritPreview({ kind: "none", why: "disagree" }); return; }
+        const nameById = new Map<string, string>(
+          siblings.flatMap((x: any) =>
+            ((x.portfolios ?? []) as any[])
+              .map((m) => [m?.portfolio?.id, m?.portfolio?.name])
+              .filter((pair): pair is [string, string] => typeof pair[0] === "string" && typeof pair[1] === "string"),
+          ),
+        );
+        setInheritPreview({ kind: "inherits", names: sets[0].map((id) => nameById.get(id) ?? "?") });
+      } catch {
+        // A failed look-ahead must not block the save. Say nothing rather
+        // than claim an outcome we could not check.
+        if (!cancelled) setInheritPreview({ kind: "loading" });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, mode, clientValue, initial]);
 
   useEffect(() => {
     if (!open) return;
@@ -697,6 +771,41 @@ export default function PropertyDialog({
                           ? "Pick any number. Scheduled visits follow; finished work keeps what it counted toward. Clear them all to leave it in none."
                           : "Decides whose rollups this property appears in."}
                     </Text>
+                    {/* WHAT THE DEFAULT IS ABOUT TO DO. Only while the
+                        inherit option is the one selected — once a
+                        portfolio is picked there is nothing to predict. */}
+                    {mode === "CREATE" && areaValue.includes("INHERIT") && inheritPreview.kind !== "loading" && (
+                      inheritPreview.kind === "inherits" ? (
+                        <Text fontSize="xs" color="fg.muted" mt="1">
+                          Will go in <strong>{inheritPreview.names.join(", ")}</strong>, matching this client&apos;s other properties.
+                        </Text>
+                      ) : (
+                        <HStack
+                          mt="2"
+                          gap={2}
+                          align="start"
+                          borderWidth="1px"
+                          borderColor="orange.emphasized"
+                          bg="orange.subtle"
+                          rounded="md"
+                          px="2"
+                          py="1.5"
+                          data-testid="property-no-portfolio-warning"
+                        >
+                          <Icon as={AlertTriangle} boxSize={3.5} color="orange.fg" mt="2px" flexShrink={0} />
+                          <Text fontSize="xs" color="orange.fg">
+                            {inheritPreview.why === "new-client"
+                              ? "This is a new customer, so there is nothing to inherit from — "
+                              : inheritPreview.why === "disagree"
+                                ? "This client's other properties are in different portfolios, so there is no obvious answer — "
+                                : "This client has no other property in a portfolio — "}
+                            <strong>this property will go in no portfolio.</strong> Its work counts toward no
+                            rollup and it is invisible to anyone whose access is limited to one. Pick one above,
+                            or set it later from the property.
+                          </Text>
+                        </HStack>
+                      )
+                    )}
                   </div>
                 )}
                 <HStack gap={3}>

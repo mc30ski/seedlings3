@@ -324,7 +324,7 @@ forgotten — those are the ones to re-read before shipping.
 | 9 | `Portfolio.path` is built from **ids**, never names | G21 |
 | 10 | Creating / renaming / retiring portfolios needs `portfolios.manage` | G5 |
 | 11 | Portfolios are never reparented — copy-and-retire | G14 |
-| 12 | `occurrence.portfolioId` frozen at completion | G22 |
+| 12 | A completed visit's portfolios are never rewritten (no `frozenAt` column — completion is the record) | G22 |
 | 13 | New `portfolioId`: previous occurrence → job default → sole property portfolio → prompt | test |
 | 14 | Retag needs `schedule.manage` in BOTH portfolios | G16 |
 | 15 | Rollup defaults to portfolio, toggles to "My team" | Playwright |

@@ -32,4 +32,7 @@ A 404 only means something when you have first proven the key reaches the
 instance you meant. Same reasoning applies to any external service
 configured per-environment (R2 buckets, Twilio).
 
+Where the production URL actually lives (commented out in the same file):
+[[reference_prod_db_url_is_commented_in_env]].
+
 Related: [[project-mark-baliff-purge]], [[feedback-check-current-docs-before-diagnosing]].

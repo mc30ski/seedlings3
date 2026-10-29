@@ -14,7 +14,7 @@ import {
   Select,
   createListCollection,
 } from "@chakra-ui/react";
-import { Filter, LayoutList, MapPin, Plus, RefreshCw, X } from "lucide-react";
+import { Filter, Layers, LayoutList, MapPin, Plus, RefreshCw, X } from "lucide-react";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
 import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -98,6 +98,21 @@ export default function PropertiesTab({
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
+  /**
+   * PORTFOLIO MEMBERSHIP, as a filter.
+   *
+   * "In no portfolio" is the one that earns its place. A property in no
+   * portfolio is invisible to every portfolio-scoped reader and counts
+   * toward no rollup, and until this filter the only way to find one was
+   * to scan the list for a missing badge. The badge was already on the
+   * row; nothing could ask the list for the absence.
+   *
+   * Deliberately NOT a per-portfolio picker: narrowing to one portfolio is
+   * what the lens in the title bar does, across every tab at once, and two
+   * controls answering the same question in one screen is how they end up
+   * disagreeing.
+   */
+  const [portfolioFilter, setPortfolioFilter] = usePersistedState<string[]>(`${pfx}_portfolio`, ["ALL"]);
 
   const [items, setItems] = useState<Property[]>([]);
   const [loading, setLoading] = useState(false);
@@ -133,6 +148,19 @@ export default function PropertiesTab({
   const statusCollection = useMemo(
     () => createListCollection({ items: statusItems }),
     [statusItems]
+  );
+
+  const portfolioItems = useMemo(
+    () => [
+      { label: "Any portfolio", value: "ALL" },
+      { label: "In no portfolio", value: "NONE" },
+      { label: "In a portfolio", value: "SOME" },
+    ],
+    [],
+  );
+  const portfolioCollection = useMemo(
+    () => createListCollection({ items: portfolioItems }),
+    [portfolioItems],
   );
 
   // Main function to load all the items from the API.
@@ -224,6 +252,13 @@ export default function PropertiesTab({
       rows = rows.filter((i) => i.status === sf);
     }
 
+    // Filter on portfolio membership. `portfolios` is the join rows the
+    // list endpoint already returns — the same ones the badge reads, so
+    // the filter and the badge can never disagree.
+    const pf = portfolioFilter[0];
+    if (pf === "NONE") rows = rows.filter((r) => (((r as any).portfolios ?? []).length === 0));
+    else if (pf === "SOME") rows = rows.filter((r) => (((r as any).portfolios ?? []).length > 0));
+
     // Filter based on free text.
     const qlc = q.trim().toLowerCase();
     if (qlc) {
@@ -257,7 +292,7 @@ export default function PropertiesTab({
     });
 
     return rows;
-  }, [items, q, kind, statusFilter, highlightId, notFieldCleared, restrictedPropertyIds]);
+  }, [items, q, kind, statusFilter, portfolioFilter, highlightId, notFieldCleared, restrictedPropertyIds]);
 
   function openCreate() {
     setEditing(null);
@@ -464,6 +499,42 @@ export default function PropertiesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Select.Root
+          collection={portfolioCollection}
+          value={portfolioFilter}
+          onValueChange={(e) => setPortfolioFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger
+              w="auto"
+              minW="0"
+              px="2"
+              title={
+                portfolioFilter[0] === "NONE"
+                  ? "Showing only properties in no portfolio"
+                  : portfolioFilter[0] === "SOME"
+                    ? "Showing only properties in a portfolio"
+                    : "Filter by portfolio membership"
+              }
+              css={{ background: portfolioFilter[0] !== "ALL" ? "var(--chakra-colors-teal-muted)" : "var(--chakra-colors-teal-subtle)", border: portfolioFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-teal-strong)" : "1px solid var(--chakra-colors-teal-emphasized)", borderRadius: "6px" }}
+            >
+              <Layers size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {portfolioItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
         {canManageClients && (
           <Button
             variant="solid"
@@ -478,11 +549,16 @@ export default function PropertiesTab({
           </Button>
         )}
       </HStack>
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL") && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || portfolioFilter[0] !== "ALL") && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {kind[0] !== "ALL" && (
             <Badge size="sm" colorPalette="blue" variant="subtle">
               {kindItems.find((i) => i.value === kind[0])?.label}
+            </Badge>
+          )}
+          {portfolioFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="teal" variant="subtle">
+              {portfolioItems.find((i) => i.value === portfolioFilter[0])?.label}
             </Badge>
           )}
           {statusFilter[0] !== "ALL" && (

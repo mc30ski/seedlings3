@@ -600,11 +600,19 @@ model Property {
 Added to existing models:
 
 ```prisma
-model JobOccurrence {
-  portfolioId String?                                 // stamped at creation, frozen at completion
-  portfolio   Portfolio?   @relation(fields: [portfolioId], references: [id], onDelete: Restrict)
+// SUPERSEDED 2026-10-28 — membership became a SET, so the column became a
+// join. The rule it carried is unchanged; only its shape is different.
+model JobOccurrencePortfolio {
+  occurrenceId String
+  portfolioId  String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  portfolio    Portfolio     @relation(fields: [portfolioId], references: [id], onDelete: Restrict)
+  @@id([occurrenceId, portfolioId])
   @@index([portfolioId])
 }
+// There is NO `frozenAt` — a column of that name existed and was dropped on
+// 2026-10-29 (migration 20261029180000), because nothing in the app ever
+// wrote it. "Frozen" is `occurrence.completedAt != null`.
 
 model Job     { defaultPortfolioId String? }          // projections only
 model User    { /* canPullInventory + canChargeBusinessExpenses are DROPPED */ }
@@ -774,10 +782,21 @@ their own numbers from a territory they do not run.
 
 ### Money rides the occurrence
 
-`JobOccurrence.portfolioId`, stamped at creation, editable while SCHEDULED, frozen
-at completion — the same rule as completion splits. `Job` holds a default portfolio
-for projections. `Payment.occurrenceId` is `@unique`: the occurrence *is* the
-money-bearing row.
+The occurrence's OWN portfolio rows (`JobOccurrencePortfolio`), synced from the
+property while the visit is open and left alone once it completes — the same
+rule as completion splits. Money is filtered
+`Payment → occurrence → JobOccurrencePortfolio`, never through the property's
+*current* membership, which is what makes the next paragraph true.
+`Payment.occurrenceId` is `@unique`: the occurrence *is* the money-bearing row.
+
+Enforced in two places, both asserted by **G22**: `resyncPortfoliosForProperty`
+selects only open visits, and `syncOccurrencePortfolios` returns early on a
+completed one even if handed its id. **Verified against real rows 2026-10-29** —
+removing a property from a zone moved its 6 open visits and left the 25
+completed ones, and the zone's payment total was identical before and after.
+
+`Job.defaultAreaId` is **gone**: an open visit follows its property directly,
+so there is no unanswerable case left for a job-level default to answer.
 
 Consequence worth keeping: **reassigning a property cannot move last year's
 revenue**, because the occurrence snapshotted its portfolio. History stays put by
@@ -1349,11 +1368,29 @@ role.
 to be suggested from a `MANAGER_TITLES` setting, same pattern as the other
 config-driven taxonomies; portfolio tier names likewise from `PORTFOLIO_TIER_NAMES`.
 
-> **BUILT 2026-10-18.** Both Setting rows exist, seeded as flat string
-> arrays in the `catalogs` section and editable on the Settings tab.
-> `PortfoliosTab` renders the tier field as a Select over `PORTFOLIO_TIER_NAMES` with
-> an "Other (specify…)" escape; `RolesTab` offers `MANAGER_TITLES` as
-> clickable chips under the new-role name box.
+> **BUILT 2026-10-18.** Both Setting rows exist in the `catalogs` section
+> and are editable on the Settings tab. `MANAGER_TITLES` is a flat string
+> array, offered by `RolesTab` as clickable chips under the new-role name
+> box. `PORTFOLIO_TIER_NAMES` is an array of `{ name, description }`
+> (2026-10-29 — it shipped as bare strings, and both shapes are still
+> read): `PortfoliosTab` renders the tier field as a Select over it and
+> shows the chosen tier's description under the picker. The "Other
+> (specify…)" free-text escape was **removed the same day** — it was right
+> while the list needed a developer to extend, and wrong once the list
+> became operator-editable AND each entry carried its definition, because
+> a typed-in tier is a level with no meaning recorded anywhere. A saved
+> value that is off-list is still shown and still selected; it just cannot
+> be chosen again. `Portfolio.tier` remains a free string in the schema
+> and the API still accepts any text — this is about where a new level is
+> born, not a new constraint on the data. That sentence is the point of the richer shape —
+> "Zone" and "Route" are ordinary words whose difference here is a rule
+> (a route has an order, a zone has a boundary), and an operator choosing
+> blind mixes them. The shipped vocabulary is **State → Market → District
+> → Zone** as a nesting spine, plus **Route** and **Book**, which cut
+> across it and sit at the lowest node containing everything they touch.
+> `install-starter-roles.ts` replaces a value only when it still matches
+> one we shipped exactly (`supersedes`), so an edited vocabulary is never
+> overwritten.
 >
 > Both remain **suggestions, not vocabularies** — `Portfolio.tier` and
 > `CustomRole.name` are free strings and stay that way, because an operator
@@ -1435,9 +1472,11 @@ Where a missed filter silently shows another territory's clients.
 UsersTab (assignments beside wages and worker type), HomeTab (rollups become
 portfolio-aware).
 
-**E — Settings.** Two new taxonomies, `PORTFOLIO_TIER_NAMES` and `MANAGER_TITLES`,
-through the existing editor. **Built 2026-10-18** — sections A–E have all
-shipped.
+**E — Settings.** Two new taxonomies, `PORTFOLIO_TIER_NAMES` and `MANAGER_TITLES`.
+`MANAGER_TITLES` uses the generic string-list editor; `PORTFOLIO_TIER_NAMES`
+has its own name + description editor, because the generic one coerces each
+row with `String(x)` and would save `"[object Object]"` over the vocabulary.
+**Built 2026-10-18** — sections A–E have all shipped.
 
 ### Web audit, 2026-10-11
 
@@ -1574,7 +1613,7 @@ was rewritten; they are restored here with their current status.
 
 | | Question | Status |
 |---|---|---|
-| **A** | When does `occurrence.portfolioId` freeze? | **Resolved.** Stamped at creation, editable while SCHEDULED, frozen at completion — the same rule as completion splits. |
+| **A** | When does a visit's portfolio freeze? | **Resolved, and shipped as a join rather than a column.** Synced from the property while the visit is open, left alone from completion — the same rule as completion splits. There is no `frozenAt` stamp: completion *is* the record. |
 | **B** | Worker activity vs. portfolio work | **Resolved — both.** A Raleigh-assigned worker doing a Durham job appears for both managers. The rollup **defaults to portfolio** ("Raleigh") with a **toggle to people** ("My team"), because a territory's revenue is the territorial number; the toggle exists so the manager can see the two answers differ. Never merged into one figure — that would double-count the same visit across two managers. |
 | **C** | What money can a manager see? | **Resolved by the entitlement split.** `money.view` scoped to a portfolio gives payments on occurrences in that subtree. `books.*` is global-only, so no company P&L unless explicitly granted. |
 | **D** | Two managers over one portfolio? | **Resolved.** Allowed — the union is safe. Design the UI for the single-manager case and let the second be a list. |

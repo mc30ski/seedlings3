@@ -1,11 +1,11 @@
 ---
 name: project_portfolios_design
-description: "Area → Portfolio: COMPLETE 2026-10-28 — backend, rename, migrations and all three UI pieces. Applied to DEV only, nothing committed. Many-to-many membership; occurrences remember the full set, frozen at completion."
+description: "Area → Portfolio: COMPLETE 2026-10-28; DEV FIXTURE RESHAPED to production's 5-level shape 2026-10-29, which exposed a real lens-picker bug. Applied to DEV only, nothing committed."
 metadata:
   node_type: memory
   type: project
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-10-28T21:28:42.499Z
+  modified: 2026-10-29T00:00:00.000Z
 ---
 
 Agreed and **BUILT on 2026-10-28** — schema, migrations, API, gates and the
@@ -136,13 +136,130 @@ production is one flat root.
    while membership was single-valued; under overlap a parent counted a
    shared property once per child.
 
+
+## The dev fixture now mirrors production's SHAPE — 2026-10-29
+
+`prisma/seed.ts` used to build a two-level tree (root → Durham / Chapel
+Hill / Chatham, with three "Route" leaves). It now builds the real
+five-level shape with dev's own cities, so a question answered on the
+fixture is answered for production:
+
+```
+All properties
+└── North Carolina            State
+    └── Triangle              Market
+        ├── Durham            District  9     ← districtLead's grant, now 3 levels down
+        ├── Chapel Hill       District  8 distinct
+        │   ├── Chapel Hill West  Zone  6
+        │   ├── Carrboro          Zone  1
+        │   ├── Hillsborough      Zone  1
+        │   └── Chapel Hill Route Route 5     ← cuts across all three zones
+        ├── Chatham           District  5   (no coords — weather fallback case)
+        │   └── Pittsboro         Zone  5
+        └── Mike's Book       Book      5     ← cuts across three districts
+```
+
+22 properties, **32 memberships** — the first dev fixture with overlap, so
+the `COUNT(DISTINCT …)` roll-up finally has a case that differs from a
+naive sum (Chapel Hill: children sum 13, distinct 8).
+
+How it is built, and the three traps:
+
+- **The build is recursive and the sweep matches on IDENTITY, not name.**
+  A name-based sweep SPARES an old root-level "Durham" when the fixture
+  moves Durham three levels down — two nodes, same name, different ids,
+  the exact duplicate-tree failure the sweep exists to prevent. It now
+  deletes anything under the root this run did not create, deepest-first,
+  and refuses to delete a node holding a grant that is not the
+  districtLead fixture's.
+- **city → node is READ OFF THE TREE** (`cities:` on each node) instead of
+  a second hand-written list that can drift.
+- **Route membership is computed** from the occurrences the seed actually
+  generated — the district's properties serviced on the busiest weekday,
+  logged because it moves with the seed date. **Book membership is by
+  CLIENT NAME** (Martinez Family, River Bend Office Park), because a rule
+  with a boundary would make it a zone.
+
+### What the reshape caught — a real bug aimed at production
+
+`GET /me/portfolios` dropped "a sole root" from the lens picker. That was
+the right rule only for a one-level tree. With a State and a Market above
+the districts, somebody granted **Durham alone was offered "North
+Carolina", "Triangle" and "Durham"** — three entries returning identical
+rows, because the lens is intersected with their grants. The rule now
+says what it always meant: **an option is offered only if something the
+caller can otherwise see falls outside it.** One root + global reader →
+drops exactly the root (old behaviour); scoped reader → drops the
+over-wide ancestors. Caught by `portfolio-lens-owner.spec.ts`, now 4/4 green.
+
+Two more things the reshape broke and repaired:
+
+- `portfolio-lens-owner.spec.ts` hardcoded two portfolio cuids that **had
+  already rotted** — neither existed in dev, so "the lens reaches the
+  server" was comparing one dead string to another. It looks them up by
+  name now.
+- `scripts/verify-portfolio-scope.ts` counted the negative control on the
+  NODE rather than the SUBTREE, so it failed the moment Chapel Hill's
+  properties moved into zones beneath it. 7/7 green after the fix.
+
+### Tree UI reworked the same day
+
+Five levels broke the row layout — "North Caroli…", "Chap…", "Chapel
+Hi…". The count was the culprit: `22 properties (0 own)` is ~110px that
+never yielded, on a row already paying for indent. Now the column is
+20rem, the indent is 14px a level and stops stepping after six, the name
+**wraps instead of truncating**, and the count is digits (`22 · 0 own`)
+with the sentence in a tooltip. Verified by screenshot, not by reading
+the diff.
+
+## `frozenAt` dropped — 2026-10-29
+
+`JobOccurrencePortfolio.frozenAt` and `freezeOccurrencePortfolios()` are
+**gone** (migration `20261029180000_drop_occurrence_portfolio_frozen_at`).
+
+The function had **zero callers** repo-wide. Only `seed.ts` ever wrote the
+column, so in production it would have been NULL on every completed visit
+while dev had it populated — and the first report filtering
+`frozenAt IS NOT NULL` would have returned nothing in prod and the right
+answer in dev. Nothing was broken by its absence, because the stamp was
+never the protection.
+
+**Whether a visit's portfolios are frozen is `occurrence.completedAt`,
+and only that.** Two guards, both asserted by G22:
+`resyncPortfoliosForProperty` selects only open visits, and
+`syncOccurrencePortfolios` returns early on a completed one even if handed
+the id directly.
+
+**Proven against real dev rows** before the column went: removing a
+property from Chapel Hill West moved its **6 open** visits and left the
+**25 completed** ones, and the zone's payment total was `$1706.00` before,
+after and once restored. So: *the future follows the property, the past
+stays where it was counted.*
+
+**G12/G22 was rewritten**, because its old assertion had been vacuous since
+the rename — it looked for `portfolioId:` in `services/jobs.ts`, a column
+that no longer exists, so it passed by having nothing to match. It now
+asserts the rule that holds: only `lib/occurrencePortfolio.ts` may write
+`JobOccurrencePortfolio` (the seed is exempt — it builds from scratch), the
+`completedAt` guard is still in that file, and no `frozenAt` field comes
+back. Three negative controls, each failing for its own reason.
+
+Related, found the same day: **hard-deleting a property** cascades its
+`PropertyPortfolio` rows away, but `hardDelete` refuses if the property has
+ANY job — so only work-free properties can be deleted and no money history
+can be lost that way. **Archiving** touches membership not at all: the
+property stays in its portfolios and keeps counting in the tree's rollup
+(measured — the rollup SQL never joins `Property`, so status cannot affect
+it).
+
 ## Not yet done
 
 - **Rule-assisted bulk tagging** (by ZIP, by street). The Add picker is
   one at a time, which is fine for maintenance and slow for the first
   load of 93. The rollout script in the section above is still the plan
   for that.
-- **E2E** has not been run against any of this.
+- **E2E**: `portfolio-lens-owner` is green (4/4, 2026-10-29). The rest of the
+  suite has still not been run against the rename.
 
 Rollout caution carried from [[project_area_tree_for_the_business]]: the
 re-tag script must also update the **67 open occurrences**, or recurring

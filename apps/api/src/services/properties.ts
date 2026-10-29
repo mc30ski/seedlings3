@@ -216,9 +216,11 @@ export const properties: ServicesProperties = {
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
       take: limit,
       include: {
-        // THE PORTFOLIOS, for the badges on the property card. Names only —
-        // the card states what the property belongs to; it does not filter.
-        // Plural now: a property can be in a location portfolio and a route
+        // THE PORTFOLIOS, for the badges on the property card — and, since
+        // 2026-10-29, for the "In no portfolio" filter on that tab, which
+        // reads these same rows so the filter and the badge cannot
+        // disagree about whether a property is tagged.
+        // Plural: a property can be in a location portfolio and a route
         // at the same time, and a card showing only one of them would be
         // the old single-column model leaking through the UI.
         portfolios: { select: { portfolio: { select: { id: true, name: true } } } },

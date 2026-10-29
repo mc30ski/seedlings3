@@ -4679,6 +4679,12 @@ model PropertyPortfolio {
 
 /// WHAT A VISIT COUNTED TOWARD, synced while open and frozen at completion.
 ///
+/// "Frozen" is a RULE, not a column. There was a `frozenAt` here and it was
+/// dropped on 2026-10-29: nothing in the app ever wrote it, so it was NULL
+/// on every real completed visit while the seed set it in dev. Whether a
+/// row is frozen is `occurrence.completedAt != null`, enforced in
+/// `lib/occurrencePortfolio.ts` and asserted by G22.
+///
 /// Restrict on the portfolio, not Cascade: retiring a portfolio must never
 /// silently rewrite the history of visits that counted toward it. Cascade
 /// on the occurrence, because deleting the visit deletes its own record.
@@ -4687,11 +4693,6 @@ model JobOccurrencePortfolio {
   portfolioId  String
   occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
   portfolio    Portfolio     @relation(fields: [portfolioId], references: [id], onDelete: Restrict)
-
-  /// Set when the visit completed and this row stopped tracking the
-  /// property. Null means the row is still following membership. G12/G22
-  /// assert nothing writes a row whose occurrence is already complete.
-  frozenAt DateTime?
 
   @@id([occurrenceId, portfolioId])
   @@index([portfolioId])

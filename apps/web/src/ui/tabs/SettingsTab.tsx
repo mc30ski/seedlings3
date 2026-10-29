@@ -1216,6 +1216,120 @@ function StringListEditor({ value, onChange, onSave, onCancel, saving, placehold
   );
 }
 
+/**
+ * Editor for PORTFOLIO_TIER_NAMES — a name AND the sentence that explains it.
+ *
+ * The description is not decoration. "Zone" and "Route" are ordinary English
+ * words whose difference HERE is a rule (a route has an order, a zone has a
+ * boundary), and an operator picking between them blind will mix the two
+ * within a week — after which the tree says nothing about how the work is
+ * actually organised. The sentence is shown at the point of choice in
+ * PortfoliosTab, which is the only place it can do any good.
+ *
+ * It cannot use StringListEditor: that one coerces every row with
+ * `String(x)`, so opening this value in it would save `"[object Object]"`
+ * for every tier and silently destroy the vocabulary.
+ *
+ * A value still in the old plain-string shape is read as names with no
+ * description rather than refused, so an operator who never re-ran the
+ * installer can still edit their list.
+ */
+function PortfolioTierNamesEditor({ value, onChange, onSave, onCancel, saving }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  let items: Array<{ name: string; description: string }> = [];
+  let parseError: string | null = null;
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) throw new Error("must be an array");
+    items = parsed.map((x: any) =>
+      typeof x === "string"
+        ? { name: x, description: "" }
+        : { name: String(x?.name ?? ""), description: String(x?.description ?? "") },
+    );
+  } catch (e: any) {
+    parseError = e?.message ?? "invalid JSON";
+  }
+
+  const write = (next: Array<{ name: string; description: string }>) => onChange(JSON.stringify(next));
+
+  if (parseError) {
+    return (
+      <VStack align="stretch" gap={2} w="full">
+        <Text fontSize="xs" color="red.fg">PORTFOLIO_TIER_NAMES JSON is malformed: {parseError}</Text>
+        <Input size="sm" value={value} onChange={(e) => onChange(e.target.value)} />
+        <HStack gap={2} justify="flex-end">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+          <Button size="sm" onClick={onSave} loading={saving}>Save</Button>
+        </HStack>
+      </VStack>
+    );
+  }
+
+  return (
+    <VStack align="stretch" gap={3} w="full">
+      <Text fontSize="2xs" color="fg.muted">
+        What a level of the portfolio tree is called, and what it means. The description is shown under the picker when that tier is chosen. Suggestions only — a portfolio&apos;s tier accepts any text.
+      </Text>
+      {items.map((row, idx) => (
+        <VStack key={idx} align="stretch" gap={1} w="full">
+          <HStack gap={2} w="full">
+            <Input
+              size="sm"
+              value={row.name}
+              placeholder="e.g. Zone"
+              onChange={(e) => write(items.map((r, i) => (i === idx ? { ...r, name: e.target.value } : r)))}
+              maxW="200px"
+            />
+            <Input
+              size="sm"
+              value={row.description}
+              placeholder="What this level means, in one sentence"
+              onChange={(e) => write(items.map((r, i) => (i === idx ? { ...r, description: e.target.value } : r)))}
+              flex="1"
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              colorPalette="red"
+              onClick={() => write(items.filter((_, i) => i !== idx))}
+              aria-label={`Remove ${row.name || "entry"}`}
+            >
+              ×
+            </Button>
+          </HStack>
+        </VStack>
+      ))}
+      <Button size="xs" variant="outline" alignSelf="flex-start" onClick={() => write([...items, { name: "", description: "" }])}>
+        + Add tier
+      </Button>
+      <HStack gap={2} justify="flex-end">
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+        <Button
+          size="sm"
+          loading={saving}
+          onClick={() => {
+            // A blank name is never meant, and an entry with no description
+            // is allowed — it just gets no help text.
+            write(
+              items
+                .map((r) => ({ name: r.name.trim(), description: r.description.trim() }))
+                .filter((r) => r.name),
+            );
+            onSave();
+          }}
+        >
+          Save
+        </Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 function PaymentFromOptionsEditor({ value, onChange, onSave, onCancel, saving }: {
   value: string;
   onChange: (v: string) => void;
@@ -2940,9 +3054,15 @@ export default function SettingsTab({ me }: TabPropsType) {
                         if (s.key === "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS") {
                           return <PauseReasonsEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
                         }
+                        // Tier names carry a description each — see
+                        // PortfolioTierNamesEditor for why StringListEditor
+                        // would destroy the value.
+                        if (s.key === "PORTFOLIO_TIER_NAMES") {
+                          return <PortfolioTierNamesEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
+                        }
                         // Plain string arrays — a row per entry rather
                         // than hand-edited JSON.
-                        if (s.key === "PORTFOLIO_TIER_NAMES" || s.key === "MANAGER_TITLES") {
+                        if (s.key === "MANAGER_TITLES") {
                           return (
                             <StringListEditor
                               value={editValue}
@@ -2950,7 +3070,7 @@ export default function SettingsTab({ me }: TabPropsType) {
                               onSave={() => handleSave(s.key)}
                               onCancel={() => setEditingKey(null)}
                               saving={saving}
-                              placeholder={s.key === "PORTFOLIO_TIER_NAMES" ? "e.g. District" : "e.g. Crew Lead"}
+                              placeholder="e.g. Crew Lead"
                             />
                           );
                         }
@@ -3055,11 +3175,47 @@ export default function SettingsTab({ me }: TabPropsType) {
                             </Text>
                           );
                         }
-                        // PORTFOLIO_TIER_NAMES / MANAGER_TITLES are plain string
-                        // arrays. The generic path printed the raw JSON,
-                        // brackets and quotes included, which reads as
-                        // something the operator broke.
-                        if (s.key === "PORTFOLIO_TIER_NAMES" || s.key === "MANAGER_TITLES") {
+                        // PORTFOLIO_TIER_NAMES is a list of {name, description}
+                        // (older values are bare strings). Print the name and
+                        // the sentence that defines it — the vocabulary is
+                        // only useful if two people read it the same way.
+                        if (s.key === "PORTFOLIO_TIER_NAMES") {
+                          try {
+                            const parsed = JSON.parse(s.value || "[]");
+                            if (Array.isArray(parsed)) {
+                              const tiers = parsed
+                                .map((x: any) =>
+                                  typeof x === "string"
+                                    ? { name: x, description: "" }
+                                    : { name: String(x?.name ?? ""), description: String(x?.description ?? "") },
+                                )
+                                .filter((t: { name: string }) => t.name);
+                              return tiers.length === 0 ? (
+                                <Text fontSize="sm" color="fg.muted">None configured.</Text>
+                              ) : (
+                                <VStack align="stretch" gap={1}>
+                                  {tiers.map((t: { name: string; description: string }) => (
+                                    <HStack key={t.name} gap={2} align="baseline">
+                                      <Badge size="sm" variant="solid" colorPalette="blue" px="2" borderRadius="full" fontSize="xs">
+                                        {t.name}
+                                      </Badge>
+                                      {t.description ? (
+                                        <Text fontSize="xs" color="fg.muted" lineHeight="short">{t.description}</Text>
+                                      ) : null}
+                                    </HStack>
+                                  ))}
+                                </VStack>
+                              );
+                            }
+                          } catch {
+                            // Malformed JSON falls through to the generic
+                            // renderer, which shows the raw text.
+                          }
+                        }
+                        // MANAGER_TITLES is a plain string array. The generic
+                        // path printed the raw JSON, brackets and quotes
+                        // included, which reads as something the operator broke.
+                        if (s.key === "MANAGER_TITLES") {
                           try {
                             const items = JSON.parse(s.value || "[]");
                             if (Array.isArray(items) && items.every((x) => typeof x === "string")) {
