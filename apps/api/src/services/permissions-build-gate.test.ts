@@ -874,6 +874,50 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
       "groups still to thread — this number should fall to 0, never rise",
     ).toBeLessThanOrEqual(6);
   });
+  it("G13b — retiring refuses while anything still depends on the portfolio", () => {
+    // THE THIRD DEPENDANT, which was missing.
+    //
+    // `setRetired` refused a portfolio with live children, and one with
+    // unfinished visits, and said nothing about the people assigned to it.
+    // So a portfolio somebody leads became retirable the moment its last
+    // visit closed.
+    //
+    // Nothing breaks loudly when that happens, which is why it needs a
+    // gate rather than a reviewer. Scoping deliberately ignores
+    // `retiredAt` (invariant 4 — history has to resolve through a closed
+    // portfolio), so the lead is NOT revoked: they stay confined to it
+    // exactly as before. What changes is that `GET /me/portfolios` filters
+    // retired nodes out, so their lens chip loses its only option and
+    // vanishes — leaving somebody narrowed to a portfolio that no picker
+    // in the app will name, and an operator who was told nothing.
+    //
+    // A suspended grant must NOT block: it is already switched off, and
+    // retiring cannot make it worse.
+    //
+    // The codes below are matched WITH their quotes. Unquoted, the first
+    // version of this passed against `PORTFOLIO_HAS_LEADS_DISABLED` —
+    // a substring match, so disabling the guard by renaming it would have
+    // sailed through the gate that exists to stop exactly that.
+    const svc = read(path.join(API, "services", "portfolios.ts"));
+    const at = svc.indexOf("async setRetired(");
+    expect(at, "portfolios.setRetired not found — renamed?").toBeGreaterThan(-1);
+    const body = svc.slice(at, svc.indexOf("\n  async ", at + 1));
+
+    expect(
+      body,
+      "setRetired must count the people still assigned here, ignoring suspended grants",
+    ).toMatch(/portfolioAssignment\.(findMany|count)\([\s\S]{0,200}suspendedAt:\s*null/);
+    expect(
+      body,
+      "and refuse, naming them — a silent retire strands the lead with no picker",
+    ).toMatch(/"PORTFOLIO_HAS_LEADS"/);
+
+    // The two older dependants are still checked, so this cannot be
+    // "fixed" by replacing one guard with another.
+    expect(body, "live children must still block").toMatch(/"PORTFOLIO_HAS_LIVE_CHILDREN"/);
+    expect(body, "unfinished work must still block").toMatch(/"PORTFOLIO_HAS_OPEN_WORK"/);
+  });
+
   it("G13 — a retired portfolio refuses new work and stays visible in reporting", () => {
     // RETIRED IS NOT DELETED. A portfolio is retired, never deleted, because
     // money and history are tagged to it: dropping it would restate last
