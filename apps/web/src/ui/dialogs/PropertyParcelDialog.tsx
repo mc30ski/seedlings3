@@ -194,7 +194,7 @@ export default function PropertyParcelDialog({
             </HStack>
 
             <Text fontSize="xs" color="fg.muted" fontStyle="italic">
-              Total parcel size, not mowable area — woods, house and drive are all inside this number.
+              Total parcel size, not mowable portfolio — woods, house and drive are all inside this number.
             </Text>
 
             {/* A failure gets its OWN panel rather than the block vanishing.

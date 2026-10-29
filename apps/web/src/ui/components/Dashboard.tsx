@@ -28,6 +28,7 @@ import {
 import { ChevronDown, ChevronRight, LayoutDashboard, RefreshCw } from "lucide-react";
 import { getAreaLensName, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
 import type { LucideIcon } from "lucide-react";
+import { apiGet } from "@/src/lib/api";
 import {
   GlowContext,
   type BannerPalette,
@@ -195,7 +196,7 @@ export function Dashboard({
     | "attention";
 }) {
   const [open, setOpen] = useState<boolean>(defaultOpen);
-  // The active area lens, for the INSIGHTS note below. Read in an effect
+  // The active portfolio lens, for the INSIGHTS note below. Read in an effect
   // rather than during render: it comes from localStorage, which does not
   // exist on the server, so reading it inline would hydrate the wrong text.
   const [lensName, setLensName] = useState<string | null>(null);
@@ -205,6 +206,43 @@ export function Dashboard({
     window.addEventListener(AREA_LENS_CHANGED_EVENT, read);
     return () => window.removeEventListener(AREA_LENS_CHANGED_EVENT, read);
   }, []);
+
+  /**
+   * THE PORTFOLIO THE READER IS CONFINED TO, if any.
+   *
+   * The note below already knew about the LENS and not about a GRANT, so a
+   * district lead with no lens chosen read "Business-wide — the whole
+   * company" above numbers that covered only Durham. That is the same
+   * untruth the lens fix was written to stop, in the worse direction: a
+   * lens is something you chose and can clear, a grant is permanent, so
+   * the one person who can never turn the filter off was the one being
+   * told it was not on.
+   *
+   * Fetched here rather than threaded down: `Dashboard` is rendered from a
+   * dozen places and none of them pass `me`. It is the same `/api/me` the
+   * shell already loaded, so this is a cache hit in practice.
+   */
+  const [grantScope, setGrantScope] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await apiGet<any>("/api/me");
+        const trails: string[][] = me?.portfolioScope?.trails ?? [];
+        if (cancelled || trails.length === 0) return;
+        // The leaf of each chain — "Chapel Hill → Carrboro" is Carrboro to
+        // somebody reading a number, and the full chain does not fit here.
+        const leaves = [...new Set(trails.map((t) => t[t.length - 1]).filter(Boolean))];
+        setGrantScope(leaves.join(" and "));
+      } catch {
+        // No scope line is better than a wrong one.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  /** The lens wins when both are in force: it can only ever narrow further. */
+  const scopeLabel = lensName ?? grantScope;
   useEffect(() => {
     try {
       const v = localStorage.getItem(storageKey);
@@ -722,16 +760,16 @@ export function Dashboard({
                     rounded="md"
                   >
                     <Text fontSize="sm" color="orange.fg">
-                      {/* THE NOTE HAS TO KNOW ABOUT THE LENS. It read
+                      {/* THE NOTE HAS TO KNOW ABOUT THE LENS AND THE GRANT. It read
                           "the whole company" unconditionally, which is a
                           plain untruth with a district lens in force — and
                           the untruth is the dangerous direction: a reader
                           takes Durham's numbers for the company's and
                           concludes the month was bad. */}
-                      {lensName
+                      {scopeLabel
                         ? insightsScope === "current"
-                          ? `${lensName} only — as it stands right now.`
-                          : `${lensName} only — over the selected period.`
+                          ? `${scopeLabel} only — as it stands right now.`
+                          : `${scopeLabel} only — over the selected period.`
                         : insightsScope === "current"
                           ? "Business-wide — the whole company, as it stands right now."
                           : "Business-wide — the whole company over the selected period."}

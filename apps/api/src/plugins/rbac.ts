@@ -2,7 +2,7 @@ import fp from "fastify-plugin";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { services } from "../services";
 import { PERSPECTIVE_HEADER, resolvePerspective } from "../lib/impersonation";
-import { AREA_LENS_HEADER, parseAreaLensHeader, resolveAreaLensPath } from "../lib/areaLens";
+import { AREA_LENS_HEADER, parseAreaLensHeader, resolveAreaLensPath } from "../lib/portfolioLens";
 import type { Principal } from "@repo/permissions";
 import { isEntitlement, type Entitlement, type RoleGrant } from "@repo/permissions";
 import "@fastify/sensible";
@@ -77,18 +77,18 @@ export default fp(async (app: FastifyInstance) => {
       req.headers[PERSPECTIVE_HEADER],
     );
 
-    // ── The area lens ─────────────────────────────────────────────────────
+    // ── The portfolio lens ─────────────────────────────────────────────────────
     //
     // "Show me only Durham", for somebody entitled to see more. Resolved
     // here, onto the principal, so that all 100+ existing
-    // `areaWhere(principal, …)` query sites honour it without an edit — and
+    // `portfolioWhere(principal, …)` query sites honour it without an edit — and
     // so a view written next year honours it too.
     //
     // UNVALIDATED ON PURPOSE. Whether the caller may look there is settled
-    // by intersection in areaScope, where a lens outside their grants
+    // by intersection in portfolioScope, where a lens outside their grants
     // yields nothing rather than that territory's rows. Checking it here as
     // well would add a second place to get it wrong and a 4xx that leaks
-    // which areas exist.
+    // which portfolios exist.
     const lensPath = await resolveAreaLensPath(
       parseAreaLensHeader(req.headers[AREA_LENS_HEADER]),
     );
@@ -100,7 +100,7 @@ export default fp(async (app: FastifyInstance) => {
         roleId: g.roleId,
         name: g.name,
         entitlements: g.entitlements.filter(isEntitlement) as Entitlement[],
-        ...(g.areaPath ? { areaPath: g.areaPath } : {}),
+        ...(g.portfolioPath ? { portfolioPath: g.portfolioPath } : {}),
       })) satisfies RoleGrant[],
       perspective,
       lensPath,

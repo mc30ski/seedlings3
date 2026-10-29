@@ -64,9 +64,9 @@ import { fetchUnmatchedPayrollNames } from "@/src/lib/payroll";
 import TasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/TasksTab";
 import SharePhotosWorkflow from "@/src/ui/workflows/SharePhotosWorkflow";
 // Reinstated 2026-10-26 as the TEAM ROLLUP, after being unwired for a
-// while. `/statistics` is area-scoped now, so this is also how an area
+// while. `/statistics` is portfolio-scoped now, so this is also how a portfolio
 // lead rolls up their own district: a company-wide holder sees the
-// company, an area-limited one sees their area and the page says which.
+// company, a portfolio-limited one sees their portfolio and the page says which.
 import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
@@ -87,14 +87,14 @@ import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 import { setPerspective, CAPABILITIES_CHANGED_EVENT, PERSPECTIVE_CHANGED_EVENT, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
 import RolesTab from "@/src/ui/tabs/RolesTab";
-import AreasTab from "@/src/ui/tabs/AreasTab";
+import PortfoliosTab from "@/src/ui/tabs/PortfoliosTab";
 
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 import { Me, ClientTabs, StaffTabs, EventTypes } from "@/src/lib/types";
-import { FiActivity, FiAlertCircle, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiHome, FiLink, FiMapPin, FiMonitor, FiNavigation, FiPackage, FiRefreshCw, FiSearch, FiSettings, FiShield, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
+import { FiActivity, FiAlertCircle, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiHome, FiLayers, FiLink, FiMapPin, FiMonitor, FiNavigation, FiPackage, FiRefreshCw, FiSearch, FiSettings, FiShield, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
 import { GrUserSettings } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
 import { TfiMoney } from "react-icons/tfi";
@@ -126,8 +126,8 @@ import DayBoardButton from "@/src/ui/components/DayBoardButton";
  */
 const SHOW_DAY_BOARD_BUTTON: boolean = false;
 import RoleChip, { type RoleValue } from "@/src/ui/components/RoleChip";
-import AreaLensChip from "@/src/ui/components/AreaLensChip";
-import AreaScopeNotice from "@/src/ui/components/AreaScopeNotice";
+import PortfolioLensChip from "@/src/ui/components/PortfolioLensChip";
+import PortfolioScopeNotice from "@/src/ui/components/PortfolioScopeNotice";
 import ThemeChip from "@/src/ui/components/ThemeChip";
 import TasksPage from "@/src/ui/pages/TasksPage";
 import { can, isEntitlement, type Entitlement } from "@repo/permissions";
@@ -163,7 +163,7 @@ const TAB_CATEGORY: Record<string, string> = {
   documents: "Records", guides: "Records", audit: "Records",
   "tools-mowing": "Tools", "tools-mulch": "Tools",
   notify: "System", settings: "System", profile: "System",
-  vanity: "System", displays: "System", roles: "System", areas: "System",
+  vanity: "System", displays: "System", roles: "System", portfolios: "System",
 };
 
 export default function HomePage() {
@@ -364,7 +364,7 @@ export default function HomePage() {
   // Migration: removed tab values ("reminders" from the retired Planning
   // tab, "usage" from the retired Equipment Usage tab) are still persisted
   // under the two old per-shell keys. Redirect them to "home" once so
-  // nobody lands on a now-nonexistent inner tab and sees a blank area.
+  // nobody lands on a now-nonexistent inner tab and sees a blank portfolio.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const w = staffInnerTab as string;
@@ -879,7 +879,7 @@ export default function HomePage() {
     // do has moved.
     const onCapabilitiesChanged = () => { void refreshMe(); };
     window.addEventListener(CAPABILITIES_CHANGED_EVENT, onCapabilitiesChanged);
-    // THE AREA LENS NEEDS EXACTLY THE SAME TREATMENT, for the same reason:
+    // THE PORTFOLIO LENS NEEDS EXACTLY THE SAME TREATMENT, for the same reason:
     // every response on screen was fetched through the outgoing lens, so
     // each one may be answering about a district nobody is looking at any
     // more. `refreshMe` is not strictly needed here — a lens changes WHERE,
@@ -1343,22 +1343,27 @@ export default function HomePage() {
           categoryIcon: AiOutlineTeam,
         },
         {
-          // Areas — the place tree, and who looks after each branch. A role
-          // held in an area is the same role, confined to it.
+          // Portfolios — the place tree, and who looks after each branch. A role
+          // held in a portfolio is the same role, confined to it.
           //
-          // DIRECTORY, NOT SYSTEM. An Area is a named grouping of
+          // DIRECTORY, NOT SYSTEM. An Portfolio is a named grouping of
           // PROPERTIES, which is the same shape of thing as a Group (a
           // named grouping of people) sitting two rows below. The page is
           // mostly a name, a tier, a centre point and "Properties in X" —
           // record maintenance, not configuration — and "which properties
           // are in Pittsboro?" is a question nobody takes to System. The
           // assignment panel stays on the tab; a category is navigation,
-          // and `areas.manage` still guards every mutation on it.
-          value: "areas",
-          label: "Areas",
-          icon: FiMapPin,
+          // and `portfolios.manage` still guards every mutation on it.
+          value: "portfolios",
+          label: "Portfolios",
+          // LAYERS, NOT A PIN. Properties two rows up already uses FiMapPin
+          // and the two tabs sat side by side in Directory wearing the same
+          // glyph. The pin belongs to Properties — a property IS a place.
+          // A portfolio is a nested GROUPING that need not be a place at
+          // all, which is what the stacked layers say.
+          icon: FiLayers,
           content: wrapWithInlineMessage(
-            <AreasTab
+            <PortfoliosTab
               scope={scopeBase}
             />
           ),
@@ -1981,7 +1986,7 @@ export default function HomePage() {
   setupSearchEvent("jobsTabToPropertiesTabSearch", "properties");
   setupSearchEvent("jobsTabToClientsTabSearch", "clients");
   setupSearchEvent("paymentsTabToPropertiesTabSearch", "properties");
-  // Areas → Properties. The Areas tab lists an area's properties; clicking
+  // Portfolios → Properties. The Portfolios tab lists a portfolio's properties; clicking
   // one should land on it, not leave you to search for it by hand.
   setupSearchEvent("areasTabToPropertiesTabSearch", "properties");
   setupSearchEvent("paymentsTabToClientsTabSearch", "clients");
@@ -4138,14 +4143,14 @@ export default function HomePage() {
                 drawer now (the chevron at the end of this row): a
                 preference people set once and then never touch was holding
                 32px of the title bar on every screen of every session. */}
-            {/* The AREA LENS — "show me only Durham", for somebody entitled
+            {/* The PORTFOLIO LENS — "show me only Durham", for somebody entitled
                 to see more. Sits before the perspective chip because the two
                 narrow different axes and read left to right as WHERE then
                 WHO: a perspective narrows what you may do, this narrows
                 where you are looking, and they combine freely. Renders
-                nothing unless there are at least two areas this person can
+                nothing unless there are at least two portfolios this person can
                 choose between. */}
-            {mounted && isSignedIn && hasAnyRole && <AreaLensChip />}
+            {mounted && isSignedIn && hasAnyRole && <PortfolioLensChip />}
             {/* The perspective picker. This slot held a shell switcher
                 listing one entry per role, deciding
                 which build of every tab you saw. One staff tab list means
@@ -4700,7 +4705,7 @@ export default function HomePage() {
       {/* Error banner when /api/me failed or timed out. Signed-in
           user with no profile = something is broken upstream (Neon
           cold, network hiccup). Renders a retryable banner in the
-          content area so the app is never a blank green header.
+          content portfolio so the app is never a blank green header.
           Suppressed when offline — the existing offline indicator
           (status dot + OfflineQueueDialog) already tells the user
           why nothing is loading; a red "couldn't load profile"
@@ -4783,7 +4788,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
           BreadcrumbNav slot when open; closing returns the operator to
           the exact tab they were on (state never gets cleared). The
           role pills are intentionally hidden while Tasks is rendered so
-          this reads as a distinct area of the app, not a tab. */}
+          this reads as a distinct portfolio of the app, not a tab. */}
       {authLoaded && (!isSignedIn || me) && tasksOpen && hasAnyRole && (
         <TasksPage
           // `can` and nothing else. This also passed three scoped role
@@ -4851,7 +4856,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             switching tabs changed the content height and slid the strip in
             and out of view at the bottom. */}
         {mounted && isSignedIn && hasAnyRole && topTab !== "client" && (
-          <AreaScopeNotice areaScope={(me as any)?.areaScope ?? null} />
+          <PortfolioScopeNotice portfolioScope={(me as any)?.portfolioScope ?? null} />
         )}
         <BreadcrumbNav
             contentGeneration={contentGeneration}
@@ -4933,7 +4938,7 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
                 <DayBoardButton userId={me?.id ?? null} />
               )}
               {/* TRIAL (worker Jobs only): the "How Jobs work" explainer's
-                  trigger, moved out of the content area. Inline, that
+                  trigger, moved out of the content portfolio. Inline, that
                   disclosure held a full row at the top of every visit even
                   when collapsed; here it costs nothing until opened. Scoped
                   to one tab deliberately — if it reads well it can replace

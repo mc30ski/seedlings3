@@ -1,6 +1,6 @@
 "use client";
 
-// THE AREA MAP — an area's properties as pins, on an OpenStreetMap basemap.
+// THE PORTFOLIO MAP — a portfolio's properties as pins, on an OpenStreetMap basemap.
 //
 // WHY THE POINTS ARRIVE IN DRIBS. Geocoding is the slow part: the free US
 // Census geocoder takes about three and a half SECONDS per address
@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, Button, HStack, Progress, Text } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { portfolioNames } from "@/src/lib/portfolios";
 
 type Point = {
   id: string;
@@ -32,13 +33,13 @@ type Point = {
   lat: number | null;
   lng: number | null;
   parcelLookupError: string | null;
-  area: { id: string; name: string } | null;
+  portfolios: { portfolio: { id: string; name: string } }[];
   client: { displayName: string | null } | null;
 };
 
 type PointsResponse = {
-  /** The area's own configured point — what its weather is anchored on. */
-  areaCentre: { id: string; name: string; lat: number; lng: number } | null;
+  /** The portfolio's own configured point — what its weather is anchored on. */
+  portfolioCentre: { id: string; name: string; lat: number; lng: number } | null;
   points: Point[];
   total: number;
   placed: number;
@@ -46,7 +47,7 @@ type PointsResponse = {
   unplaceable: number;
 };
 
-export default function AreaPropertyMap({ areaId }: { areaId: string }) {
+export default function PortfolioPropertyMap({ portfolioId }: { portfolioId: string }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const layerRef = useRef<any>(null);
@@ -72,16 +73,16 @@ export default function AreaPropertyMap({ areaId }: { areaId: string }) {
     loopFor.current = null;
     (async () => {
       try {
-        const res = await apiGet<PointsResponse>(`/api/properties/points?areaId=${encodeURIComponent(areaId)}`);
+        const res = await apiGet<PointsResponse>(`/api/properties/points?portfolioId=${encodeURIComponent(portfolioId)}`);
         if (!cancelled) setData(res);
       } catch {
         if (!cancelled) setFailed(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [areaId]);
+  }, [portfolioId]);
 
-  // One fill loop per area, ever. A ref rather than an effect dependency:
+  // One fill loop per portfolio, ever. A ref rather than an effect dependency:
   // the loop writes `data` on every batch, so any dep derived from `data`
   // either re-triggers it or — as happened first — never changes at all.
   // The original condition was `data?.pending === 0`, which is `false`
@@ -93,15 +94,15 @@ export default function AreaPropertyMap({ areaId }: { areaId: string }) {
   // 2. The slow fill, in small batches, until nothing is pending.
   useEffect(() => {
     if (!data || data.pending === 0) return;
-    if (loopFor.current === areaId) return;
-    loopFor.current = areaId;
+    if (loopFor.current === portfolioId) return;
+    loopFor.current = portfolioId;
     (async () => {
       setResolving(true);
       try {
         while (liveRef.current) {
           const res = await apiPost<{ resolved: Array<{ id: string; lat: number; lng: number }>; remaining: number }>(
             "/api/properties/points/resolve",
-            { areaId, limit: 5 },
+            { portfolioId, limit: 5 },
           );
           // NOT GATED ON AN EFFECT-SCOPED `cancelled` FLAG. It was, and
           // the batch's results were being thrown away: `setResolving(true)`
@@ -148,7 +149,7 @@ export default function AreaPropertyMap({ areaId }: { areaId: string }) {
     // it folds in, and depending on `resolving` would re-run it the moment
     // it sets its own flag. The ref above is what keeps it to one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [areaId, !!data]);
+  }, [portfolioId, !!data]);
 
   // 3. Draw. Leaflet is imported here, not at module scope.
   useEffect(() => {
@@ -181,16 +182,17 @@ export default function AreaPropertyMap({ areaId }: { areaId: string }) {
       // default rather than freezing one theme's palette into the code.
       const token = (name: string) =>
         getComputedStyle(document.documentElement).getPropertyValue(name).trim() || undefined;
-      const inArea = token("--chakra-colors-purple-solid");
-      const noArea = token("--chakra-colors-red-solid");
+      const inPortfolio = token("--chakra-colors-purple-solid");
+      const noPortfolio = token("--chakra-colors-red-solid");
       const centre = token("--chakra-colors-blue-solid");
 
       const placed = data.points.filter((p) => p.lat != null && p.lng != null);
       for (const p of placed) {
-        // A property with NO area is drawn differently on purpose — the
-        // map is the best place to notice one, and an untagged property is
-        // invisible to every area-scoped reader.
-        const colour = p.area ? inArea : noArea;
+        // A property in NO portfolio is drawn differently on purpose — the
+        // map is the best place to notice one, and such a property is
+        // invisible to every portfolio-scoped reader and counts toward no
+        // rollup. Being in several is normal and needs no special mark.
+        const colour = p.portfolios.length > 0 ? inPortfolio : noPortfolio;
         L.circleMarker([p.lat!, p.lng!], {
           radius: 7,
           color: colour,
@@ -201,20 +203,20 @@ export default function AreaPropertyMap({ areaId }: { areaId: string }) {
           .bindPopup(
             `<strong>${escapeHtml(p.displayName)}</strong><br/>` +
               `${escapeHtml([p.street1, p.city].filter(Boolean).join(", "))}<br/>` +
-              `<em>${escapeHtml(p.area?.name ?? "No area")}</em>`,
+              `<em>${escapeHtml(portfolioNames(p).join(" · ") || "No portfolio")}</em>`,
           )
           .addTo(layerRef.current);
       }
 
-      // THE AREA'S OWN POINT, drawn differently and said out loud.
+      // THE PORTFOLIO'S OWN POINT, drawn differently and said out loud.
       //
-      // It is not another property — it is the coordinate the area's
+      // It is not another property — it is the coordinate the portfolio's
       // WEATHER is forecast from. Showing it against the real properties
       // is the only way to notice it is in the wrong place, which is a
       // mistake that otherwise surfaces as a forecast quietly describing
       // somewhere else. A hollow ring with a crosshair reads as "a
       // reference point" rather than "a thing you visit".
-      const c = data.areaCentre;
+      const c = data.portfolioCentre;
       if (c) {
         L.circleMarker([c.lat, c.lng], {
           radius: 11,
@@ -225,8 +227,8 @@ export default function AreaPropertyMap({ areaId }: { areaId: string }) {
           dashArray: "4 3",
         })
           .bindPopup(
-            `<strong>${escapeHtml(c.name)} — area centre</strong><br/>` +
-              `Weather for this area is forecast from here.`,
+            `<strong>${escapeHtml(c.name)} — portfolio centre</strong><br/>` +
+              `Weather for this portfolio is forecast from here.`,
           )
           .addTo(layerRef.current);
       }
@@ -291,7 +293,7 @@ export default function AreaPropertyMap({ areaId }: { areaId: string }) {
         borderWidth="1px"
         borderColor="border"
         overflow="hidden"
-        data-testid="area-map"
+        data-testid="portfolio-map"
       />
 
       <HStack mt={2} gap={3} wrap="wrap">
@@ -304,9 +306,9 @@ export default function AreaPropertyMap({ areaId }: { areaId: string }) {
             {unplaceable} couldn&rsquo;t be placed from {unplaceable === 1 ? "its address" : "their addresses"}
           </Text>
         )}
-        {data?.areaCentre && (
+        {data?.portfolioCentre && (
           <Text fontSize="2xs" color="blue.fg">
-            ◎ area centre — the weather is forecast from here
+            ◎ portfolio centre — the weather is forecast from here
           </Text>
         )}
         {resolving && <Text fontSize="2xs" color="purple.fg">Locating…</Text>}

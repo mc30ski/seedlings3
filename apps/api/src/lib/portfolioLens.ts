@@ -1,12 +1,12 @@
 import { prisma } from "../db/prisma";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE AREA LENS — "show me only Durham", for someone allowed to see more.
+// THE PORTFOLIO LENS — "show me only Durham", for someone allowed to see more.
 //
 // A GRANT AND A LENS ARE DIFFERENT THINGS, and keeping them different is the
 // whole design:
 //
-//   A GRANT (AreaAssignment) decides what you are ALLOWED to see. It only
+//   A GRANT (PortfolioAssignment) decides what you are ALLOWED to see. It only
 //   ever widens — an assignment adds a territory, it never cages someone who
 //   already holds the capability company-wide.
 //
@@ -14,13 +14,13 @@ import { prisma } from "../db/prisma";
 //   and only inside what your grants already reach.
 //
 // WHY THE HEADER CANNOT ESCALATE. The chosen path is INTERSECTED with the
-// granted subtrees in areaScope.visibleAreaPaths. A lens pointing somewhere
+// granted subtrees in portfolioScope.visiblePortfolioPaths. A lens pointing somewhere
 // the grants do not cover yields an empty path list — "see nothing" — never
 // that territory's rows. So no validation here is load-bearing; the worst a
 // crafted header achieves is showing its sender less than they are owed.
 //
 // WHY IT RIDES ON THE PRINCIPAL rather than being a query param each route
-// reads. There are 100+ query sites already calling areaWhere(principal, …).
+// reads. There are 100+ query sites already calling portfolioWhere(principal, …).
 // On the principal, every one of them honours the lens with no edit — and,
 // more to the point, a view added next year honours it too. A per-route
 // param would have to be remembered at every single one, and the failure
@@ -34,10 +34,10 @@ import { prisma } from "../db/prisma";
 // it may not refuse an action.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const AREA_LENS_HEADER = "x-area-lens";
+export const AREA_LENS_HEADER = "x-portfolio-lens";
 
 /**
- * Parse the header into a candidate area ID. Shape check only — whether the
+ * Parse the header into a candidate portfolio ID. Shape check only — whether the
  * caller may look there is settled by the intersection, not here.
  */
 export function parseAreaLensHeader(
@@ -54,26 +54,26 @@ export function parseAreaLensHeader(
  *
  * Safe to cache forever because AREAS ARE NEVER REPARENTED (G14) and never
  * deleted — a path is immutable once written, so an entry cannot go stale.
- * Only new areas can appear, and those simply miss and fetch. Retiring an
- * area does not change its path either: retirement hides it from pickers and
+ * Only new portfolios can appear, and those simply miss and fetch. Retiring an
+ * portfolio does not change its path either: retirement hides it from pickers and
  * leaves history resolvable.
  */
 const pathById = new Map<string, string>();
 
-/** Resolve the header's area ID to a path, or null if there is no such area. */
-export async function resolveAreaLensPath(areaId: string | null): Promise<string | null> {
-  if (!areaId) return null;
-  const hit = pathById.get(areaId);
+/** Resolve the header's portfolio ID to a path, or null if there is no such portfolio. */
+export async function resolveAreaLensPath(portfolioId: string | null): Promise<string | null> {
+  if (!portfolioId) return null;
+  const hit = pathById.get(portfolioId);
   if (hit !== undefined) return hit;
-  const row = await prisma.area.findUnique({
-    where: { id: areaId },
+  const row = await prisma.portfolio.findUnique({
+    where: { id: portfolioId },
     select: { path: true },
   });
   // MISSES ARE NOT CACHED. A hit is immutable and safe to keep forever; a
-  // miss only means "not yet", and caching it would make an area created a
+  // miss only means "not yet", and caching it would make a portfolio created a
   // moment ago permanently unselectable for this process.
   if (!row) return null;
-  pathById.set(areaId, row.path);
+  pathById.set(portfolioId, row.path);
   return row.path;
 }
 

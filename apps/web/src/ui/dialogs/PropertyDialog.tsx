@@ -16,7 +16,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
-import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
+import { apiGet, apiPost, apiPatch, apiPut } from "@/src/lib/api";
 import AddressSearchField from "@/src/ui/components/AddressSearchField";
 import {
   DialogMode,
@@ -125,18 +125,31 @@ export default function PropertyDialog({
 
   // ── TERRITORY ─────────────────────────────────────────────────────────
   //
-  // A property's area decides whose rollups it appears in. Until now
+  // A property's portfolio decides whose rollups it appears in. Until now
   // nothing in the app set it: a property got one from the seed, or by
   // inheriting from a sibling when the client's other properties all
   // agreed, or not at all — and an untagged property is invisible to every
-  // area-scoped reader, which is the silent-rows-missing failure the whole
-  // area feature exists to avoid.
+  // portfolio-scoped reader, which is the silent-rows-missing failure the whole
+  // portfolio feature exists to avoid.
   const [areaValue, setAreaValue] = useState<string[]>(["INHERIT"]);
   const [areaOptions, setAreaOptions] = useState<Array<{ id: string; name: string; trail?: string[] }>>([]);
-  // What it was when the dialog opened, so an UPDATE only retags when the
-  // operator actually changed it.
-  const initialAreaId = (initial as any)?.areaId ?? null;
-  const mayRetag = !!scope?.can("areas.manage");
+  // What it was when the dialog opened, so an UPDATE only writes when the
+  // operator actually changed something.
+  //
+  // A LIST, because membership is a set. This read `initial.portfolioId`,
+  // a single column that no longer exists — so it resolved to `undefined`,
+  // the picker opened on "No portfolio" whatever the property was really
+  // in, and saving would have silently emptied it. Nothing failed to
+  // compile, because `initial` is read through `as any`.
+  const initialAreaIds = useMemo<string[]>(
+    () =>
+      ((initial as any)?.portfolios ?? [])
+        .map((m: any) => m?.portfolio?.id)
+        .filter((x: unknown): x is string => typeof x === "string")
+        .sort(),
+    [initial],
+  );
+  const mayRetag = !!scope?.can("portfolios.manage");
 
   const clientItems = useMemo(() => {
     const items = clients.map((c) => ({
@@ -157,11 +170,12 @@ export default function PropertyDialog({
   const areaItems = useMemo(
     () => [
       // CREATE offers "work it out", which is the server's inherit-from-
-      // the-client rule. UPDATE offers "none", which is a real choice to
-      // remove a property from every territory.
-      mode === "CREATE"
-        ? { label: "Decide from this client's other properties", value: "INHERIT" }
-        : { label: "No area", value: "NONE" },
+      // the-client rule. UPDATE needs no "none" entry: the picker is
+      // multi-select now, so clearing it IS none, and a sentinel sitting
+      // alongside real choices would be selectable *with* them.
+      ...(mode === "CREATE"
+        ? [{ label: "Decide from this client's other properties", value: "INHERIT" }]
+        : []),
       ...areaOptions.map((a) => ({
         // The chain, so two routes called "North" are distinguishable.
         label: a.trail?.length ? a.trail.join(" → ") : a.name,
@@ -250,25 +264,27 @@ export default function PropertyDialog({
   }
 
   // load clients list when dialog opens
-  // Load the areas on offer, and seed the picker from the property.
+  // Load the portfolios on offer, and seed the picker from the property.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await apiGet<{ areas: Array<{ id: string; name: string; trail?: string[] }> }>(
-          "/api/me/areas",
+        const res = await apiGet<{ portfolios: Array<{ id: string; name: string; trail?: string[] }> }>(
+          "/api/me/portfolios",
         );
-        if (!cancelled) setAreaOptions(res.areas ?? []);
+        if (!cancelled) setAreaOptions(res.portfolios ?? []);
       } catch {
         // No list means no picker — the rest of the dialog still works and
         // the server still applies its own inherit rule on create.
         if (!cancelled) setAreaOptions([]);
       }
     })();
-    setAreaValue([initialAreaId ?? (mode === "CREATE" ? "INHERIT" : "NONE")]);
+    // CREATE opens on "work it out" (the server's inherit rule); UPDATE
+    // opens on what the property is actually in.
+    setAreaValue(mode === "CREATE" ? ["INHERIT"] : initialAreaIds);
     return () => { cancelled = true; };
-  }, [open, initialAreaId, mode]);
+  }, [open, initialAreaIds, mode]);
 
   useEffect(() => {
     if (!open) return;
@@ -465,12 +481,16 @@ export default function PropertyDialog({
       lotSizeUnit: lotSize !== "" ? lotSizeUnit : null,
       pointOfContactId: pocValue[0] === "NONE" ? null : pocValue[0],
       // ONLY ON CREATE. `properties.update` deliberately does not write
-      // `areaId`: moving an existing property has consequences the plain
-      // patch does not handle — future visits follow it, a retired area is
-      // refused, and the audit records how many occurrences moved. That is
-      // `PATCH /properties/:id/area`, called separately below.
-      ...(mode === "CREATE" && areaValue[0] && areaValue[0] !== "INHERIT"
-        ? { areaId: areaValue[0] }
+      // membership: changing it on an existing property has consequences
+      // the plain patch does not handle — its open visits are resynced, a
+      // retired portfolio is refused, both sides are checked for
+      // `schedule.manage` (G16), and the audit records the deltas. That is
+      // `PUT /properties/:id/portfolios`, called separately below.
+      //
+      // An empty list on CREATE means "inherit", which is what INHERIT is;
+      // omitting the key entirely is what triggers the server's rule.
+      ...(mode === "CREATE" && !areaValue.includes("INHERIT") && areaValue.length > 0
+        ? { portfolioIds: areaValue }
         : {}),
     };
 
@@ -496,28 +516,32 @@ export default function PropertyDialog({
           payload
         );
 
-        // MOVING AREA IS ITS OWN CALL, after the patch above.
+        // MEMBERSHIP IS ITS OWN CALL, after the patch above.
         //
-        // Not folded into it: the retag endpoint moves the property's
-        // UNFINISHED visits with it and leaves completed ones where they
-        // happened, refuses a retired area, and audits the count. Writing
-        // `areaId` through the ordinary patch would skip all three and
-        // quietly restate what past rollups reported.
-        const chosenArea = areaValue[0] === "NONE" ? null : areaValue[0] ?? null;
+        // Not folded into it: this endpoint resyncs the property's
+        // UNFINISHED visits and leaves completed ones frozen where they
+        // counted, refuses a retired portfolio, checks `schedule.manage`
+        // in every portfolio being added and removed (G16), and audits the
+        // deltas. Writing membership through the ordinary patch would skip
+        // all four and quietly restate what past rollups reported.
+        const chosenAreas = areaValue.filter((v) => v !== "INHERIT").sort();
+        const changed =
+          chosenAreas.length !== initialAreaIds.length ||
+          chosenAreas.some((id, i) => id !== initialAreaIds[i]);
         let moved = 0;
-        if (mayRetag && chosenArea !== (initialAreaId ?? null)) {
-          const res = await apiPatch<{ changed?: boolean; occurrencesRetagged?: number }>(
-            `/api/properties/${initial.id}/area`,
-            { areaId: chosenArea },
+        if (mayRetag && changed) {
+          const res = await apiPut<{ changed?: boolean; occurrencesResynced?: number }>(
+            `/api/properties/${initial.id}/portfolios`,
+            { portfolioIds: chosenAreas },
           );
-          moved = res?.occurrencesRetagged ?? 0;
+          moved = res?.occurrencesResynced ?? 0;
         }
 
         publishInlineMessage({
           type: "SUCCESS",
           text:
             moved > 0
-              ? `Property "${payload.displayName}" updated. ${moved} scheduled visit${moved === 1 ? "" : "s"} moved with it.`
+              ? `Property "${payload.displayName}" updated. ${moved} scheduled visit${moved === 1 ? "" : "s"} followed it.`
               : `Property "${payload.displayName}" updated.`,
         });
       }
@@ -622,28 +646,38 @@ export default function PropertyDialog({
                     ))}
                   </HStack>
                 </div>
-                {/* AREA. Above Status because it answers a question about
+                {/* PORTFOLIO. Above Status because it answers a question about
                     the property's place in the business, not its lifecycle,
                     and because it is the field nobody could set until now. */}
                 {areaOptions.length > 0 && (
                   <div>
-                    <Text mb="1">Area</Text>
+                    <Text mb="1">{mode === "CREATE" ? "Portfolio" : "Portfolios"}</Text>
                     <Select.Root
                       collection={areaCollection}
                       value={areaValue}
                       onValueChange={(e) => setAreaValue(e.value)}
+                      // MULTIPLE on UPDATE, because a property belongs to
+                      // any number of portfolios — a district AND a route,
+                      // say. Single on CREATE, where the alternative to
+                      // picking one is "work it out from the client", and
+                      // a multi-select whose empty state means "inherit"
+                      // reads as "none".
+                      multiple={mode === "UPDATE"}
                       size="sm"
                       positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                      // Changing an existing property's area goes through the
-                      // retag endpoint, which is `areas.manage`. Without it
-                      // the field shows where the property is and refuses to
-                      // move it, rather than offering a control whose save
-                      // would be refused.
+                      // Changing an existing property's membership goes
+                      // through `PUT /properties/:id/portfolios`, which is
+                      // `portfolios.manage`. Without it the field shows
+                      // what the property is in and refuses to change it,
+                      // rather than offering a control whose save would be
+                      // refused.
                       disabled={mode === "UPDATE" ? !mayRetag : !canManageClients}
                     >
                       <Select.Control>
                         <Select.Trigger>
-                          <Select.ValueText placeholder="Select area" />
+                          <Select.ValueText
+                            placeholder={mode === "CREATE" ? "Select portfolio" : "In no portfolio"}
+                          />
                         </Select.Trigger>
                       </Select.Control>
                       <Select.Positioner>
@@ -658,9 +692,9 @@ export default function PropertyDialog({
                     </Select.Root>
                     <Text fontSize="xs" color="fg.muted" mt="1">
                       {mode === "UPDATE" && !mayRetag
-                        ? "Only somebody who manages areas can move a property."
+                        ? "Only somebody who manages portfolios can change this."
                         : mode === "UPDATE"
-                          ? "Moving it takes its scheduled visits along. Finished work stays where it happened."
+                          ? "Pick any number. Scheduled visits follow; finished work keeps what it counted toward. Clear them all to leave it in none."
                           : "Decides whose rollups this property appears in."}
                     </Text>
                   </div>

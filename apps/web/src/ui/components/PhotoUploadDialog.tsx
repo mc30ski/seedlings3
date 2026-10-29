@@ -234,7 +234,7 @@ export default function PhotoUploadDialog({ files, onUpload, onClose, isOffline 
                     rounded="md"
                   >
                     <Text fontSize="sm" color="blue.fg">
-                      Tap a photo to hide sensitive areas (black out or blur, optional). Tap the X to remove a photo from this batch.
+                      Tap a photo to hide sensitive portfolios (black out or blur, optional). Tap the X to remove a photo from this batch.
                     </Text>
                   </Box>
                 )}
@@ -390,7 +390,7 @@ function PhotoTile({
   const isUploaded = item.status === "uploaded";
   const isFailed = item.status === "failed";
   // Whole tile is the Blur trigger when the photo isn't locked in by upload.
-  // Hint text "Tap a photo to blur sensitive areas" promised this — making
+  // Hint text "Tap a photo to blur sensitive portfolios" promised this — making
   // only a tiny corner icon clickable made the dialog feel broken (tapping
   // the photo seemed to do nothing or close the dialog by accident).
   const tileClickable = !disabled && !isUploading && !isUploaded;

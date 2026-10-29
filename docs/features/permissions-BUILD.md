@@ -1,4 +1,4 @@
-# Permissions / Roles / Areas — BUILD FILE
+# Permissions / Roles / Portfolios — BUILD FILE
 
 **TEMPORARY WORKING FILE. The BACKEND work has landed (2026-10-13); this is
 kept for the gate assertions and the audit findings, not as a to-do list.**
@@ -12,7 +12,7 @@ kept for the gate assertions and the audit findings, not as a to-do list.**
 > is now built** — G13 and G25 landed 2026-10-18 and
 > `permissions-build-gate.test.ts` has no `it.todo` entries left. What is
 > still missing is not a gate but a live-data test: nothing drives a route as
-> a territory-limited principal, because the seed creates no AreaAssignment
+> a territory-limited principal, because the seed creates no PortfolioAssignment
 > rows.
 
 **Nothing intermediate is deployed.** One project, one arrival point — the
@@ -47,10 +47,10 @@ because they are invisible until they bite.
 - [ ] **Every scope default must fail CLOSED.** `CrewsTab` currently
       defaulted an absent scope to one that grants — the shape G2 now fails the build on.
 - [ ] **`AuditScope` needs new enum values** — a Prisma migration. `ROLE` in
-      Step 1; `AREA` and `AREA_ASSIGNMENT` in Step 3. Every state change in
+      Step 1; `PORTFOLIO` and `PORTFOLIO_ASSIGNMENT` in Step 3. Every state change in
       this app writes an AuditEvent.
-- [ ] **Backfill `areaId` on existing rows in the same migration** that
-      creates the root area, or every rollup returns zero on day one.
+- [ ] **Backfill `portfolioId` on existing rows in the same migration** that
+      creates the root portfolio, or every rollup returns zero on day one.
 - [ ] **A surface hidden by entitlement must not look broken.** Say
       "You can view this; you cannot change it" once at the top. This is the
       claimer bug's failure mode and it is about to become systemic.
@@ -63,35 +63,35 @@ because they are invisible until they bite.
 - [x] ~~**Break-glass must not resolve through `can()`.**~~ SUPERSEDED by
       decision 47 — the env-var break-glass is deleted outright. Recovery is
       re-running the starter script, which never calls `can()`.
-- [ ] **Area move is ONE guided transaction** — create new node, move
+- [ ] **Portfolio move is ONE guided transaction** — create new node, move
       properties, retire old, audit with a before-snapshot — behind a
-      typed confirm (type the area name), like the user-decline flow.
-- [ ] **Retired areas are hidden from PICKERS, never from REPORTING.**
+      typed confirm (type the portfolio name), like the user-decline flow.
+- [ ] **Retired portfolios are hidden from PICKERS, never from REPORTING.**
 - [ ] **No per-person entitlement grants. Ever.** Every grant goes through a
       named role; an exception is a role ("Contractor — no inventory"), not a
       tick on a person. Worker-type defaults are three `isSystem` roles.
-- [ ] **Roles SUSPEND, areas RETIRE.** Two steps for a role: suspend
+- [ ] **Roles SUSPEND, portfolios RETIRE.** Two steps for a role: suspend
       (reversible, grants inactive immediately, assignments survive) then
       optionally delete from the suspended state. Suspend is also the
       everyone-at-once switch — no separate mechanism. Both warn **by name**.
-- [ ] **A new occurrence's `areaId` resolves: previous occurrence in the chain
-      → `Job.defaultAreaId` → the property's area if it has exactly one →
+- [ ] **A new occurrence's `portfolioId` resolves: previous occurrence in the chain
+      → `Job.defaultPortfolioId` → the property's portfolio if it has exactly one →
       prompt.** Inheritance FIRST, so automatic chain rollover can never hit
       an unanswerable prompt.
 - [ ] **No hard depth cap on the tree**; warn past four levels.
-- [ ] **`Area.path` is built from IDS, not names.** Names are neither unique
+- [ ] **`Portfolio.path` is built from IDS, not names.** Names are neither unique
       nor stable; a slug path breaks on rename.
 - [ ] **"Manager" never appears in UI copy.** It is a title from a taxonomy,
-      not a thing the system knows. Say "anyone assigned to this area", or
-      name the area's totals. Surfaces are named for what they show — *Area
+      not a thing the system knows. Say "anyone assigned to this portfolio", or
+      name the portfolio's totals. Surfaces are named for what they show — *Portfolio
       rollup*, never *Manager dashboard*.
-- [ ] **One area per property, and it is OPTIONAL** — a nullable column, no
+- [ ] **One portfolio per property, and it is OPTIONAL** — a nullable column, no
       join table. Unassigned is allowed but warned FOR ITS CONSEQUENCE:
       "its work won't appear in any manager's view." Day-one migration puts
-      every property in the root area so nothing starts invisible.
-- [ ] **Area names are NOT unique.** Only ids are. The UI must disambiguate
-      by full path and badge retired areas with their retirement date.
-- [ ] **Creating, renaming and retiring areas needs `areas.manage`** — the tree
+      every property in the root portfolio so nothing starts invisible.
+- [ ] **Portfolio names are NOT unique.** Only ids are. The UI must disambiguate
+      by full path and badge retired portfolios with their retirement date.
+- [ ] **Creating, renaming and retiring portfolios needs `portfolios.manage`** — the tree
       decides who sees what money.
 - [ ] **45 entitlements.** `materials.charge`, `money.record` and
       `clients.contribute` were all added by the route-map review —
@@ -105,8 +105,8 @@ because they are invisible until they bite.
 - [ ] **`payroll.*` is NOT `books.*`.** Payroll is individual wages; books is
       the business. A bookkeeper gets books without seeing anyone's pay.
 - [ ] **Geocode `User.homeBaseAddress`** (Mapbox token already in env), store
-      lat/lng, derive an area's location from its properties' centroid. The
-      home-crew picker suggests by distance AND prior work in that area —
+      lat/lng, derive a portfolio's location from its properties' centroid. The
+      home-crew picker suggests by distance AND prior work in that portfolio —
       suggestions only, anyone addable. Show distance, never the address.
 - [ ] **Role builder copies a base role's entitlements as a STARTING POINT**,
       with a warning that the copy travels to anyone assigned the role even
@@ -199,25 +199,25 @@ Removing the stub (nothing ships between steps) removed the only reason
 9. [ ] Gates: **G5, G6, G7, G8, G18, G23, G24, G29**.
 10. [ ] The test suite below, in full.
 
-## Step 3 — Areas
+## Step 3 — Portfolios
 
-1. [ ] Migration: `Area` (self-ref + materialized `path`), `AreaAssignment`,
-        `Property.areas[]`, `JobOccurrence.areaId`, `Job.defaultAreaId`;
-        `AREA` + `AREA_ASSIGNMENT` on `AuditScope`. **Create the root area and
+1. [ ] Migration: `Portfolio` (self-ref + materialized `path`), `PortfolioAssignment`,
+        `Property.portfolios[]`, `JobOccurrence.portfolioId`, `Job.defaultPortfolioId`;
+        `PORTFOLIO` + `PORTFOLIO_ASSIGNMENT` on `AuditScope`. **Create the root portfolio and
         backfill every existing row in this same migration.**
-2. [ ] `areaScope(principal)` helper, threaded like `businessStartCutoff`.
-3. [ ] Area tree UI, guided move, assignment editor, **area rollup tab**,
-        area selector, **area-assignment badge**, temporary-cover check.
-4. [ ] `PropertiesTab` Area filter (incl. "Unassigned") + multi-select bulk
-        assign; "Add properties" picker on an area node; unassigned warning
+2. [ ] `portfolioScope(principal)` helper, threaded like `businessStartCutoff`.
+3. [ ] Portfolio tree UI, guided move, assignment editor, **portfolio rollup tab**,
+        portfolio selector, **portfolio-assignment badge**, temporary-cover check.
+4. [ ] `PropertiesTab` Portfolio filter (incl. "Unassigned") + multi-select bulk
+        assign; "Add properties" picker on a portfolio node; unassigned warning
         and the "Unassigned (n)" bucket on the tree.
-5. [ ] Geocode `homeBaseAddress`; area location from its properties'
+5. [ ] Geocode `homeBaseAddress`; portfolio location from its properties'
         centroid; home-crew picker suggesting on distance AND prior work.
 6. [ ] Gates: **G10, G11, G12, G13, G14, G16, G17, G21, G22, G25**.
 
 ## Step 4 — Join them
 
-1. [ ] `can(principal, capability, { areaId })`.
+1. [ ] `can(principal, capability, { portfolioId })`.
 2. [ ] Gates: **G15**.
 
 ---
@@ -274,17 +274,17 @@ rather than trusted. Two mitigations, both required:
    `AuditEvent` so the inputs survive in the audit log even though the
    columns do not.
 
-**A display may optionally bind to an area.** Unbound displays behave exactly
+**A display may optionally bind to a portfolio.** Unbound displays behave exactly
 as today, so nothing changes for the screen already paired. The binding lives
 on the `Display` row and resolves from the pairing token, so it needs no
 principal — which is what makes it workable for a device with no user.
 
-**Area scoping is verified by OUTPUT, not by code shape.** G10 catches a
-missing `areaScope()`; it cannot catch `areaScope(wrongUser)`, the wrong
+**Portfolio scoping is verified by OUTPUT, not by code shape.** G10 catches a
+missing `portfolioScope()`; it cannot catch `portfolioScope(wrongUser)`, the wrong
 column, or a subtly wrong prefix match. So:
 
-> **One integration test drives EVERY area-scopable route** as a
-> Raleigh-only principal against a two-area seed, and asserts no Durham
+> **One integration test drives EVERY portfolio-scopable route** as a
+> Raleigh-only principal against a two-portfolio seed, and asserts no Durham
 > record appears in any response.
 
 Driven from the route map, so it covers new routes automatically. This is the
@@ -294,8 +294,8 @@ silent shape as the view-as bug that shipped three times, in the one place a
 static gate cannot reach.
 
 **Build everything, deploy once.** The question of shipping entitlements
-first and leaving areas until a second location exists was put explicitly and
-declined. The halves were designed together — `can(p, cap, { areaId })` only
+first and leaving portfolios until a second location exists was put explicitly and
+declined. The halves were designed together — `can(p, cap, { portfolioId })` only
 means anything because both exist — and incomplete intermediate states are
 worse here than waiting.
 
@@ -311,7 +311,7 @@ forgotten — those are the ones to re-read before shipping.
 
 | # | Decision | Enforced by |
 |---|---|---|
-| 1 | Four axes never collapse: worker type / roles / areas / client link | human |
+| 1 | Four axes never collapse: worker type / roles / portfolios / client link | human |
 | 2 | `STAFF` added to `Role`; **no further enum values, ever** | G19 |
 | 3 | ~~STAFF is the floor and is never removed from an active account~~ **SUPERSEDED by 40.** There is no STAFF role to keep. The lockout it prevented — demotion leaving zero rows — cannot happen when "on payroll, no roles" is a valid state and profile access is ownership rather than an entitlement | n/a |
 | 3a | Existing accounts holding WORKER are backfilled to STAFF; role-less users (clients, mid-onboarding) are not | migration |
@@ -320,32 +320,32 @@ forgotten — those are the ones to re-read before shipping.
 | 5 | **Roles only** — no per-person entitlement grants | G20 |
 | 6 | Worker-type defaults are three `isSystem` roles | test |
 | 7 | Roles **suspend** (reversible); delete only from suspended | test |
-| 8 | Area names are NOT unique; only ids are | schema |
-| 9 | `Area.path` is built from **ids**, never names | G21 |
-| 10 | Creating / renaming / retiring areas needs `areas.manage` | G5 |
-| 11 | Areas are never reparented — copy-and-retire | G14 |
-| 12 | `occurrence.areaId` frozen at completion | G22 |
-| 13 | New `areaId`: previous occurrence → job default → sole property area → prompt | test |
-| 14 | Retag needs `schedule.manage` in BOTH areas | G16 |
-| 15 | Rollup defaults to area, toggles to "My team" | Playwright |
-| 15a | A property belongs to **exactly one** area — a column, not a join table | schema |
-| 15b | `Property.areaId` is **optional**, but unassigned is warned for its consequence, and an "Unassigned" bucket shows the backlog | Playwright |
+| 8 | Portfolio names are NOT unique; only ids are | schema |
+| 9 | `Portfolio.path` is built from **ids**, never names | G21 |
+| 10 | Creating / renaming / retiring portfolios needs `portfolios.manage` | G5 |
+| 11 | Portfolios are never reparented — copy-and-retire | G14 |
+| 12 | `occurrence.portfolioId` frozen at completion | G22 |
+| 13 | New `portfolioId`: previous occurrence → job default → sole property portfolio → prompt | test |
+| 14 | Retag needs `schedule.manage` in BOTH portfolios | G16 |
+| 15 | Rollup defaults to portfolio, toggles to "My team" | Playwright |
+| 15a | A property belongs to **exactly one** portfolio — a column, not a join table | schema |
+| 15b | `Property.portfolioId` is **optional**, but unassigned is warned for its consequence, and an "Unassigned" bucket shows the backlog | Playwright |
 | 15c | Moving a property moves its SCHEDULED visits, never completed ones | G22 + test |
-| 15d | Moving a property needs `schedule.manage` in BOTH areas, like retagging | G16 |
-| 15e | `PropertiesTab` gains an Area filter incl. "Unassigned", plus multi-select bulk assign | Playwright |
+| 15d | Moving a property needs `schedule.manage` in BOTH portfolios, like retagging | G16 |
+| 15e | `PropertiesTab` gains an Portfolio filter incl. "Unassigned", plus multi-select bulk assign | Playwright |
 | 15f | "Manager" never appears in UI copy — it is a taxonomy title, not a role | G23 |
 | 15g | Entitlements load with the auth read, uncached until measured | G3 |
 | 15h | ~~Old guards stay beside the new ones, env-flag switched, removed later~~ — **superseded.** The cord was cut instead: the flag and the old guards were removed together, so there is no period with two paths to keep in step. | G24 |
 | 15i | Privilege columns dropped in the same migration, with a count assertion + audit snapshot | migration |
-| 15j | A display may optionally bind to an area; unbound = today's behaviour | test |
-| 15k | Every area-scopable route is output-tested against a two-area seed | **G25** |
+| 15j | A display may optionally bind to a portfolio; unbound = today's behaviour | test |
+| 15k | Every portfolio-scopable route is output-tested against a two-portfolio seed | **G25** |
 | 15l | Build all four steps, one deploy — asked explicitly, declined splitting | process |
 | 15m | ~~Roles stack freely, EXCEPT at most one `isSystem` defaults role per person~~ **SUPERSEDED by 42/44.** `isSystem` worker-type roles stop existing, and with inheritance two roles descending from a common base is normal rather than incoherent | n/a |
 | 15n | UsersTab's two privilege toggles and its duplicate `PRIV_DEFAULTS` table are removed; replaced by a single "Defaults role" picker | Playwright |
 | 15o | STAFF is granted to users who ALREADY hold a role — never to clients, who hold none | migration |
 | 15p | `/users/:x/privileges` retires with the columns it writes | G5 |
-| 15q | People are organised FLAT — no reporting line. Area ownership is accountability for a place, never authority over a person. `people.manage` and `people.grant-roles` stay global-only. | G5 |
-| 15r | The flat-people principle appears in BOTH help surfaces — role builder and area assignment — in the operator's own words | Playwright |
+| 15q | People are organised FLAT — no reporting line. Portfolio ownership is accountability for a place, never authority over a person. `people.manage` and `people.grant-roles` stay global-only. | G5 |
+| 15r | The flat-people principle appears in BOTH help surfaces — role builder and portfolio assignment — in the operator's own words | Playwright |
 | 16 | `AreaMembership` grants nothing; no check may read it | G17 |
 | 17 | `inventory.pull` / `expenses.charge` become grants; columns dropped | migration + test |
 | 18 | Custom roles are **absolute**, never deltas from a base | test |
@@ -359,14 +359,14 @@ forgotten — those are the ones to re-read before shipping.
 | 26 | No money/payroll route resolves to `schedule.manage` | **G18** |
 | 27 | `link-clerk` needs `identity.link` — binding a login is an auth act | G5 |
 | 28 | `people.grant-roles`, bounded by *cannot grant what you lack* | **G6** |
-| 29 | A duplicate global+area grant shows BOTH, area flagged redundant | Playwright |
+| 29 | A duplicate global+portfolio grant shows BOTH, portfolio flagged redundant | Playwright |
 | 30 | Warn past four levels of depth; never block | test |
 | 31 | One arrival point — nothing intermediate is deployed | process |
 | 32 | `can()` takes a resolved principal, never a userId | G3 |
 | 33 | Resolution order: roles → impersonation → entitlements | **G4** |
 | 34 | One `Scope` type; every default fails closed | G1, G2 |
-| 35 | `AuditScope` gains `ROLE`, `AREA`, `AREA_ASSIGNMENT` | migration |
-| 36 | Root area created and every existing row backfilled, same migration | migration |
+| 35 | `AuditScope` gains `ROLE`, `PORTFOLIO`, `PORTFOLIO_ASSIGNMENT` | migration |
+| 36 | Root portfolio created and every existing row backfilled, same migration | migration |
 | 37 | A named `SYSTEM` principal for cron / tokens / rollover | test |
 | 38 | ~~Break-glass resolves without the entitlement tables~~ **SUPERSEDED by 47.** The env-var break-glass is deleted; initial assignment is the starter script run against the database. There is no in-app recovery path left to keep correct | n/a |
 | 39 | A hidden surface never looks broken; no empty tabs | Playwright |
@@ -418,21 +418,21 @@ appears in exactly one step list.
 | **G6** | You cannot grant an entitlement you do not hold. |
 | **G7** | The permissions matrix config lists every entitlement in the enum — matrix is generated, never hand-maintained. |
 | **G8** | No conditional anywhere reads a role, tier or title **name** string. |
-| **G10** | Every area-scopable route applies `areaScope()`, or carries `// area-scope-allow: <reason>`. |
-| **G11** | A worker's own job feed is NOT narrowed by area. |
-| **G12** | Areas form a tree — one parent, no cycles. |
-| **G13** | Retired areas are excluded from pickers and INCLUDED in reporting aggregates. |
-| **G14** | No code path reparents an area; moves go through the guided copy-and-retire action. |
+| **G10** | Every portfolio-scopable route applies `portfolioScope()`, or carries `// portfolio-scope-allow: <reason>`. |
+| **G11** | A worker's own job feed is NOT narrowed by portfolio. |
+| **G12** | Portfolios form a tree — one parent, no cycles. |
+| **G13** | Retired portfolios are excluded from pickers and INCLUDED in reporting aggregates. |
+| **G14** | No code path reparents a portfolio; moves go through the guided copy-and-retire action. |
 | **G19** | No `Role` enum and no `UserRole` table exist. Supersedes the original "exactly four values" rule — decision 40 removes the enum rather than capping it. "On payroll" is `workerType != null`; "what you may do" is custom roles. A vestigial enum carrying no entitlements would be a second source of truth for a fact the worker type already states. |
 | **G20** | No per-person entitlement table exists; every grant resolves through a named role. |
-| **G21** | `Area.path` contains no name-derived segments. |
-| **G22** | No code path writes `occurrence.areaId` on a COMPLETED or later occurrence. |
+| **G21** | `Portfolio.path` contains no name-derived segments. |
+| **G22** | No code path writes `occurrence.portfolioId` on a COMPLETED or later occurrence. |
 | **G24** | **RETIRED, and replaced in place by G24a–c.** It asserted that both guard paths survived while the flag did. There is no flag and no second path: `requireRole`, `adminGuard` and friends are deleted, so the original assertion can only ever pass vacuously — which reads as coverage of a rule nothing is following. What replaced it is stricter, because "one path" is a property worth asserting on its own: **G24a** exactly ONE authorization path exists; **G24b** no route is gated by a role NAME; **G24c** `approvedUser` appears only on routes the route map calls OWNERSHIP — added after a blanket `adminGuard → approvedUser` substitution silently opened four routes, one of which let anyone grant themselves ADMIN. |
-| **G25** | Every route in the route map's area-scopable groups appears in the scope integration test. A new scopable route with no coverage fails the build. |
+| **G25** | Every route in the route map's portfolio-scopable groups appears in the scope integration test. A new scopable route with no coverage fails the build. |
 | **G23** | No user-facing string in `apps/web` contains "manager" outside a taxonomy value. Writing it promotes a label into a role and undoes manager-as-assignment. |
 | **G18** | No money-mutating or payroll-mutating route resolves to `schedule.manage`. Write-off, mark-paid, split recalculation and hours approval all resolved to it because it had become the catch-all for occurrence routes. A manager with scheduling rights could have changed worker pay. |
-| **G17** | No permission check reads `AreaMembership`. Home areas are informational; a check there silently restricts where people may work. |
-| **G16** | Retagging an occurrence's area checks `schedule.manage` in BOTH the source and destination area — a single-sided check lets a manager move revenue onto or off their own books. |
+| **G17** | No permission check reads `AreaMembership`. Home portfolios are informational; a check there silently restricts where people may work. |
+| **G16** | Retagging an occurrence's portfolio checks `schedule.manage` in BOTH the source and destination portfolio — a single-sided check lets a manager move revenue onto or off their own books. |
 | **G15** | Every UI action's condition matches its route's guard. *(The Unclaim bug: UI said `isClaimer`, server said `isClaimer \|\| schedule.manage`, so a claimer-less visit could not be released by anyone.)* |
 | **G28** | Every write to `RoleEntitlement` goes through the validated helper — no raw `entitlement` string reaches the table. Paired with a reconciliation in `apps/api/scripts/verify-ledger-integrity.ts` (already run before and after every `migrate:deploy`) that fails on any stored value absent from the TS union. The column is `String` by design; without this the failure mode is a grant the role builder shows and `can()` denies, with no error anywhere. |
 | **G29** | No worker-guarded route is mapped to a `.manage`, `.approve` or `.record` entitlement. A worker acting on their own record is OWNERSHIP; mapping it to a manage verb and then deriving WORKER's bundle from the guards escalates every worker to that entitlement's entire route set. Caught 36 such routes on 2026-10-11. Enforced on the SHIPPED LADDER in `install-starter-roles.ts`: no `.manage` / `.approve` / `.record` / `.adjust` capability may sit in the Trainee or Worker tier, because every new install starts there. `scripts/derive-base-bundles.ts` is DELETED — it computed role contents from the guards, and roles are editable database rows now, so there is nothing to derive. |
@@ -461,7 +461,7 @@ row only, and cannot be clicked through.
 
 ### Personas
 
-| | Base | workerType | Custom role | Area assignment | Clerk account |
+| | Base | workerType | Custom role | Portfolio assignment | Clerk account |
 |---|---|---|---|---|---|
 | **Jake** | WORKER | EMPLOYEE | District Manager | Raleigh | `admin+employee@` |
 | **Dana** | WORKER | CONTRACTOR | Regional Manager | Triangle *(parent of Raleigh + Durham)* | `admin+contractor@` |
@@ -492,16 +492,16 @@ the clickable pass; see *Seeded personas* below.
 
 | Case | Expect | Rule it proves |
 |---|---|---|
-| Jake · `schedule.manage` · Raleigh | ✅ | assignment grants in its own area |
+| Jake · `schedule.manage` · Raleigh | ✅ | assignment grants in its own portfolio |
 | Jake · `schedule.manage` · Durham | ❌ | and nowhere else |
-| **Jake · `work.claim` · Durham** | **✅** | **capability is NOT area-scoped — promotion must not shrink where you can work** |
+| **Jake · `work.claim` · Durham** | **✅** | **capability is NOT portfolio-scoped — promotion must not shrink where you can work** |
 | Dana · `schedule.manage` · Raleigh | ✅ | parent assignment covers the whole subtree |
 | Dana · `money.approve` · Durham | ✅ | subtree, both children |
 | Dana · `inventory.pull` | ✅ | CONTRACTOR default seeded as a grant |
 | **Sam · `work.claim`** | **✅** | **trainees MAY claim — `TRAINEE_CANNOT_ACT` is scoped to start/complete/manage, and must not widen to claiming** |
 | Sam · `work.complete` | ❌ | TRAINEE bundle omits it |
 | Sam · `inventory.pull` | ❌ | TRAINEE default |
-| Fran · `schedule.view` · anywhere | ✅ | global custom role, no area needed |
+| Fran · `schedule.view` · anywhere | ✅ | global custom role, no portfolio needed |
 | Fran · `schedule.manage` | ❌ | never granted — not "removed" |
 | Fran · `work.claim` | ❌ | STAFF has no field capability |
 | Casey · `books.manage` | ✅ | global |
@@ -513,7 +513,7 @@ the clickable pass; see *Seeded personas* below.
 | Jake · `pricing.view` | ✅ | WORKER reads the price list; only `pricing.manage` is withheld |
 | Dana · `routes.plan` | ✅ | planning the day's driving is in Regional Manager |
 | Fran · `routes.plan` | ❌ | a coordinator views; she does not plan routes |
-| Dana · historical rollup incl. a RETIRED child area | ✅ | retired hidden from pickers, present in reporting |
+| Dana · historical rollup incl. a RETIRED child portfolio | ✅ | retired hidden from pickers, present in reporting |
 | Promote Fran to WORKER | gains WORKER bundle, keeps Office Coordinator | custom roles are absolute, not deltas |
 | STAFF with zero custom roles | profile + policies + announcements only | the floor |
 | **Morgan · `payroll.manage`** | **✅** | **payroll is reachable WITHOUT books — decision 21, the half Casey cannot prove** |
@@ -552,24 +552,24 @@ in as and driven through the UI. Touching `seed.ts` means re-running
 - [ ] Fran, Casey and Morgan once their accounts exist. Until then they are
       unit-matrix rows only, and anything needing to be *clicked* as a
       STAFF-only user is blocked on the prerequisite above.
-- [ ] An area tree **four levels deep**, so the depth warning, the
+- [ ] A portfolio tree **four levels deep**, so the depth warning, the
       materialized path and subtree rollups are all exercised for real:
       `North Carolina` → `Triangle` → `Wake County` → `Raleigh` /
       `Cary`, plus `Triangle` → `Durham County` → `Durham`
 - [ ] At least one **unassigned property**, so the warning and the
       "Unassigned" bucket are both clickable
-- [ ] One **retired** area with historical occurrences under it, so the
+- [ ] One **retired** portfolio with historical occurrences under it, so the
       hidden-from-pickers / present-in-reporting rule is clickable
-- [ ] Occurrences spread across areas, including **a Durham job done by
+- [ ] Occurrences spread across portfolios, including **a Durham job done by
       Jake**, who is assigned to Raleigh — the case that proves capability is
-      not area-scoped, and the case behind open question B
+      not portfolio-scoped, and the case behind open question B
 - [ ] The four custom roles as real rows, so the role builder has content
 
 ### Playwright — what unit tests cannot cover
 
 - [ ] Role builder: create a role, tick entitlements, assign, verify effect
-- [ ] Effective-permissions view shows provenance (global vs area, via which role)
-- [ ] A manager can still claim a job in another area
+- [ ] Effective-permissions view shows provenance (global vs portfolio, via which role)
+- [ ] A manager can still claim a job in another portfolio
 - [ ] A read-only surface says so once, and renders no action buttons
 - [ ] No empty tabs for a persona holding nothing in that family
 - [ ] Super viewing-as a worker does NOT retain their own entitlements
@@ -651,7 +651,7 @@ rule — an assignment to Raleigh must not cage him.
 - [ ] A **suspended role** denies; un-suspending restores, assignments intact.
 - [ ] A **system role** cannot be deleted or suspended.
 - [ ] Changing a worker type prompts, and only then swaps the defaults role.
-- [ ] Two areas named "Raleigh" (one retired) resolve independently by id.
+- [ ] Two portfolios named "Raleigh" (one retired) resolve independently by id.
 - [ ] A user with zero roles (client, or mid-onboarding) resolves to nothing,
       and is distinguishable from STAFF.
 - [ ] `SYSTEM` principal bypasses `can()` and appears in the audit log.
@@ -682,7 +682,7 @@ decide something.
 
 - **Question B — a Raleigh-assigned worker doing a Durham job: whose rollup?**
   **Resolved: both**, via two different filters. The rollup defaults to the
-  area ("Raleigh") with a toggle to people ("My team"), because a territory's
+  portfolio ("Raleigh") with a toggle to people ("My team"), because a territory's
   revenue is the territorial number. The two answers are deliberately never
   summed into one figure — that would double-count the same visit across two
   managers. Full reasoning in `permissions.md`, *Questions carried over*.

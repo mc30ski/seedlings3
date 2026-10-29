@@ -18,7 +18,7 @@ export type SeedUserKey =
   | "bookkeeper"
   | "payroll"
   | "unpaid"
-  // AREA-SCOPED. Holds Admin inside Durham only, with no company-wide
+  // PORTFOLIO-SCOPED. Holds Admin inside Durham only, with no company-wide
   // grant — the one persona whose reads are territorially narrowed.
   | "districtLead";
 

@@ -21,7 +21,7 @@ function blurRadiusFor(imgEl: HTMLImageElement): number {
  * Paint a single redaction rect on the LIVE preview canvas (which is
  * sized to the source image). Blackout = solid #000 fill. Blur = clip to
  * the rect and re-draw the source image through a gaussian-blur filter,
- * so only the area inside the rect is blurred (the rest of the canvas
+ * so only the portfolio inside the rect is blurred (the rest of the canvas
  * stays sharp). save/restore isolates the clip + filter changes from the
  * rest of the render.
  */
@@ -79,7 +79,7 @@ type Props = {
 
 /**
  * Optional manual-redaction step shown after a photo is picked. The user
- * drags rectangles over sensitive areas (addresses, signs, mailbox
+ * drags rectangles over sensitive portfolios (addresses, signs, mailbox
  * numbers). Each region is independently either "Black out" (solid bar —
  * strongest privacy) or "Blur" (gaussian — softer, looks less aggressive).
  * Mode is per-rect, picked at draw time. Result is baked into the image —
@@ -269,7 +269,7 @@ export default function RedactPhotoDialog({ file, onCommit, onCancel }: Props) {
     }
   }
 
-  // Display sizing — fit the actual content area (measured via wrapperRef
+  // Display sizing — fit the actual content portfolio (measured via wrapperRef
   // so we don't have to guess Dialog.Body's internal padding) and never
   // exceed ~60% of the viewport height. Falls back to 0 width on first
   // render before the ResizeObserver fires; we hide the overlay until we
@@ -292,7 +292,7 @@ export default function RedactPhotoDialog({ file, onCommit, onCancel }: Props) {
           <Dialog.Content mx="4" maxW="2xl" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.CloseTrigger />
             <Dialog.Header>
-              <Dialog.Title>Hide sensitive areas (optional)</Dialog.Title>
+              <Dialog.Title>Hide sensitive portfolios (optional)</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               {!imgEl ? (
@@ -307,7 +307,7 @@ export default function RedactPhotoDialog({ file, onCommit, onCancel }: Props) {
                     <Text as="span" fontWeight="medium"> Blur</Text> softens instead. Skip if you
                     don&apos;t need to hide anything.
                   </Text>
-                  {/* Wrapper takes the actual content-area width so the photo
+                  {/* Wrapper takes the actual content-portfolio width so the photo
                       can never exceed it. The overlay sits centered inside
                       this wrapper. */}
                   <Box

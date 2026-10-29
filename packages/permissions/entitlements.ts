@@ -78,7 +78,7 @@ export const ENTITLEMENT_GROUPS = [
   {
     group: "People and time",
     entitlements: [
-      { id: "people.view", copy: "See the team and who is working *(area-scopable)*" },
+      { id: "people.view", copy: "See the team and who is working *(portfolio-scopable)*" },
       { id: "people.manage", copy: "Add people, set pay and worker type" },
       // SEPARATE FROM people.manage, which is "add people, set pay and
       // worker type" — the day-to-day of running a team, and someone with `schedule.manage`'s job.
@@ -87,9 +87,9 @@ export const ENTITLEMENT_GROUPS = [
       // undone by editing a field.
       { id: "people.approve", copy: "Admit a pending sign-up, or decline it" },
       { id: "people.grant-roles", copy: "Put a role on a person — never one you do not hold yourself" },
-      { id: "time.view", copy: "See other people's hours and mileage *(area-scopable)*" },
+      { id: "time.view", copy: "See other people's hours and mileage *(portfolio-scopable)*" },
       { id: "time.manage", copy: "Create and edit workday and mileage records" },
-      { id: "time.approve", copy: "Approve hours and mileage *(area-scopable)*" },
+      { id: "time.approve", copy: "Approve hours and mileage *(portfolio-scopable)*" },
     ],
   },
   {
@@ -206,8 +206,8 @@ export const ENTITLEMENT_GROUPS = [
       // Admin role, so every admin
       // could impersonate any client.
       { id: "clients.view-as", copy: "Look at the app as one of your clients sees it" },
-      { id: "areas.view", copy: "See the area tree and what is in each one" },
-      { id: "areas.manage", copy: "Create, rename, retire and reorganise areas" },
+      { id: "portfolios.view", copy: "See the portfolio tree and what is in each one" },
+      { id: "portfolios.manage", copy: "Create, rename, retire and reorganise portfolios" },
     ],
   },
 ] as const;
@@ -245,7 +245,7 @@ export const ENTITLEMENT_COPY: ReadonlyMap<string, string> = new Map(
  *
  * Cutting at the FIRST comma instead was tried and is wrong: a copy that
  * opens with a list of verbs — "Create, rename, retire and reorganise
- * areas" — collapses to "You don't have permission to create.", which names
+ * portfolios" — collapses to "You don't have permission to create.", which names
  * no object at all. Four entitlements fail that way.
  *
  * Returns null for an unknown id, so the caller falls back to a generic
@@ -255,9 +255,9 @@ export function refusalPhrase(entitlement: string): string | null {
   const copy = ENTITLEMENT_COPY.get(entitlement);
   if (!copy) return null;
   const clause = copy
-    // The area-scopable marker is documentation for the role builder's
+    // The portfolio-scopable marker is documentation for the role builder's
     // reader, not part of the action.
-    .replace(/\s*\*\(area-scopable\)\*/g, "")
+    .replace(/\s*\*\(portfolio-scopable\)\*/g, "")
     .split(" — ")[0]
     .split(", and ")[0]
     .trim();

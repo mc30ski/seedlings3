@@ -225,7 +225,7 @@ export default async function publicRoutes(app: FastifyInstance) {
         .filter(Boolean) as string[];
     }
 
-    function area(prop: { city: string | null; state: string | null } | null): string {
+    function portfolio(prop: { city: string | null; state: string | null } | null): string {
       return [prop?.city, prop?.state].filter(Boolean).join(", ");
     }
 
@@ -236,7 +236,7 @@ export default async function publicRoutes(app: FastifyInstance) {
       timestamp: string;
       jobKind: string;
       kind: string;
-      area: string;
+      portfolio: string;
       workers: string[];
       durationMinutes: number | null;
       estimatedMinutes: number | null;
@@ -257,7 +257,7 @@ export default async function publicRoutes(app: FastifyInstance) {
         timestamp: occ.startedAt?.toISOString() ?? now.toISOString(),
         jobKind: occ.job?.kind ?? "",
         kind: occ.kind ?? "",
-        area: area(occ.job?.property ?? null),
+        portfolio: portfolio(occ.job?.property ?? null),
         workers: firstNames(occ.assignees),
         durationMinutes,
         estimatedMinutes: occ.estimatedMinutes,
@@ -290,7 +290,7 @@ export default async function publicRoutes(app: FastifyInstance) {
         timestamp: occ.completedAt!.toISOString(),
         jobKind: occ.job?.kind ?? "",
         kind: occ.kind ?? "",
-        area: area(occ.job?.property ?? null),
+        portfolio: portfolio(occ.job?.property ?? null),
         workers: firstNames(occ.assignees),
         durationMinutes,
         estimatedMinutes: occ.estimatedMinutes,

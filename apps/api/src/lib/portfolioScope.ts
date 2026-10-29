@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Area scoping — narrowing WHAT YOU SEE, never what you may do.
+// Portfolio scoping — narrowing WHAT YOU SEE, never what you may do.
 //
 // PURPOSE
 // A person assigned "District Manager" in Raleigh sees Raleigh's work and
@@ -16,7 +16,7 @@
 //      capability globally — from a base role bundle or a global custom role
 //      — every helper returns an EMPTY object so the query is byte-identical
 //      to its pre-feature shape. Off-state must always === pre-feature
-//      behaviour. An area assignment is a FILTER, never a CAGE: it can only
+//      behaviour. A portfolio assignment is a FILTER, never a CAGE: it can only
 //      ever add places you can see, never subtract.
 //
 //      THE ONE EXCEPTION IS A LENS THE VIEWER CHOSE THEMSELVES
@@ -35,7 +35,7 @@
 //      `work.complete` are never narrowed (G11): a worker promoted to look
 //      after Raleigh must still be able to pick up a job in Durham, because
 //      people cover for each other. Those live in NEVER_AREA_SCOPED in
-//      @repo/permissions, and `can()` already ignores area for them — this
+//      @repo/permissions, and `can()` already ignores portfolio for them — this
 //      module must never re-introduce a restriction can() declined to make.
 //
 //      A chosen LENS does still narrow the LIST for these, because a viewer
@@ -43,15 +43,15 @@
 //      because it is only a `where` fragment: `can()` never reads the lens,
 //      so reaching that Chapel Hill visit by its link still works. The rule
 //      is "a lens may hide a row, and may never refuse an action".
-//   4. RETIRED AREAS STAY IN REPORTING. Retirement hides an area from
+//   4. RETIRED PORTFOLIOS STAY IN REPORTING. Retirement hides a portfolio from
 //      PICKERS, not from history (G13). Nothing here filters on retiredAt.
 //
-// WHEN ADDING A NEW AREA-SCOPABLE MODEL
-//   - If it has its own `areaId`, use `areaWhere()`.
-//   - If it reaches an area through a relation, use `areaWhereVia()`.
+// WHEN ADDING A NEW PORTFOLIO-SCOPABLE MODEL
+//   - If it has its own `portfolioId`, use `portfolioWhere()`.
+//   - If it reaches a portfolio through a relation, use `portfolioWhereVia()`.
 //   - Add the route to the scope integration test (G25), which drives EVERY
 //     scopable route as a Raleigh-only principal and asserts no Durham row
-//     comes back. A static gate cannot catch `areaScope(wrongUser)` or a
+//     comes back. A static gate cannot catch `portfolioScope(wrongUser)` or a
 //     subtly wrong prefix; only output can.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -66,14 +66,14 @@ import {
 const NO_FILTER = {} as const;
 
 /**
- * The area subtrees this principal may see for this capability, or `null`
+ * The portfolio subtrees this principal may see for this capability, or `null`
  * meaning "no restriction".
  *
  * `null` and `[]` are NOT the same thing and must never be conflated:
  *   null → global authority, see everything
  *   []   → holds the capability nowhere, see nothing
  */
-export function visibleAreaPaths(
+export function visiblePortfolioPaths(
   principal: Principal | undefined,
   capability: Entitlement,
 ): string[] | null {
@@ -90,9 +90,9 @@ export function visibleAreaPaths(
   if (principal.workerType === null) return [];
 
   // Invariant 3, and it has to be checked HERE rather than inferred from
-  // can(). can() is asked without an areaPath below, so it answers "yes, held
-  // somewhere" for a field capability held only inside one area — and the
-  // area-grant walk after it would then narrow exactly the thing that must
+  // can(). can() is asked without a portfolioPath below, so it answers "yes, held
+  // somewhere" for a field capability held only inside one portfolio — and the
+  // portfolio-grant walk after it would then narrow exactly the thing that must
   // never be narrowed. A worker assigned to Raleigh would stop seeing the
   // Durham visit they are still allowed to claim.
   if (NEVER_AREA_SCOPED.has(capability)) {
@@ -102,17 +102,17 @@ export function visibleAreaPaths(
   if (!can(principal, capability)) return [];
 
   // Invariant 1: held company-wide by ANY role means no narrowing. A role
-  // without an areaPath is global, and an area assignment can only ever add
+  // without a portfolioPath is global, and a portfolio assignment can only ever add
   // places you can see — never cage someone who already holds it everywhere.
   const global = principal.roles.some(
-    (r) => !r.areaPath && r.entitlements.includes(capability),
+    (r) => !r.portfolioPath && r.entitlements.includes(capability),
   );
   if (global) return applyLens(null, principal.lensPath);
 
   return applyLens(
     principal.roles
-      .filter((r) => r.areaPath && r.entitlements.includes(capability))
-      .map((r) => r.areaPath!),
+      .filter((r) => r.portfolioPath && r.entitlements.includes(capability))
+      .map((r) => r.portfolioPath!),
     principal.lensPath,
   );
 }
@@ -149,66 +149,93 @@ function applyLens(granted: string[] | null, lensPath: string | null | undefined
 }
 
 /**
- * `where` fragment for a model carrying its own `areaId`.
+ * `where` fragment for a model with its own `portfolios` membership list.
  *
  * Subtree membership is a PREFIX test on the materialized path, which is why
  * both the stored path and the grant path are delimited and terminated:
  * "/a/b/" prefixes "/a/b/c/" but not "/a/bb/". Without the trailing
  * delimiter a grant leaks into any sibling whose id starts the same way.
+ *
+ * `some`, BECAUSE MEMBERSHIP IS NOW A LIST. This used to emit
+ * `{ portfolio: { OR: [...] } }` against a single `areaId` column. A
+ * property can belong to several portfolios, so the question changed from
+ * "is its one portfolio in my subtree" to "is ANY of them". The function
+ * returns `Record<string, unknown>`, so the compiler would not have caught
+ * the stale shape — it would simply have matched nothing, and every
+ * portfolio-scoped reader would have seen an empty app with no error.
  */
-export function areaWhere(
+export function portfolioWhere(
   principal: Principal | undefined,
   capability: Entitlement,
 ): Record<string, unknown> {
-  const paths = visibleAreaPaths(principal, capability);
+  const paths = visiblePortfolioPaths(principal, capability);
   if (paths === null) return NO_FILTER;
   if (paths.length === 0) {
     // Holds it nowhere. An impossible condition rather than a silent
     // unfiltered read — the guard should already have refused this request.
-    return { areaId: { in: [] as string[] } };
+    return { portfolios: { none: {} } };
   }
   return {
-    area: { OR: paths.map((p) => ({ path: { startsWith: p } })) },
+    portfolios: {
+      some: { portfolio: { OR: paths.map((p) => ({ path: { startsWith: p } })) } },
+    },
   };
 }
 
 /**
- * Same, for a model that reaches its area through a relation.
+ * Same, for a model that reaches its portfolios through a relation.
  *
- * `relation` is the path to the area-carrying model, e.g. "job" when
- * filtering something hanging off JobOccurrence.
+ * `relation` is the path to the portfolio-carrying model, e.g. "property"
+ * when filtering a Job, or "job" for something hanging off JobOccurrence.
+ *
+ * untyped-fragment-allow: the relation name is a string here, which is the
+ * shape that let `areaWhereOn(…, "defaultPortfolio")` survive the deletion
+ * of `Job.defaultArea` and throw a 500 on every job list. The residual
+ * risk is not the same, and the difference is worth stating rather than
+ * assuming:
+ *
+ *   · `areaWhereOn` INTERPRETED the relation — it emitted
+ *     `{ rel: { OR: [{ path: … }] } }`, asserting that `rel` pointed at a
+ *     Portfolio and had a `path`. Both of those could rot independently.
+ *   · this only NESTS an already-correct fragment under a key. It asserts
+ *     nothing about the relation beyond its existence.
+ *
+ * And a renamed relation does not pass unnoticed: every caller selects or
+ * includes that same relation a few lines away, where the compiler does
+ * check it. A DELETED relation with no other use in the query is the one
+ * gap, which is why this carries a reason instead of being exempt.
  */
-export function areaWhereVia(
+export function portfolioWhereVia(
   principal: Principal | undefined,
   capability: Entitlement,
   relation: string,
 ): Record<string, unknown> {
-  const inner = areaWhere(principal, capability);
+  const inner = portfolioWhere(principal, capability);
   if (Object.keys(inner).length === 0) return NO_FILTER;
   return { [relation]: inner };
 }
 
 /** True when this principal's view of this capability is territorially
- *  limited. For deciding whether to SHOW an area filter, never for gating. */
-export function isAreaLimited(
+ *  limited. For deciding whether to SHOW a portfolio filter, never for gating. */
+export function isPortfolioLimited(
   principal: Principal | undefined,
   capability: Entitlement,
 ): boolean {
-  return visibleAreaPaths(principal, capability) !== null;
+  return visiblePortfolioPaths(principal, capability) !== null;
 }
 
 /**
- * Merge an area filter into a `where` without colliding with what is there.
+ * Merge a portfolio filter into a `where` without colliding with what is there.
  *
  * Always via `AND`. Spreading the fragment in at the top level looks tidier
  * and silently loses one of the two whenever a caller already uses the same
- * key — and both `areaWhere` shapes (`area` and `areaId`) are keys a query
+ * key — and both `portfolioWhere` shapes (`portfolio` and `portfolioId`) are keys a query
  * may well already use. `AND` composes under every shape.
  *
  * An empty fragment (global authority) returns the `where` untouched, so a
  * threaded callsite costs a global reader nothing.
  */
-export function withArea<T extends Record<string, any>>(
+export function withPortfolio<T extends Record<string, any>>(
   where: T,
   fragment: Record<string, unknown>,
 ): T {
@@ -218,22 +245,23 @@ export function withArea<T extends Record<string, any>>(
   return { ...where, AND: [...and, fragment] } as T;
 }
 
-/**
- * `where` fragment for a model whose area relation is NOT called `area`.
+/*
+ * `areaWhereOn` WAS HERE, and is deleted.
  *
- * `Job` reaches territory through `defaultArea`, not `area`, so neither
- * `areaWhere` (which assumes `area`/`areaId`) nor `areaWhereVia` (which
- * would nest `{ defaultArea: { area: … } }`) fits. Rather than hand-rolling
- * the prefix test at that callsite — where getting the trailing delimiter
- * wrong silently leaks a sibling subtree — the rule lives here once.
+ * It took the relation name as a STRING and emitted
+ * `{ <relation>: { OR: [...] } }`, which existed for exactly one caller:
+ * `Job.defaultArea`, the projection default for where future occurrences
+ * land. That column is gone — an open visit follows its property's current
+ * memberships, so there is no unanswerable case left to default.
+ *
+ * The four callers kept passing "defaultPortfolio" after the rename and
+ * TypeScript could not object, because the field name was a string. Prisma
+ * did object, at runtime, with a 500 on every job list as soon as any
+ * portfolio filter was in force — which is to say the Services tab broke
+ * for exactly the people the feature is for, and for anyone who picked a
+ * portfolio from the lens. Found by calling the endpoint with and without
+ * the header, not by reading it.
+ *
+ * Use `portfolioWhereVia(principal, cap, "property")`: a job reaches its
+ * portfolios through its property, which is now the only route there.
  */
-export function areaWhereOn(
-  principal: Principal | undefined,
-  capability: Entitlement,
-  areaRelation: string,
-): Record<string, unknown> {
-  const paths = visibleAreaPaths(principal, capability);
-  if (paths === null) return NO_FILTER;
-  if (paths.length === 0) return { [areaRelation]: { id: { in: [] as string[] } } };
-  return { [areaRelation]: { OR: paths.map((p) => ({ path: { startsWith: p } })) } };
-}

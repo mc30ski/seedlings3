@@ -30,7 +30,7 @@ type FeedItem = {
   timestamp: string;
   jobKind: string;
   kind: string;
-  area: string;
+  portfolio: string;
   workers: string[];
   photos: FeedPhoto[];
 };
@@ -73,7 +73,7 @@ function workerLabel(workers: string[]): string {
 
 /** Build a natural-language description for a feed item */
 function feedMessage(item: FeedItem): string {
-  const where = item.area || "the area";
+  const where = item.portfolio || "the portfolio";
 
   if (item.type === "in_progress") {
     return `Our team is servicing lawns in ${where}`;

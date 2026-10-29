@@ -1,4 +1,4 @@
-# Permissions, Roles, Areas — Feature Reference
+# Permissions, Roles, Portfolios — Feature Reference
 
 **STATUS (verified against the code 2026-10-18): BACKEND AND UI ARE BOTH
 BUILT.** This file is the agreed DESIGN, written 2026-10-11 so it stopped
@@ -19,8 +19,8 @@ What has since landed, and what this document's own prose predates:
   enum; `requires(entitlement)` asks `can()` and nothing else, and a gate
   fails the build if a readable flag returns.
 - **The UI is built** (2026-10-16): `apps/web/src/lib/tabRequirements.ts`
-  decides which tabs exist, and `RolesTab.tsx` / `AreasTab.tsx` are the role
-  and area builders.
+  decides which tabs exist, and `RolesTab.tsx` / `PortfoliosTab.tsx` are the role
+  and portfolio builders.
 - **Counted from the code on 2026-10-18** — re-count rather than trust these,
   they rot: **61 entitlements**, **641 mapped routes** = 498
   entitlement-guarded (across 60 entitlements) + 103 OWNERSHIP + 24 PUBLIC
@@ -51,7 +51,7 @@ three of those are squashed into one enum with three values.
 
 **What it gives you.** Custom roles defined in the app and assigned to people.
 A front-office coordinator who sees everything and changes nothing. Managers
-who run a territory without running the company. An area tree that nests
+who run a territory without running the company. A portfolio tree that nests
 freely, where money is tagged to the visit so reorganising never restates last
 year's numbers.
 
@@ -59,7 +59,7 @@ year's numbers.
 *assignments*, never new `Role` enum values — `requireRole` is exact
 membership, so each new value would need a judgement call at every one of
 the ~1,300 role checks measured in web alone (see *Web audit*), and a
-missed `||` fails silently. And areas are never reparented;
+missed `||` fails silently. And portfolios are never reparented;
 you copy-and-retire, so history cannot move.
 
 **Scale.** 676 route registrations resolving to 669 distinct method+path
@@ -80,7 +80,7 @@ Three different treatments, by entitlement kind:
 | Kind | UI treatment |
 |---|---|
 | Company-global (`books.*`, `compliance.*`) | **Hide the whole tab.** Simpler than filtering and correct — these are company-wide by definition. |
-| Area-scopable (`schedule.*`, `money.*`) | **Show the tab, filter the rows** to the assignment subtree. |
+| Portfolio-scopable (`schedule.*`, `money.*`) | **Show the tab, filter the rows** to the assignment subtree. |
 | Action (`money.approve`, `work.claim`) | **Show the row, hide the button.** |
 
 > **A surface hidden by entitlement must never look broken.** This is the
@@ -108,7 +108,7 @@ Shown beside the permissions matrix. This is the canonical copy.
 > |---|---|
 > | **Worker type** | how they are **paid** — employee, contractor, unpaid |
 > | **Role** | what they may **do** |
-> | **Areas** | where they may **see** it |
+> | **Portfolios** | where they may **see** it |
 > | **Customer** | whether they are also a client of yours |
 >
 > They are independent. A contractor can manage a territory. A worker can also
@@ -121,21 +121,21 @@ Shown beside the permissions matrix. This is the canonical copy.
 > anything away. To give someone less, start from a smaller base role and
 > build up — that way nobody can be locked out by accident.
 >
-> **Assigning a role to an area limits where it applies.** "District Manager
+> **Assigning a role to a portfolio limits where it applies.** "District Manager
 > of Raleigh" can manage Raleigh and everything under it, and nothing else.
-> Assign the same role to a parent area and it covers every area beneath it.
+> Assign the same role to a parent portfolio and it covers every portfolio beneath it.
 >
-> **Running an area is not managing the people in it.** Someone who runs
+> **Running a portfolio is not managing the people in it.** Someone who runs
 > Raleigh keeps Raleigh running — its schedule, its customers, its money.
 > They cannot set anyone's pay, change a worker type, or hand out roles.
 > There is no reporting line in this app: people are organised flat, and
 > ownership is of **places**, not people.
 >
-> **Some things cannot be limited to an area** — payroll, policies, the price
+> **Some things cannot be limited to a portfolio** — payroll, policies, the price
 > list. Those are company-wide, and they are marked. Granting one grants it
 > everywhere.
 >
-> **Field work is never limited to an area.** Someone who manages Raleigh can
+> **Field work is never limited to a portfolio.** Someone who manages Raleigh can
 > still pick up a job anywhere. Managing a territory does not stop you working
 > in another one.
 >
@@ -143,25 +143,25 @@ Shown beside the permissions matrix. This is the canonical copy.
 
 ---
 
-## In-app help (assigning someone to an area)
+## In-app help (assigning someone to a portfolio)
 
-Shown on the area assignment editor — the moment the misunderstanding is
-most likely, because putting a person on an area *looks* like putting them
+Shown on the portfolio assignment editor — the moment the misunderstanding is
+most likely, because putting a person on a portfolio *looks* like putting them
 in charge of people. Canonical copy.
 
-> ### Assigning someone to an area
+> ### Assigning someone to a portfolio
 >
 > You are making this person accountable for **operations here** — the
 > schedule, the customers, the money for this patch. They will see what
-> happens in this area and in every area beneath it.
+> happens in this portfolio and in every portfolio beneath it.
 >
 > **This is not a reporting line.** They can see who is working here and
 > approve hours and mileage. They cannot set anyone's pay, change a worker
 > type, or give anyone a role. Those stay company-wide, with you.
 >
-> **Nobody is tied to an area.** Assigning someone to Raleigh does not stop
+> **Nobody is tied to a portfolio.** Assigning someone to Raleigh does not stop
 > them picking up a job in Durham, and it does not stop anyone else working
-> in Raleigh. Areas decide what people **see**, never where they can work.
+> in Raleigh. Portfolios decide what people **see**, never where they can work.
 >
 > To change what this person is allowed to do — rather than where — change
 > their role.
@@ -177,7 +177,7 @@ which compose freely and must never be collapsed into each other:
 |---|---|---|
 | **`workerType`** | how you are **paid** | `User.workerType` — EMPLOYEE · CONTRACTOR · UNPAID · null |
 | **Roles + entitlements** | what you may **do** | `UserCustomRole` → `CustomRole` |
-| **Area assignments** | where you may **see** | `AreaAssignment` into the area tree |
+| **Portfolio assignments** | where you may **see** | `PortfolioAssignment` into the portfolio tree |
 | **ClientContact link** | you are a **customer** | `ClientContact.clerkUserId` |
 
 Worked example: a CONTRACTOR (paid 1099) who holds the Worker starter role
@@ -310,7 +310,7 @@ Grouped by **what a person does**, not by resource — a role is built by
 thinking about a job, not about a database table. Each line is the copy shown
 beside its checkbox.
 
-#### Daily work *(field capability — never area-scoped)*
+#### Daily work *(field capability — never portfolio-scoped)*
 
 `inventory.pull` and `expenses.charge` are **seeded from worker type** when a
 user is created or their type changes, then live as ordinary grants — see
@@ -324,7 +324,7 @@ user is created or their type changes, then live as ordinary grants — see
 | `materials.charge` | Add billable materials to a visit — charged to the client |
 | `expenses.charge` | Charge the company's own purchases to the business |
 
-#### Scheduling and customers *(area-scopable)*
+#### Scheduling and customers *(portfolio-scopable)*
 
 | Entitlement | Copy shown in the UI |
 |---|---|
@@ -342,17 +342,17 @@ user is created or their type changes, then live as ordinary grants — see
 | `estimates.create` | Write and send quotes |
 | `estimates.accept` | Accept or reject a quote on the customer's behalf |
 
-#### Money *(NEVER area-scopable — decided 2026-10-14)*
+#### Money *(NEVER portfolio-scopable — decided 2026-10-14)*
 
-> This heading used to read *(area-scopable)* while resolved question C said
+> This heading used to read *(portfolio-scopable)* while resolved question C said
 > `books.*` is global-only, and the two sat in the same document
 > contradicting each other for long enough that the build gate had to exclude
 > all four money capabilities pending an answer. The answer is **global**:
 > the company's books are the owner's, and there is no district P&L. A gate
-> now fails if `books.*` or `payroll.*` is added to the area-scopable list,
+> now fails if `books.*` or `payroll.*` is added to the portfolio-scopable list,
 > so this cannot quietly flip back.
 >
-> `money.view` IS area-filtered on the payment reads, which is not a
+> `money.view` IS portfolio-filtered on the payment reads, which is not a
 > contradiction: that narrows WHICH VISITS' money you see, by the territory
 > of the visit. It does not slice the books.
 
@@ -374,13 +374,13 @@ user is created or their type changes, then live as ordinary grants — see
 
 | Entitlement | Copy shown in the UI |
 |---|---|
-| `people.view` | See the team and who is working *(area-scopable)* |
+| `people.view` | See the team and who is working *(portfolio-scopable)* |
 | `people.manage` | Add people, set pay and worker type |
 | `people.approve` | Admit a pending sign-up, or decline it |
 | `people.grant-roles` | Put a role on a person — never one you do not hold yourself |
-| `time.view` | See other people's hours and mileage *(area-scopable)* |
+| `time.view` | See other people's hours and mileage *(portfolio-scopable)* |
 | `time.manage` | Create and edit workday and mileage records |
-| `time.approve` | Approve hours and mileage *(area-scopable)* |
+| `time.approve` | Approve hours and mileage *(portfolio-scopable)* |
 
 #### Equipment and supplies
 
@@ -436,8 +436,8 @@ user is created or their type changes, then live as ordinary grants — see
 | `displays.manage` | Pair and revoke wall screens |
 | `identity.link` | Connect a login to a client record |
 | `clients.view-as` | Look at the app as one of your clients sees it |
-| `areas.view` | See the area tree and what is in each one |
-| `areas.manage` | Create, rename, retire and reorganise areas |
+| `portfolios.view` | See the portfolio tree and what is in each one |
+| `portfolios.manage` | Create, rename, retire and reorganise portfolios |
 
 **68 entitlements.**
 
@@ -525,7 +525,7 @@ model CustomRole {
   createdById  String?
   entitlements RoleEntitlement[]
   userGrants   UserCustomRole[]
-  areaGrants   AreaAssignment[]
+  portfolioGrants   PortfolioAssignment[]
 }
 
 model RoleEntitlement {
@@ -546,20 +546,20 @@ model UserCustomRole {                           // role held GLOBALLY
   @@unique([userId, customRoleId])
 }
 
-model Area {
+model Portfolio {
   id          String    @id @default(cuid())
   name        String
-  tier        String?                            // from AREA_TIER_NAMES — display only
+  tier        String?                            // from PORTFOLIO_TIER_NAMES — display only
   parentId    String?
-  parent      Area?     @relation("AreaTree", fields: [parentId], references: [id], onDelete: Restrict)
-  children    Area[]    @relation("AreaTree")
+  parent      Portfolio?     @relation("AreaTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children    Portfolio[]    @relation("AreaTree")
   path        String                             // materialized, of IDS not names:
                                                  // "/ck3.../ck7.../" — names are
                                                  // neither unique nor stable, so a
                                                  // slug path would break on rename
   retiredAt   DateTime?
   createdAt   DateTime  @default(now())
-  assignments AreaAssignment[]
+  assignments PortfolioAssignment[]
   properties  Property[]
   occurrences JobOccurrence[]
   @@index([path])
@@ -567,33 +567,33 @@ model Area {
   // NO uniqueness on name, by design. A name is a label for humans: you may
   // retire "Raleigh" and create a new "Raleigh", under the same parent or a
   // different one. Only the id is never reused. The UI therefore MUST
-  // disambiguate — show the full path, and badge a retired area with the
+  // disambiguate — show the full path, and badge a retired portfolio with the
   // date it was retired.
 }
 
 model AreaMembership {                           // "usually works here" — NO authority
   userId String
-  areaId String
-  @@id([userId, areaId])
+  portfolioId String
+  @@id([userId, portfolioId])
 }
 
-model AreaAssignment {                           // role held WITHIN a subtree
+model PortfolioAssignment {                           // role held WITHIN a subtree
   id           String    @id @default(cuid())
   userId       String
-  areaId       String
+  portfolioId       String
   customRoleId String
   isTemporary  Boolean   @default(false)         // surfaces in the cover audit check
   note         String?
   suspendedAt  DateTime?
   grantedAt    DateTime  @default(now())
   grantedById  String?
-  @@unique([userId, areaId, customRoleId])
+  @@unique([userId, portfolioId, customRoleId])
 }
 
 model Property {
-  areaId String?                                 // EXACTLY ONE, and optional
-  area   Area?   @relation(fields: [areaId], references: [id], onDelete: Restrict)
-  @@index([areaId])
+  portfolioId String?                                 // EXACTLY ONE, and optional
+  portfolio   Portfolio?   @relation(fields: [portfolioId], references: [id], onDelete: Restrict)
+  @@index([portfolioId])
 }
 ```
 
@@ -601,16 +601,16 @@ Added to existing models:
 
 ```prisma
 model JobOccurrence {
-  areaId String?                                 // stamped at creation, frozen at completion
-  area   Area?   @relation(fields: [areaId], references: [id], onDelete: Restrict)
-  @@index([areaId])
+  portfolioId String?                                 // stamped at creation, frozen at completion
+  portfolio   Portfolio?   @relation(fields: [portfolioId], references: [id], onDelete: Restrict)
+  @@index([portfolioId])
 }
 
-model Job     { defaultAreaId String? }          // projections only
+model Job     { defaultPortfolioId String? }          // projections only
 model User    { /* canPullInventory + canChargeBusinessExpenses are DROPPED */ }
 ```
 
-`onDelete: Restrict` on both area foreign keys, never `SetNull` — a null here
+`onDelete: Restrict` on both portfolio foreign keys, never `SetNull` — a null here
 silently de-attributes revenue, which is the `assignedById` incident.
 
 ### The three sources `can()` unions
@@ -618,7 +618,7 @@ silently de-attributes revenue, which is the `assignedById` incident.
 ```
 base role bundle                     code constant, by Role
 UserCustomRole  → RoleEntitlement    global
-AreaAssignment  → RoleEntitlement    within that subtree
+PortfolioAssignment  → RoleEntitlement    within that subtree
 ```
 
 **Every grant goes through a named role. There are no per-person entitlement
@@ -701,24 +701,24 @@ first reversible:
 
 Both actions warn **by name**: "4 people lose `money.approve`: Jake, Dana…"
 
-> Roles **suspend**; areas **retire**. Different words because different
-> meanings — a suspended role is paused and coming back, a retired area is
+> Roles **suspend**; portfolios **retire**. Different words because different
+> meanings — a suspended role is paused and coming back, a retired portfolio is
 > permanently closed but preserved so history still resolves through it.
 
-## Area hierarchy
+## Portfolio hierarchy
 
-**One construct that nests freely.** An area contains areas. A "region" is just
-an area with children. Regional / District / Area are job titles, never schema,
+**One construct that nests freely.** A portfolio contains portfolios. A "region" is just
+a portfolio with children. Regional / District / Portfolio are job titles, never schema,
 so the tree reshapes without a migration.
 
-**One parent per area, strictly.** A tree, never a graph. Two areas sharing a
+**One parent per portfolio, strictly.** A tree, never a graph. Two portfolios sharing a
 child would need two materialized paths, and rollups would **double-count** —
 Raleigh under both Triangle and Eastern means a company total that sums regions
 invents revenue. That is the failure `payments-build-gate`'s "Income aggregate
 EXCLUDES write-offs (no phantom revenue)" already exists to prevent.
 
-**A property belongs to exactly ONE area, and the field is optional.** A
-column, not a join table — the schema makes "two areas" unrepresentable
+**A property belongs to exactly ONE portfolio, and the field is optional.** A
+column, not a join table — the schema makes "two portfolios" unrepresentable
 rather than merely discouraged.
 
 Moving a property is free and **cannot move money**: revenue is recorded where
@@ -727,27 +727,27 @@ property to Durham and last year's Raleigh visits stay Raleigh.
 
 One consequence to settle at build time: when a property moves, its
 **already-SCHEDULED visits should follow** — they have not happened yet and
-the new area will be doing them — while completed ones never move. That is
+the new portfolio will be doing them — while completed ones never move. That is
 the direct reading of "recorded where it was completed".
 
 ### Unassigned is allowed, and discouraged hard
 
-`areaId` is nullable because forcing it would block property creation on an
+`portfolioId` is nullable because forcing it would block property creation on an
 org decision nobody wants to make at 7am. But an unassigned property is not
 harmless, and the UI says so plainly rather than politely:
 
-> **A property with no area produces visits with no area, and those are
-> counted in no area's totals and seen by nobody assigned to one.**
+> **A property with no portfolio produces visits with no portfolio, and those are
+> counted in no portfolio's totals and seen by nobody assigned to one.**
 
-- the area selector appears **on property creation**, pre-filled where a
+- the portfolio selector appears **on property creation**, pre-filled where a
   sensible default exists
 - an unassigned property carries a **visible warning**, worded for the
-  consequence — **"Not in an area — work here won't appear in any area's
-  totals, or to anyone assigned to one"** — never a neutral "no area set"
-- the area tree shows an **"Unassigned (7)"** bucket derived from
-  `areaId IS NULL`, not a real Area row, so the backlog is visible and
+  consequence — **"Not in a portfolio — work here won't appear in any portfolio's
+  totals, or to anyone assigned to one"** — never a neutral "no portfolio set"
+- the portfolio tree shows an **"Unassigned (7)"** bucket derived from
+  `portfolioId IS NULL`, not a real Portfolio row, so the backlog is visible and
   fixable in one place instead of hiding across 75 property pages
-- the **day-one migration assigns every property to the root area**, so
+- the **day-one migration assigns every property to the root portfolio**, so
   nothing starts invisible
 
 ### Assigning and moving properties — the surfaces
@@ -755,42 +755,42 @@ harmless, and the UI says so plainly rather than politely:
 Placing 75 properties one page at a time is not a plan, so this needs real
 filtering and bulk action:
 
-- **`PropertiesTab` gains an Area filter**, alongside the existing kind and
+- **`PropertiesTab` gains an Portfolio filter**, alongside the existing kind and
   status filters, including an explicit **"Unassigned"** option — the filter
   that turns the backlog into a worklist
-- **Multi-select + "Assign to area…"** on that filtered list. This is how the
+- **Multi-select + "Assign to portfolio…"** on that filtered list. This is how the
   initial placement actually happens, and every later reshuffle
-- **"Add properties" picker on an area node**, filtered and searchable, for
+- **"Add properties" picker on a portfolio node**, filtered and searchable, for
   working from the tree inwards
-- The active-filter chip pattern already used there shows the area filter the
+- The active-filter chip pattern already used there shows the portfolio filter the
   same way, so a filtered view is never mistaken for the whole list
 
 **Rights follow the retag rule (decision 14):** moving a property between
-areas needs `schedule.manage` in BOTH source and destination; placing an
+portfolios needs `schedule.manage` in BOTH source and destination; placing an
 unassigned one needs it in the destination. Nobody pulls properties into
 their own numbers from a territory they do not run.
 
-**An area may hold both child areas and properties at once.** Not either/or.
+**A portfolio may hold both child portfolios and properties at once.** Not either/or.
 
 ### Money rides the occurrence
 
-`JobOccurrence.areaId`, stamped at creation, editable while SCHEDULED, frozen
-at completion — the same rule as completion splits. `Job` holds a default area
+`JobOccurrence.portfolioId`, stamped at creation, editable while SCHEDULED, frozen
+at completion — the same rule as completion splits. `Job` holds a default portfolio
 for projections. `Payment.occurrenceId` is `@unique`: the occurrence *is* the
 money-bearing row.
 
 Consequence worth keeping: **reassigning a property cannot move last year's
-revenue**, because the occurrence snapshotted its area. History stays put by
+revenue**, because the occurrence snapshotted its portfolio. History stays put by
 construction, not by a rule someone must remember.
 
-### Where a new occurrence's `areaId` comes from
+### Where a new occurrence's `portfolioId` comes from
 
 Resolved in order, first hit wins:
 
 1. **The previous occurrence in the chain** — the same carry-forward pattern
    `price` and `frequencyDays` already use.
-2. **`Job.defaultAreaId`**.
-3. **The property's area**.
+2. **`Job.defaultPortfolioId`**.
+3. **The property's portfolio**.
 4. **Prompt.**
 
 Step 4 is only reachable for a brand-new job on an UNASSIGNED property — which
@@ -799,33 +799,33 @@ always has a predecessor, so the background path can never hit an
 unanswerable prompt. That is the property that makes this safe, and it is why
 inheritance comes first rather than the job default.
 
-### What area ownership is, and is not
+### What portfolio ownership is, and is not
 
 > *"Assign region X to person Y. That person needs to make sure operations
-> are smooth in that area — not that they hire, fire or manage the people
+> are smooth in that portfolio — not that they hire, fire or manage the people
 > directly, only indirectly via association."*
 
 **The organisation of PEOPLE is flat.** There is no reporting line in the
 schema. The only hierarchy is of places.
 
-| An area assignee CAN | An area assignee CANNOT |
+| A portfolio assignee CAN | A portfolio assignee CANNOT |
 |---|---|
-| see who is working in their area (`people.view`) | set pay or worker type (`people.manage`) |
+| see who is working in their portfolio (`people.view`) | set pay or worker type (`people.manage`) |
 | see hours and mileage (`time.view`) | grant anyone a role (`people.grant-roles`) |
 | approve hours and mileage (`time.approve`) | hire, approve or remove a person |
 | run the schedule, clients and money for their patch | touch anything company-wide |
 
 `people.manage` and `people.grant-roles` are **global-only** — deliberately
-not area-scopable — which is what keeps employment decisions out of
+not portfolio-scopable — which is what keeps employment decisions out of
 territorial ownership.
 
-`time.approve` sits closest to the line and is area-scopable on purpose: it
-is operational verification ("did this work happen in my area") rather than
-an employment decision ("what is your rate"). An area owner is accountable
+`time.approve` sits closest to the line and is portfolio-scopable on purpose: it
+is operational verification ("did this work happen in my portfolio") rather than
+an employment decision ("what is your rate"). A portfolio owner is accountable
 for whether the work got done, so they are the right person to confirm it.
 
 **The forward path, if people-management is ever wanted.** Nothing here
-forecloses it. A future `people.manage` scoped to an area, or a genuine
+forecloses it. A future `people.manage` scoped to a portfolio, or a genuine
 reporting edge, would be purely additive — a new scope on an existing
 entitlement, or a new relation. It is left out now because it is not needed,
 not because the model resists it. The only people-shaped concept today is
@@ -839,62 +839,62 @@ Raleigh beneath it, so Dana sees Pete's territory. There is no "Dana manages
 Pete" edge in the schema and there should not be — management flows through
 territory, not a person-to-person org chart. Consequence: *"who is my
 manager?"* is derived, not stored — whoever holds an assignment at or above
-my area.
+my portfolio.
 
-**Nesting was challenged in a from-scratch review and kept.** Flat areas plus
+**Nesting was challenged in a from-scratch review and kept.** Flat portfolios plus
 multi-assignment can express "Dana covers Raleigh, Durham and Chapel Hill",
 but cannot express a tier *above* other overseers and gives no intermediate
 node to roll up to. A real regional → district → local structure is a tree,
 and retrofitting one once money is attached is far worse than carrying it
 from the start.
 
-### Home areas vs. authority — two different things
+### Home portfolios vs. authority — two different things
 
-> **Managing an area is not managing the people in it.** The Raleigh manager
+> **Managing a portfolio is not managing the people in it.** The Raleigh manager
 > runs Raleigh; they do not run Jake.
 
 Two separate relationships, deliberately not merged:
 
 | | Means | Grants |
 |---|---|---|
-| `AreaMembership` | "Jake usually works Raleigh" — his **home area**, one or more | **nothing** |
-| `AreaAssignment` | "Dana runs Raleigh" — authority, via a role | that role, in that subtree |
+| `AreaMembership` | "Jake usually works Raleigh" — his **home portfolio**, one or more | **nothing** |
+| `PortfolioAssignment` | "Dana runs Raleigh" — authority, via a role | that role, in that subtree |
 
 Three consequences:
 
-- **`people.manage` stays global-only.** An area manager cannot set wages,
-  roles or worker types for anyone. Only `people.view` is area-scoped.
+- **`people.manage` stays global-only.** A portfolio manager cannot set wages,
+  roles or worker types for anyone. Only `people.view` is portfolio-scoped.
 - **Membership must never gate anything.** It is informational. The moment a
   permission check reads it, you have restricted where people may work —
   the exact thing *visibility is scoped, capability is not* protects. Gate it.
-- **Visitors are badged, not hidden.** An area's rollup shows work by its home
+- **Visitors are badged, not hidden.** A portfolio's rollup shows work by its home
   crew *and* by anyone else who picked up a job there — "3 visits by workers
   outside the Raleigh crew" is precisely what a manager should notice. A
-  roaming contractor has no home area and appears as a visitor wherever they
+  roaming contractor has no home portfolio and appears as a visitor wherever they
   work; no special case needed.
 
 The rollup's **"My team"** toggle therefore means **the home crew**, and their
 work anywhere — not "people I have authority over", which is nobody.
 
-### Retagging a visit's area
+### Retagging a visit's portfolio
 
 While SCHEDULED the tag is editable, and editing it moves revenue between two
 managers' numbers. So:
 
 > **Retagging requires `schedule.manage` in BOTH the source and the
-> destination area.**
+> destination portfolio.**
 
 Neither one alone. `schedule.manage` in the destination would let a manager
 pull other territories' work into their own figures; in the source alone it
 would let them push an awkward job onto someone else's. Requiring both means
-you can only move a visit between two areas you already answer for. Holders of `schedule.manage`
+you can only move a visit between two portfolios you already answer for. Holders of `schedule.manage`
 and Holders of `settings.manage` hold it globally, so a genuine cross-territory mistake can always
 be corrected — a manager who spots one outside their patch reports it.
 
 Frozen at completion, as above, so this is only ever a correction to future
 work.
 
-### Areas are never reparented
+### Portfolios are never reparented
 
 Moving a node would restate group history: move Raleigh out of Triangle and
 Triangle's past revenue silently shrinks. Instead, **copy and retire**, as one
@@ -911,14 +911,14 @@ materialized `path` effectively immutable, which removes cycle-prevention and
 reparent-rewrite entirely.
 
 Costs, accepted: retired nodes accumulate (hide them from pickers), and a
-report spanning the move shows the area under two parents — which is correct,
+report spanning the move shows the portfolio under two parents — which is correct,
 it genuinely was two organisational things, but the UI must say so.
 
-> **Retired hides an area from PICKERS. It must never hide it from
+> **Retired hides a portfolio from PICKERS. It must never hide it from
 > REPORTING.** If retired nodes drop out of rollups, history vanishes the
 > moment you retire one, which defeats the whole pattern.
 
-Areas are soft-deleted only. The FK is `onDelete: Restrict` as a backstop —
+Portfolios are soft-deleted only. The FK is `onDelete: Restrict` as a backstop —
 never `SetNull`, which would silently de-attribute revenue (see the
 `assignedById` incident in `lib/claimerInvariant.ts`).
 
@@ -928,31 +928,31 @@ Two shapes:
 
 ```
 UserCustomRole(userId, roleId)             → grants everywhere
-AreaAssignment(userId, areaId, roleId)     → grants within that subtree
+PortfolioAssignment(userId, portfolioId, roleId)     → grants within that subtree
 ```
 
-The area assignment **carries the role**, so the same person can be District
+The portfolio assignment **carries the role**, so the same person can be District
 Manager in Raleigh and merely a viewer in Durham.
 
 > **Authority = global (if ADMIN/SUPER) OR the union of assignments. NEVER the
-> intersection.** Otherwise the day the owner assigns himself to one area he
+> intersection.** Otherwise the day the owner assigns himself to one portfolio he
 > locks himself out of the company.
 
-A manager over a parent area covers the whole subtree automatically — one
+A manager over a parent portfolio covers the whole subtree automatically — one
 indexed prefix match on `path`. Multiple assignments are needed only for a
 territory that is not a single subtree.
 
 ### Visibility is scoped; capability is not
 
-`work.claim` and `work.complete` are deliberately **not** area-scopable. A
+`work.claim` and `work.complete` are deliberately **not** portfolio-scopable. A
 worker promoted to manage Raleigh must still be able to pick up a job in Durham
 — people cover for each other and move around.
 
-> **Area scoping applies to MANAGEMENT surfaces, not to a worker's own job
+> **Portfolio scoping applies to MANAGEMENT surfaces, not to a worker's own job
 > feed.** That feed is already "my jobs + unassigned + announcements", which is
-> assignment-based. Narrowing it by area would shrink the list of jobs a
+> assignment-based. Narrowing it by portfolio would shrink the list of jobs a
 > promoted worker can pick up — the exact opposite of intent. This is the most
-> likely bug in the area phase and needs its own gate.
+> likely bug in the portfolio phase and needs its own gate.
 
 ### A grant is not a lens
 
@@ -960,8 +960,8 @@ Two different questions, and the feature only works because they stay apart:
 
 | | Decides | Direction | Who sets it |
 |---|---|---|---|
-| **Grant** (`AreaAssignment`) | what you are **allowed** to see | only ever **widens** | an operator, on the Areas tab |
-| **Lens** (`X-Area-Lens`) | what you are **currently looking at** | only ever **narrows** | the viewer, from the header |
+| **Grant** (`PortfolioAssignment`) | what you are **allowed** to see | only ever **widens** | an operator, on the Portfolios tab |
+| **Lens** (`X-Portfolio-Lens`) | what you are **currently looking at** | only ever **narrows** | the viewer, from the header |
 
 The lens exists because "scoped down to Durham" and "allowed only Durham" are
 not the same thing. Someone who can see the whole company still wants to read
@@ -970,7 +970,7 @@ was the grant, which is the wrong tool: it is an operator action, it is
 recorded, and it is not something a reader should edit to answer a question.
 
 **How it cannot escalate.** The chosen path is INTERSECTED with the granted
-subtrees in `visibleAreaPaths` (`apps/api/src/lib/areaScope.ts`). The
+subtrees in `visiblePortfolioPaths` (`apps/api/src/lib/portfolioScope.ts`). The
 intersection of two subtrees is one of them or nothing:
 
 - lens inside grant → the lens *(a global reader asking for Durham)*
@@ -984,14 +984,14 @@ showing its sender less than they are owed.
 
 **It rides on the principal, not on each route.** `principal.lensPath` is
 resolved once in `plugins/rbac.ts`, so the ~100 query sites already calling
-`areaWhere(principal, …)` honour it with no edit — and so does a view written
-next year. A per-route `?areaId=` param existed briefly on `/operations` and
+`portfolioWhere(principal, …)` honour it with no edit — and so does a view written
+next year. A per-route `?portfolioId=` param existed briefly on `/operations` and
 was removed: it made exactly one panel narrowable, and the failure mode of
 forgetting it elsewhere is the silent one this whole feature exists to avoid.
 
 **A lens may hide a row. It may never refuse an action.** `can()` does not read
 `lensPath` — **G47** fails the build if anything in `@repo/permissions` after
-the type declaration does, or if any API file outside `areaScope` / `areaLens`
+the type declaration does, or if any API file outside `portfolioScope` / `portfolioLens`
 / `rbac` reads it. A lens that could 403 would hand a worker a refusal naming a
 capability they genuinely hold, from a dropdown they set last Tuesday. This is
 also why the lens *does* narrow lists for `work.claim` / `work.complete`, which
@@ -1002,17 +1002,17 @@ Chapel Hill visit opened by its link is still claimable.
 which is the convenience being asked for. The cost is the feature's one real
 hazard — "Chapel Hill earned nothing this month" and "you have been looking at
 Durham since Tuesday" are the identical empty screen. So the header chip names
-the area whenever one is in force, and the INSIGHTS note stops claiming "the
+the portfolio whenever one is in force, and the INSIGHTS note stops claiming "the
 whole company". The chip is what pays for the persistence; do not remove one
 without removing the other.
 
-**It is hidden when there is no choice.** Fewer than two selectable areas means
+**It is hidden when there is no choice.** Fewer than two selectable portfolios means
 no picker: somebody granted Durham alone already sees Durham, and a control
 that cannot change anything teaches people to distrust the ones that can.
 
-Enforced by `area-lens-owner.spec.ts` (both properties: one control narrows
+Enforced by `portfolio-lens-owner.spec.ts` (both properties: one control narrows
 the whole app, and a forged lens shows nothing rather than more) and the lens
-block in `apps/api/src/lib/areaScope.test.ts`.
+block in `apps/api/src/lib/portfolioScope.test.ts`.
 
 ---
 
@@ -1126,11 +1126,11 @@ rule.
 ### Audit scopes need a migration
 
 `AuditScope` is a Prisma enum, and every state change in this app writes an
-`AuditEvent`. There is no `ROLE`, `AREA` or `ASSIGNMENT` scope today, and the
+`AuditEvent`. There is no `ROLE`, `PORTFOLIO` or `ASSIGNMENT` scope today, and the
 enum's own comments show scopes being added with each feature.
 
 - **Step 1** adds `ROLE` (definition and grant/revoke).
-- **Step 3** adds `AREA` and `AREA_ASSIGNMENT`.
+- **Step 3** adds `PORTFOLIO` and `PORTFOLIO_ASSIGNMENT`.
 
 Easy to forget, and forgetting it means role changes mutate state with no
 trail — which the audit-coverage gate exists to prevent.
@@ -1197,13 +1197,13 @@ desk-bound coordinator may read oddly on someone now in the field.
 
 ### Day one: backfill every occurrence
 
-Shipping with one all-encompassing area is only safe if **existing rows point
-at it**. A nullable `JobOccurrence.areaId` left unset means every subtree
+Shipping with one all-encompassing portfolio is only safe if **existing rows point
+at it**. A nullable `JobOccurrence.portfolioId` left unset means every subtree
 rollup returns zero and last year's revenue vanishes from the manager view the
-day areas ship.
+day portfolios ship.
 
 The Step 3 migration backfills all existing occurrences, jobs and properties
-to the root area, in the same migration that creates it.
+to the root portfolio, in the same migration that creates it.
 
 ---
 
@@ -1228,7 +1228,7 @@ the audit log as a system action, so "who did this?" never answers "nobody."
 
 ### Offboarding is a flow, not a flag
 
-Someone leaves holding WORKER, managing an area, and as **claimer on a dozen
+Someone leaves holding WORKER, managing a portfolio, and as **claimer on a dozen
 open visits**. They cannot be deleted — `JobOccurrenceAssignee.userId` is
 `onDelete: Restrict`. Suspending their grants removes *authority* and does
 nothing about *ownership*, so those visits keep pointing at someone who will
@@ -1239,7 +1239,7 @@ Design it in Step 2; the first departure will otherwise be handled by hand.
 
 ### Temporary cover needs to be visible
 
-Someone covers another manager's area for two weeks. With suspension and no
+Someone covers another manager's portfolio for two weeks. With suspension and no
 expiry, the assignment stays until a human removes it, and the dormancy check
 **will not catch it** — the stand-in is active, merely over-privileged.
 
@@ -1327,7 +1327,7 @@ read-only with a lock — they are documentation, not configuration.
 The four-axes table above belongs in the informational help on this page.
 
 **Effective permissions (per user).** "What can this person actually do?",
-resolved across base role, custom roles and area assignments — **with
+resolved across base role, custom roles and portfolio assignments — **with
 provenance**:
 
 ```
@@ -1336,26 +1336,26 @@ money.view     Raleigh  via "District Manager"
 ```
 
 Provenance is not a nicety. Because the union means a global grant always beats
-area scoping, "Pete is District Manager of Raleigh" reads like a boundary while
+portfolio scoping, "Pete is District Manager of Raleigh" reads like a boundary while
 a stray global grant quietly erases it. Without provenance nobody can debug
 that.
 
 **Where assignments appear:** ProfileTab (own, read-only), a caller with `schedule.manage` user
-detail beside wages and worker type (edit), and the area tree — click Raleigh,
+detail beside wages and worker type (edit), and the portfolio tree — click Raleigh,
 see who covers it. No new top-level tab; a Manager tab would imply manager is a
 role.
 
 **Naming.** A custom role's `name` is its display text ("Regional Manager"),
 to be suggested from a `MANAGER_TITLES` setting, same pattern as the other
-config-driven taxonomies; area tier names likewise from `AREA_TIER_NAMES`.
+config-driven taxonomies; portfolio tier names likewise from `PORTFOLIO_TIER_NAMES`.
 
 > **BUILT 2026-10-18.** Both Setting rows exist, seeded as flat string
 > arrays in the `catalogs` section and editable on the Settings tab.
-> `AreasTab` renders the tier field as a Select over `AREA_TIER_NAMES` with
+> `PortfoliosTab` renders the tier field as a Select over `PORTFOLIO_TIER_NAMES` with
 > an "Other (specify…)" escape; `RolesTab` offers `MANAGER_TITLES` as
 > clickable chips under the new-role name box.
 >
-> Both remain **suggestions, not vocabularies** — `Area.tier` and
+> Both remain **suggestions, not vocabularies** — `Portfolio.tier` and
 > `CustomRole.name` are free strings and stay that way, because an operator
 > who runs "Zones" rather than "Districts" must not have to ask. A saved tier
 > that is not in the list opens in free-text mode rather than being silently
@@ -1364,12 +1364,12 @@ config-driven taxonomies; area tier names likewise from `AREA_TIER_NAMES`.
 
 > **"Manager" never appears in UI copy.** It is a job title someone typed
 > into the `MANAGER_TITLES` taxonomy, not something the system knows. The
-> schema has areas and assignments; it has no concept of a manager. Copy says
-> **"anyone assigned to this area"**, or names the area's totals directly.
+> schema has portfolios and assignments; it has no concept of a manager. Copy says
+> **"anyone assigned to this portfolio"**, or names the portfolio's totals directly.
 > Writing "manager" in an interface quietly promotes a label into a role and
 > undoes the decision this whole design rests on.
 >
-> Surfaces are named for what they show, not who looks at them: *Area
+> Surfaces are named for what they show, not who looks at them: *Portfolio
 > rollup*, not *Manager dashboard*.
 
 > **No code ever branches on a role or tier name.** It is a label. The
@@ -1404,12 +1404,12 @@ work.
 | Offboarding flow — transfer work, suspend, retire | Admin user detail | 2 |
 | Dormant access check | AuditTab | 2 |
 | Worker-type defaults prompt on type change | Admin user detail | 2 |
-| Area tree manager + guided move action | Super | 3 |
-| Area assignment editor | User detail **and** area tree | 3 |
-| "Who covers this area" | Area tree node | 3 |
-| Area rollup tab (conditional on holding an assignment) | Shell | 3 |
-| Area selector, like view-as | `BreadcrumbNav` `headerRight` | 3 |
-| Area-assignment badge component | Board roster, assignee lists, user detail | 3 |
+| Portfolio tree manager + guided move action | Super | 3 |
+| Portfolio assignment editor | User detail **and** portfolio tree | 3 |
+| "Who covers this portfolio" | Portfolio tree node | 3 |
+| Portfolio rollup tab (conditional on holding an assignment) | Shell | 3 |
+| Portfolio selector, like view-as | `BreadcrumbNav` `headerRight` | 3 |
+| Portfolio-assignment badge component | Board roster, assignee lists, user detail | 3 |
 | Temporary cover check | AuditTab | 3 |
 
 ### Changed surfaces, by kind of change
@@ -1428,14 +1428,14 @@ converted:
 > ServicesTab · ReconcileTab · SettingsTab · UnclaimedTab · SuppliesTab ·
 > UsersTab · TimelineTab · VehiclesTab
 
-**C — Area filtering.** The list surfaces behind the ~101 scopable routes.
+**C — Portfolio filtering.** The list surfaces behind the ~101 scopable routes.
 Where a missed filter silently shows another territory's clients.
 
-**D — New data on existing screens.** ProfileTab (your roles and areas),
+**D — New data on existing screens.** ProfileTab (your roles and portfolios),
 UsersTab (assignments beside wages and worker type), HomeTab (rollups become
-area-aware).
+portfolio-aware).
 
-**E — Settings.** Two new taxonomies, `AREA_TIER_NAMES` and `MANAGER_TITLES`,
+**E — Settings.** Two new taxonomies, `PORTFOLIO_TIER_NAMES` and `MANAGER_TITLES`,
 through the existing editor. **Built 2026-10-18** — sections A–E have all
 shipped.
 
@@ -1462,14 +1462,14 @@ inline:
 scope?: { /* three role booleans, one per deleted role */ };
 ```
 
-Each is its own structural type. Adding `can` or `areas` means editing
+Each is its own structural type. Adding `can` or `portfolios` means editing
 seventeen literals, and **TypeScript cannot tell you which one you missed** — a
 tab left on the three-field shape compiles perfectly and silently keeps the
 old behaviour.
 
 > **Step 1 must introduce one exported `Scope` type and convert all seventeen
 > before anything else.** It is a mechanical refactor whose entire value is
-> that the compiler then enforces every later change. Without it the area and
+> that the compiler then enforces every later change. Without it the portfolio and
 > entitlement work has no safety net on the web side at all.
 
 **FINDING 2 — scope construction is not uniform.** Ten tabs fall back to
@@ -1527,7 +1527,7 @@ rewritten anyway.
 ### The riskiest UI change — and what actually happened
 
 The prediction was the additive scope object — three role booleans gaining
-areas and capabilities, with the footgun that the top-role flag must not
+portfolios and capabilities, with the footgun that the top-role flag must not
 fall back to the staff one.
 
 That is not where the risk turned out to be. The object was not extended —
@@ -1556,8 +1556,8 @@ What remains is **dependency order**, not release phases:
 |---|---|---|
 | **1 · Foundations** | one exported `Scope` type, fail-closed defaults, `can(principal, cap)`, capabilities resolved after impersonation | — |
 | **2 · Permissions** | STAFF, `CustomRole` / `RoleEntitlement` / `UserCustomRole`, route→entitlement mapping, migrate off the privilege columns, role builder, effective-permissions view, offboarding | 1 |
-| **3 · Areas** | `Area` + `AreaAssignment`, materialized `path`, `areaScope()`, root area + backfill, tree UI, guided move, rollup tab, area selector | 2 |
-| **4 · Join** | `can(principal, cap, { areaId })` | 2, 3 |
+| **3 · Portfolios** | `Portfolio` + `PortfolioAssignment`, materialized `path`, `portfolioScope()`, root portfolio + backfill, tree UI, guided move, rollup tab, portfolio selector | 2 |
+| **4 · Join** | `can(principal, cap, { portfolioId })` | 2, 3 |
 
 Migrations still accumulate one at a time — a migration applied to dev is
 frozen and superseded by a new one, never edited — but they ship as one set.
@@ -1567,20 +1567,20 @@ there is no production signal until the end, so the gates and the test
 matrix are what tell you it is working. Write each gate before the code it
 guards.
 
-## Questions carried over from the original area design
+## Questions carried over from the original portfolio design
 
 These were open in the September design. Four were lost when that memory file
 was rewritten; they are restored here with their current status.
 
 | | Question | Status |
 |---|---|---|
-| **A** | When does `occurrence.areaId` freeze? | **Resolved.** Stamped at creation, editable while SCHEDULED, frozen at completion — the same rule as completion splits. |
-| **B** | Worker activity vs. area work | **Resolved — both.** A Raleigh-assigned worker doing a Durham job appears for both managers. The rollup **defaults to area** ("Raleigh") with a **toggle to people** ("My team"), because a territory's revenue is the territorial number; the toggle exists so the manager can see the two answers differ. Never merged into one figure — that would double-count the same visit across two managers. |
-| **C** | What money can a manager see? | **Resolved by the entitlement split.** `money.view` scoped to an area gives payments on occurrences in that subtree. `books.*` is global-only, so no company P&L unless explicitly granted. |
-| **D** | Two managers over one area? | **Resolved.** Allowed — the union is safe. Design the UI for the single-manager case and let the second be a list. |
-| **E** | Cycle prevention on reparent | **Resolved** — areas are never reparented. |
-| **F** | Does moving an area rewrite list history? | **Resolved** — copy-and-retire; nothing moves. |
-| **G** | Order of scoping the area-scopable routes | **Guidance, no longer a release decision.** Money surfaces first: highest consequence, smallest surface, and they start at the occurrence so they gain one `where` clause with no joins. Lists after. |
+| **A** | When does `occurrence.portfolioId` freeze? | **Resolved.** Stamped at creation, editable while SCHEDULED, frozen at completion — the same rule as completion splits. |
+| **B** | Worker activity vs. portfolio work | **Resolved — both.** A Raleigh-assigned worker doing a Durham job appears for both managers. The rollup **defaults to portfolio** ("Raleigh") with a **toggle to people** ("My team"), because a territory's revenue is the territorial number; the toggle exists so the manager can see the two answers differ. Never merged into one figure — that would double-count the same visit across two managers. |
+| **C** | What money can a manager see? | **Resolved by the entitlement split.** `money.view` scoped to a portfolio gives payments on occurrences in that subtree. `books.*` is global-only, so no company P&L unless explicitly granted. |
+| **D** | Two managers over one portfolio? | **Resolved.** Allowed — the union is safe. Design the UI for the single-manager case and let the second be a list. |
+| **E** | Cycle prevention on reparent | **Resolved** — portfolios are never reparented. |
+| **F** | Does moving a portfolio rewrite list history? | **Resolved** — copy-and-retire; nothing moves. |
+| **G** | Order of scoping the portfolio-scopable routes | **Guidance, no longer a release decision.** Money surfaces first: highest consequence, smallest surface, and they start at the occurrence so they gain one `where` clause with no joins. Lists after. |
 | **H** | Read-only or read-write manager? | **Dissolved.** Once entitlements exist it is a checkbox on a role, not an architecture decision. |
 | **I** | Does someone with `settings.manage`'s assignment act as a UI lens? | **Resolved.** Yes — a filter, never a cage. Authority is global OR the union of assignments, never the intersection. |
 
@@ -1592,12 +1592,12 @@ was rewritten; they are restored here with their current status.
   dispatcher without the owner — and the bound is what makes that safe. A
   full admin could already perform those actions directly, so passing them on
   is not an escalation.
-- **A role held globally AND on an area shows BOTH lines**, the area one
+- **A role held globally AND on a portfolio shows BOTH lines**, the portfolio one
   marked *"redundant — already granted globally"*. Deduplicating silently
   would hide a misconfiguration; the provenance view exists to explain why
   someone has something, so it shows the pointless row rather than tidying it
   away.
-- **Warn past four levels** of area depth. State › Region › District › Area
+- **Warn past four levels** of portfolio depth. State › Region › District › Portfolio
   covers any realistic org chart at this size; the fifth is usually someone
   modelling something that is not a territory. Warn, never block.
 
@@ -1606,7 +1606,7 @@ was rewritten; they are restored here with their current status.
 Write each gate **before** the first route it guards. Both of this codebase's
 worst recurring bug classes — view-as endpoints (shipped three times) and the
 claimer invariant — are *silent*: the page renders, it just shows the wrong
-thing. An unscoped area list and an unguarded entitlement route are exactly
+thing. An unscoped portfolio list and an unguarded entitlement route are exactly
 that shape.
 
 The playbook already exists: `businessStartCutoff` is a cross-cutting filter
@@ -1628,9 +1628,9 @@ not.
 Summarised, in the order the build file schedules them: one `Scope` type and
 fail-closed defaults; capabilities resolved after impersonation, every route
 declaring an entitlement, no granting what you lack, a generated matrix,
-break-glass independent of the entitlement tables; then area scoping with an
+break-glass independent of the entitlement tables; then portfolio scoping with an
 allow-annotation, the worker feed never narrowed, the tree acyclic, retired
-areas present in reporting, no reparenting; and UI conditions matching their
+portfolios present in reporting, no reparenting; and UI conditions matching their
 route guards throughout.
 
 ## Known limitations / non-goals
@@ -1641,14 +1641,14 @@ route guards throughout.
   bundles into preset custom roles — then everything is a bundle and omission
   replaces subtraction.
 - **Global beats scoped**, always. A globally-granted entitlement cannot be
-  narrowed by an area assignment. Provenance in the UI is the mitigation.
-- **Reorganising the tree splits an area across two parents** in any report
+  narrowed by a portfolio assignment. Provenance in the UI is the mitigation.
+- **Reorganising the tree splits a portfolio across two parents** in any report
   spanning the change. Correct, but needs explaining in the UI.
 - **No time-based access.** By choice; see *Suspension, not expiry*.
-- **Projects are not modelled.** Oversight is territorial: areas contain
+- **Projects are not modelled.** Oversight is territorial: portfolios contain
   properties, properties have jobs. A large piece of work is a job at a
-  property inside someone's area. Raised in review and confirmed as a
-  non-goal — there is no cross-area programme-of-work concept.
+  property inside someone's portfolio. Raised in review and confirmed as a
+  non-goal — there is no cross-portfolio programme-of-work concept.
 - **Client contacts are undifferentiated.** A client may have several
   `ClientContact` rows — a homeowner and their property manager, or a business
   where one person schedules and another pays — and the portal treats them

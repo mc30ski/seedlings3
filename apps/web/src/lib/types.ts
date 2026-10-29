@@ -28,7 +28,7 @@
  */
 export type StaffTabs =
   | "activity"
-  | "areas"
+  | "portfolios"
   | "audit"
   | "clients"
   | "collections"
@@ -167,9 +167,20 @@ export type Me = {
   /**
    * The territories this person's access is confined to, or null/absent
    * when it is not confined. `mixed` means they also hold something
-   * company-wide, so only some views are narrowed. Drives AreaScopeNotice.
+   * company-wide, so only some views are narrowed. Drives PortfolioScopeNotice.
    */
-  areaScope?: { trails: string[][]; mixed: boolean } | null;
+  portfolioScope?: {
+    trails: string[][];
+    /** The same chains, each with the ROLE held there. A grant is
+     *  (person, role, portfolio); the notice names all three. */
+    grants?: Array<{ id: string; trail: string[]; role: string }>;
+    /** False when every capability the grant carries is also held
+     *  company-wide — the holder leads it on paper and sees everything. */
+    narrows?: boolean;
+    /** The company-wide roles covering it, when `narrows` is false. */
+    coveredBy?: string[];
+    mixed: boolean;
+  } | null;
 };
 
 export type TabPropsType = {

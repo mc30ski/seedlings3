@@ -1,15 +1,15 @@
 /**
- * THE AREA LENS — "show me only Durham", for somebody entitled to see more.
+ * THE PORTFOLIO LENS — "show me only Durham", for somebody entitled to see more.
  *
  * Two properties are worth a browser to prove, because neither is visible
  * in a unit test and both fail silently:
  *
  *   1. ONE CONTROL NARROWS EVERY VIEW. The lens rides on the principal, so
- *      the ~100 query sites already calling areaWhere() honour it without
+ *      the ~100 query sites already calling portfolioWhere() honour it without
  *      an edit. If that threading breaks, a panel keeps showing company
  *      numbers under a header that says Durham — and nothing errors.
  *
- *   2. IT CANNOT WIDEN. The chosen area is intersected with the areas the
+ *   2. IT CANNOT WIDEN. The chosen portfolio is intersected with the portfolios the
  *      caller is GRANTED, so a lens pointing somewhere they hold nothing
  *      resolves to empty — 200 with no rows, never a 403 and never that
  *      territory's data. A lens may hide a row; it may not refuse an action.
@@ -17,7 +17,7 @@
 import { test, expect } from "@playwright/test";
 import { waitForSplashGone } from "../helpers/nav";
 
-/** Dev-seed areas. The tree is All areas → Durham, Chapel Hill. */
+/** Dev-seed portfolios. The tree is All portfolios → Durham, Chapel Hill. */
 const DURHAM = "cmv5of1vy0006gndrqohl0nvj";
 const CHAPEL_HILL = "cmv5oqzj801lcgnw72h6yxnt6";
 
@@ -51,7 +51,7 @@ async function land(page: any, tab: string, category: string, lens: string | nul
 function watchClients(page: any, sink: Array<{ status: number; lens: string; rows: number }>) {
   page.on("response", async (r: any) => {
     if (!/\/api\/clients$/.test(new URL(r.url()).pathname)) return;
-    const lens = r.request().headers()["x-area-lens"] ?? "none";
+    const lens = r.request().headers()["x-portfolio-lens"] ?? "none";
     try {
       const j = await r.json();
       const rows = Array.isArray(j) ? j : (j?.clients ?? j?.items ?? []);
@@ -85,14 +85,14 @@ test.describe("a reader who can see everything", () => {
     ).toBeLessThan(unlensed!.rows);
   });
 
-  test("the chip names the area, and the INSIGHTS note stops saying 'the whole company'", async ({ page }) => {
+  test("the chip names the portfolio, and the INSIGHTS note stops saying 'the whole company'", async ({ page }) => {
     await land(page, "jobs", "Work", null);
-    const chip = page.getByTestId("area-lens-chip");
+    const chip = page.getByTestId("portfolio-lens-chip");
     await expect(chip).toBeVisible();
-    await expect(chip).toHaveAttribute("title", "Viewing all areas");
+    await expect(chip).toHaveAttribute("title", "Viewing all portfolios");
 
     await chip.click();
-    await page.getByTestId(`area-lens-option-${DURHAM}`).click();
+    await page.getByTestId(`portfolio-lens-option-${DURHAM}`).click();
     await page.waitForTimeout(4500);
 
     // LOUD WHEN SET is the whole mitigation for persisting the choice:
@@ -105,18 +105,18 @@ test.describe("a reader who can see everything", () => {
     await page.reload();
     await page.waitForLoadState("networkidle");
     await waitForSplashGone(page);
-    await expect(page.getByTestId("area-lens-chip")).toHaveAttribute("title", "Viewing Durham only");
+    await expect(page.getByTestId("portfolio-lens-chip")).toHaveAttribute("title", "Viewing Durham only");
   });
 });
 
 test.describe("the forecast follows the lens", () => {
   test.use({ storageState: "./playwright/.auth/owner.json" });
 
-  test("an area with coordinates outranks the business address", async ({ page }) => {
+  test("a portfolio with coordinates outranks the business address", async ({ page }) => {
     // Every other number on a lensed screen is that district's. A forecast
     // for head office would be the one panel still answering about
     // somewhere else — which is the same silent-wrong-answer shape the
-    // whole area feature exists to avoid, just wearing a weather icon.
+    // whole portfolio feature exists to avoid, just wearing a weather icon.
     const locs: string[] = [];
     page.on("response", async (r) => {
       if (!new URL(r.url()).pathname.endsWith("/api/weather/location") || r.status() !== 200) return;
@@ -134,12 +134,12 @@ test.describe("the forecast follows the lens", () => {
     }
     console.log(`forecast anchors: ${JSON.stringify(seen)}`);
 
-    // Unlensed falls back to BUSINESS_ADDRESS, exactly as before areas.
+    // Unlensed falls back to BUSINESS_ADDRESS, exactly as before portfolios.
     expect(seen.none, "no lens must still use the business address").toMatch(/^business:/);
-    // Lensed uses the area's own point — and the two districts differ, so
+    // Lensed uses the portfolio's own point — and the two districts differ, so
     // this cannot pass by accidentally returning the same coordinates.
-    expect(seen.durham, "a lensed area must anchor the forecast").toMatch(/^area:/);
-    expect(seen.chapelHill).toMatch(/^area:/);
+    expect(seen.durham, "a lensed portfolio must anchor the forecast").toMatch(/^portfolio:/);
+    expect(seen.chapelHill).toMatch(/^portfolio:/);
     expect(seen.durham).not.toBe(seen.chapelHill);
   });
 });
@@ -155,7 +155,7 @@ test.describe("a reader already limited to one district", () => {
     // No choice to make: they already see Durham and nothing else, so a
     // control that cannot change anything would only teach distrust of the
     // ones that can.
-    await expect(page.getByTestId("area-lens-chip")).toHaveCount(0);
+    await expect(page.getByTestId("portfolio-lens-chip")).toHaveCount(0);
     expect(clients.at(-1)?.rows, "they should see their own district").toBeGreaterThan(0);
 
     // THE SECURITY PROPERTY. Chapel Hill is a district they hold nothing in.

@@ -19,7 +19,7 @@ Summary: how it all works together
 */
 
 import { prisma } from "../db/prisma";
-import { withArea } from "../lib/areaScope";
+import { withPortfolio } from "../lib/portfolioScope";
 import type { CallerCan } from "../lib/callerCan";
 import { resolveHoursBaseline, type BaselineSource } from "../lib/hoursBaseline";
 import {
@@ -71,7 +71,7 @@ import {
   PAID_SEAT_REFUSAL,
 } from "../lib/claimerInvariant";
 import { userCan } from "../lib/userCapabilities";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
+import { syncOccurrencePortfolios } from "../lib/occurrencePortfolio";
 import { etMidnight, etEndOfDay, etToday, etFormatDate, etDaysBetween, etAddDays, type EtDateKey } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import {
@@ -279,14 +279,9 @@ export async function rebuildRecurringChainInTx(
   const nextEnd = lastOcc.endAt
     ? new Date(nextStart.getTime() + (lastOcc.endAt.getTime() - lastOcc.startAt.getTime()))
     : null;
-  const nextAreaId = await resolveOccurrenceArea(tx, {
-    jobId,
-    previousOccurrenceId: lastOcc.id,
-  });
   const nextOcc = await tx.jobOccurrence.create({
     data: {
       jobId,
-      areaId: nextAreaId,
       kind: lastOcc.kind,
       startAt: nextStart,
       endAt: nextEnd,
@@ -302,6 +297,7 @@ export async function rebuildRecurringChainInTx(
       frequencyDays: (lastOcc as any).frequencyDays ?? null,
     } as any,
   });
+  await syncOccurrencePortfolios(tx, nextOcc.id);
   // Standing orders from the visit this follows, plus anything a client asked
   // for "next time" anywhere on this job. See lib/instructionCarry.ts.
   await carryInstructionsToNewOccurrence(tx as any, {
@@ -717,12 +713,12 @@ export const jobs: ServicesJobs = {
 
     if (andClauses.length) where.AND = andClauses;
 
-    // Territory. A Job reaches its area through `defaultArea`, so the
-    // caller passes a fragment built with `areaWhereOn`, not `areaWhere`.
+    // Territory. A Job reaches its portfolio through `defaultPortfolio`, so the
+    // caller passes a fragment built with `portfolioWhereVia`, not `portfolioWhere`.
     // Only the manage branch of GET /jobs comes through here — the worker
     // branch is already scoped to jobs they are assigned to, which is
     // narrower than territory and must stay that way so cover work shows.
-    where = withArea(where, params?.areaWhere ?? {});
+    where = withPortfolio(where, params?.portfolioWhere ?? {});
 
     const rows = await prisma.job.findMany({
       where,
@@ -742,9 +738,10 @@ export const jobs: ServicesJobs = {
             // standing at a locked gate cannot go and look it up, and the one
             // who knew is not always the one sent.
             accessNotes: true,
-            // The property's TERRITORY, for the badge beside the address on
-            // a job card. The NAME only.
-            area: { select: { name: true } },
+            // THE PROPERTY'S PORTFOLIOS, for the badges beside the address
+            // on a job card. Names only, and plural — a property can be in
+            // a location portfolio and a route at once.
+            portfolios: { select: { portfolio: { select: { name: true } } } },
             client: { select: { id: true, displayName: true, isVip: true, vipReason: true, internalTags: true } },
           },
         },
@@ -1005,11 +1002,9 @@ export const jobs: ServicesJobs = {
         },
       });
 
-      const manualAreaId = await resolveOccurrenceArea(tx, { jobId });
       const occ = await tx.jobOccurrence.create({
         data: {
           jobId,
-          areaId: manualAreaId,
           kind: input.kind ?? job.kind,
           startAt: toDate(input.startAt),
           endAt: toDate(input.endAt),
@@ -1036,6 +1031,8 @@ export const jobs: ServicesJobs = {
           title: input.title ?? null,
         } as any,
       });
+
+      await syncOccurrencePortfolios(tx, occ.id);
 
       // A visit added by hand is still "the next visit" for anyone who left a
       // request on an earlier one — the whole point of searching the job
@@ -1123,7 +1120,7 @@ export const jobs: ServicesJobs = {
 
   async createTask(currentUserId: string, input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string }) {
     return prisma.$transaction(async (tx) => {
-      // occurrence-area-allow: a task is work for a person, not work at a property.
+      // occurrence-portfolio-allow: a task is work for a person, not work at a property.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1160,7 +1157,7 @@ export const jobs: ServicesJobs = {
 
   async createStandaloneReminder(currentUserId: string, input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string; isHighPriority?: boolean }) {
     return prisma.$transaction(async (tx) => {
-      // occurrence-area-allow: a reminder is a note to self, tied to no property.
+      // occurrence-portfolio-allow: a reminder is a note to self, tied to no property.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1198,7 +1195,7 @@ export const jobs: ServicesJobs = {
   async createEvent(actingUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }) {
     return prisma.$transaction(async (tx) => {
       const isRepeating = input.frequencyDays != null && input.frequencyDays > 0;
-      // occurrence-area-allow: an event is a date in the calendar, not a visit.
+      // occurrence-portfolio-allow: an event is a date in the calendar, not a visit.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1286,7 +1283,7 @@ export const jobs: ServicesJobs = {
           nextStart.setDate(nextStart.getDate() + freq);
         }
 
-        // occurrence-area-allow: closing an event creates its follow-on, which is also not a visit.
+        // occurrence-portfolio-allow: closing an event creates its follow-on, which is also not a visit.
         nextOccurrence = await tx.jobOccurrence.create({
           data: {
             kind: null,
@@ -1313,7 +1310,7 @@ export const jobs: ServicesJobs = {
 
   async createFollowup(actingUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null; clientIds?: string[]; jobIds?: string[] }) {
     return prisma.$transaction(async (tx) => {
-      // occurrence-area-allow: a follow-up is a conversation to have, not work at a property.
+      // occurrence-portfolio-allow: a follow-up is a conversation to have, not work at a property.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1401,7 +1398,7 @@ export const jobs: ServicesJobs = {
           nextStart.setDate(nextStart.getDate() + freq);
         }
 
-        // occurrence-area-allow: closing a follow-up creates the next one — still a conversation.
+        // occurrence-portfolio-allow: closing a follow-up creates the next one — still a conversation.
         nextOccurrence = await tx.jobOccurrence.create({
           data: {
             kind: null,
@@ -1441,7 +1438,7 @@ export const jobs: ServicesJobs = {
   async createAnnouncement(actingUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }) {
     return prisma.$transaction(async (tx) => {
       const isRepeating = input.frequencyDays != null && input.frequencyDays > 0;
-      // occurrence-area-allow: an announcement goes to people, not to a property.
+      // occurrence-portfolio-allow: an announcement goes to people, not to a property.
       const occ = await tx.jobOccurrence.create({
         data: {
           kind: null,
@@ -1515,7 +1512,7 @@ export const jobs: ServicesJobs = {
           nextStart.setDate(nextStart.getDate() + freq);
         }
 
-        // occurrence-area-allow: closing an announcement creates its successor.
+        // occurrence-portfolio-allow: closing an announcement creates its successor.
         nextOccurrence = await tx.jobOccurrence.create({
           data: {
             kind: null,
@@ -1564,7 +1561,7 @@ export const jobs: ServicesJobs = {
     const addressData: Record<string, any> = {};
     applyEstimateAddressParts(addressData, input);
     return prisma.$transaction(async (tx) => {
-      // occurrence-area-allow: an estimate is a quote; the visit it becomes resolves its own area on conversion.
+      // occurrence-portfolio-allow: an estimate is a quote; the visit it becomes resolves its own portfolio on conversion.
       const occ = await tx.jobOccurrence.create({
         data: {
           jobId: input.jobId ?? null,
@@ -2455,11 +2452,11 @@ export const jobs: ServicesJobs = {
 
     const occs = await prisma.jobOccurrence.findMany({
       // THE JOBS FEED IS THE MAIN TERRITORIAL READ. An occurrence carries
-      // its own `areaId`, so this is a direct prefix test. Note what is NOT
+      // its own `portfolioId`, so this is a direct prefix test. Note what is NOT
       // scoped: `work.claim` and `work.complete` are in NEVER_AREA_SCOPED,
       // so a worker can still pick up and finish a visit outside their
       // district — people cover for each other. Only the LIST narrows.
-      where: withArea({
+      where: withPortfolio({
         status: { not: JobOccurrenceStatus.ARCHIVED },
         ...(hasDates ? { startAt: dateRange } : {}),
         // Business Start Date filter — pre-cutoff occurrences (anchored on
@@ -2468,7 +2465,7 @@ export const jobs: ServicesJobs = {
         // off-state matches pre-feature behavior exactly. Client-facing
         // routes deliberately do NOT pass a cutoff — see routes/client.ts.
         ...occurrenceWorkDateCutoff(params?.cutoff ?? null),
-      }, params?.areaWhere ?? {}),
+      }, params?.portfolioWhere ?? {}),
       include: {
         job: {
           include: {
@@ -2478,7 +2475,7 @@ export const jobs: ServicesJobs = {
                 // The property's TERRITORY, for the badge beside the
                 // address on a job card. The NAME only — the card shows
                 // where this work sits, it does not filter by it.
-                area: { select: { name: true } },
+                portfolios: { select: { portfolio: { select: { name: true } } } },
                 client: {
                   select: {
                     id: true, displayName: true, isVip: true, vipReason: true, internalTags: true,
@@ -2694,10 +2691,10 @@ export const jobs: ServicesJobs = {
     to?: string;
     assigneeUserId?: string | null;
     cutoff?: Date | null;
-    /** Territory filter built with `areaWhereOn(principal, cap,
-     *  "defaultArea")` — a ghost is projected from a Job, and a Job reaches
-     *  its area through `defaultArea`. */
-    areaWhere?: Record<string, unknown>;
+    /** Territory filter built with `portfolioWhereVia(principal, cap,
+     *  "defaultPortfolio")` — a ghost is projected from a Job, and a Job reaches
+     *  its portfolio through `defaultPortfolio`. */
+    portfolioWhere?: Record<string, unknown>;
   }) {
     const fromDate = params?.from ? etMidnight(params.from as EtDateKey) : null;
     const toDate = params?.to ? etEndOfDay(params.to as EtDateKey) : null;
@@ -2706,11 +2703,11 @@ export const jobs: ServicesJobs = {
     // Prisma handles the include tree without a materially large query.
     const jobs = await prisma.job.findMany({
       // A ghost is a PROJECTED visit, so it has no occurrence row to carry
-      // an areaId — scope the job it is projected from instead. Without
+      // a portfolioId — scope the job it is projected from instead. Without
       // this, the feed was correctly scoped and the ghosts beside it were
       // not, which is the same "one surface, two read paths" shape that put
       // the claimer invariant into production broken.
-      where: withArea({
+      where: withPortfolio({
         status: JobStatus.ACCEPTED,
         // "Repeating" is Job.frequencyDays, resolved below as
         // `occurrence.frequencyDays ?? job.frequencyDays` — the same
@@ -2722,7 +2719,7 @@ export const jobs: ServicesJobs = {
         // this card had never appeared in production at all. It looked
         // healthy in dev only because seed.ts created the rows.
         // JobSchedule has since been removed entirely.
-      }, params?.areaWhere ?? {}),
+      }, params?.portfolioWhere ?? {}),
       include: {
         property: {
           select: {
@@ -2730,7 +2727,7 @@ export const jobs: ServicesJobs = {
                 // The property's TERRITORY, for the badge beside the
                 // address on a job card. The NAME only — the card shows
                 // where this work sits, it does not filter by it.
-                area: { select: { name: true } },
+                portfolios: { select: { portfolio: { select: { name: true } } } },
             client: {
               select: {
                 id: true, displayName: true, isVip: true, vipReason: true,
@@ -2920,12 +2917,12 @@ export const jobs: ServicesJobs = {
   async countGhostExpiry(params: {
     assigneeUserId?: string | null;
     cutoff?: Date | null;
-      areaWhere?: Record<string, unknown>;
+      portfolioWhere?: Record<string, unknown>;
   }) {
     // Rides the same (already territorial) ghost query, so the count and
     // the list it summarises cannot disagree.
     const ghosts = await this.listNextOccurrenceGhosts({
-      areaWhere: params?.areaWhere ?? {},
+      portfolioWhere: params?.portfolioWhere ?? {},
       assigneeUserId: params.assigneeUserId ?? null,
       cutoff: params.cutoff ?? null,
     });
@@ -2962,7 +2959,7 @@ export const jobs: ServicesJobs = {
                 // The property's TERRITORY, for the badge beside the
                 // address on a job card. The NAME only — the card shows
                 // where this work sits, it does not filter by it.
-                area: { select: { name: true } },
+                portfolios: { select: { portfolio: { select: { name: true } } } },
                 client: {
                   select: {
                     id: true, displayName: true, isVip: true, vipReason: true, internalTags: true,
@@ -3074,7 +3071,7 @@ export const jobs: ServicesJobs = {
                 // The property's TERRITORY, for the badge beside the
                 // address on a job card. The NAME only — the card shows
                 // where this work sits, it does not filter by it.
-                area: { select: { name: true } },
+                portfolios: { select: { portfolio: { select: { name: true } } } },
                 client: {
                   select: {
                     id: true, displayName: true, isVip: true, vipReason: true, internalTags: true,
@@ -3128,13 +3125,13 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async listAvailableOccurrences(areaWhere: Record<string, unknown> = {}) {
+  async listAvailableOccurrences(portfolioWhere: Record<string, unknown> = {}) {
     return prisma.jobOccurrence.findMany({
       // The unclaimed pool is a LIST, so it narrows — even though claiming
       // itself never does (`work.claim` is in NEVER_AREA_SCOPED). Seeing
       // your own district's open work by default is the point; being able
       // to cover another district is still allowed, just not the default view.
-      where: withArea({
+      where: withPortfolio({
         status: JobOccurrenceStatus.SCHEDULED,
         assignees: { none: {} },
         // Timeline events (workflow=EVENT) and tasks are NOT claimable
@@ -3143,7 +3140,7 @@ export const jobs: ServicesJobs = {
         // some flows) are claimable. Keep this narrow rather than open
         // so future workflow additions default to "not claimable".
         workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
-      }, areaWhere),
+      }, portfolioWhere),
       include: {
         job: {
           include: {
@@ -3153,7 +3150,7 @@ export const jobs: ServicesJobs = {
                 // The property's TERRITORY, for the badge beside the
                 // address on a job card. The NAME only — the card shows
                 // where this work sits, it does not filter by it.
-                area: { select: { name: true } },
+                portfolios: { select: { portfolio: { select: { name: true } } } },
                 client: {
                   select: {
                     id: true, displayName: true, isVip: true, vipReason: true, internalTags: true,
@@ -4171,16 +4168,16 @@ export const jobs: ServicesJobs = {
     return opts?.tx ? run(opts.tx) : prisma.$transaction(run);
   },
 
-  async listArchivedJobs(params?: { page?: number; pageSize?: number; areaWhere?: Record<string, unknown> }) {
+  async listArchivedJobs(params?: { page?: number; pageSize?: number; portfolioWhere?: Record<string, unknown> }) {
     const page = Math.max(params?.page ?? 1, 1);
     const pageSize = Math.min(Math.max(params?.pageSize ?? 25, 1), 100);
     const skip = (page - 1) * pageSize;
 
     // Archived work stays in its district — history resolves through a
-    // closed territory, which is why areas retire rather than delete.
-    const where: Prisma.JobWhereInput = withArea(
+    // closed territory, which is why portfolios retire rather than delete.
+    const where: Prisma.JobWhereInput = withPortfolio(
       { status: JobStatus.ARCHIVED },
-      params?.areaWhere ?? {},
+      params?.portfolioWhere ?? {},
     );
 
     const [rows, total] = await prisma.$transaction([

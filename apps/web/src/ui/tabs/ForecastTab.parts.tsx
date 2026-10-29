@@ -73,7 +73,7 @@ export function MarketRateProvenance({ market }: { market?: MarketRateInfo }) {
           {looked ? (
             <>
               US Bureau of Labor Statistics, OEWS {market.year} · Landscaping &amp;
-              Groundskeeping Workers (SOC {market.occupation}) · {market.areaName} ·
+              Groundskeeping Workers (SOC {market.occupation}) · {market.portfolioName} ·
               looked up from your business address
               {market.fetchedAt ? ` · cached ${fmtDate(market.fetchedAt)}` : ""}
             </>

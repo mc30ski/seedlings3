@@ -21,8 +21,7 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, paymentSplitCutoffWhere, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
-import { areaWhere, areaWhereVia } from "../lib/areaScope";
+import { portfolioWhere, portfolioWhereVia } from "../lib/portfolioScope";
 import { WORKER_TYPES, classify, isFeeable, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { currentUserId, enrichSyncTasks, nextRecurrenceDate, occInEditableState } from "./_shared";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
@@ -88,10 +87,10 @@ export default async function moneyRoutes(app: FastifyInstance) {
       method?: string;
     };
     const cutoff = await resolveCutoff(req);
-    // A Payment reaches its area through the occurrence it settles. Empty for
+    // A Payment reaches its portfolio through the occurrence it settles. Empty for
     // anyone holding money.view globally, so their query does not change.
-    const areaWhere = areaWhereVia(req.principal, "money.view", "occurrence");
-    return services.payments.listAllPayments({ from, to, userId, method, cutoff, areaWhere });
+    const portfolioWhere = portfolioWhereVia(req.principal, "money.view", "occurrence");
+    return services.payments.listAllPayments({ from, to, userId, method, cutoff, portfolioWhere });
   });
   app.patch("/invoice-charges/:id/ledger-link", req_materialsCharge, async (req: any) => {
     const uid = await currentUserId(req);
@@ -222,17 +221,17 @@ export default async function moneyRoutes(app: FastifyInstance) {
     const cutoff = await resolveCutoff(req);
     return services.payments.listPendingApprovals(
       cutoff,
-      areaWhereVia(req.principal, "money.view", "occurrence"),
+      portfolioWhereVia(req.principal, "money.view", "occurrence"),
     );
   });
   // Outstanding payment requests — sent to a client, not yet paid back.
   app.get("/payment-requests/outstanding", req_moneyView_pending, async (req: any) => {
     const cutoff = await resolveCutoff(req);
-    // This one reads JobOccurrence directly, which carries areaId itself, so
+    // This one reads JobOccurrence directly, which carries portfolioId itself, so
     // the fragment is top-level rather than nested through a relation.
     return services.paymentRequests.listOutstanding({
       cutoff,
-      areaWhere: areaWhere(req.principal, "money.view"),
+      portfolioWhere: portfolioWhere(req.principal, "money.view"),
     });
   });
   app.post("/payments/:id/approve", req_moneyApprove, async (req: any) => {

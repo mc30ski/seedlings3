@@ -86,6 +86,7 @@ import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 import { Dashboard } from "@/src/ui/components/Dashboard";
 import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
 import { isW2 } from "@repo/money";
+import { PortfolioBadges } from "@/src/lib/portfolios";
 
 // `localDate` removed — use `bizDateKey` directly.
 
@@ -1892,12 +1893,7 @@ export default function ServicesTab({
                   // span trailing the link.
                   <HStack mt="1" fontSize="sm" gap={2} align="center" wrap="wrap">
                     <MapLink address={[job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ")} />
-                    {(job.property as any)?.area?.name && (
-                      <Badge size="sm" variant="subtle" colorPalette="purple" flexShrink={0} display="inline-flex" alignItems="center" gap="1">
-                        <MapPin size={10} />
-                        {(job.property as any).area.name}
-                      </Badge>
-                    )}
+                    <PortfolioBadges of={job.property} />
                   </HStack>
                 )}
               </Card.Header>

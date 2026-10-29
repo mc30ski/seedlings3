@@ -1103,7 +1103,7 @@ export default function HomeTab({
             team & clients) driven by one period control. Placed
             ABOVE the worker picker so the widest view
             (business-wide pulse) sits at the top; the picker below
-            narrows the main hero/tile area. Wrapped in the orange
+            narrows the main hero/tile portfolio. Wrapped in the orange
             Insights card that matches the Equipment + Jobs Insights
             sections for a consistent Super visual language. */}
         {scope.can("reports.business") && (

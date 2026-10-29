@@ -38,7 +38,7 @@ export async function capabilitiesForUsers(
   const out = new Map<string, Set<Entitlement>>(userIds.map((id) => [id, new Set()]));
   if (userIds.length === 0) return out;
 
-  const [allRoles, grants, areaGrants, people] = await Promise.all([
+  const [allRoles, grants, portfolioGrants, people] = await Promise.all([
     db.customRole.findMany({
       select: {
         id: true, name: true, key: true, inheritsFromId: true,
@@ -46,15 +46,15 @@ export async function capabilitiesForUsers(
       },
     }),
     // BOTH WAYS A ROLE IS HELD. This read `userCustomRole` alone, so
-    // anybody whose access comes from an AREA ASSIGNMENT resolved to the
+    // anybody whose access comes from an PORTFOLIO ASSIGNMENT resolved to the
     // empty set — they looked capability-less to every caller of this
     // function while `can()` (which walks `principal.roles`, built from
     // both) said otherwise. That is exactly the UI-badge-vs-403 mismatch
     // the note above says this function exists to prevent.
     //
-    // Area narrows WHICH ROWS, not which capabilities, so for "what may
+    // Portfolio narrows WHICH ROWS, not which capabilities, so for "what may
     // this person do at all" the two grant kinds count the same. A caller
-    // needing the territorial part asks `areaScope` with the path.
+    // needing the territorial part asks `portfolioScope` with the path.
     db.userCustomRole.findMany({
       where: {
         userId: { in: [...userIds] },
@@ -63,7 +63,7 @@ export async function capabilitiesForUsers(
       },
       select: { userId: true, customRoleId: true },
     }),
-    db.areaAssignment.findMany({
+    db.portfolioAssignment.findMany({
       where: {
         userId: { in: [...userIds] },
         suspendedAt: null,
@@ -103,7 +103,7 @@ export async function capabilitiesForUsers(
     ]),
   );
 
-  for (const g of [...grants, ...areaGrants]) {
+  for (const g of [...grants, ...portfolioGrants]) {
     if (!cleared.has(g.userId)) continue;
     const set = out.get(g.userId);
     if (!set) continue;

@@ -28,9 +28,9 @@ export default async function weatherRoutes(app: FastifyInstance) {
   const req_scheduleView = requires("schedule.view");
 
   app.get("/weather/location", req_scheduleView, async (req: any) => {
-    // area-scope-allow: forecast for a lat/lng. No rows, no territory
+    // portfolio-scope-allow: forecast for a lat/lng. No rows, no territory
     //
-    // THE AREA LENS WINS OVER THE BUSINESS ADDRESS. If the caller has
+    // THE PORTFOLIO LENS WINS OVER THE BUSINESS ADDRESS. If the caller has
     // narrowed the app to a district, every number on their screen is that
     // district's — a forecast for head office would be the one panel still
     // answering about somewhere else.
@@ -46,12 +46,12 @@ export default async function weatherRoutes(app: FastifyInstance) {
     // turns out to be for the wrong town.
     const lensPath: string | null = req.principal?.lensPath ?? null;
     if (lensPath) {
-      const area = await prisma.area.findFirst({
+      const portfolio = await prisma.portfolio.findFirst({
         where: { path: lensPath },
         select: { name: true, lat: true, lng: true },
       });
-      if (area?.lat != null && area?.lng != null) {
-        return { lat: area.lat, lng: area.lng, source: "area" as const, label: area.name };
+      if (portfolio?.lat != null && portfolio?.lng != null) {
+        return { lat: portfolio.lat, lng: portfolio.lng, source: "portfolio" as const, label: portfolio.name };
       }
     }
 
@@ -77,7 +77,7 @@ export default async function weatherRoutes(app: FastifyInstance) {
   // decides to sign up for that, this returns everything the free window
   // actually covers rather than an arbitrary 3 days.
   app.get("/weather", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a lat/lng passthrough to an external forecast API.
+    // portfolio-scope-allow: a lat/lng passthrough to an external forecast API.
     // It reads no rows of ours, so there is nothing to narrow.
     const { lat, lng } = (req.query || {}) as { lat?: string; lng?: string };
     if (!lat || !lng) throw app.httpErrors.badRequest("lat and lng are required");

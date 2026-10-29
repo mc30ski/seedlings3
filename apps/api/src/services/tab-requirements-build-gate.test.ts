@@ -159,7 +159,7 @@ describe("G44 — tab visibility table", () => {
   it("has no row for a tab that no longer exists", () => {
     const rows = readTable();
     const rendered = readRenderedTabValues();
-    // There is no exemption list. `roles` and `areas` had one while those
+    // There is no exemption list. `roles` and `portfolios` had one while those
     // screens were being written; both exist now, so it is gone. Do not
     // reintroduce it — a row with no tab is policy that governs nothing.
     const orphans = [...rows.keys()].filter((id) => !rendered.has(id));

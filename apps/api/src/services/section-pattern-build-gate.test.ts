@@ -173,7 +173,7 @@ describe("section pattern — a section refresh refreshes only itself", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Pulse direction — outward only.
 //
-// Reported 2026-09-01: "some areas pulsate outward and then inward, but this
+// Reported 2026-09-01: "some portfolios pulsate outward and then inward, but this
 // is not consistent". The cause was two shapes of keyframe living side by
 // side. The two-stop shorthand
 //

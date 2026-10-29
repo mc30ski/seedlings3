@@ -24,9 +24,9 @@ const PARTS = readFileSync(join(ROOT, "apps/web/src/ui/tabs/ForecastTab.parts.ts
 const MODEL = readFileSync(join(ROOT, "packages/money/forecastModel.ts"), "utf8");
 
 describe("market rate — sourced, not invented", () => {
-  it("resolves the metro area from BUSINESS_ADDRESS", () => {
+  it("resolves the metro portfolio from BUSINESS_ADDRESS", () => {
     expect(SVC).toMatch(/BUSINESS_ADDRESS/);
-    expect(SVC).toMatch(/Metropolitan Statistical Areas/);
+    expect(SVC).toMatch(/Metropolitan Statistical Portfolios/);
   });
 
   it("caches through the shared cache, never in a Setting row", () => {
@@ -70,10 +70,10 @@ describe("market rate — sourced, not invented", () => {
 });
 
 describe("market rate — the UI says where the number came from", () => {
-  it("names the source, survey year, occupation, area and fetch date", () => {
+  it("names the source, survey year, occupation, portfolio and fetch date", () => {
     const blk = PARTS.slice(PARTS.indexOf("export function MarketRateProvenance"));
     for (const bit of ["Bureau of Labor Statistics", "market.year", "market.occupation",
-                       "market.areaName", "cached "]) {
+                       "market.portfolioName", "cached "]) {
       expect(blk, `provenance must mention ${bit}`).toMatch(bit);
     }
   });

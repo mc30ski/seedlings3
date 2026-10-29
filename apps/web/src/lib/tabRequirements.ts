@@ -86,7 +86,7 @@ export const TAB_REQUIREMENTS = {
   forecast: ["forecasts.view"],
   // The team rollup — Insights → Statistics. `reports.view`, the same
   // capability GET /statistics is guarded on, so the tab and its endpoint
-  // cannot disagree. The numbers narrow by area for an area-limited holder,
+  // cannot disagree. The numbers narrow by portfolio for a portfolio-limited holder,
   // and the page says so when they do.
   statistics: ["reports.view"],
 
@@ -139,13 +139,13 @@ export const TAB_REQUIREMENTS = {
   settings: ["settings.view", "settings.manage"],
   displays: ["displays.manage"],
   roles: ["roles.view"],
-  // `areas.view`, NOT `areas.manage` — and only the one, because the rule is
+  // `portfolios.view`, NOT `portfolios.manage` — and only the one, because the rule is
   // that a tab names the capability of the endpoint it calls. Listing both
-  // would reopen the tab for a manage-only holder whose `GET /areas` then
+  // would reopen the tab for a manage-only holder whose `GET /portfolios` then
   // 403s behind it, which is the silent-refusal shape this table exists to
-  // prevent. Everyone who holds `areas.manage` also holds `areas.view`
+  // prevent. Everyone who holds `portfolios.manage` also holds `portfolios.view`
   // through Admin; see install-starter-roles.ts.
-  areas: ["areas.view"],
+  portfolios: ["portfolios.view"],
 
   // ── No capability distinguishes these ───────────────────────────────
   // Guides reads `/me/guides`, which is an OWNERSHIP route: the guides

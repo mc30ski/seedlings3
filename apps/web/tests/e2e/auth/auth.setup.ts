@@ -38,9 +38,9 @@ const CLERK_USERS = [
   { name: "bookkeeper",  clerkUserId: "user_3Kb1sDh90di1Ya57pOtEGBw4hJz" },
   { name: "payroll",     clerkUserId: "user_3Kb1sECtQcpabtj34NIODcFCQv0" },
   { name: "unpaid",      clerkUserId: "user_3Kb1s9wrOJx2CoLRW3EooVxunN7" },
-  // Added 2026-10-22. The first persona whose access is narrowed by AREA
+  // Added 2026-10-22. The first persona whose access is narrowed by PORTFOLIO
   // rather than by capability: it holds Admin's whole set, but only inside
-  // Durham. Area scoping had models, routes, a tab, 25 unit tests and a
+  // Durham. Portfolio scoping had models, routes, a tab, 25 unit tests and a
   // seeded fixture, and still no run had ever issued a request as a
   // territorially limited user — the fixture carried a synthetic
   // `seed_…` clerkUserId that could not sign in.

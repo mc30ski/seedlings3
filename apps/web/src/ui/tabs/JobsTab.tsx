@@ -155,6 +155,7 @@ import {
 } from "@/src/ui/components/DocumentTypePicker";
 import type { Scope } from "@/src/lib/scope";
 import { isW2, isFeeable } from "@repo/money";
+import { PortfolioBadges, PortfolioNameLine, portfolioNames } from "@/src/lib/portfolios";
 
 // `localDate` removed — use `bizDateKey` directly (single canonical
 // helper from @/src/lib/dates). See docs/DATE_HANDLING.md.
@@ -5536,12 +5537,12 @@ export default function JobsTab({
                                     very differently depending on whose
                                     district it counts toward, and until now
                                     nothing on a card said. Absent rather
-                                    than "—" when the property has no area:
+                                    than "—" when the property has no portfolio:
                                     a blank badge would read as a real
                                     territory called nothing. */}
-                                {(occ.job.property as any)?.area?.name && (
+                                {portfolioNames(occ.job.property).length > 0 && (
                                   <Text as="span" ml="1.5" color="purple.fg" fontWeight="medium">
-                                    · {(occ.job.property as any).area.name}
+                                    <PortfolioNameLine of={occ.job.property} prefix="· " />
                                   </Text>
                                 )}
                               </Text>
@@ -6791,8 +6792,9 @@ export default function JobsTab({
                                   badge goes beside the name here, which is
                                   where somebody scanning a list of cards
                                   is actually looking. */}
-                              {(occ.job?.property as any)?.area?.name && (
+                              {portfolioNames(occ.job?.property).map((name) => (
                                 <Badge
+                                  key={name}
                                   size="sm"
                                   variant="subtle"
                                   colorPalette="purple"
@@ -6803,9 +6805,9 @@ export default function JobsTab({
                                   gap="1"
                                 >
                                   <MapPin size={10} />
-                                  {(occ.job?.property as any).area.name}
+                                  {name}
                                 </Badge>
-                              )}
+                              ))}
                             </>
                           )}
                         </Text>
@@ -7331,7 +7333,7 @@ export default function JobsTab({
                             // as a separate fact rather than a qualifier on
                             // the address. The badge sits OUTSIDE the
                             // MapLink because that opens a map of the
-                            // address, and an area is not part of one.
+                            // address, and a portfolio is not part of one.
                             <HStack fontSize="sm" mt={2} gap={2} align="center" wrap="wrap">
                               <MapLink address={[
                                   occ.job?.property?.street1,
@@ -7340,15 +7342,9 @@ export default function JobsTab({
                                 ]
                                   .filter(Boolean)
                                   .join(", ")} />
-                              {(occ.job?.property as any)?.area?.name && (
-                                <Badge size="sm" variant="subtle" colorPalette="purple" flexShrink={0} display="inline-flex" alignItems="center" gap="1">
-                                  {/* The pin reads as "a place" before the
-                                      word does, which is the whole job of
-                                      an icon on a badge this small. */}
-                                  <MapPin size={10} />
-                                  {(occ.job?.property as any).area.name}
-                                </Badge>
-                              )}
+                              {/* The pin reads as "a place" before the word does, which is
+                                  the whole job of an icon on a badge this small. */}
+                              <PortfolioBadges of={occ.job?.property} />
                             </HStack>
                             )}
                             <HStack gap={3} fontSize="xs">

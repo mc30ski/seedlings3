@@ -15,6 +15,11 @@ up and paused again on 2026-10-28 — the user wants to come back to it.
 Context for the feature itself is in [[project_area_hierarchy_design]]; this
 file is about which areas the REAL business should have.
 
+**The concept was renamed in design on 2026-10-28** — areas become
+portfolios, and membership becomes many-to-many. See
+[[project_portfolios_design]]. The tree proposed below is still the right
+shape; read "area" as "portfolio" throughout.
+
 ## The production picture (2026-10-27 — re-verify, these move)
 
 | | Properties | 90-day visits | Collected, all time |

@@ -15,7 +15,7 @@ import type { Entitlement } from "@repo/permissions";
  *
  * TypeScript matches structurally, so seventeen identical literals are
  * seventeen interchangeable types — harmless while the shape never changes.
- * The permissions work changes it (a `can` function, later `areas`), and that
+ * The permissions work changes it (a `can` function, later `portfolios`), and that
  * is where it bites: add a field here and the files still on the old literal
  * KEEP COMPILING. There is no error and nothing in the diff to notice,
  * because a tab accepting three fields is valid code. It silently keeps its

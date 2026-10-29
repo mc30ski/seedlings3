@@ -245,23 +245,23 @@ persona("owner", () => {
     ).toBeVisible();
   });
 
-  test("creates an area at the top level", async ({ page }) => {
-    const name = `${stamp()} Area`;
-    // Areas moved from System to Directory (2026-10-28) — it is a grouping
+  test("creates a portfolio at the top level", async ({ page }) => {
+    const name = `${stamp()} Portfolio`;
+    // Portfolios moved from System to Directory (2026-10-28) — it is a grouping
     // of properties, which is what Directory holds.
-    await goto(page, "staff", "areas", "Areas", "Directory");
-    await page.getByRole("button", { name: /New area/i }).click();
-    await page.getByPlaceholder("Area name").fill(name);
+    await goto(page, "staff", "portfolios", "Portfolios", "Directory");
+    await page.getByRole("button", { name: /New portfolio/i }).click();
+    await page.getByPlaceholder("Portfolio name").fill(name);
     await page.getByRole("button", { name: "Create", exact: true }).click();
     await expect(page.getByText(`Created ${name}`)).toBeVisible({ timeout: 15_000 });
 
     const prisma = makePrisma();
     try {
-      const row = await prisma.area.findFirst({ where: { name } });
-      expect(row, "the area was not written").not.toBeNull();
-      // The path is what every area-scoped query matches on, so it has to
+      const row = await prisma.portfolio.findFirst({ where: { name } });
+      expect(row, "the portfolio was not written").not.toBeNull();
+      // The path is what every portfolio-scoped query matches on, so it has to
       // be correct by construction rather than by the caller remembering.
-      expect(row?.path, "an area with no materialized path scopes nothing").toBeTruthy();
+      expect(row?.path, "a portfolio with no materialized path scopes nothing").toBeTruthy();
     } finally {
       await prisma.$disconnect();
     }

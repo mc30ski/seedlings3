@@ -13,7 +13,7 @@ export const AUDIT = {
     // the row, and the one report anybody runs misses it.
     //
     // Use AUDIT.ROLE.ROLE_ASSIGNED / .ROLE_REMOVED for a grant on a person,
-    // and AUDIT.AREA_ASSIGNMENT.* for one scoped to an area. The AuditVerb
+    // and AUDIT.PORTFOLIO_ASSIGNMENT.* for one scoped to a portfolio. The AuditVerb
     // ENUM values are untouched and still used by both — this removes two
     // scope+verb pairings, not an enum member, so no migration and no
     // existing row is affected.
@@ -454,20 +454,20 @@ export const AUDIT = {
     ROLE_REMOVED: [AuditScope.ROLE, AuditVerb.ROLE_REMOVED] as const,
   },
 
-  // The area tree decides who sees what money, so reshaping it is audited.
-  AREA: {
-    CREATED: [AuditScope.AREA, AuditVerb.CREATED] as const,
-    UPDATED: [AuditScope.AREA, AuditVerb.UPDATED] as const,
-    RETIRED: [AuditScope.AREA, AuditVerb.RETIRED] as const,
-    UNRETIRED: [AuditScope.AREA, AuditVerb.UNRETIRED] as const,
+  // The portfolio tree decides who sees what money, so reshaping it is audited.
+  PORTFOLIO: {
+    CREATED: [AuditScope.PORTFOLIO, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.PORTFOLIO, AuditVerb.UPDATED] as const,
+    RETIRED: [AuditScope.PORTFOLIO, AuditVerb.RETIRED] as const,
+    UNRETIRED: [AuditScope.PORTFOLIO, AuditVerb.UNRETIRED] as const,
   },
 
-  // Separate from AREA: granting someone a role in a territory is a
+  // Separate from PORTFOLIO: granting someone a role in a territory is a
   // different act from reshaping the territory.
-  AREA_ASSIGNMENT: {
-    ROLE_ASSIGNED: [AuditScope.AREA_ASSIGNMENT, AuditVerb.ROLE_ASSIGNED] as const,
-    ROLE_REMOVED: [AuditScope.AREA_ASSIGNMENT, AuditVerb.ROLE_REMOVED] as const,
-    UPDATED: [AuditScope.AREA_ASSIGNMENT, AuditVerb.UPDATED] as const,
+  PORTFOLIO_ASSIGNMENT: {
+    ROLE_ASSIGNED: [AuditScope.PORTFOLIO_ASSIGNMENT, AuditVerb.ROLE_ASSIGNED] as const,
+    ROLE_REMOVED: [AuditScope.PORTFOLIO_ASSIGNMENT, AuditVerb.ROLE_REMOVED] as const,
+    UPDATED: [AuditScope.PORTFOLIO_ASSIGNMENT, AuditVerb.UPDATED] as const,
   },
 
   CALENDAR_FEED: {

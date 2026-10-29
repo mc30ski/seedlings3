@@ -21,8 +21,7 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, paymentSplitCutoffWhere, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
-import { areaWhere, areaWhereVia } from "../lib/areaScope";
+import { portfolioWhere, portfolioWhereVia } from "../lib/portfolioScope";
 import { WORKER_TYPES, classify, isFeeable, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { currentUserId, enrichSyncTasks, nextRecurrenceDate, occInEditableState } from "./_shared";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
@@ -51,7 +50,7 @@ export default async function customerRoutes(app: FastifyInstance) {
   // not connected to any client record ("phantom"). This endpoint lists
   // those phantoms so someone with `routes.plan` can manually link them.
   app.get("/clients/unlinked-accounts", req_clientsView, async (req: any) => {
-    // area-scope-allow: these accounts are precisely the ones with NO client
+    // portfolio-scope-allow: these accounts are precisely the ones with NO client
     // record yet — that is what "unlinked" means — so they have no property,
     // no occurrence and therefore no territory to filter on. Scoping would
     // return nothing to everyone.
@@ -106,7 +105,7 @@ export default async function customerRoutes(app: FastifyInstance) {
   // household-email collisions while they're still typing, instead of
   // failing at the final batchSave.
   app.get("/client-contacts/check", req_clientsView, async (req: any) => {
-    // area-scope-allow: an existence lookup by email/phone used before
+    // portfolio-scope-allow: an existence lookup by email/phone used before
     //   creating a contact; it answers "is this person already in the
     //   system", which is a company-wide question and returns no territorial
     //   rows
@@ -142,7 +141,7 @@ export default async function customerRoutes(app: FastifyInstance) {
   // Returns ACTIVE contacts that don't yet have a clerkUserId, optionally
   // sorted by email-local-part similarity to a hint (`?nearEmail=...`).
   app.get("/client-contacts/unlinked", req_clientsView, async (req: any) => {
-    // area-scope-allow: the identity-linking worklist — contacts with no
+    // portfolio-scope-allow: the identity-linking worklist — contacts with no
     //   Clerk account. Linking a login is an account-administration job
     //   (identity.link), not a territorial one
     const { nearEmail } = (req.query || {}) as { nearEmail?: string };
@@ -341,9 +340,9 @@ export default async function customerRoutes(app: FastifyInstance) {
   // Cheap; two count queries + a group-by. Not gated by cutoff — this is
   // an operational preview, not a financial one.
   app.get("/clients/:id/archive-preview", req_clientsView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -366,9 +365,9 @@ export default async function customerRoutes(app: FastifyInstance) {
   // back to active. Uses status=ARCHIVED so the number matches what the
   // cascade will actually touch.
   app.get("/clients/:id/unarchive-preview", req_clientsView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -470,9 +469,9 @@ export default async function customerRoutes(app: FastifyInstance) {
   });
   // Preview for Property archive cascade — same shape as the Client one.
   app.get("/properties/:id/archive-preview", req_clientsView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -484,9 +483,9 @@ export default async function customerRoutes(app: FastifyInstance) {
     return { jobsToArchive };
   });
   app.get("/properties/:id/unarchive-preview", req_clientsView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -651,7 +650,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       q,
       status: status as any,
       limit: limit ? Number(limit) : undefined,
-      areaWhere: areaWhere(req.principal, "clients.view"),
+      portfolioWhere: portfolioWhere(req.principal, "clients.view"),
       assignedToUserId: await assignedScopeFor(req),
     });
     if (!callerCan(req, "clients.manage")) {
@@ -660,9 +659,9 @@ export default async function customerRoutes(app: FastifyInstance) {
     return list;
   });
   app.get("/clients/:id", req_clientsView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -690,20 +689,20 @@ export default async function customerRoutes(app: FastifyInstance) {
   // with nothing repeated. That is also why no cron and no backfill script
   // are needed: the data fills in as the feature is used.
   app.get("/properties/points", req_clientsView, async (req: any) => {
-    const { areaId } = (req.query || {}) as { areaId?: string };
+    const { portfolioId } = (req.query || {}) as { portfolioId?: string };
 
-    let areaSubtreePath: string | "none" | undefined;
-    if (areaId === "none") areaSubtreePath = "none";
-    else if (areaId) {
-      const picked = await prisma.area.findUnique({ where: { id: String(areaId) }, select: { path: true } });
-      areaSubtreePath = picked?.path ?? "\u0000no-such-area";
+    let portfolioSubtreePath: string | "none" | undefined;
+    if (portfolioId === "none") portfolioSubtreePath = "none";
+    else if (portfolioId) {
+      const picked = await prisma.portfolio.findUnique({ where: { id: String(portfolioId) }, select: { path: true } });
+      portfolioSubtreePath = picked?.path ?? "\u0000no-such-portfolio";
     }
 
     return services.properties.mapPoints({
-      areaWhere: areaWhere(req.principal, "clients.view"),
-      areaSubtreePath,
+      portfolioWhere: portfolioWhere(req.principal, "clients.view"),
+      portfolioSubtreePath,
       assignedToUserId: await assignedScopeFor(req),
-      areaId: areaId && areaId !== "none" ? String(areaId) : undefined,
+      portfolioId: portfolioId && portfolioId !== "none" ? String(portfolioId) : undefined,
     });
   });
 
@@ -715,54 +714,54 @@ export default async function customerRoutes(app: FastifyInstance) {
    * calls this repeatedly and watches `remaining` go to zero.
    */
   app.post("/properties/points/resolve", req_clientsView, async (req: any) => {
-    const b = (req.body || {}) as { areaId?: string; limit?: number };
+    const b = (req.body || {}) as { portfolioId?: string; limit?: number };
 
-    let areaSubtreePath: string | "none" | undefined;
-    if (b.areaId === "none") areaSubtreePath = "none";
-    else if (b.areaId) {
-      const picked = await prisma.area.findUnique({ where: { id: String(b.areaId) }, select: { path: true } });
-      areaSubtreePath = picked?.path ?? "\u0000no-such-area";
+    let portfolioSubtreePath: string | "none" | undefined;
+    if (b.portfolioId === "none") portfolioSubtreePath = "none";
+    else if (b.portfolioId) {
+      const picked = await prisma.portfolio.findUnique({ where: { id: String(b.portfolioId) }, select: { path: true } });
+      portfolioSubtreePath = picked?.path ?? "\u0000no-such-portfolio";
     }
 
     return services.properties.resolveMapPoints({
-      areaWhere: areaWhere(req.principal, "clients.view"),
-      areaSubtreePath,
+      portfolioWhere: portfolioWhere(req.principal, "clients.view"),
+      portfolioSubtreePath,
       assignedToUserId: await assignedScopeFor(req),
       limit: Math.min(Math.max(Number(b.limit) || 5, 1), 10),
     });
   });
 
   app.get("/properties", req_clientsView, async (req: any) => {
-    const { q, clientId, status, kind, limit, areaId } = (req.query || {}) as {
+    const { q, clientId, status, kind, limit, portfolioId } = (req.query || {}) as {
       q?: string;
       clientId?: string;
       status?: "ACTIVE" | "ARCHIVED" | "ALL";
       kind?: string | "ALL";
       limit?: string;
-      areaId?: string;
+      portfolioId?: string;
     };
 
-    // "Show me this area's properties." Resolved to a PATH here so the
+    // "Show me this portfolio's properties." Resolved to a PATH here so the
     // SUBTREE comes with it — picking a district includes its routes, and
-    // the list then agrees with the count beside it on the Areas tab.
+    // the list then agrees with the count beside it on the Portfolios tab.
     //
     // An unknown id narrows to nothing rather than being ignored, which
     // would silently answer with every property instead. `none` asks for
-    // the properties in NO area — the one question the area tree cannot
+    // the properties in NO portfolio — the one question the portfolio tree cannot
     // answer about itself, and the one worth asking, because an untagged
-    // property is invisible to every area-scoped reader.
+    // property is invisible to every portfolio-scoped reader.
     //
     // A VIEW filter, never a permission: the service ANDs it with the
-    // caller's own `areaWhere`, so it can only ever subtract.
-    let areaSubtreePath: string | "none" | undefined;
-    if (areaId === "none") {
-      areaSubtreePath = "none";
-    } else if (areaId) {
-      const picked = await prisma.area.findUnique({
-        where: { id: String(areaId) },
+    // caller's own `portfolioWhere`, so it can only ever subtract.
+    let portfolioSubtreePath: string | "none" | undefined;
+    if (portfolioId === "none") {
+      portfolioSubtreePath = "none";
+    } else if (portfolioId) {
+      const picked = await prisma.portfolio.findUnique({
+        where: { id: String(portfolioId) },
         select: { path: true },
       });
-      areaSubtreePath = picked?.path ?? "\u0000no-such-area";
+      portfolioSubtreePath = picked?.path ?? "\u0000no-such-portfolio";
     }
     const props = await services.properties.list({
       q,
@@ -771,8 +770,8 @@ export default async function customerRoutes(app: FastifyInstance) {
       kind: (kind as any) ?? "ALL",
       limit: limit ? Number(limit) : undefined,
       // Territory is resolved HERE because only the route has the principal.
-      areaWhere: areaWhere(req.principal, "clients.view"),
-      areaSubtreePath,
+      portfolioWhere: portfolioWhere(req.principal, "clients.view"),
+      portfolioSubtreePath,
       assignedToUserId: await assignedScopeFor(req),
     });
     // Attach last 3 photos from most recent occurrence for each property
@@ -814,9 +813,9 @@ export default async function customerRoutes(app: FastifyInstance) {
     return props;
   });
   app.get("/properties/:id", req_clientsView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS

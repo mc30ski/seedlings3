@@ -1905,7 +1905,7 @@ describe("[build-gate] the stacked card panels share one vertical rhythm", () =>
     // earlier in the file paints the same fill and was matching first.
     ["access note", TAB, /accessNotes && \(\s*\n\s*<HStack([\s\S]{0,400}?)bg="orange\.faint"/],
     // Box OR HStack: the address row became an HStack in 2026-10 so the
-    // property's AREA badge could sit on the same line as the address
+    // property's PORTFOLIO badge could sit on the same line as the address
     // instead of wrapping below it. The rhythm rule is unchanged — that
     // row still owns its own top gap and sets no bottom margin — but the
     // matcher named one element and silently stopped finding the panel.
@@ -2493,7 +2493,7 @@ describe("[build-gate] an alert count and the filter it opens agree", () => {
   it("the two overdue queues partition by workflow, with no overlap", () => {
     // Job Overdue and Activities Overdue are ONE rule split by workflow. If a
     // workflow appeared in both sets, one late row would be counted twice —
-    // the exact bug this whole area keeps producing. If it appeared in
+    // the exact bug this whole portfolio keeps producing. If it appeared in
     // neither, it would be late and silent, which is worse.
     const job = /const JOB_WORKFLOWS = new Set\(\[([^\]]*)\]\)/.exec(RULE);
     const act = /const ACTIVITY_WORKFLOWS = new Set\(\[([^\]]*)\]\)/.exec(RULE);

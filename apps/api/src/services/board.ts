@@ -21,7 +21,7 @@
  */
 
 import { prisma } from "../db/prisma";
-import { withArea } from "../lib/areaScope";
+import { withPortfolio } from "../lib/portfolioScope";
 import { JobOccurrenceStatus, OccurrenceWorkflow } from "@prisma/client";
 import {
   etAddDays,
@@ -121,7 +121,7 @@ const SELECT = {
 } as const;
 
 export const board = {
-  async getBoard(areaWhere: Record<string, unknown> = {}): Promise<BoardData> {
+  async getBoard(portfolioWhere: Record<string, unknown> = {}): Promise<BoardData> {
     const todayKey = etToday();
     const thisMon = etMondayOnOrBefore();
     const lastMon = etAddDays(thisMon, -7);
@@ -131,11 +131,11 @@ export const board = {
     const rows = (await prisma.jobOccurrence.findMany({
       // The board narrows too. A wall screen in one district showing
       // another district's addresses is the same leak as a list doing it.
-      where: withArea({
+      where: withPortfolio({
         completedAt: { gte: etMidnight(lastMon), lte: etEndOfDay(thisSun) },
         workflow: { in: REAL_WORK },
         status: { notIn: NOT_COUNTED },
-      }, areaWhere),
+      }, portfolioWhere),
       select: SELECT,
     })) as unknown as Row[];
 

@@ -14,7 +14,7 @@ import { ENTITLEMENT_COPY, assertEntitlement, flattenRole, isEntitlement, type E
  * point: exceptions become named, visible and reusable, and "why does Jake
  * have this?" always has exactly one kind of answer.
  *
- * TWO WORDS, TWO MEANINGS. Roles SUSPEND; areas RETIRE. A suspended role is
+ * TWO WORDS, TWO MEANINGS. Roles SUSPEND; portfolios RETIRE. A suspended role is
  * paused and coming back — grants go inactive immediately, assignments
  * survive, un-suspending restores everything. Suspension is also how you
  * switch a role off for everyone at once, so there is no separate role-wide
@@ -68,14 +68,14 @@ export const customRoles = {
    * show which came from where, and so editing only ever writes `own`.
    */
   /**
-   * The people who hold a role, company-wide grants and area grants alike.
+   * The people who hold a role, company-wide grants and portfolio grants alike.
    *
    * Returned as one list with a `scope` on each row rather than two lists,
    * because the question a reader has is "who has this?" and splitting the
    * answer by mechanism makes them reconcile two tables to get it. The
-   * distinction still matters — a global grant beats area scoping, so an
-   * area row and a global row for the same person are NOT the same fact —
-   * so `scope` is explicit rather than inferred from a null areaId.
+   * distinction still matters — a global grant beats portfolio scoping, so an
+   * portfolio row and a global row for the same person are NOT the same fact —
+   * so `scope` is explicit rather than inferred from a null portfolioId.
    */
   /**
    * EVERY CAPABILITY THIS PERSON HOLDS, AND WHERE EACH ONE CAME FROM.
@@ -84,12 +84,12 @@ export const customRoles = {
    * directory, and it cannot answer the question an operator actually has:
    * *why* can this person do that, and is it everywhere or just here.
    *
-   * The part that earns the endpoint is `scope`. A GLOBAL grant beats area
-   * scoping — hold a capability company-wide through any role and no area
+   * The part that earns the endpoint is `scope`. A GLOBAL grant beats portfolio
+   * scoping — hold a capability company-wide through any role and no portfolio
    * assignment narrows it. So "Pete manages Raleigh" reads like a boundary
    * while a stray global grant has quietly erased it, and nothing on screen
    * says so today. Here, a capability held both ways resolves to `global`
-   * and still lists the area grants underneath, so the contradiction is
+   * and still lists the portfolio grants underneath, so the contradiction is
    * visible instead of implied.
    *
    * Inheritance is reported, not flattened away: holding "Estimator" may be
@@ -120,20 +120,20 @@ export const customRoles = {
       return out;
     };
 
-    const [globalGrants, areaGrants] = await Promise.all([
+    const [globalGrants, portfolioGrants] = await Promise.all([
       prisma.userCustomRole.findMany({
         where: { userId, suspendedAt: null, customRole: { suspendedAt: null } },
         select: { customRoleId: true },
       }),
-      prisma.areaAssignment.findMany({
+      prisma.portfolioAssignment.findMany({
         where: { userId, suspendedAt: null, customRole: { suspendedAt: null } },
-        select: { customRoleId: true, area: { select: { id: true, name: true, retiredAt: true } } },
+        select: { customRoleId: true, portfolio: { select: { id: true, name: true, retiredAt: true } } },
       }),
     ]);
 
     type Source = {
       roleId: string; roleName: string; writtenOn: string;
-      scope: "global" | "area"; areaId: string | null; areaName: string | null;
+      scope: "global" | "portfolio"; portfolioId: string | null; portfolioName: string | null;
     };
     const sources = new Map<string, Source[]>();
     const add = (ent: string, src: Source) => {
@@ -146,14 +146,14 @@ export const customRoles = {
       const role = byId.get(g.customRoleId);
       if (!role) continue;
       for (const { entitlement, writtenOn } of chain(g.customRoleId)) {
-        add(entitlement, { roleId: role.id, roleName: role.name, writtenOn, scope: "global", areaId: null, areaName: null });
+        add(entitlement, { roleId: role.id, roleName: role.name, writtenOn, scope: "global", portfolioId: null, portfolioName: null });
       }
     }
-    for (const a of areaGrants) {
+    for (const a of portfolioGrants) {
       const role = byId.get(a.customRoleId);
       if (!role) continue;
       for (const { entitlement, writtenOn } of chain(a.customRoleId)) {
-        add(entitlement, { roleId: role.id, roleName: role.name, writtenOn, scope: "area", areaId: a.area.id, areaName: a.area.name });
+        add(entitlement, { roleId: role.id, roleName: role.name, writtenOn, scope: "portfolio", portfolioId: a.portfolio.id, portfolioName: a.portfolio.name });
       }
     }
 
@@ -163,16 +163,16 @@ export const customRoles = {
         copy: ENTITLEMENT_COPY.get(entitlement) ?? null,
         // Global wins. Stated here so no reader has to derive it from the
         // list below and get it wrong.
-        scope: via.some((v) => v.scope === "global") ? ("global" as const) : ("area" as const),
+        scope: via.some((v) => v.scope === "global") ? ("global" as const) : ("portfolio" as const),
         overriddenByGlobal:
-          via.some((v) => v.scope === "global") && via.some((v) => v.scope === "area"),
+          via.some((v) => v.scope === "global") && via.some((v) => v.scope === "portfolio"),
         via,
       }))
       .sort((a, b) => a.entitlement.localeCompare(b.entitlement));
   },
 
   async holders(customRoleId: string) {
-    const [global, area] = await Promise.all([
+    const [global, portfolio] = await Promise.all([
       prisma.userCustomRole.findMany({
         where: { customRoleId },
         select: {
@@ -180,12 +180,12 @@ export const customRoles = {
           user: { select: { id: true, displayName: true, email: true, workerType: true } },
         },
       }),
-      prisma.areaAssignment.findMany({
+      prisma.portfolioAssignment.findMany({
         where: { customRoleId },
         select: {
           suspendedAt: true,
           isTemporary: true,
-          area: { select: { id: true, name: true, path: true, retiredAt: true } },
+          portfolio: { select: { id: true, name: true, path: true, retiredAt: true } },
           user: { select: { id: true, displayName: true, email: true, workerType: true } },
         },
       }),
@@ -199,17 +199,17 @@ export const customRoles = {
         email: g.user.email,
         workerType: g.user.workerType,
         suspendedAt: g.suspendedAt,
-        area: null,
+        portfolio: null,
         isTemporary: false,
       })),
-      ...area.map((a) => ({
-        scope: "area" as const,
+      ...portfolio.map((a) => ({
+        scope: "portfolio" as const,
         userId: a.user.id,
         displayName: a.user.displayName,
         email: a.user.email,
         workerType: a.user.workerType,
         suspendedAt: a.suspendedAt,
-        area: { id: a.area.id, name: a.area.name, retired: !!a.area.retiredAt },
+        portfolio: { id: a.portfolio.id, name: a.portfolio.name, retired: !!a.portfolio.retiredAt },
         isTemporary: a.isTemporary,
       })),
     ].sort((x, y) => (x.displayName ?? "").localeCompare(y.displayName ?? ""));
@@ -223,7 +223,7 @@ export const customRoles = {
         isSystem: true, suspendedAt: true, inheritsFromId: true,
         isPerspective: true, perspectiveOrder: true, perspectiveIcon: true, isLadderRung: true,
         entitlements: { select: { entitlement: true } },
-        _count: { select: { userGrants: true, areaGrants: true, inheritedBy: true } },
+        _count: { select: { userGrants: true, portfolioGrants: true, inheritedBy: true } },
       },
     });
     const byId = new Map<string, RoleDefinition>(
@@ -249,7 +249,7 @@ export const customRoles = {
       /** What holding it actually gives, inheritance resolved. */
       effective: flattenRole(r.id, byId),
       holders: r._count.userGrants,
-      areaGrants: r._count.areaGrants,
+      portfolioGrants: r._count.portfolioGrants,
       /** Editing this role changes this many descendants (G34). */
       descendants: r._count.inheritedBy,
     }));
@@ -265,10 +265,46 @@ export const customRoles = {
   async create(
     actorUserId: string,
     actorCapabilities: readonly Entitlement[],
-    input: { name: string; description?: string | null; inheritsFromId?: string | null; entitlements?: string[] },
+    input: {
+      name: string;
+      description?: string | null;
+      inheritsFromId?: string | null;
+      entitlements?: string[];
+      /**
+       * An immutable key, optional and usually absent.
+       *
+       * WHY THE UI NEEDS TO BE ABLE TO SET ONE. `install-starter-roles.ts`
+       * upserts on `key`, and `CustomRole.name` is `@unique`. So a role
+       * created here with no key, bearing a name the installer also uses,
+       * is not found by key — the installer then tries to CREATE it and
+       * hits the name constraint. Re-running the installer fails outright,
+       * and the installer is the documented way back into a locked-out
+       * database.
+       *
+       * Setting one is how an operator hands a hand-made role over to the
+       * installer to maintain from then on. Leave it empty for an ordinary
+       * custom role, which is the normal case.
+       */
+      key?: string | null;
+    },
   ) {
     const name = input.name.trim();
     if (!name) throw new ServiceError("BAD_REQUEST", "A role needs a name.", 400);
+
+    // Shape-checked, because this becomes a stable identifier that other
+    // code matches on literally. Lowercase words joined by dots or dashes
+    // — the convention the starter keys already follow.
+    const key = input.key?.trim().toLowerCase() || null;
+    if (key !== null) {
+      if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(key) || key.length > 60) {
+        throw new ServiceError(
+          "BAD_KEY",
+          "A key is lowercase words joined by dots or dashes, e.g. " +
+            "\"seedlings.portfolio-lead\" — no spaces or capitals, 60 characters at most.",
+          400,
+        );
+      }
+    }
     const wanted = (input.entitlements ?? []).map(assertEntitlement);
     assertMayGrant(actorCapabilities, wanted);
 
@@ -284,9 +320,20 @@ export const customRoles = {
       if (existing) {
         throw new ServiceError("NAME_TAKEN", `A role called "${name}" already exists.`, 409);
       }
+      if (key) {
+        const clash = await tx.customRole.findUnique({ where: { key }, select: { name: true } });
+        if (clash) {
+          throw new ServiceError(
+            "KEY_TAKEN",
+            `"${clash.name}" already uses the key "${key}". A key identifies one role forever.`,
+            409,
+          );
+        }
+      }
       const role = await tx.customRole.create({
         data: {
           name,
+          key,
           description: input.description?.trim() || null,
           inheritsFromId: input.inheritsFromId ?? null,
           createdById: actorUserId,

@@ -49,7 +49,7 @@ export const CACHE_NAMESPACES = {
    *  poll was a fresh pair of API calls. */
   openWeather: { ttlSeconds: 10 * 60 },
 
-  /** BLS OEWS wage percentiles for the business's metro area. Published once
+  /** BLS OEWS wage percentiles for the business's metro portfolio. Published once
    *  a year, and the keyless API allows only ~25 requests/day. */
   marketRate: { ttlSeconds: 60 * DAY },
 

@@ -20,7 +20,7 @@ import { banners } from "./banners";
 import { paymentRequests } from "./paymentRequests";
 import { policies } from "./policies";
 import { customRoles } from "./customRoles";
-import { areas } from "./areas";
+import { portfolios } from "./portfolios";
 
 if (!process.env.CLERK_SECRET_KEY) {
   throw new Error("Missing CLERK_SECRET_KEY for server-side Clerk client");
@@ -47,5 +47,5 @@ export const services: Services = {
   paymentRequests,
   policies,
   customRoles,
-  areas,
+  portfolios,
 };

@@ -40,15 +40,15 @@ import type { WorkerType } from "@repo/money";
  * A role the person holds, with its entitlements already flattened through
  * inheritance.
  *
- * `areaPath` present means the role is held WITHIN that subtree rather than
+ * `portfolioPath` present means the role is held WITHIN that subtree rather than
  * company-wide.
  */
 export type RoleGrant = {
   roleId: string;
   name: string;
   entitlements: readonly Entitlement[];
-  /** Materialized path of area IDS, delimited and terminated: "/ck3/ck7/". */
-  areaPath?: string;
+  /** Materialized path of portfolio IDS, delimited and terminated: "/ck3/ck7/". */
+  portfolioPath?: string;
 };
 
 /**
@@ -80,13 +80,13 @@ export type Principal =
        */
       perspective?: { roleId: string; entitlements: readonly Entitlement[] } | null;
       /**
-       * The area the viewer has CHOSEN to look at, as a materialized path.
+       * The portfolio the viewer has CHOSEN to look at, as a materialized path.
        *
        * A LENS, NOT A GRANT, and the distinction is the whole safety story:
        * grants decide what you are ALLOWED to see and only ever widen; the
        * lens decides what you are CURRENTLY LOOKING AT and only ever
        * narrows. It is intersected with the granted subtrees in
-       * `visibleAreaPaths`, so a lens pointing somewhere the grants do not
+       * `visiblePortfolioPaths`, so a lens pointing somewhere the grants do not
        * reach yields NOTHING — never that territory's rows.
        *
        * Deliberately NOT consulted by `can()`. A lens must never turn into a
@@ -97,9 +97,9 @@ export type Principal =
     };
 
 /**
- * Entitlements that are NEVER narrowed by area.
+ * Entitlements that are NEVER narrowed by portfolio.
  *
- * Exported because areaScope must honour the same set. A second hand-written
+ * Exported because portfolioScope must honour the same set. A second hand-written
  * copy there would mean adding a field capability to one file and not the
  * other, and the resulting bug — "I can claim it but the card is not on my
  * list" — looks like a data problem, not a permissions one.
@@ -114,16 +114,16 @@ export const NEVER_AREA_SCOPED: ReadonlySet<Entitlement> = new Set<Entitlement>(
 ]);
 
 export type CanOptions = {
-  /** The area this request concerns, as a materialized path. A grant on an
+  /** The portfolio this request concerns, as a materialized path. A grant on an
    *  ANCESTOR covers it: holding Triangle covers Raleigh beneath it. */
-  areaPath?: string;
+  portfolioPath?: string;
 };
 
 /**
  * Does this principal hold this capability?
  *
  * UNION, NEVER INTERSECTION. Authority is every role's entitlements added
- * together. An area assignment can only ever add places you can see; it can
+ * together. A portfolio assignment can only ever add places you can see; it can
  * never cage someone who holds something company-wide.
  */
 export function can(
@@ -171,14 +171,14 @@ export function can(
   }
 
   const roles = principal.roles;
-  const ignoreArea = !options.areaPath || NEVER_AREA_SCOPED.has(capability);
+  const ignoreArea = !options.portfolioPath || NEVER_AREA_SCOPED.has(capability);
 
   for (const role of roles) {
     if (!role.entitlements.includes(capability)) continue;
     // Held company-wide: nothing to narrow.
-    if (!role.areaPath) return true;
+    if (!role.portfolioPath) return true;
     if (ignoreArea) return true;
-    if (coversArea(role.areaPath, options.areaPath!)) return true;
+    if (coversArea(role.portfolioPath, options.portfolioPath!)) return true;
   }
   return false;
 }
@@ -186,7 +186,7 @@ export function can(
 /**
  * Does a grant on `grantPath` cover `targetPath`?
  *
- * True when the target IS the granted area or sits beneath it. Both paths are
+ * True when the target IS the granted portfolio or sits beneath it. Both paths are
  * id segments delimited and terminated by "/", which is what makes this a
  * plain prefix test: "/a/b/" is a prefix of "/a/b/c/" but NOT of "/a/bb/",
  * because the trailing delimiter forces a segment boundary. Dropping that
@@ -195,9 +195,9 @@ export function can(
 export function coversArea(grantPath: string, targetPath: string): boolean {
   if (!grantPath.endsWith("/") || !targetPath.endsWith("/")) {
     throw new Error(
-      `Area paths must be delimited and terminated with "/": ` +
+      `Portfolio paths must be delimited and terminated with "/": ` +
         `got grant=${JSON.stringify(grantPath)} target=${JSON.stringify(targetPath)}. ` +
-        `Without the trailing delimiter a prefix test matches sibling areas ` +
+        `Without the trailing delimiter a prefix test matches sibling portfolios ` +
         `whose id merely starts with the same characters.`,
     );
   }
@@ -205,10 +205,10 @@ export function coversArea(grantPath: string, targetPath: string): boolean {
 }
 
 /**
- * Every capability this principal holds, ignoring area.
+ * Every capability this principal holds, ignoring portfolio.
  *
  * For the "your access" surface and the provenance view. NOT for gating — a
- * gate asks about one capability and may carry an area, and answering through
+ * gate asks about one capability and may carry a portfolio, and answering through
  * this would silently drop it.
  */
 export function heldCapabilities(principal: Principal): Entitlement[] {

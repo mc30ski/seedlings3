@@ -4,7 +4,7 @@
 // pending action waiting on the operator into one screen. Purposely
 // distinct from the tab navigation: when this page is open, the
 // BreadcrumbNav role/category/tab pills are hidden so it's
-// unambiguously a separate area of the app.
+// unambiguously a separate portfolio of the app.
 //
 // Architecture: thin wrapper. Re-uses the existing section components
 // verbatim (PendingApprovalsSection, OutstandingRequestsSection,

@@ -16,7 +16,7 @@
  * Re-running this must not orphan anybody. Roles are upserted by their
  * immutable `key` ("seedlings.worker"), so rebuilding a role after adding an
  * entitlement PRESERVES ITS ID — and therefore every `UserCustomRole` and
- * `AreaAssignment` pointing at it. `name` is an editable label; keying on it
+ * `PortfolioAssignment` pointing at it. `name` is an editable label; keying on it
  * would mean renaming a role silently created a second one and quietly
  * stripped everyone's access to the first.
  *
@@ -196,11 +196,11 @@ const LADDER: StarterRole[] = [
       "timeline.view",
       "time.approve",
       // READ THE TERRITORY. Rearranging it stays on Super
-      // (`areas.manage`); seeing which properties sit where is day-to-day
+      // (`portfolios.manage`); seeing which properties sit where is day-to-day
       // work for anybody running the schedule. Granted HERE rather than on
-      // Super so Super and District Lead both inherit it — a role holding
-      // `areas.manage` without this would open the Areas tab onto a 403.
-      "areas.view",
+      // Super so Super and Portfolio Lead both inherit it — a role holding
+      // `portfolios.manage` without this would open the Portfolios tab onto a 403.
+      "portfolios.view",
       // SEEING THE WHOLE BOARD, SAID OUT LOUD. Admin already saw every
       // visit and every customer, but only as a side effect of being
       // field-cleared through Worker and holding `clients.manage` — take
@@ -221,7 +221,7 @@ const LADDER: StarterRole[] = [
       "Everything someone with schedule authority can do, plus the decisions that change the " +
       "business: approving and reversing payments, the tax exports, " +
       "rewriting timesheets, buying supplies, payroll, pricing, compliance, " +
-      "areas, settings, and who holds which role.",
+      "portfolios, settings, and who holds which role.",
     inheritsKey: "seedlings.admin",
     adds: [
       // `books.view` is granted HERE, not in the tier it was removed
@@ -230,7 +230,7 @@ const LADDER: StarterRole[] = [
       // nobody at all holding `books.view` and all 19 books routes
       // unreachable. Inheritance cuts both ways, and the gate below now
       // fails on any entitlement no starter role holds.
-      "areas.manage", "books.export-tax", "books.manage", "books.view",
+      "portfolios.manage", "books.export-tax", "books.manage", "books.view",
       // The business-wide INSIGHTS rollup (GET /operations). Admin keeps
       // `reports.view` for the team rollup — see the note on that tier.
       "reports.business",
@@ -261,8 +261,8 @@ const LADDER: StarterRole[] = [
 /**
  * DISTRICT LEAD — an Admin who is accountable for one territory's numbers.
  *
- * WHY THIS IS A ROLE AND NOT A GRANT ON ADMIN. "The lead of an area should
- * be able to roll up their area" is one capability away from Admin:
+ * WHY THIS IS A ROLE AND NOT A GRANT ON ADMIN. "The lead of a portfolio should
+ * be able to roll up their portfolio" is one capability away from Admin:
  * `reports.business`, which is what INSIGHTS is guarded on. Adding it to
  * Admin would have worked for the lead and ALSO handed every company-wide
  * Admin the business-wide INSIGHTS card — reversing the deliberate decision
@@ -271,20 +271,32 @@ const LADDER: StarterRole[] = [
  * self-view.
  *
  * Inheriting instead keeps both answers: Admin is unchanged, and a lead
- * assigned THIS role inside an area sees that area's business numbers and
- * nothing outside it — `areaWhere` narrows `reports.business` the same as
+ * assigned THIS role inside a portfolio sees that portfolio's business numbers and
+ * nothing outside it — `portfolioWhere` narrows `reports.business` the same as
  * everything else.
  *
- * GRANT IT AT AN AREA, not company-wide. Held company-wide it is simply
+ * GRANT IT AT A PORTFOLIO, not company-wide. Held company-wide it is simply
  * Admin plus the INSIGHTS card, which is a decision to make on purpose
- * rather than by leaving an area off.
+ * rather than by leaving a portfolio off.
  */
-const DISTRICT_LEAD_ROLE: StarterRole = {
-  key: "seedlings.district-lead",
-  name: "District Lead",
+const PORTFOLIO_LEAD_ROLE: StarterRole = {
+  // KEY CHANGED FROM `seedlings.district-lead`, which is normally the one
+  // thing that must never move: the installer is keyed on it and every
+  // grant points at the row it found. It is safe here only because the
+  // operator is deleting the old role and creating the new one by hand,
+  // so there is no row to orphan. Do not take this as a precedent.
+  key: "seedlings.portfolio-lead",
+  // NOT "District Lead". The role carries exactly one entitlement beyond
+  // Admin — `reports.business` — and nothing in it is about districts.
+  // Tiers are operator-defined free text (Region, District, Territory,
+  // Route, Zone), so the old name contradicted itself the moment somebody
+  // led a Route, and said nothing at all about a portfolio grouped by
+  // round or by relationship rather than by place.
+  name: "Portfolio Lead",
   description:
     "An Admin who also sees the business rollup — jobs, revenue and equipment — " +
-    "for the area they are assigned to. Assign it at an area, not company-wide.",
+    "for the portfolio they lead. Assign it at a portfolio, not company-wide: " +
+    "held company-wide it is simply Admin plus the Insights card.",
   inheritsKey: "seedlings.admin",
   adds: ["reports.business"],
 };
@@ -368,7 +380,7 @@ export const ALL_STARTER_ROLES: StarterRole[] = [
   ...LADDER,
   CLEARANCE_ROLE,
   // After the ladder: it inherits Admin, so Admin has to exist first.
-  DISTRICT_LEAD_ROLE,
+  PORTFOLIO_LEAD_ROLE,
   ...EXCEPTION_ROLES,
 ];
 
@@ -401,6 +413,37 @@ export async function installStarterRoles(
           `must stay editable, so this will not take one it does not own.`,
       );
     }
+    // THE ONE DESCRIPTION THE INSTALLER WILL OVERWRITE.
+    //
+    // `name`/`description` are the operator's and are never touched on
+    // re-run — which is right, and which also made one specific sentence
+    // permanent. Migration `20261012170000_convert_roles_to_grants`
+    // created the five starter roles with
+    //
+    //     "Installed by migration from the legacy Role enum."
+    //
+    // and nothing could ever replace it: the installer refused, by rule.
+    // It sat on Admin, Super, Worker, Trainee and Field Clearance, read by
+    // the operator every time they opened the Roles tab and shown beside a
+    // role at the moment somebody grants it.
+    //
+    // Replacing EXACTLY that string is safe in a way a blanket update is
+    // not: it cannot stomp anything a human wrote, because a human did not
+    // write it. Anything else — including an empty description — is still
+    // left alone.
+    const LEGACY_PLACEHOLDER = "Installed by migration from the legacy Role enum.";
+    const current = await prisma.customRole.findUnique({
+      where: { key: r.key },
+      select: { description: true },
+    });
+    const replacePlaceholder =
+      current?.description?.trim() === LEGACY_PLACEHOLDER
+        ? { description: r.description }
+        : {};
+    if (Object.keys(replacePlaceholder).length > 0) {
+      console.log(`  ${r.name}: replacing the migration placeholder description.`);
+    }
+
     const role = await prisma.customRole.upsert({
       where: { key: r.key },
       create: {
@@ -412,7 +455,9 @@ export async function installStarterRoles(
         inheritsFromId: r.inheritsKey ? idByKey.get(r.inheritsKey) : null,
       },
       // `name`/`description` are NOT updated: the operator owns the label.
+      // The single exception is the migration placeholder above.
       update: {
+        ...replacePlaceholder,
         isSystem: true,
         isLadderRung: r.ladderRung === true,
         isPerspective: r.perspectiveOrder != null,
@@ -462,13 +507,27 @@ async function installStarterSettings(
   log: (msg: string) => void,
 ) {
   const workerRoleId = idByKey.get("seedlings.worker") ?? null;
-  const rows: Array<{ key: string; value: string; description: string }> = [
+  const rows: Array<{
+    key: string;
+    value: string;
+    description: string;
+    /** Values we shipped previously. One still matching exactly is ours
+     *  to replace; anything else is the operator's. */
+    supersedes?: string[];
+  }> = [
     {
-      key: "AREA_TIER_NAMES",
-      value: JSON.stringify(["Region", "District", "Territory", "Route"]),
+      key: "PORTFOLIO_TIER_NAMES",
+      // Zone sits below Route: a route is a journey, a zone is a patch.
+      value: JSON.stringify(["Region", "District", "Territory", "Route", "Zone"]),
+      // What this list used to be. An existing database keeps its own
+      // value — the operator may have replaced the whole vocabulary — but
+      // one left exactly as shipped is still ours to extend. Same
+      // reasoning as the role-description placeholder above: replace only
+      // what we know we wrote.
+      supersedes: [JSON.stringify(["Region", "District", "Territory", "Route"])],
       description:
-        "What a level of the area tree is called where you operate. Array of " +
-        "strings. Suggestions only — Area.tier accepts any text.",
+        "What a level of the portfolio tree is called where you operate. Array of " +
+        "strings. Suggestions only — Portfolio.tier accepts any text.",
     },
     {
       key: "MANAGER_TITLES",
@@ -496,19 +555,38 @@ async function installStarterSettings(
   ];
 
   let created = 0;
+  let upgraded = 0;
   for (const row of rows) {
+    const { supersedes, ...data } = row as typeof row & { supersedes?: string[] };
     const existing = await prisma.setting.findUnique({
       where: { key: row.key },
-      select: { key: true },
+      select: { key: true, value: true },
     });
-    if (existing) continue;
+    if (existing) {
+      // ONLY A VALUE WE SHIPPED AND HAVE SINCE EXTENDED.
+      //
+      // Settings are the operator's and are never overwritten — which is
+      // right, and which also means a default we later add to never
+      // reaches a database that already exists. "Zone" was added to the
+      // tier names and appeared on nothing but a fresh install.
+      //
+      // Matching the previous default EXACTLY is what makes this safe:
+      // a vocabulary somebody has edited does not match, and is left
+      // alone. Anything else needs a human.
+      if (supersedes?.includes(existing.value) && existing.value !== data.value) {
+        await prisma.setting.update({ where: { key: row.key }, data: { value: data.value } });
+        upgraded++;
+        log(`  setting ${row.key} extended (was still the shipped default)`);
+      }
+      continue;
+    }
     await prisma.setting.create({
-      data: { ...row, section: "catalogs" },
+      data: { ...data, section: "catalogs" },
     });
     created++;
     log(`  setting ${row.key} created`);
   }
-  if (created === 0) log("  settings: all present, nothing changed");
+  if (created === 0 && upgraded === 0) log("  settings: all present, nothing changed");
 }
 
 async function main() {

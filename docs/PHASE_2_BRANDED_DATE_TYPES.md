@@ -97,7 +97,7 @@ Compiler now flags every mismatch. Walk the errors, fix each callsite either by:
 - Correcting the actual bug (e.g. passing a key where an instant was expected).
 - Explicitly casting through the constructor (`isoInstant(x)`) at a boundary where the shape is genuinely known (e.g. deserializing from a trusted external source).
 
-Expected error count: **~40–70** across the codebase, mostly clustered in the areas the audit already flagged (JobsTab, PaymentsTab, ReconcileTab, WorkdaysTab, VehiclesTab, compliance surfaces).
+Expected error count: **~40–70** across the codebase, mostly clustered in the portfolios the audit already flagged (JobsTab, PaymentsTab, ReconcileTab, WorkdaysTab, VehiclesTab, compliance surfaces).
 
 **Files touched:** ~70. **Risk:** medium — each fix is small but the sheer volume needs careful review. **Every fix is a real latent bug being closed.**
 

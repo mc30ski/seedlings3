@@ -222,7 +222,7 @@ export default function MulchJobTool() {
     <VStack align="stretch" gap={4} pb={4} maxW="900px" mx="auto">
       <TabExplainer explainerId="seedlings:toolsMulchTab:guideOpen">
         <ExplainerText>
-          Turns bed measurements into cubic yards and a price. Add a bed per area, entering either
+          Turns bed measurements into cubic yards and a price. Add a bed per portfolio, entering either
           length &times; width or a square-foot figure directly, then set the depth — the volume and
           the total follow.
         </ExplainerText>

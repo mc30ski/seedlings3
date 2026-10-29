@@ -21,8 +21,7 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, paymentSplitCutoffWhere, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
-import { areaWhere, areaWhereOn, areaWhereVia, withArea } from "../lib/areaScope";
+import { portfolioWhere, portfolioWhereVia, withPortfolio } from "../lib/portfolioScope";
 import { WORKER_TYPES, classify, isFeeable, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { currentUserId, enrichSyncTasks, nextRecurrenceDate, occInEditableState } from "./_shared";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
@@ -42,9 +41,9 @@ export default async function jobRoutes(app: FastifyInstance) {
   const req_scheduleView = requires("schedule.view");
 
   app.get("/jobs/:id/property-photos", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -97,9 +96,9 @@ export default async function jobRoutes(app: FastifyInstance) {
     return { ok: true, count: propertyPhotoIds.length };
   });
   app.get("/jobs/:id", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -145,9 +144,9 @@ export default async function jobRoutes(app: FastifyInstance) {
     } as any);
   });
   app.get("/jobs/:id/pause-preview", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -557,7 +556,7 @@ export default async function jobRoutes(app: FastifyInstance) {
       pageSize?: string;
     };
     return services.jobs.listArchivedJobs({
-      areaWhere: areaWhereOn(req.principal, "schedule.view", "defaultArea"),
+      portfolioWhere: portfolioWhereVia(req.principal, "schedule.view", "property"),
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
@@ -728,7 +727,7 @@ export default async function jobRoutes(app: FastifyInstance) {
     const oneWeekAgo = etMidnight(etAddDays(todayKey, -7));
     const fourWeeksAgo = etMidnight(etAddDays(todayKey, -28));
     const count = await prisma.jobOccurrence.count({
-      where: withArea<Prisma.JobOccurrenceWhereInput>(
+      where: withPortfolio<Prisma.JobOccurrenceWhereInput>(
         {
           workflow: "ESTIMATE",
           status: "PROPOSAL_SUBMITTED",
@@ -737,7 +736,7 @@ export default async function jobRoutes(app: FastifyInstance) {
         // The badge counts what this caller could actually follow up on. A
         // district lead chasing a company-wide number would be chasing
         // estimates in territories they cannot open.
-        areaWhere(req.principal, "estimates.create"),
+        portfolioWhere(req.principal, "estimates.create"),
       ),
     });
     return { count };
@@ -761,7 +760,7 @@ export default async function jobRoutes(app: FastifyInstance) {
         kind: (kind as any) ?? "ALL",
         limit: limit ? Number(limit) : 200,
         from, to,
-        areaWhere: areaWhereOn(req.principal, "schedule.view", "defaultArea"),
+        portfolioWhere: portfolioWhereVia(req.principal, "schedule.view", "property"),
       });
     }
     // Workers see only jobs they are assigned to (via occurrence assignees)

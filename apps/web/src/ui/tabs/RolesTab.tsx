@@ -59,11 +59,11 @@ type RoleRow = {
 };
 
 type Holder = {
-  scope: "global" | "area";
+  scope: "global" | "portfolio";
   userId: string;
   displayName: string | null;
   email: string | null;
-  areaName?: string | null;
+  portfolioName?: string | null;
   isTemporary?: boolean;
   suspendedAt: string | null;
 };
@@ -298,6 +298,7 @@ function RoleList({
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [copyFromId, setCopyFromId] = useState<string | null>(null);
+  const [roleKey, setRoleKey] = useState("");
   const [busy, setBusy] = useState(false);
 
   /**
@@ -416,6 +417,7 @@ function RoleList({
       const created = await apiPost<{ id: string }>("/api/roles", {
         name: name.trim(),
         entitlements: source?.own ?? [],
+        key: roleKey.trim() || null,
       });
       publishInlineMessage({
         type: "SUCCESS",
@@ -425,6 +427,7 @@ function RoleList({
       });
       setCreating(false);
       setName("");
+      setRoleKey("");
       setCopyFromId(null);
       onCreated(created.id);
     } catch (err) {
@@ -453,6 +456,28 @@ function RoleList({
                   autoFocus
                 />
                 <RoleNameSuggestions titles={titles} value={name} onPick={setName} />
+                {/* THE KEY, and why a UI needs to offer one at all.
+                    `install-starter-roles.ts` upserts on `key`, and
+                    `CustomRole.name` is unique. A role made here with no
+                    key, wearing a name the installer also uses, is not
+                    found by key — so the installer tries to CREATE it,
+                    hits the name constraint and fails. The installer is
+                    the documented way back into a locked-out database, so
+                    "re-running it crashes" is not a small thing.
+                    Normally leave this empty. Fill it only to hand a
+                    hand-made role to the installer to maintain. */}
+                <Input
+                  size="sm"
+                  value={roleKey}
+                  onChange={(e) => setRoleKey(e.target.value)}
+                  placeholder="Key (optional) — e.g. seedlings.portfolio-lead"
+                />
+                <Text fontSize="xs" color="fg.muted">
+                  Leave empty for an ordinary role. Set it only to match a role the
+                  setup script installs, so re-running the script maintains this one
+                  instead of failing on the duplicate name. Lowercase words joined by
+                  dots or dashes; it can never be changed afterwards.
+                </Text>
                 <Select.Root
                   size="sm"
                   collection={copyCollection}
@@ -1236,7 +1261,7 @@ function RoleEditor({
                         reader who cannot tell them apart will misread a
                         boundary as absolute. */}
                     {/* "Everywhere" answered the wrong question — everywhere
-                        WHAT? It means the grant is not tied to an area, which
+                        WHAT? It means the grant is not tied to a portfolio, which
                         is only obvious once you have seen the other variant.
                         Named for the thing it is, with the explanation on
                         hover for the reader who has not. */}
@@ -1246,11 +1271,11 @@ function RoleEditor({
                       colorPalette={h.scope === "global" ? "blue" : "purple"}
                       title={
                         h.scope === "global"
-                          ? "Held across the whole business — not limited to any area"
-                          : `Held only in ${h.areaName ?? "this area"}, and in the areas beneath it`
+                          ? "Held across the whole business — not limited to any portfolio"
+                          : `Held only in ${h.portfolioName ?? "this portfolio"}, and in the portfolios beneath it`
                       }
                     >
-                      {h.scope === "global" ? "Company-wide" : `${h.areaName ?? "an area"} only`}
+                      {h.scope === "global" ? "Company-wide" : `${h.portfolioName ?? "a portfolio"} only`}
                     </Badge>
                     {h.suspendedAt && (
                       <Badge size="sm" variant="subtle" colorPalette="orange">
@@ -1409,8 +1434,8 @@ type DirectoryUser = {
     roleId: string;
     key: string | null;
     name: string;
-    areaId: string | null;
-    areaName: string | null;
+    portfolioId: string | null;
+    portfolioName: string | null;
     isTemporary: boolean;
   }>;
   capabilities?: string[];
@@ -1521,15 +1546,15 @@ function PeopleRoles({
         )}
       </HStack>
 
-      {/* AN AREA GRANT IS NOT A SMALLER COMPANY-WIDE GRANT, and the count
+      {/* AN PORTFOLIO GRANT IS NOT A SMALLER COMPANY-WIDE GRANT, and the count
           must not imply it is. `GET /users` resolves `capabilities` from
-          company-wide grants only, because what an area grant permits
-          depends on the area of the RECORD being acted on and there is no
-          record here. Area roles are listed, badged with their area, and
+          company-wide grants only, because what a portfolio grant permits
+          depends on the portfolio of the RECORD being acted on and there is no
+          record here. Portfolio roles are listed, badged with their portfolio, and
           left out of the number. */}
       <Text fontSize="xs" color="fg.muted">
-        Capability counts cover company-wide grants. A role granted in one area is
-        shown with that area and is not counted, because what it allows depends on
+        Capability counts cover company-wide grants. A role granted in one portfolio is
+        shown with that portfolio and is not counted, because what it allows depends on
         where the work is.
       </Text>
 
@@ -1598,15 +1623,15 @@ function PeopleRoles({
                         <HStack gap={1} wrap="wrap">
                           {grants.map((g) => (
                             <Badge
-                              key={`${g.roleId}:${g.areaId ?? "all"}`}
+                              key={`${g.roleId}:${g.portfolioId ?? "all"}`}
                               size="sm"
-                              variant={g.areaId ? "outline" : "subtle"}
-                              colorPalette={g.areaId ? "purple" : "teal"}
-                              title={g.areaId
-                                ? `Granted in ${g.areaName} only${g.isTemporary ? " (temporary)" : ""}`
+                              variant={g.portfolioId ? "outline" : "subtle"}
+                              colorPalette={g.portfolioId ? "purple" : "teal"}
+                              title={g.portfolioId
+                                ? `Granted in ${g.portfolioName} only${g.isTemporary ? " (temporary)" : ""}`
                                 : "Granted company-wide"}
                             >
-                              {g.name}{g.areaId ? ` · ${g.areaName}` : ""}
+                              {g.name}{g.portfolioId ? ` · ${g.portfolioName}` : ""}
                               {g.isTemporary ? " ·  temp" : ""}
                             </Badge>
                           ))}
@@ -1650,7 +1675,7 @@ function PeopleRoles({
                               const own = new Set(role?.own ?? []);
                               const effective = role?.effective ?? [];
                               return (
-                                <Box key={`${g.roleId}:${g.areaId ?? "all"}`}>
+                                <Box key={`${g.roleId}:${g.portfolioId ?? "all"}`}>
                                   <HStack gap={2} mb={1} wrap="wrap">
                                     <Button
                                       size="xs"
@@ -1659,9 +1684,9 @@ function PeopleRoles({
                                     >
                                       <Shield size={12} /> {g.name}
                                     </Button>
-                                    {g.areaId && (
+                                    {g.portfolioId && (
                                       <Text fontSize="xs" color="purple.fg">
-                                        in {g.areaName} only
+                                        in {g.portfolioName} only
                                       </Text>
                                     )}
                                     <Text fontSize="xs" color="fg.muted">

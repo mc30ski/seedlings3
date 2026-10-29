@@ -568,7 +568,7 @@ export default function DisplayPage() {
           animation: "boardShift 600s linear infinite",
           color: C.ink,
           fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
-          // Overscan safe area: some TVs still crop 3-5% off every edge, and
+          // Overscan safe portfolio: some TVs still crop 3-5% off every edge, and
           // the thing you lose first is whatever sits at the bottom — here,
           // the age line that tells you the board is alive.
           padding: "2.5vmin 3vmin",
@@ -1061,7 +1061,7 @@ function PrivateView({
           a third of the board the thumbnails came out too small to read as
           photographs at all — which defeats the point of showing them. Across
           the whole width the same short strip gets each image roughly four
-          times the area for a couple of vmin of extra height. */}
+          times the portfolio for a couple of vmin of extra height. */}
       {todayPhotos}
 
       {/* One notice at a time, dropping into place and locking. Severe weather,

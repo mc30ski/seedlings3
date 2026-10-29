@@ -1,5 +1,5 @@
 /**
- * Area scoping, with the two failure modes that matter.
+ * Portfolio scoping, with the two failure modes that matter.
  *
  * Getting this wrong is silent in both directions:
  *   too loose  → a page renders perfectly with another territory's money in
@@ -13,13 +13,27 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  visibleAreaPaths,
-  areaWhere,
-  areaWhereVia,
-  isAreaLimited,
-} from "./areaScope";
+  visiblePortfolioPaths,
+  portfolioWhere,
+  portfolioWhereVia,
+  isPortfolioLimited,
+} from "./portfolioScope";
 import { can } from "@repo/permissions";
 import type { Entitlement, Principal, RoleGrant } from "@repo/permissions";
+
+/**
+ * The shape `portfolioWhere` emits.
+ *
+ * `some`, because a property belongs to any number of portfolios. This was
+ * `{ portfolio: { OR: … } }` against a single column, and the function's
+ * return type is `Record<string, unknown>` — so when membership became a
+ * list nothing here failed to compile. These assertions are the only thing
+ * standing between a stale fragment and an app that silently matches no
+ * rows for every scoped reader.
+ */
+type Shape = {
+  portfolios: { some: { portfolio: { OR: Array<{ path: { startsWith: string } }> } } };
+};
 
 const NC = "/nc/";
 const TRIANGLE = "/nc/triangle/";
@@ -44,29 +58,29 @@ const global_ = (...entitlements: Entitlement[]): RoleGrant => ({
   entitlements,
 });
 
-/** The same role held only inside an area subtree. */
-const inArea = (areaPath: string, ...entitlements: Entitlement[]): RoleGrant => ({
-  roleId: `r-${areaPath}`,
+/** The same role held only inside a portfolio subtree. */
+const inArea = (portfolioPath: string, ...entitlements: Entitlement[]): RoleGrant => ({
+  roleId: `r-${portfolioPath}`,
   name: "District Manager",
-  areaPath,
+  portfolioPath,
   entitlements,
 });
 
-describe("visibleAreaPaths — null and [] are different answers", () => {
+describe("visiblePortfolioPaths — null and [] are different answers", () => {
   it("a company-wide role returns null, not a list", () => {
     // Held company-wide, so there is nothing to narrow.
-    expect(visibleAreaPaths(user({ roles: [global_("money.view")] }), "money.view")).toBeNull();
+    expect(visiblePortfolioPaths(user({ roles: [global_("money.view")] }), "money.view")).toBeNull();
   });
 
   it("a second company-wide role is just as global", () => {
     expect(
-      visibleAreaPaths(user({ roles: [global_("money.view")] }), "money.view"),
+      visiblePortfolioPaths(user({ roles: [global_("money.view")] }), "money.view"),
     ).toBeNull();
   });
 
-  it("an area-only grant returns exactly that subtree", () => {
+  it("a portfolio-only grant returns exactly that subtree", () => {
     const p = user({ roles: [inArea(RALEIGH, "money.view")] });
-    expect(visibleAreaPaths(p, "money.view")).toEqual([RALEIGH]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([RALEIGH]);
   });
 
   it("several assignments return all of them", () => {
@@ -76,20 +90,20 @@ describe("visibleAreaPaths — null and [] are different answers", () => {
         inArea(DURHAM, "money.view"),
       ],
     });
-    expect(visibleAreaPaths(p, "money.view")).toEqual([RALEIGH, DURHAM]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([RALEIGH, DURHAM]);
   });
 
   it("holding it nowhere returns [], which is NOT null", () => {
     const p = user({ roles: [inArea(RALEIGH, "schedule.view")] });
-    expect(visibleAreaPaths(p, "money.view")).toEqual([]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([]);
   });
 
-  it("a global grant is not caged by also holding an area grant", () => {
+  it("a global grant is not caged by also holding a portfolio grant", () => {
     // The rule that stops an assignment demoting someone with `schedule.manage`.
     const p = user({
       roles: [global_("money.view"), inArea(RALEIGH, "money.view")],
     });
-    expect(visibleAreaPaths(p, "money.view")).toBeNull();
+    expect(visiblePortfolioPaths(p, "money.view")).toBeNull();
   });
 
   it("a user with no worker type sees nothing, and that is NOT null", () => {
@@ -97,39 +111,39 @@ describe("visibleAreaPaths — null and [] are different answers", () => {
     // scope — but the answer must be [] (an impossible condition) rather than
     // null (no restriction), or a pending user reads the whole book.
     const pending = user({ workerType: null, roles: [global_("money.view")] });
-    expect(visibleAreaPaths(pending, "money.view")).toEqual([]);
-    expect(areaWhere(pending, "money.view")).toEqual({ areaId: { in: [] } });
+    expect(visiblePortfolioPaths(pending, "money.view")).toEqual([]);
+    expect(portfolioWhere(pending, "money.view")).toEqual({ portfolios: { none: {} } });
   });
 
   it("no principal means no narrowing", () => {
-    expect(visibleAreaPaths(undefined, "money.view")).toBeNull();
+    expect(visiblePortfolioPaths(undefined, "money.view")).toBeNull();
   });
 
   it("the SYSTEM principal is not territorial", () => {
     const sys: Principal = { kind: "system", name: "cron:chain-rollover" };
-    expect(visibleAreaPaths(sys, "money.view")).toBeNull();
+    expect(visiblePortfolioPaths(sys, "money.view")).toBeNull();
   });
 });
 
 describe("field capability is never narrowed", () => {
-  it("work.claim is not scoped even for an area-assigned worker", () => {
+  it("work.claim is not scoped even for a portfolio-assigned worker", () => {
     // Promotion must not shrink where you can work (G11).
     const p = user({ roles: [inArea(RALEIGH, "work.claim", "schedule.manage")] });
-    expect(visibleAreaPaths(p, "work.claim")).toBeNull();
+    expect(visiblePortfolioPaths(p, "work.claim")).toBeNull();
   });
 });
 
-describe("areaWhere — the Prisma fragment", () => {
+describe("portfolioWhere — the Prisma fragment", () => {
   it("is EMPTY for global authority, so the query is byte-identical", () => {
     // Invariant 1. An extra `where` key on an unrestricted read is a
     // behaviour change disguised as a feature flag.
-    expect(areaWhere(user({ roles: [global_("money.view")] }), "money.view")).toEqual({});
+    expect(portfolioWhere(user({ roles: [global_("money.view")] }), "money.view")).toEqual({});
   });
 
-  it("prefix-matches the subtree for an area grant", () => {
+  it("prefix-matches the subtree for a portfolio grant", () => {
     const p = user({ roles: [inArea(TRIANGLE, "money.view")] });
-    expect(areaWhere(p, "money.view")).toEqual({
-      area: { OR: [{ path: { startsWith: TRIANGLE } }] },
+    expect(portfolioWhere(p, "money.view")).toEqual({
+      portfolios: { some: { portfolio: { OR: [{ path: { startsWith: TRIANGLE } }] } } },
     });
   });
 
@@ -137,34 +151,34 @@ describe("areaWhere — the Prisma fragment", () => {
     // NOT an empty where — that would silently return everything to someone
     // entitled to nothing.
     const p = user({ roles: [inArea(RALEIGH, "schedule.view")] });
-    expect(areaWhere(p, "money.view")).toEqual({ areaId: { in: [] } });
+    expect(portfolioWhere(p, "money.view")).toEqual({ portfolios: { none: {} } });
   });
 
-  it("nests under a relation with areaWhereVia", () => {
+  it("nests under a relation with portfolioWhereVia", () => {
     const p = user({ roles: [inArea(RALEIGH, "money.view")] });
-    expect(areaWhereVia(p, "money.view", "job")).toEqual({
-      job: { area: { OR: [{ path: { startsWith: RALEIGH } }] } },
+    expect(portfolioWhereVia(p, "money.view", "job")).toEqual({
+      job: { portfolios: { some: { portfolio: { OR: [{ path: { startsWith: RALEIGH } }] } } } },
     });
   });
 
-  it("areaWhereVia stays empty for global authority", () => {
-    expect(areaWhereVia(user({ roles: [global_("money.view")] }), "money.view", "job")).toEqual({});
+  it("portfolioWhereVia stays empty for global authority", () => {
+    expect(portfolioWhereVia(user({ roles: [global_("money.view")] }), "money.view", "job")).toEqual({});
   });
 });
 
 describe("the prefix rule", () => {
   it("a parent grant covers its children", () => {
     const p = user({ roles: [inArea(TRIANGLE, "money.view")] });
-    const where = areaWhere(p, "money.view") as { area: { OR: Array<{ path: { startsWith: string } }> } };
-    const prefix = where.area.OR[0].path.startsWith;
+    const where = portfolioWhere(p, "money.view") as Shape;
+    const prefix = where.portfolios.some.portfolio.OR[0].path.startsWith;
     expect(RALEIGH.startsWith(prefix)).toBe(true);
     expect(DURHAM.startsWith(prefix)).toBe(true);
   });
 
   it("a child grant does not reach its parent", () => {
     const p = user({ roles: [inArea(RALEIGH, "money.view")] });
-    const where = areaWhere(p, "money.view") as { area: { OR: Array<{ path: { startsWith: string } }> } };
-    const prefix = where.area.OR[0].path.startsWith;
+    const where = portfolioWhere(p, "money.view") as Shape;
+    const prefix = where.portfolios.some.portfolio.OR[0].path.startsWith;
     expect(TRIANGLE.startsWith(prefix)).toBe(false);
     expect(NC.startsWith(prefix)).toBe(false);
   });
@@ -172,18 +186,18 @@ describe("the prefix rule", () => {
   it("does not leak into a sibling whose id starts the same", () => {
     // The bug the trailing delimiter exists to prevent.
     const p = user({ roles: [inArea("/a/b/", "money.view")] });
-    const where = areaWhere(p, "money.view") as { area: { OR: Array<{ path: { startsWith: string } }> } };
-    const prefix = where.area.OR[0].path.startsWith;
+    const where = portfolioWhere(p, "money.view") as Shape;
+    const prefix = where.portfolios.some.portfolio.OR[0].path.startsWith;
     expect("/a/bb/".startsWith(prefix)).toBe(false);
     expect("/a/b/c/".startsWith(prefix)).toBe(true);
   });
 });
 
-describe("isAreaLimited", () => {
-  it("is false for global authority and true for an area grant", () => {
-    expect(isAreaLimited(user({ roles: [global_("money.view")] }), "money.view")).toBe(false);
+describe("isPortfolioLimited", () => {
+  it("is false for global authority and true for a portfolio grant", () => {
+    expect(isPortfolioLimited(user({ roles: [global_("money.view")] }), "money.view")).toBe(false);
     expect(
-      isAreaLimited(
+      isPortfolioLimited(
         user({ roles: [inArea(RALEIGH, "money.view")] }),
         "money.view",
       ),
@@ -191,7 +205,7 @@ describe("isAreaLimited", () => {
   });
 });
 
-describe("G16 — moving a visit needs authority in BOTH areas", () => {
+describe("G16 — moving a visit needs authority in BOTH portfolios", () => {
   // The rule, as a set of outcomes. The service does this with two `can`
   // calls carrying different areaPaths; these assert the DECISIONS, so a
   // refactor that keeps the rule keeps the test.
@@ -206,35 +220,35 @@ describe("G16 — moving a visit needs authority in BOTH areas", () => {
     roles: paths.map((p, i) => ({
       roleId: `r${i}`,
       name: "District Manager",
-      areaPath: p,
+      portfolioPath: p,
       entitlements: ["schedule.manage"],
     })),
   });
 
   const mayMove = (p: Principal, from: string, to: string) =>
-    can(p, "schedule.manage", { areaPath: from }) &&
-    can(p, "schedule.manage", { areaPath: to });
+    can(p, "schedule.manage", { portfolioPath: from }) &&
+    can(p, "schedule.manage", { portfolioPath: to });
 
-  it("allows a move between two areas the person runs", () => {
+  it("allows a move between two portfolios the person runs", () => {
     expect(mayMove(manages(DURHAM, CHAPEL), DURHAM, CHAPEL)).toBe(true);
   });
 
-  it("refuses pulling work IN from an area they do not run", () => {
+  it("refuses pulling work IN from a portfolio they do not run", () => {
     // The revenue-grab: they run Chapel Hill and want Durham's job on their
     // own books. Destination-only would have allowed it.
     const p = manages(CHAPEL);
-    expect(can(p, "schedule.manage", { areaPath: CHAPEL })).toBe(true);
+    expect(can(p, "schedule.manage", { portfolioPath: CHAPEL })).toBe(true);
     expect(mayMove(p, DURHAM, CHAPEL)).toBe(false);
   });
 
-  it("refuses pushing work OUT to an area they do not run", () => {
+  it("refuses pushing work OUT to a portfolio they do not run", () => {
     // The mirror image: shed a loss onto somebody else's books.
     const p = manages(DURHAM);
-    expect(can(p, "schedule.manage", { areaPath: DURHAM })).toBe(true);
+    expect(can(p, "schedule.manage", { portfolioPath: DURHAM })).toBe(true);
     expect(mayMove(p, DURHAM, CHAPEL)).toBe(false);
   });
 
-  it("a parent-area manager may move between its children", () => {
+  it("a parent-portfolio manager may move between its children", () => {
     // Holding the Triangle covers both districts beneath it, so this person
     // is answerable for both sides and the move is legitimate.
     expect(mayMove(manages(TRIANGLE), DURHAM, CHAPEL)).toBe(true);
@@ -270,7 +284,7 @@ describe("G16 — moving a visit needs authority in BOTH areas", () => {
  * Chapel Hill, and not a silently-ignored header that hands them their
  * full Durham view while the UI says they are looking at Chapel Hill.
  */
-describe("the area lens narrows, and can never widen", () => {
+describe("the portfolio lens narrows, and can never widen", () => {
   const CHAPEL = "/nc/triangle/chapel-hill/";
   const lensed = (lensPath: string, ...roles: RoleGrant[]): Principal =>
     user({ roles, lensPath });
@@ -278,71 +292,71 @@ describe("the area lens narrows, and can never widen", () => {
   it("no lens leaves a global reader completely unfiltered", () => {
     // The off-state must stay byte-identical to pre-feature behaviour.
     const p = user({ roles: [global_("money.view")] });
-    expect(visibleAreaPaths(p, "money.view")).toBeNull();
-    expect(areaWhere(p, "money.view")).toEqual({});
+    expect(visiblePortfolioPaths(p, "money.view")).toBeNull();
+    expect(portfolioWhere(p, "money.view")).toEqual({});
   });
 
   it("a global reader looking at one district sees that district", () => {
     const p = lensed(DURHAM, global_("money.view"));
-    expect(visibleAreaPaths(p, "money.view")).toEqual([DURHAM]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([DURHAM]);
   });
 
   it("a lens on an ancestor of your grant leaves the grant, not the ancestor", () => {
     // A Raleigh lead asking to look at the whole region still sees Raleigh.
     // Taking the lens literally here would hand them the region.
     const p = lensed(TRIANGLE, inArea(RALEIGH, "money.view"));
-    expect(visibleAreaPaths(p, "money.view")).toEqual([RALEIGH]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([RALEIGH]);
   });
 
   it("a lens on a descendant of your grant narrows to the descendant", () => {
     const p = lensed(RALEIGH, inArea(TRIANGLE, "money.view"));
-    expect(visibleAreaPaths(p, "money.view")).toEqual([RALEIGH]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([RALEIGH]);
   });
 
   it("A LENS OUTSIDE YOUR GRANTS SHOWS NOTHING, never that territory", () => {
     // The security property. A crafted header is a way to see less.
     const p = lensed(CHAPEL, inArea(DURHAM, "money.view"));
-    expect(visibleAreaPaths(p, "money.view")).toEqual([]);
-    expect(areaWhere(p, "money.view")).toEqual({ areaId: { in: [] } });
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([]);
+    expect(portfolioWhere(p, "money.view")).toEqual({ portfolios: { none: {} } });
   });
 
   it("a sibling prefix is not a match", () => {
     // "/nc/triangle/durham/" must not be reached by a lens on
     // "/nc/triangle/durh/" — the trailing delimiter is what stops it.
     const p = lensed("/nc/triangle/durh/", inArea(DURHAM, "money.view"));
-    expect(visibleAreaPaths(p, "money.view")).toEqual([]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([]);
   });
 
   it("a lens cannot conjure a capability you do not hold", () => {
     // Holding nothing relevant is [] before the lens and [] after it.
     const p = lensed(DURHAM, global_("schedule.view"));
-    expect(visibleAreaPaths(p, "money.view")).toEqual([]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([]);
   });
 
-  it("a lens still narrows the LIST for a never-area-scoped capability", () => {
+  it("a lens still narrows the LIST for a never-portfolio-scoped capability", () => {
     // `work.claim` is never narrowed BY A GRANT, so cover across districts
     // keeps working. A lens is the viewer's own request, so it does apply
     // to what they are shown — and because nothing here feeds `can()`, the
     // Chapel Hill visit they open by its link is still claimable.
     const p = lensed(DURHAM, global_("work.claim"));
-    expect(visibleAreaPaths(p, "work.claim")).toEqual([DURHAM]);
+    expect(visiblePortfolioPaths(p, "work.claim")).toEqual([DURHAM]);
     expect(can(p, "work.claim")).toBe(true);
   });
 
   it("a lens does not rescue a capability the payroll gate already refused", () => {
-    // workerType null resolves to nothing BEFORE any area logic runs.
+    // workerType null resolves to nothing BEFORE any portfolio logic runs.
     const p = user({ workerType: null, roles: [global_("money.view")], lensPath: DURHAM });
-    expect(visibleAreaPaths(p, "money.view")).toEqual([]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([]);
   });
 
   it("the system principal is not territorial, lens or no lens", () => {
     // Cron has no viewer, so there is nobody to have chosen a lens.
-    expect(visibleAreaPaths({ kind: "system", name: "cron" }, "money.view")).toBeNull();
+    expect(visiblePortfolioPaths({ kind: "system", name: "cron" }, "money.view")).toBeNull();
   });
 
   it("two grants intersect independently", () => {
     // Held in Raleigh AND Durham, looking at Durham: only Durham survives.
     const p = lensed(DURHAM, inArea(RALEIGH, "money.view"), inArea(DURHAM, "money.view"));
-    expect(visibleAreaPaths(p, "money.view")).toEqual([DURHAM]);
+    expect(visiblePortfolioPaths(p, "money.view")).toEqual([DURHAM]);
   });
 });

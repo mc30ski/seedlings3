@@ -165,7 +165,7 @@ export type MarketRateInfo = {
   low: number;
   high: number;
   source: "bls" | "override" | "fallback";
-  areaName: string | null;
+  portfolioName: string | null;
   areaCode: string | null;
   year: string | null;
   occupation: string | null;

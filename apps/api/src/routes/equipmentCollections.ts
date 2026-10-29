@@ -282,9 +282,9 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
   });
 
   app.get("/jobs/:id/recommended-collections", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS

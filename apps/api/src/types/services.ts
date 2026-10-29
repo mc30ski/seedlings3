@@ -146,11 +146,11 @@ export type PropertyUpsert = Pick<
   | "lotSizeUnit"
 > & {
   id?: string;
-  /** Territory. Omitted means "inherit from this client's other properties
-   *  when they all agree, otherwise leave unassigned" — see
-   *  `properties.create`. Unassigned is legal and its consequence is that
-   *  the property's work counts toward no area's rollup. */
-  areaId?: string | null;
+  /** Which portfolios this property belongs to. Omitted means "inherit
+   *  from this client's other properties when they all agree, otherwise
+   *  leave it in none" — see `properties.create`. Belonging to none is
+   *  legal; the consequence is that its work counts toward no rollup. */
+  portfolioIds?: string[];
 };
 
 export type PropertyListItemParams = {
@@ -159,26 +159,26 @@ export type PropertyListItemParams = {
   status?: PropertyStatus | "ALL";
   kind?: PropertyKind | "ALL";
   limit?: number;
-  /** Territory filter from `areaWhere(principal, "clients.view")`, computed
+  /** Territory filter from `portfolioWhere(principal, "clients.view")`, computed
    *  at the route because only the route has the principal. `{}` means the
    *  caller holds the capability company-wide. */
-  areaWhere?: Record<string, unknown>;
+  portfolioWhere?: Record<string, unknown>;
   /** Narrow to properties this user is on the work for — set by the route
    *  for a caller who is not field-cleared and cannot manage clients. The
    *  same rule PropertiesTab was applying in the browser, moved to where
    *  it actually withholds the rows. */
   assignedToUserId?: string;
   /**
-   * Show one area's properties — the SUBTREE, so picking a district
+   * Show one portfolio's properties — the SUBTREE, so picking a district
    * includes its routes and the list agrees with the count beside it on
-   * the Areas tab.
+   * the Portfolios tab.
    *
-   * A VIEW filter, not a permission: it is ANDed with `areaWhere` above, so
+   * A VIEW filter, not a permission: it is ANDed with `portfolioWhere` above, so
    * it can only ever subtract from what the caller may already see.
-   * `"none"` asks for the properties in NO area, which is the one question
-   * the area tree cannot answer about itself.
+   * `"none"` asks for the properties in NO portfolio, which is the one question
+   * the portfolio tree cannot answer about itself.
    */
-  areaSubtreePath?: string | "none";
+  portfolioSubtreePath?: string | "none";
 };
 
 export type PropertyListItem = Property & {
@@ -323,14 +323,17 @@ export type DirectoryUserRow = User & {
     name: string;
     /**
      * null for a company-wide grant (a `UserCustomRole` row); set for one
-     * scoped to a single area (an `AreaAssignment` row). The two live in
+     * scoped to a single portfolio (a `PortfolioAssignment` row). The two live in
      * separate tables because they are different grants, and the directory
      * has to tell them apart: "Admin" and "Admin in Durham" are not the same
      * badge, and only the first makes someone someone with `schedule.manage` of the business.
      */
-    areaId: string | null;
-    areaName: string | null;
-    /** Temporary cover — an `AreaAssignment` flag; always false company-wide. */
+    /** `PortfolioAssignment.id`, so a person's card can revoke the grant
+     *  itself. Null for a company-wide grant, which is revoked by role. */
+    grantId: string | null;
+    portfolioId: string | null;
+    portfolioName: string | null;
+    /** Temporary cover — a `PortfolioAssignment` flag; always false company-wide. */
     isTemporary: boolean;
   }>;
   /**
@@ -350,10 +353,10 @@ export type DirectoryUserRow = User & {
    * What this person can do EVERYWHERE — their company-wide grants,
    * flattened through inheritance, suspension already applied.
    *
-   * Area-scoped grants are deliberately excluded. `heldCapabilities` is a
-   * union and does not consider `areaPath`, so including them would report
+   * Portfolio-scoped grants are deliberately excluded. `heldCapabilities` is a
+   * union and does not consider `portfolioPath`, so including them would report
    * someone who runs one district as running the business. Read those out
-   * of `roleGrants`, where each carries its own area.
+   * of `roleGrants`, where each carries its own portfolio.
    */
   capabilities: string[];
 };
@@ -441,9 +444,9 @@ export type ServicesClients = {
     q?: string;
     status?: ClientStatus | "ALL";
     limit?: number;
-    /** Territory filter from `areaWhere(principal, "clients.view")`; the
+    /** Territory filter from `portfolioWhere(principal, "clients.view")`; the
      *  service wraps it in the hop through `properties`. */
-    areaWhere?: Record<string, unknown>;
+    portfolioWhere?: Record<string, unknown>;
     /** Narrow to clients this user is on the work for — set by the route
      *  for a caller who is not field-cleared and cannot manage clients. */
     assignedToUserId?: string;
@@ -519,7 +522,7 @@ export type ServicesCurrentUser = {
     /** How this person is paid. NULL means nothing resolves — being in the
      *  system is not being cleared to act in it. */
     workerType: "EMPLOYEE" | "CONTRACTOR" | "UNPAID" | null;
-    /** Live roles with inheritance already flattened. `areaPath` present
+    /** Live roles with inheritance already flattened. `portfolioPath` present
      *  means the role is held within that subtree rather than company-wide.
      *
      *  NOT the person's capabilities. The rbac plugin builds those into a
@@ -529,7 +532,7 @@ export type ServicesCurrentUser = {
       roleId: string;
       name: string;
       entitlements: string[];
-      areaPath?: string;
+      portfolioPath?: string;
     }>;
     /** Perspectives this person may look through, lowest access first. Always a
      *  subset of what they hold — a perspective can only ever narrow. */
@@ -560,7 +563,7 @@ export type ServicesAudit = {
   }): Promise<{ items: AuditEvent[]; total: number }>;
 };
 
-/** One pin on the area map. */
+/** One pin on the portfolio map. */
 export type PropertyMapPoint = {
   id: string;
   displayName: string;
@@ -571,21 +574,23 @@ export type PropertyMapPoint = {
   /** Set when the geocoder could not place this address. Such a property is
    *  skipped by the resolver rather than retried on every open. */
   parcelLookupError: string | null;
-  area: { id: string; name: string } | null;
+  /** Every portfolio this property is in. Plural: a pin can belong to a
+   *  location portfolio and a route at the same time. */
+  portfolios: { portfolio: { id: string; name: string } }[];
   client: { displayName: string | null } | null;
 };
 
 export type PropertyMapScope = {
-  areaWhere?: Record<string, unknown>;
-  areaSubtreePath?: string | "none";
+  portfolioWhere?: Record<string, unknown>;
+  portfolioSubtreePath?: string | "none";
   assignedToUserId?: string;
 };
 
 export type ServicesProperties = {
-  /** Pins for the area map. A pure read — never geocodes. */
-  mapPoints(params: PropertyMapScope & { areaId?: string }): Promise<{
-    /** The area's own configured point — what its weather is anchored on. */
-    areaCentre: { id: string; name: string; lat: number; lng: number } | null;
+  /** Pins for the portfolio map. A pure read — never geocodes. */
+  mapPoints(params: PropertyMapScope & { portfolioId?: string }): Promise<{
+    /** The portfolio's own configured point — what its weather is anchored on. */
+    portfolioCentre: { id: string; name: string; lat: number; lng: number } | null;
     points: PropertyMapPoint[];
     total: number;
     placed: number;
@@ -690,39 +695,39 @@ export type ServicesJobs = {
     limit?: number;
     from?: string;
     to?: string;
-      /** From `areaWhereOn(principal, cap, "defaultArea")`. */
-    areaWhere?: Record<string, unknown>;
+      /** From `portfolioWhereVia(principal, cap, "property")`. */
+    portfolioWhere?: Record<string, unknown>;
   }): Promise<JobListItem[]>;
 
   listAllOccurrences(params?: {
     from?: string;
     to?: string;
     cutoff?: Date | null;
-      /** Territory filter from `areaWhere(principal, "schedule.view")`.
-     *  A JobOccurrence carries its own `areaId`. */
-    areaWhere?: Record<string, unknown>;
+      /** Territory filter from `portfolioWhere(principal, "schedule.view")`.
+     *  A JobOccurrence reaches its portfolios through a join. */
+    portfolioWhere?: Record<string, unknown>;
   }): Promise<any[]>;
   listNextOccurrenceGhosts(params: {
     from?: string;
     to?: string;
     assigneeUserId?: string | null;
     cutoff?: Date | null;
-      /** From `areaWhereOn(principal, cap, "defaultArea")`. */
-    areaWhere?: Record<string, unknown>;
+      /** From `portfolioWhereVia(principal, cap, "property")`. */
+    portfolioWhere?: Record<string, unknown>;
   }): Promise<any[]>;
   countGhostExpiry(params: {
     assigneeUserId?: string | null;
     cutoff?: Date | null;
-      areaWhere?: Record<string, unknown>;
+      portfolioWhere?: Record<string, unknown>;
   }): Promise<{ expiringSoon: number; expired: number }>;
   getOccurrencesByIds(ids: string[], cutoff?: Date | null): Promise<any[]>;
   listMyOccurrences(
     userId: string,
     options?: { canManageSchedule?: boolean },
   ): Promise<any[]>;
-  /** @param areaWhere territory filter from
-   *  `areaWhere(principal, "schedule.view")`; `{}` for a global reader. */
-  listAvailableOccurrences(areaWhere?: Record<string, unknown>): Promise<any[]>;
+  /** @param portfolioWhere territory filter from
+   *  `portfolioWhere(principal, "schedule.view")`; `{}` for a global reader. */
+  listAvailableOccurrences(portfolioWhere?: Record<string, unknown>): Promise<any[]>;
   /**
    * These four decide whether the caller may act on a visit that is not
    * theirs — unclaim somebody else's, remove another person's assignment,
@@ -854,7 +859,7 @@ export type ServicesJobs = {
     currentUserId: string,
     occurrenceId: string,
   ): Promise<JobOccurrence>;
-  listArchivedJobs(params?: { page?: number; pageSize?: number; areaWhere?: Record<string, unknown> }): Promise<{
+  listArchivedJobs(params?: { page?: number; pageSize?: number; portfolioWhere?: Record<string, unknown> }): Promise<{
     items: JobListItem[];
     total: number;
     page: number;
@@ -1030,10 +1035,10 @@ export type ServicesPayments = {
     userId?: string;
     method?: string;
     cutoff?: Date | null;
-    /** Area filter from `areaWhereVia(principal, "money.view", "occurrence")`.
+    /** Portfolio filter from `portfolioWhereVia(principal, "money.view", "occurrence")`.
      *  EMPTY means no narrowing — a global money.view holder sees everything
      *  and the query is byte-identical to its pre-feature shape. */
-    areaWhere?: Record<string, unknown>;
+    portfolioWhere?: Record<string, unknown>;
   }): Promise<{
     items: any[];
     personTotals: Array<{
@@ -1198,9 +1203,9 @@ export type ServicesPayments = {
 
   listPendingApprovals(
     cutoff?: Date | null,
-    /** From `areaWhereVia(principal, "money.view", "occurrence")`. Empty
+    /** From `portfolioWhereVia(principal, "money.view", "occurrence")`. Empty
      *  means no narrowing. */
-    areaWhere?: Record<string, unknown>,
+    portfolioWhere?: Record<string, unknown>,
   ): Promise<any[]>;
 };
 
@@ -1444,7 +1449,7 @@ export type Services = {
   paymentRequests: typeof import("../services/paymentRequests").paymentRequests;
   policies: typeof import("../services/policies").policies;
   customRoles: typeof import("../services/customRoles").customRoles;
-  areas: typeof import("../services/areas").areas;
+  portfolios: typeof import("../services/portfolios").portfolios;
 };
 
 export type ServicesSettings = {

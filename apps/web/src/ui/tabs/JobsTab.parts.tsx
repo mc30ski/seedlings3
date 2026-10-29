@@ -58,7 +58,7 @@ export { CompactBanner } from "@/src/ui/components/CompactBanner";
  *
  * So the presentation is untouched and the source is swapped: the server
  * computes the identical shape over every occurrence in the period
- * (`jobsRollup` on GET /operations), area-scoped and cutoff-aware like
+ * (`jobsRollup` on GET /operations), portfolio-scoped and cutoff-aware like
  * the rest of that endpoint. One rollup, one set of numbers, and the
  * per-list counts keep their own place above the list.
  */
@@ -80,10 +80,10 @@ export function JobsInsightsSection({
   }) => void;
 }) {
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
-  // NO AREA PICKER HERE. This card briefly carried its own, which worked
+  // NO PORTFOLIO PICKER HERE. This card briefly carried its own, which worked
   // and was the only one in the app — so narrowing by district was a thing
   // you could do on exactly one panel. The lens moved to the header
-  // (AreaLensChip) and rides on the principal, so these numbers narrow with
+  // (PortfolioLensChip) and rides on the principal, so these numbers narrow with
   // every other view at once and this card needs no parameter of its own.
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
