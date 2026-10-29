@@ -2,7 +2,7 @@
 
 Companion to [`permissions-BUILD.md`](permissions-BUILD.md), which covers the
 backend. That document's four steps are the server: schema, `can()`, route
-guards, areas. This one is the browser.
+guards, portfolios. This one is the browser.
 
 It is a **build artifact**, like its sibling: it changes as code lands, and it
 is not the design. The design — what the role builder looks like, what
@@ -16,7 +16,7 @@ the list of work.
 > one `StaffTabs` list and two shells (`client`, `staff`), `TAB_REQUIREMENTS`
 > deciding which tabs exist, `Scope` reduced to `{ can }`, the surface-flag
 > factory and its capability map deleted, `RoleChip` as the perspective picker, and
-> the role + area builders.
+> the role + portfolio builders.
 >
 > **Counts in this document are from 2026-10-14 and describe the BEFORE
 > state.** They are kept because the reasoning depends on them; do not read
@@ -289,7 +289,7 @@ is built.
 
 **Where they live is not a separate question.** These are rows in the §3
 `TAB_REQUIREMENTS` table like every other tab: Roles appears for a holder of
-`roles.define`, Areas for `areas.manage`. Naming a destination by shell
+`roles.define`, Portfolios for `portfolios.manage`. Naming a destination by shell
 ("under Super") reintroduces the role vocabulary this whole phase removes —
 and `Super` is only a starter row the install script creates, renameable and
 deletable, which nothing in the code branches on. Per-person effective
@@ -306,19 +306,19 @@ permissions is not a tab at all: it is a section on the person's row in
 - [x] ~~**Effective permissions per person, with provenance**~~ — **the API
       exists as of 2026-10-15**: `GET /users/:id/effective-permissions`
       (`people.manage`). Per capability it returns the human copy, `scope`
-      (`global` | `area`), an `overriddenByGlobal` flag, and `via[]` naming
+      (`global` | `portfolio`), an `overriddenByGlobal` flag, and `via[]` naming
       both the role HELD and the role the entitlement is WRITTEN ON — so
       `schedule.view` on someone with `schedule.manage` reads "via Admin, written on Trainee",
       which is the difference between fixing the right role and the wrong
       one. The screen itself is still to build.
-      **Caveat:** the area and `overriddenByGlobal` paths are unexercised —
-      there are zero `AreaAssignment` rows, so nobody is area-scoped yet.
+      **Caveat:** the portfolio and `overriddenByGlobal` paths are unexercised —
+      there are zero `PortfolioAssignment` rows, so nobody is portfolio-scoped yet.
 - [x] ~~**Who holds a role**~~ — `GET /roles/:id/holders` (`roles.view`)
-      returns company-wide and area grants in one list, each labelled with
+      returns company-wide and portfolio grants in one list, each labelled with
       its `scope`, because a reader who cannot tell them apart will misread
       a territorial grant as absolute.
-- [x] ~~**Area tree and assignment**~~ **DONE 2026-10-16** — `AreasTab`, a row
-      in the same `TAB_REQUIREMENTS` table as everything else (`areas.manage`).
+- [x] ~~**Portfolio tree and assignment**~~ **DONE 2026-10-16** — `PortfoliosTab`, a row
+      in the same `TAB_REQUIREMENTS` table as everything else (`portfolios.manage`).
       No reparent control, deliberately: G14.
 
 ---

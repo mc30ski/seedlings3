@@ -12,7 +12,7 @@
 // they are. A number that steers a pay decision has to be sourced.
 //
 // TWO FREE GOVERNMENT LOOKUPS, NO API KEYS:
-//   1. Census geocoder: BUSINESS_ADDRESS -> Metropolitan Statistical Area.
+//   1. Census geocoder: BUSINESS_ADDRESS -> Metropolitan Statistical Portfolio.
 //   2. BLS OEWS: that MSA + an SOC occupation code -> hourly percentiles.
 //
 // CACHING. Keyed by the address AND every other input that shapes the answer,
@@ -36,7 +36,7 @@ import { cached } from "../lib/cache";
 export const MARKET_RATE_SETTINGS: Record<string, [string, string]> = {
   MARKET_RATE_ENABLED: [
     "true",
-    "Look up the local market wage from the Bureau of Labor Statistics for the metro area your business address sits in. Used only by a caller with settings authority forecasting tool, to draw the market band behind each worker's hourly rate. Turn off to fall back to the manual override below.",
+    "Look up the local market wage from the Bureau of Labor Statistics for the metro portfolio your business address sits in. Used only by a caller with settings authority forecasting tool, to draw the market band behind each worker's hourly rate. Turn off to fall back to the manual override below.",
   ],
   MARKET_RATE_SOC_CODE: [
     "373011",
@@ -52,7 +52,7 @@ export const MARKET_RATE_SETTINGS: Record<string, [string, string]> = {
   ],
   MARKET_RATE_GEOCODER_URL: [
     "https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress?address={address}&benchmark=Public_AR_Current&vintage=Current_Current&layers=all&format=json",
-    "Resolves the business address to a Metropolitan Statistical Area. {address} is substituted. The US Census geocoder is free and needs no API key.",
+    "Resolves the business address to a Metropolitan Statistical Portfolio. {address} is substituted. The US Census geocoder is free and needs no API key.",
   ],
   MARKET_RATE_BLS_URL: [
     "https://api.bls.gov/publicAPI/v1/timeseries/data/",
@@ -77,8 +77,8 @@ export type MarketRate = {
   high: number;
   /** Where the number came from, so the UI can say so plainly. */
   source: "bls" | "override" | "fallback";
-  /** Human description of the area, e.g. "Durham-Chapel Hill, NC Metro Area". */
-  areaName: string | null;
+  /** Human description of the portfolio, e.g. "Durham-Chapel Hill, NC Metro Portfolio". */
+  portfolioName: string | null;
   areaCode: string | null;
   /** OEWS survey year. */
   year: string | null;
@@ -94,7 +94,7 @@ export type MarketRate = {
  *  an unsourced number as though it came from the BLS. */
 const FALLBACK: MarketRate = {
   low: 15, high: 24, source: "fallback",
-  areaName: null, areaCode: null, year: null, occupation: null,
+  portfolioName: null, areaCode: null, year: null, occupation: null,
   percentiles: [25, 75], fetchedAt: null,
   note: "Using a generic estimate — no local figure has been looked up yet.",
 };
@@ -126,27 +126,27 @@ function parseOverride(raw: string): [number, number] | null {
   return [Math.min(...parts), Math.max(...parts)];
 }
 
-/** BUSINESS_ADDRESS -> { code, name } for the enclosing metro area. */
+/** BUSINESS_ADDRESS -> { code, name } for the enclosing metro portfolio. */
 async function resolveArea(address: string, urlTemplate: string) {
   const url = urlTemplate.replace("{address}", encodeURIComponent(address));
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`Census geocoder returned ${res.status}`);
   const j: any = await res.json();
   const geos = j?.result?.addressMatches?.[0]?.geographies ?? {};
-  const layer = Object.entries(geos).find(([name]) => /^Metropolitan Statistical Areas$/i.test(name))
+  const layer = Object.entries(geos).find(([name]) => /^Metropolitan Statistical Portfolios$/i.test(name))
     ?? Object.entries(geos).find(([name]) => /Metropolitan/i.test(name));
   const hit: any = (layer?.[1] as any[])?.[0];
-  if (!hit?.GEOID) throw new Error("no metropolitan area found for that address");
+  if (!hit?.GEOID) throw new Error("no metropolita portfolio found for that address");
   return { code: String(hit.GEOID), name: String(hit.NAME ?? hit.BASENAME ?? hit.GEOID) };
 }
 
-/** Hourly percentile wages for one occupation in one metro area. */
+/** Hourly percentile wages for one occupation in one metro portfolio. */
 async function fetchWages(
   blsUrl: string, areaCode: string, soc: string, pcts: [number, number],
 ) {
-  // OEWS series: OEU + areaType(M) + 7-digit area + industry(000000) + SOC + datatype
-  const area = `M${areaCode.padStart(7, "0")}`;
-  const ids = pcts.map((p) => `OEU${area}000000${soc}${HOURLY_DATATYPE[p]}`);
+  // OEWS series: OEU + areaType(M) + 7-digit portfolio + industry(000000) + SOC + datatype
+  const portfolio = `M${areaCode.padStart(7, "0")}`;
+  const ids = pcts.map((p) => `OEU${portfolio}000000${soc}${HOURLY_DATATYPE[p]}`);
   const res = await fetch(blsUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -162,7 +162,7 @@ async function fetchWages(
   for (const id of ids) {
     const series = (j.Results?.series ?? []).find((s: any) => s.seriesID === id);
     const latest = series?.data?.[0];
-    if (!latest?.value) throw new Error(`no OEWS data for ${id} — check the SOC code and area`);
+    if (!latest?.value) throw new Error(`no OEWS data for ${id} — check the SOC code and portfolio`);
     out.push({ value: Number(latest.value), year: String(latest.year) });
   }
   if (out.some((o) => !Number.isFinite(o.value) || o.value <= 0 || o.value > 500)) {
@@ -188,29 +188,29 @@ export async function getMarketRate(): Promise<MarketRate> {
     if (override) {
       return {
         low: override[0], high: override[1], source: "override",
-        areaName: null, areaCode: null, year: null, occupation: null,
+        portfolioName: null, areaCode: null, year: null, occupation: null,
         percentiles: cfg.percentiles, fetchedAt: null,
         note: "Manually set in Settings, overriding the BLS figure.",
       };
     }
     if (!cfg.enabled) return { ...FALLBACK, note: "Market-rate lookup is switched off in Settings." };
-    if (!cfg.address) return { ...FALLBACK, note: "No BUSINESS_ADDRESS is set, so the metro area can't be resolved." };
+    if (!cfg.address) return { ...FALLBACK, note: "No BUSINESS_ADDRESS is set, so the metro portfolio can't be resolved." };
 
     // Cache key includes the address AND every input that shapes the answer,
     // so changing any of them re-resolves instead of serving a stale band.
     const key = [cfg.address, cfg.soc, cfg.percentiles.join("-")].join("|");
     const { value, stale, fetchedAt } = await cached("marketRate", key, async () => {
-      const area = await resolveArea(cfg!.address, cfg!.geocoderUrl);
-      const wages = await fetchWages(cfg!.blsUrl, area.code, cfg!.soc, cfg!.percentiles);
-      return { area, wages };
+      const portfolio = await resolveArea(cfg!.address, cfg!.geocoderUrl);
+      const wages = await fetchWages(cfg!.blsUrl, portfolio.code, cfg!.soc, cfg!.percentiles);
+      return { portfolio, wages };
     });
 
     const rate: MarketRate = {
       low: value.wages.low,
       high: value.wages.high,
       source: "bls",
-      areaName: value.area.name,
-      areaCode: value.area.code,
+      portfolioName: value.portfolio.name,
+      areaCode: value.portfolio.code,
       year: value.wages.year,
       occupation: cfg.soc,
       percentiles: cfg.percentiles,
@@ -227,7 +227,7 @@ export async function getMarketRate(): Promise<MarketRate> {
     if (override) {
       return {
         low: override[0], high: override[1], source: "override",
-        areaName: null, areaCode: null, year: null, occupation: null,
+        portfolioName: null, areaCode: null, year: null, occupation: null,
         percentiles: cfg!.percentiles, fetchedAt: null,
         note: `Lookup failed (${err?.message ?? "unknown error"}), using the manual override.`,
       };

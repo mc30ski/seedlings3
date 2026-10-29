@@ -27,7 +27,7 @@ export const PERSONAS: SeedUserKey[] = [
   "employee",
   "scheduler",
   // Between the narrow personas and the owner because its access is not a
-  // tier: it holds Admin's full set, but only inside one area.
+  // tier: it holds Admin's full set, but only inside one portfolio.
   "districtLead",
   "owner",
 ];
@@ -71,28 +71,28 @@ export async function personaCapabilities(): Promise<PersonaCaps> {
       // BOTH WAYS A ROLE IS HELD, as `services/currentUser.ts` does it.
       //
       // This read `userCustomRole` alone — company-wide grants — and the
-      // moment a persona existed whose access came entirely from an AREA
+      // moment a persona existed whose access came entirely from an PORTFOLIO
       // ASSIGNMENT, it reported that persona as holding nothing. The sweep
       // then skipped its "every tab they can reach opens" test on the
       // `capabilityTabs.length === 0` guard, so the one persona added to
-      // prove area scoping was the one persona the sweep did not drive,
+      // prove portfolio scoping was the one persona the sweep did not drive,
       // and the run still said 19 passed.
       //
-      // An area narrows WHICH ROWS you see, not which capabilities you
+      // A portfolio narrows WHICH ROWS you see, not which capabilities you
       // hold, so for "what tabs does this persona get" the two kinds of
       // grant count the same.
-      const [grants, areaGrants] = await Promise.all([
+      const [grants, portfolioGrants] = await Promise.all([
         prisma.userCustomRole.findMany({
           where: { userId, suspendedAt: null, customRole: { suspendedAt: null } },
           select: { customRoleId: true },
         }),
-        prisma.areaAssignment.findMany({
+        prisma.portfolioAssignment.findMany({
           where: { userId, suspendedAt: null, customRole: { suspendedAt: null } },
           select: { customRoleId: true },
         }),
       ]);
       out[key] = new Set(
-        [...grants, ...areaGrants].flatMap((g) => flatten(g.customRoleId)),
+        [...grants, ...portfolioGrants].flatMap((g) => flatten(g.customRoleId)),
       );
     }
     capsCache = out;

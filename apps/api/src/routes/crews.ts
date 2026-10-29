@@ -20,8 +20,7 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
-import { areaWhere, areaWhereVia } from "../lib/areaScope";
+import { portfolioWhere, portfolioWhereVia } from "../lib/portfolioScope";
 import { WORKER_TYPES, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { currentUserId, enrichSyncTasks, nextRecurrenceDate } from "./_shared";
 

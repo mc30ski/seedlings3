@@ -6,7 +6,7 @@
 //
 // Admin scope does NOT get a separate section here — the shipped
 // ViewAsSelector (re-exported from JobsTab.parts) is mounted
-// at the top of HomeTab and drives the SAME hero/tile/chart area
+// at the top of HomeTab and drives the SAME hero/tile/chart portfolio
 // with aggregate / subset / single-worker data. That matches how the
 // shipped Work → Home tab works: default = All Workers
 // aggregate, pick to narrow.

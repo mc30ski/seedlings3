@@ -1,5 +1,5 @@
 import { Prisma, PropertyStatus, PropertyKind, JobStatus } from "@prisma/client";
-import { withArea } from "../lib/areaScope";
+import { withPortfolio } from "../lib/portfolioScope";
 import { prisma } from "../db/prisma";
 import { resolvePropertyPoint } from "./parcels";
 import { AUDIT } from "../lib/auditActions";
@@ -25,28 +25,28 @@ function like(text?: string) {
 }
 
 /**
- * The rows a caller may see on the map: their granted territory, the area
+ * The rows a caller may see on the map: their granted territory, the portfolio
  * they asked for, and the assignment narrowing for somebody who is not
  * field-cleared. Identical to what `list()` applies, lifted out so the map
  * cannot drift into showing a property the list would withhold.
  */
 function mapScopeWhere(params: {
-  areaWhere?: Record<string, unknown>;
-  areaSubtreePath?: string | "none";
+  portfolioWhere?: Record<string, unknown>;
+  portfolioSubtreePath?: string | "none";
   assignedToUserId?: string;
 }): Prisma.PropertyWhereInput {
   const chosen: Prisma.PropertyWhereInput | null =
-    params.areaSubtreePath === "none"
-      ? { areaId: null }
-      : params.areaSubtreePath
-        ? { area: { path: { startsWith: params.areaSubtreePath } } }
+    params.portfolioSubtreePath === "none"
+      ? { portfolios: { none: {} } }
+      : params.portfolioSubtreePath
+        ? { portfolios: { some: { portfolio: { path: { startsWith: params.portfolioSubtreePath } } } } }
         : null;
   const assigned: Prisma.PropertyWhereInput | null = params.assignedToUserId
     ? { jobs: { some: { occurrences: { some: { assignees: { some: { userId: params.assignedToUserId } } } } } } }
     : null;
   return {
     AND: [
-      (params.areaWhere ?? {}) as Prisma.PropertyWhereInput,
+      (params.portfolioWhere ?? {}) as Prisma.PropertyWhereInput,
       ...(chosen ? [chosen] : []),
       ...(assigned ? [assigned] : []),
     ],
@@ -55,7 +55,7 @@ function mapScopeWhere(params: {
 
 export const properties: ServicesProperties = {
   /**
-   * The properties in an area, as map pins.
+   * The properties in a portfolio, as map pins.
    *
    * A pure read — never geocodes. The map opens on this instantly, however
    * many points happen to be known, and `unplaced` tells the page how much
@@ -63,14 +63,14 @@ export const properties: ServicesProperties = {
    * with no end in sight.
    */
   async mapPoints(params: {
-    areaWhere?: Record<string, unknown>;
-    areaSubtreePath?: string | "none";
+    portfolioWhere?: Record<string, unknown>;
+    portfolioSubtreePath?: string | "none";
     assignedToUserId?: string;
-    /** The area being looked at, so its own point can be returned with the
-     *  pins. That point is not decoration: it is what the area's weather
+    /** The portfolio being looked at, so its own point can be returned with the
+     *  pins. That point is not decoration: it is what the portfolio's weather
      *  forecast is anchored on, and seeing it against the properties is
      *  the only way to notice it is in the wrong place. */
-    areaId?: string;
+    portfolioId?: string;
   }) {
     const where = mapScopeWhere(params);
     const rows = await prisma.property.findMany({
@@ -78,24 +78,24 @@ export const properties: ServicesProperties = {
       select: {
         id: true, displayName: true, street1: true, city: true,
         lat: true, lng: true, parcelLookupError: true,
-        area: { select: { id: true, name: true } },
+        portfolios: { select: { portfolio: { select: { id: true, name: true } } } },
         client: { select: { displayName: true } },
       },
       orderBy: { displayName: "asc" },
     });
-    const area =
-      params.areaId && params.areaId !== "none"
-        ? await prisma.area.findUnique({
-            where: { id: params.areaId },
+    const portfolio =
+      params.portfolioId && params.portfolioId !== "none"
+        ? await prisma.portfolio.findUnique({
+            where: { id: params.portfolioId },
             select: { id: true, name: true, lat: true, lng: true },
           })
         : null;
 
     return {
-      /** The AREA's own point, or null if nobody has set one. Distinct
+      /** The PORTFOLIO's own point, or null if nobody has set one. Distinct
        *  from the property pins and labelled as such on the map. */
-      areaCentre: area && area.lat != null && area.lng != null
-        ? { id: area.id, name: area.name, lat: area.lat, lng: area.lng }
+      portfolioCentre: portfolio && portfolio.lat != null && portfolio.lng != null
+        ? { id: portfolio.id, name: portfolio.name, lat: portfolio.lat, lng: portfolio.lng }
         : null,
       points: rows,
       total: rows.length,
@@ -109,7 +109,7 @@ export const properties: ServicesProperties = {
   },
 
   /**
-   * Geocode the next few unplaced properties in an area.
+   * Geocode the next few unplaced properties in a portfolio.
    *
    * SMALL BATCHES, called repeatedly. One address costs about three and a
    * half seconds against the free Census geocoder, so a request that tried
@@ -122,8 +122,8 @@ export const properties: ServicesProperties = {
    * open of the map, for ever, at three seconds each.
    */
   async resolveMapPoints(params: {
-    areaWhere?: Record<string, unknown>;
-    areaSubtreePath?: string | "none";
+    portfolioWhere?: Record<string, unknown>;
+    portfolioSubtreePath?: string | "none";
     assignedToUserId?: string;
     limit: number;
   }) {
@@ -198,27 +198,30 @@ export const properties: ServicesProperties = {
       };
     }
 
-    // The CHOSEN area, layered on top of the territory the caller may see.
-    // Two separate fragments on purpose: `areaWhere` is what they are
-    // allowed to see and `areaSubtreePath` is what they asked to look at,
+    // The CHOSEN portfolio, layered on top of the territory the caller may see.
+    // Two separate fragments on purpose: `portfolioWhere` is what they are
+    // allowed to see and `portfolioSubtreePath` is what they asked to look at,
     // and ANDing them means the request can only ever narrow.
     const chosen: Prisma.PropertyWhereInput | null =
-      params?.areaSubtreePath === "none"
-        ? { areaId: null }
-        : params?.areaSubtreePath
-          ? { area: { path: { startsWith: params.areaSubtreePath } } }
+      params?.portfolioSubtreePath === "none"
+        ? { portfolios: { none: {} } }
+        : params?.portfolioSubtreePath
+          ? { portfolios: { some: { portfolio: { path: { startsWith: params.portfolioSubtreePath } } } } }
           : null;
 
     const rows = await prisma.property.findMany({
-      // Territory. A Property carries its own `areaId`, so this is a direct
-      // prefix test rather than a hop through a relation.
-      where: withArea(withArea(where, params?.areaWhere ?? {}), chosen ?? {}),
+      // Territory. Membership is a join now, so this hops through it —
+      // `portfolioWhere` emits the `some` for us.
+      where: withPortfolio(withPortfolio(where, params?.portfolioWhere ?? {}), chosen ?? {}),
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
       take: limit,
       include: {
-        // The TERRITORY, for the badge on the property card. Name only —
-        // the card states where the property sits; it does not filter.
-        area: { select: { id: true, name: true } },
+        // THE PORTFOLIOS, for the badges on the property card. Names only —
+        // the card states what the property belongs to; it does not filter.
+        // Plural now: a property can be in a location portfolio and a route
+        // at the same time, and a card showing only one of them would be
+        // the old single-column model leaking through the UI.
+        portfolios: { select: { portfolio: { select: { id: true, name: true } } } },
         client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
         pointOfContact: {
           select: {
@@ -243,40 +246,45 @@ export const properties: ServicesProperties = {
       include: {
         client: { select: { id: true, displayName: true } },
         pointOfContact: true,
+        // SAME SHAPE AS THE LIST. The property dialog seeds its portfolio
+        // picker from whichever of the two it was handed; leaving it off
+        // here would make the picker open empty for a property that is in
+        // several, and saving would then clear them.
+        portfolios: { select: { portfolio: { select: { id: true, name: true } } } },
       },
     });
   },
 
   async create(currentUserId: string, payload: PropertyUpsert) {
     return prisma.$transaction(async (tx) => {
-      // WHICH AREA DOES A NEW PROPERTY BELONG TO?
+      // WHICH PORTFOLIOS DOES A NEW PROPERTY BELONG TO?
       //
-      // Nothing used to answer this: `areaId` was never set on create, so
-      // every new property landed in no area and its work appeared in no
-      // area's rollup. Today that is invisible because the seed backfilled
-      // every row and nobody holds an area-scoped grant — it would have
-      // started costing real attribution the first time either changed.
-      // The column's own comment promises the consequence is "warned"; it
-      // was not, anywhere.
+      // Nothing used to answer this at all: the old `areaId` was never set
+      // on create, so every new property landed nowhere and its work
+      // appeared in no rollup. That stayed invisible only because the seed
+      // had backfilled every existing row and nobody held a scoped grant.
       //
-      // Resolution mirrors `resolveOccurrenceArea`: take what the caller
-      // said, else INHERIT, else leave null honestly rather than guess.
-      // Inheritance here is the client's other properties, and only when
-      // they agree — a client split across two districts has no obvious
-      // answer, and picking one would be inventing data.
-      let areaId: string | null = payload.areaId ?? null;
-      if (!areaId) {
+      // Take what the caller said, else INHERIT, else leave it in nothing
+      // honestly rather than guess. Inheritance is the client's other
+      // properties, and only when they AGREE — a client split across two
+      // portfolios has no obvious answer and picking one invents data.
+      // "Agree" is now set equality, because a sibling can be in several.
+      let portfolioIds: string[] = payload.portfolioIds ?? [];
+      if (portfolioIds.length === 0) {
         const siblings = await tx.property.findMany({
-          where: { clientId: payload.clientId, areaId: { not: null } },
-          select: { areaId: true },
-          distinct: ["areaId"],
+          where: { clientId: payload.clientId },
+          select: { portfolios: { select: { portfolioId: true } } },
         });
-        if (siblings.length === 1) areaId = siblings[0].areaId;
+        const sets = siblings
+          .map((x) => x.portfolios.map((m) => m.portfolioId).sort())
+          .filter((ids) => ids.length > 0);
+        const distinct = new Set(sets.map((ids) => ids.join("\u0000")));
+        if (distinct.size === 1) portfolioIds = sets[0];
       }
 
       const created = await tx.property.create({
         data: {
-          areaId,
+          portfolios: { create: portfolioIds.map((portfolioId) => ({ portfolioId })) },
           clientId: payload.clientId,
           displayName: payload.displayName,
           kind: payload.kind ?? PropertyKind.SINGLE,
@@ -296,12 +304,16 @@ export const properties: ServicesProperties = {
 
       await writeAudit(tx, AUDIT.PROPERTY.CREATED, currentUserId, {
         propertyId: created.id,
-        // Recorded either way. "Unassigned" is a legal state with a real
-        // consequence (no area rollup counts this property's work), so it
+        // Recorded either way. Belonging to none is a legal state with a real
+        // consequence (no rollup counts this property's work), so it
         // belongs in the trail rather than being inferable only by noticing
         // an absence later.
-        areaId,
-        areaResolvedBy: payload.areaId ? "caller" : areaId ? "inherited-from-client" : "unassigned",
+        portfolioIds,
+        portfoliosResolvedBy: payload.portfolioIds?.length
+          ? "caller"
+          : portfolioIds.length
+            ? "inherited-from-client"
+            : "none",
         clientId: created.clientId,
         displayName: created.displayName,
       });

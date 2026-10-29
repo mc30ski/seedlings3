@@ -236,7 +236,7 @@ export default function StatisticsTab({ myId, scope }: Props = {}) {
       {/* The "Preview Feature" banner that used to sit here is GONE
           (2026-10-26). It dated from before this tab was unwired, and it
           was still claiming the screen was provisional on the day it became
-          the only way an area lead rolls up their district. A standing
+          the only way a portfolio lead rolls up their district. A standing
           "this will change" notice on a shipped surface teaches people to
           discount every other notice on the page — including the one below
           that says the figures are a slice, which they must not discount. */}
@@ -267,11 +267,11 @@ export default function StatisticsTab({ myId, scope }: Props = {}) {
           or a stale estimate moves it as much as the worker does.
         </ExplainerText>
         <ExplainerText>
-          <Em>Narrowed to an area, the totals are partial.</Em> If your access
-          covers one territory, or you have picked an area in the title bar,
+          <Em>Narrowed to a portfolio, the totals are partial.</Em> If your access
+          covers one territory, or you have picked a portfolio in the title bar,
           these figures count only work done there — somebody who also worked
           the next district shows less here than they were actually paid. The
-          strip above the tabs names the area whenever that is the case.
+          strip above the tabs names the portfolio whenever that is the case.
         </ExplainerText>
       </TabExplainer>
 
@@ -365,7 +365,7 @@ export default function StatisticsTab({ myId, scope }: Props = {}) {
               This tab had its own, and once the app-wide strip landed
               above the tab row the two stacked — the same fact twice on
               one screen, which on a phone pushed the first number below
-              the fold. One notice, one place: AreaScopeNotice. */}
+              the fold. One notice, one place: PortfolioScopeNotice. */}
           {/* Summary bar */}
           <HStack gap={4} mb={4} p={3} bg="blue.faint" rounded="xl" borderWidth="1px" borderColor="blue.emphasized" wrap="wrap" justify="center">
             <VStack gap={0}>

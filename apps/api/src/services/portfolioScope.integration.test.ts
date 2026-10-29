@@ -1,21 +1,21 @@
-// roster-skip: needs a live database and the seeded area fixture; the build gate is hermetic and mocks Prisma. Run with `npm run test:integration`.
+// roster-skip: needs a live database and the seeded portfolio fixture; the build gate is hermetic and mocks Prisma. Run with `npm run test:integration`.
 // ─────────────────────────────────────────────────────────────────────────────
-// Area scoping, against real rows and a real principal.
+// Portfolio scoping, against real rows and a real principal.
 //
-// WHAT WAS MISSING. `areaScope.test.ts` has 25 cases and every one of them
+// WHAT WAS MISSING. `portfolioScope.test.ts` has 25 cases and every one of them
 // feeds the filter a hand-built principal. That proves the path arithmetic
 // — prefix matching, the trailing delimiter that stops "/a/b/" leaking into
 // "/a/bb/" — and proves nothing about whether a real person, assembled from
 // real rows, actually sees less. Until 2026-10-22 the note on this work read
-// "the seed creates ZERO AreaAssignment rows, so scoping has never run
+// "the seed creates ZERO PortfolioAssignment rows, so scoping has never run
 // against real data". The seed now builds the fixture; this is the test that
 // uses it.
 //
 // NOT THE SAME CLAIM AS AN E2E PERSONA. Signing in as the District Lead and
 // driving the UI needs a Clerk account that does not exist yet, so this stops
 // one layer below: it builds the principal exactly as `services/currentUser`
-// does — flattening inheritance, carrying `areaPath` off the assignment —
-// and runs a genuine Prisma query through `areaWhere`. If the UI later shows
+// does — flattening inheritance, carrying `portfolioPath` off the assignment —
+// and runs a genuine Prisma query through `portfolioWhere`. If the UI later shows
 // that person too much, it will not be because this layer was untested.
 //
 // READ-ONLY. It writes nothing and depends only on what `npm run db:seed`
@@ -26,7 +26,7 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { flattenRole, isEntitlement, type Entitlement, type Principal } from "@repo/permissions";
-import { areaWhere, visibleAreaPaths, isAreaLimited } from "../lib/areaScope";
+import { portfolioWhere, visiblePortfolioPaths, isPortfolioLimited } from "../lib/portfolioScope";
 
 const prisma = new PrismaClient();
 const FIXTURE_EMAIL = "admin+districtlead@seedlingslawncare.com";
@@ -42,9 +42,9 @@ async function principalFor(email: string): Promise<Principal> {
     select: {
       workerType: true,
       customRoles: { where: { suspendedAt: null }, select: { customRoleId: true } },
-      areaAssignments: {
+      portfolioAssignments: {
         where: { suspendedAt: null },
-        select: { customRoleId: true, area: { select: { path: true } } },
+        select: { customRoleId: true, portfolio: { select: { path: true } } },
       },
     },
   });
@@ -71,11 +71,11 @@ async function principalFor(email: string): Promise<Principal> {
         name: byId.get(g.customRoleId)?.name ?? "",
         entitlements: flattenRole(g.customRoleId, byId as never) as Entitlement[],
       })),
-      ...user.areaAssignments.map((aa) => ({
+      ...user.portfolioAssignments.map((aa) => ({
         roleId: aa.customRoleId,
         name: byId.get(aa.customRoleId)?.name ?? "",
         entitlements: flattenRole(aa.customRoleId, byId as never) as Entitlement[],
-        areaPath: aa.area?.path,
+        portfolioPath: aa.portfolio?.path,
       })),
     ],
   };
@@ -91,27 +91,27 @@ beforeAll(async () => {
   });
   if (!owner?.email) throw new Error("no company-wide Super to contrast against");
   companyWideAdmin = await principalFor(owner.email);
-  durhamPath = (await prisma.area.findFirstOrThrow({
+  durhamPath = (await prisma.portfolio.findFirstOrThrow({
     where: { name: "Durham" }, select: { path: true },
   })).path;
 });
 
 afterAll(async () => { await prisma.$disconnect(); });
 
-describe("area scoping — a real assigned principal, real rows", () => {
-  it("the fixture is what it claims: one area, no company-wide grant", async () => {
+describe("portfolio scoping — a real assigned principal, real rows", () => {
+  it("the fixture is what it claims: one portfolio, no company-wide grant", async () => {
     const u = districtLead as Extract<Principal, { kind: "user" }>;
     // A company-wide grant would defeat the whole fixture, and the failure
     // mode is silent — the scoped read legitimately returns everything.
-    expect(u.roles.filter((r) => !r.areaPath), "district lead must hold NO company-wide role").toEqual([]);
-    expect(u.roles.filter((r) => r.areaPath)).toHaveLength(1);
-    expect(u.roles[0].areaPath).toBe(durhamPath);
+    expect(u.roles.filter((r) => !r.portfolioPath), "district lead must hold NO company-wide role").toEqual([]);
+    expect(u.roles.filter((r) => r.portfolioPath)).toHaveLength(1);
+    expect(u.roles[0].portfolioPath).toBe(durhamPath);
     expect(u.workerType, "a null worker type means nothing resolves at all").not.toBeNull();
   });
 
   it("narrows a real property query to the assigned subtree", async () => {
     const scoped = await prisma.property.count({
-      where: areaWhere(districtLead, "clients.view") as any,
+      where: portfolioWhere(districtLead, "clients.view") as any,
     });
     const all = await prisma.property.count();
     expect(all, "fixture too thin to prove narrowing").toBeGreaterThan(scoped);
@@ -119,16 +119,16 @@ describe("area scoping — a real assigned principal, real rows", () => {
 
     // And it is the RIGHT subset, not merely a smaller one.
     const inDurham = await prisma.property.count({
-      where: { area: { path: { startsWith: durhamPath } } },
+      where: { portfolios: { some: { portfolio: { path: { startsWith: durhamPath } } } } },
     });
     expect(scoped).toBe(inDurham);
   });
 
   it("a company-wide holder of the same capability is not narrowed", async () => {
-    expect(visibleAreaPaths(companyWideAdmin, "clients.view")).toBeNull();
-    expect(areaWhere(companyWideAdmin, "clients.view")).toEqual({});
+    expect(visiblePortfolioPaths(companyWideAdmin, "clients.view")).toBeNull();
+    expect(portfolioWhere(companyWideAdmin, "clients.view")).toEqual({});
     const scoped = await prisma.property.count({
-      where: areaWhere(companyWideAdmin, "clients.view") as any,
+      where: portfolioWhere(companyWideAdmin, "clients.view") as any,
     });
     expect(scoped).toBe(await prisma.property.count());
   });
@@ -137,14 +137,14 @@ describe("area scoping — a real assigned principal, real rows", () => {
     // The dangerous confusion in this filter is [] vs null. [] must produce
     // an impossible condition; null must produce no filter at all.
     const nobody: Principal = { kind: "user", workerType: "EMPLOYEE", roles: [] };
-    expect(visibleAreaPaths(nobody, "clients.view")).toEqual([]);
+    expect(visiblePortfolioPaths(nobody, "clients.view")).toEqual([]);
     const scoped = await prisma.property.count({
-      where: areaWhere(nobody, "clients.view") as any,
+      where: portfolioWhere(nobody, "clients.view") as any,
     });
     expect(scoped).toBe(0);
   });
 
   it("reports the district lead as territorially limited", () => {
-    expect(isAreaLimited(districtLead, "clients.view")).toBe(true);
+    expect(isPortfolioLimited(districtLead, "clients.view")).toBe(true);
   });
 });

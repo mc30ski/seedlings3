@@ -43,7 +43,7 @@ export default function DayBoardButton({
    * Inside, not beside: a caption sitting next to the button is not part of
    * it, so the words — the larger target, and the part that says what the
    * icon does — were the one place a click did nothing. Passing the label in
-   * keeps one element, one hit area, one accessible name.
+   * keeps one element, one hit portfolio, one accessible name.
    */
   label?: string;
 }) {

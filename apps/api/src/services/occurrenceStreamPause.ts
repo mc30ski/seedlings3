@@ -11,7 +11,7 @@
 // still under an ACTIVE Client + Job.
 
 import { Prisma, JobOccurrenceStatus } from "@prisma/client";
-import { withArea } from "../lib/areaScope";
+import { withPortfolio } from "../lib/portfolioScope";
 import { prisma } from "../db/prisma";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
@@ -245,15 +245,15 @@ export async function resumeStream(
 /** Count of paused streams whose reminder date has arrived or passed.
  *  Feeds the alerts-dropdown badge + Tasks-page shortcut. */
 export async function countDueStreamPauseReminders(
-  areaWhere: Record<string, unknown> = {},
+  portfolioWhere: Record<string, unknown> = {},
 ): Promise<number> {
   // A paused repeating visit belongs to the district whose work it is, so
   // the badge counts only what this reader could act on.
   return prisma.jobOccurrence.count({
-    where: withArea<Prisma.JobOccurrenceWhereInput>({
+    where: withPortfolio<Prisma.JobOccurrenceWhereInput>({
       status: JobOccurrenceStatus.STREAM_PAUSED,
       streamResumeReminderAt: { not: null, lte: new Date() },
-    }, areaWhere),
+    }, portfolioWhere),
   });
 }
 
@@ -264,11 +264,11 @@ export async function listDueStreamPauseReminders(
   // every district — the count and the list it describes disagreeing on
   // the same screen. G10 could not see the route: its matcher gave up on
   // handlers past ~1800 characters.
-  areaWhere: Record<string, unknown> = {},
+  portfolioWhere: Record<string, unknown> = {},
 ) {
   return prisma.jobOccurrence.findMany({
     where: {
-      ...areaWhere,
+      ...portfolioWhere,
       status: JobOccurrenceStatus.STREAM_PAUSED,
       streamResumeReminderAt: { not: null, lte: new Date() },
     },

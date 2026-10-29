@@ -60,13 +60,13 @@ function attachImpersonateHeader(h: Headers) {
         // Malformed JSON — ignore.
       }
     }
-    // The AREA LENS — "show me only Durham". Carries an Area id. Orthogonal
+    // The PORTFOLIO LENS — "show me only Durham". Carries an Portfolio id. Orthogonal
     // to both headers above and freely combined with them: the server
-    // intersects it with the areas this caller is granted, so a forged value
+    // intersects it with the portfolios this caller is granted, so a forged value
     // shows them LESS, never more. Unlike those two it narrows WHERE rather
     // than WHAT MAY BE DONE, and it can never produce a 403.
     const lens = localStorage.getItem(AREA_LENS_STORAGE_KEY);
-    if (lens) h.set("X-Area-Lens", lens);
+    if (lens) h.set("X-Portfolio-Lens", lens);
   } catch {
     // localStorage can throw in private mode / disabled storage; just skip.
   }

@@ -64,7 +64,7 @@ export default function MileageStrip({
   /** When true, MileageStrip renders without its own outer border/bg
    *  and instead attaches to whatever card contains it — used on
    *  HomeTab to combine visually with WorkdayStrip so the two sections
-   *  read as one grouped area. Only a top divider separates them.
+   *  read as one grouped portfolio. Only a top divider separates them.
    *
    *  Collapse behavior in embedded mode is handled by the CONTAINING
    *  WorkdayCard: it wraps mileageSlot in a display:none Box on the

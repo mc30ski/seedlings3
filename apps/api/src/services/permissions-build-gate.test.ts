@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 /**
- * G1–G26 — the permissions / roles / areas design, enforced.
+ * G1–G26 — the permissions / roles / portfolios design, enforced.
  *
  * Spec: docs/features/permissions.md · Checklist: permissions-BUILD.md
  *
@@ -189,7 +189,7 @@ describe("[G8, G19-G23] structural invariants", () => {
     expect(
       schema(),
       "`UserRole` is gone too. A grant is a UserCustomRole row, which can be " +
-        "suspended, audited and scoped to an area — none of which an enum " +
+        "suspended, audited and scoped to a portfolio — none of which an enum " +
         "row could be.",
     ).not.toMatch(/model UserRole \{/);
   });
@@ -202,26 +202,26 @@ describe("[G8, G19-G23] structural invariants", () => {
     ).toBe(false);
   });
 
-  it.skipIf(!/model Area\b/.test(schema()))("G21 — Area.path is built from ids, not names", () => {
+  it.skipIf(!/model Portfolio\b/.test(schema()))("G21 — Portfolio.path is built from ids, not names", () => {
     // The first version of this matched /path\s*[:=].*slug/ across the whole
     // API and fired on `path: ["slug"]` in vanityPages.ts — a Zod error path
-    // for a vanity slug, nothing to do with areas. A gate that cries wolf on
+    // for a vanity slug, nothing to do with portfolios. A gate that cries wolf on
     // unrelated code gets its regex deleted rather than its subject fixed, so
-    // this one only looks at lines that are actually about an area path.
+    // this one only looks at lines that are actually about a portfolio path.
     const offenders: string[] = [];
     for (const file of apiFiles()) {
       const rel = path.relative(API, file);
       for (const [i, line] of read(file).split("\n").entries()) {
-        // Only lines that assign a path AND mention an area.
+        // Only lines that assign a path AND mention a portfolio.
         //
         // `[A-Za-z]*[Pp]ath`, not `\bpath\b`: the word-boundary version
-        // missed `const areaPath = parent.path + slugify(area.name)`
-        // entirely, because there is no boundary inside "areaPath" — and
+        // missed `const portfolioPath = parent.path + slugify(portfolio.name)`
+        // entirely, because there is no boundary inside "portfolioPath" — and
         // that is exactly the variable name somebody writes when building
         // one. Found 2026-10-26 while checking the rule still fired after
         // a carve-out was added below.
         if (!/(?:^|[^A-Za-z])[A-Za-z]*[Pp]ath\s*[:=][^=]/.test(line)) continue;
-        if (!/area/i.test(line)) continue;
+        if (!/portfolio/i.test(line)) continue;
         // `path: true` is a Prisma FIELD SELECTION, never a construction.
         // The first version of this read the whole line, so it fired on a
         // `select` listing both `name` and `path`, and on audit metadata
@@ -243,8 +243,8 @@ describe("[G8, G19-G23] structural invariants", () => {
     }
     expect(
       offenders,
-      "An area path built from names breaks on rename, and names are neither " +
-        "unique nor stable — two areas may both be called Raleigh. Build it " +
+      "A portfolio path built from names breaks on rename, and names are neither " +
+        "unique nor stable — two portfolios may both be called Raleigh. Build it " +
         "from ids.",
     ).toEqual([]);
   });
@@ -271,28 +271,28 @@ describe("[G8, G19-G23] structural invariants", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-describe("[G12, G14, G17, G22, G26] area invariants", () => {
-  const hasAreas = () => /model Area\b/.test(schema());
+describe("[G12, G14, G17, G22, G26] portfolio invariants", () => {
+  const hasAreas = () => /model Portfolio\b/.test(schema());
 
-  it.skipIf(!hasAreas())("G12/G22 — areaId is never written on a completed occurrence", () => {
+  it.skipIf(!hasAreas())("G12/G22 — portfolioId is never written on a completed occurrence", () => {
     const svc = read(path.join(API, "services", "jobs.ts"));
-    expect(svc).not.toMatch(/status:\s*JobOccurrenceStatus\.(COMPLETED|CLOSED)[\s\S]{0,200}areaId:/);
+    expect(svc).not.toMatch(/status:\s*JobOccurrenceStatus\.(COMPLETED|CLOSED)[\s\S]{0,200}portfolioId:/);
   });
 
-  it.skipIf(!hasAreas())("G14 — nothing reparents an area", () => {
+  it.skipIf(!hasAreas())("G14 — nothing reparents a portfolio", () => {
     const svc = apiFiles().map(read).join("\n");
     expect(
       svc,
-      "Areas are copy-and-retired, never moved — moving one restates its " +
+      "Portfolios are copy-and-retired, never moved — moving one restates its " +
         "parent's history.",
       // `parentId: true` inside a `select` is a field selection, not a move.
-      // The original pattern was `area.update([^)]*parentId`, and `[^)]*`
+      // The original pattern was `portfolio.update([^)]*parentId`, and `[^)]*`
       // happily spanned the whole call into a `select` block — so a perfectly
       // safe rename that merely READ parentId back tripped it.
-    ).not.toMatch(/area\.update\([\s\S]*?data:\s*\{[^}]*parentId/);
+    ).not.toMatch(/portfolio\.update\([\s\S]*?data:\s*\{[^}]*parentId/);
   });
 
-  it.skipIf(!hasAreas())("G17 — there is no informational 'home area' to mistake for a grant", () => {
+  it.skipIf(!hasAreas())("G17 — there is no informational 'home portfolio' to mistake for a grant", () => {
     // WHAT THIS USED TO SAY, AND WHY IT CHANGED.
     //
     // `AreaMembership` was "this person usually works here" — informational,
@@ -306,21 +306,21 @@ describe("[G12, G14, G17, G22, G26] area invariants", () => {
     // dropped on 2026-10-28 (`drop_dead_area_membership`).
     //
     // The rule is now stronger and cheaper to keep: the concept must not
-    // come back. A second area relation on User whose name says "where they
+    // come back. A second portfolio relation on User whose name says "where they
     // are" is exactly the shape that invites a permission check — the next
-    // person sees two area tables and reasonably assumes both are consulted.
-    // There is ONE area relation that means anything, `AreaAssignment`, and
+    // person sees two portfolio tables and reasonably assumes both are consulted.
+    // There is ONE portfolio relation that means anything, `PortfolioAssignment`, and
     // it grants. If you need somewhere to record a home base, that is
     // `User.homeBaseAddress`, which no authorization path reads either.
     expect(
       schema(),
       "AreaMembership was dead and was dropped. Do not reintroduce an " +
-        "informational area relation — AreaAssignment is the only one, and " +
+        "informational portfolio relation — PortfolioAssignment is the only one, and " +
         "it grants. A home base goes on User.homeBaseAddress.",
     ).not.toMatch(/AreaMembership/);
 
     const perm = hasPerm() ? read(PERM) : "";
-    expect(perm, "no permission check may consult a home area").not.toMatch(
+    expect(perm, "no permission check may consult a home portfolio").not.toMatch(
       /AreaMembership|areaMembership/,
     );
   });
@@ -545,37 +545,37 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
 
     // ── THE FIFTH ENTRY POINT, FOUND 2026-10-13 ─────────────────────────
     //
-    // `areas.assign` is a role grant too. `currentUser` loads
-    // `areaAssignments` into the principal exactly as it loads `customRoles`,
-    // so an area assignment confers real capabilities — but it lives in a
+    // `portfolios.assign` is a role grant too. `currentUser` loads
+    // `portfolioAssignments` into the principal exactly as it loads `customRoles`,
+    // so a portfolio assignment confers real capabilities — but it lives in a
     // different FILE, so the loop above never looked at it, and it shipped
-    // with no grant check at all. A holder of `areas.manage` could assign a
-    // role holding every entitlement to anybody inside an area.
+    // with no grant check at all. A holder of `portfolios.manage` could assign a
+    // role holding every entitlement to anybody inside a portfolio.
     //
-    // It was unreachable only because `areas.manage` happened to sit in one
+    // It was unreachable only because `portfolios.manage` happened to sit in one
     // starter role. That is a seed fact, not a check. This assertion is here
     // because the gate was scoped to a file rather than to the BEHAVIOUR.
-    const areasSvc = read(path.join(API, "services", "areas.ts"));
+    const areasSvc = read(path.join(API, "services", "portfolios.ts"));
     const assignAt = areasSvc.indexOf("async assign(");
-    expect(assignAt, "areas.assign not found — renamed?").toBeGreaterThan(-1);
+    expect(assignAt, "portfolios.assign not found — renamed?").toBeGreaterThan(-1);
     const assignBody = areasSvc.slice(
       assignAt,
       areasSvc.indexOf("\n  async ", assignAt + 1),
     );
     expect(
       assignBody,
-      "areas.assign grants a role within an area, so it must call " +
+      "portfolios.assign grants a role within a portfolio, so it must call " +
         "assertMayGrant — the same check customRoles.assign applies.",
     ).toMatch(/assertMayGrant\(/);
     expect(
       assignBody,
-      "areas.assign must take the actor's set as a PARAMETER, for the same " +
+      "portfolios.assign must take the actor's set as a PARAMETER, for the same " +
         "reason every other grant path does: resolving it inside would " +
         "ignore an active perspective.",
     ).toMatch(/actorCapabilities/);
     expect(
       assignBody,
-      "areas.assign must flatten the role before checking it — granting a " +
+      "portfolios.assign must flatten the role before checking it — granting a " +
         "role grants its whole parent chain, which is where the powerful " +
         "entitlements live.",
     ).toMatch(/flattenRole\(/);
@@ -606,32 +606,32 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
   // THROUGH those tables — making the recovery path the thing that needs
   // recovering. Initial assignment is the starter script run against the
   // database, which cannot be locked out because it does not go through can().
-  it("the two capability resolvers agree about area grants", () => {
+  it("the two capability resolvers agree about portfolio grants", () => {
     // TWO FUNCTIONS ANSWER "WHAT MAY THIS PERSON DO", AND THEY DIVERGED.
     //
     // `currentUser.me` builds `req.principal`, which the route guards use.
     // `users.me` builds the `/api/me` payload, which every tab, button and
     // menu in the web app gates on. Both must count company-wide roles AND
-    // area assignments.
+    // portfolio assignments.
     //
     // `users.me` counted only `customRoles`. So somebody whose only access
-    // is an AreaAssignment — the entire point of the area feature — was
+    // is an PortfolioAssignment — the entire point of the portfolio feature — was
     // authorized correctly by the server and shown the no-access notice by
-    // the browser. Area scoping was unusable in the UI from the day it
+    // the browser. Portfolio scoping was unusable in the UI from the day it
     // shipped, and no test caught it because every server-side check went
     // through the principal.
     //
     // Asserting the SHAPE rather than the behaviour, because the behaviour
-    // needs a Clerk token. Each file must load `areaAssignments` and fold
+    // needs a Clerk token. Each file must load `portfolioAssignments` and fold
     // them into the ids it resolves entitlements from.
     const users = readFileSync(path.join(API, "services/users.ts"), "utf8");
     const current = readFileSync(path.join(API, "services/currentUser.ts"), "utf8");
 
     for (const [label, body] of [["users.ts", users], ["currentUser.ts", current]] as const) {
-      expect(body, `${label} must load areaAssignments with the user`)
-        .toMatch(/areaAssignments:\s*\{/);
-      expect(body, `${label} must read customRoleId off the area assignments`)
-        .toMatch(/areaAssignments\s*\?\?\s*\[\]\)[\s\S]{0,120}customRoleId/);
+      expect(body, `${label} must load portfolioAssignments with the user`)
+        .toMatch(/portfolioAssignments:\s*\{/);
+      expect(body, `${label} must read customRoleId off the portfolio assignments`)
+        .toMatch(/portfolioAssignments\s*\?\?\s*\[\]\)[\s\S]{0,120}customRoleId/);
     }
 
     // And specifically: the id list `users.me` resolves capabilities from
@@ -639,22 +639,22 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     const at = users.indexOf("const heldRoleIds");
     expect(at, "users.me must still build heldRoleIds").toBeGreaterThan(-1);
     const decl = users.slice(at, users.indexOf(";", users.indexOf("]", at)));
-    expect(decl, "heldRoleIds must include area assignments, not just customRoles")
-      .toMatch(/areaAssignments/);
+    expect(decl, "heldRoleIds must include portfolio assignments, not just customRoles")
+      .toMatch(/portfolioAssignments/);
   });
 
-  it("G10 — every area-scopable list read applies areaScope() or is annotated", () => {
+  it("G10 — every portfolio-scopable list read applies portfolioScope() or is annotated", () => {
     // SCOPE OF THIS GATE, deliberately narrow in two ways.
     //
-    // 1. LIST READS ONLY. 261 routes sit behind the area-scopable
+    // 1. LIST READS ONLY. 261 routes sit behind the portfolio-scopable
     //    entitlements, but only 107 are GETs — which is what the design's
-    //    "~101 scopable routes" actually counts. Area scoping is a `where`
+    //    "~101 scopable routes" actually counts. Portfolio scoping is a `where`
     //    filter on a list; a mutation on one record by id is ownership-checked
-    //    on THAT record instead. Demanding areaScope() on 154 mutations would
+    //    on THAT record instead. Demanding portfolioScope() on 154 mutations would
     //    force meaningless annotations and teach people to ignore the gate.
     //
     // 2. books.* AND payroll.* ARE EXCLUDED, pending a decision. They sit in
-    //    the Money group headed "(area-scopable)", while resolved question C
+    //    the Money group headed "(portfolio-scopable)", while resolved question C
     //    says "books.* is global-only, so no company P&L unless explicitly
     //    granted". Both cannot be true. Scoping the P&L by territory would
     //    show a manager a slice of the books as though it were the whole
@@ -669,7 +669,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
       // Added 2026-10-14: a district lead's operations numbers are their
       // district's. `books.*`, `payroll.*` and `audit.view` were considered
       // at the same time and are deliberately NOT here — see the
-      // GLOBAL_BY_DESIGN note in scripts/_area-scope-probe.ts.
+      // GLOBAL_BY_DESIGN note in scripts/_portfolio-scope-probe.ts.
       "reports.view",
       "schedule.contribute", "schedule.view",
       "time.approve",
@@ -685,9 +685,9 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     //   • `people.view`     — a person is not IN a territory. The design says
     //                         it outright ("the tree models AREAS, not
     //                         people"); oversight comes from containment, and
-    //                         `AreaAssignment` is a grant, not a home.
+    //                         `PortfolioAssignment` is a grant, not a home.
     //   • `crews.view`      — a crew is a set of PEOPLE, not a place. It has
-    //                         no `areaId` and placing one would mean picking
+    //                         no `portfolioId` and placing one would mean picking
     //                         a territory for a van that works three.
     //   • `pricing.view`    — a catalogue. One price list, one business.
     //   • `schedule.manage` — its only scopable GET is `/pause-reasons`, a
@@ -695,7 +695,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     //                         vocabulary by territory is nonsense.
     // 2026-10-18 — timesheets and driving are a PERSON and a DAY, not a
     // place, so neither `WorkerWorkday` nor `MileageEntry` carries an
-    // `areaId` and neither sensibly could: a Tuesday spent on two Durham
+    // `portfolioId` and neither sensibly could: a Tuesday spent on two Durham
     // lawns and one in Chapel Hill belongs to no single district.
     //   • `time.view`   — the sibling `time.manage`, which APPROVES those
     //                     rows, was already global. Scoping what somebody
@@ -705,7 +705,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     //                     rollup over the same MileageEntry rows.
     //
     // NOT the same thing as per-visit hours. `time.approve` covers
-    // `JobOccurrence.hoursApprovedAt` — a visit, which DOES carry an area —
+    // `JobOccurrence.hoursApprovedAt` — a visit, which DOES carry a portfolio —
     // and stays territorial. Two surfaces, both called "hours"; only one of
     // them happens in a place.
     //
@@ -728,10 +728,10 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     // joins. ADD A GROUP HERE AS YOU THREAD IT — the gate then enforces it
     // forever.
     // THREADED SO FAR. Each entry here makes G10 binding for that
-    // capability — a route guarded by it must carry an area filter or an
-    // explicit allow. Grown 2026-10-14 from one to eight after the area
-    // probe (`scripts/_area-scope-probe.ts`) showed ten reads returning
-    // another district's rows; `npm run areas:check` is the output test that
+    // capability — a route guarded by it must carry a portfolio filter or an
+    // explicit allow. Grown 2026-10-14 from one to eight after the portfolio
+    // probe (`scripts/_portfolio-scope-probe.ts`) showed ten reads returning
+    // another district's rows; `npm run portfolios:check` is the output test that
     // proves each one actually narrows instead of merely mentioning the
     // helper.
     const THREADED = [
@@ -754,8 +754,8 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
      * different answer rather than a blanket filter:
      *
      *   - already caller-scoped (`/occurrences/mine`, `/pinned`, `/liked`,
-     *     `/reminders`) — area adds nothing to "my own rows"; these want an
-     *     `area-scope-allow` note, not a filter.
+     *     `/reminders`) — portfolio adds nothing to "my own rows"; these want an
+     *     `portfolio-scope-allow` note, not a filter.
      *   - counts that must agree with a list that IS filtered
      *     (`/…/unapproved-hours-count`, `/change-requests/pending-count`) —
      *     a count that disagrees with its list is worse than either.
@@ -796,13 +796,13 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     expect(scopableGets.size, "the threaded groups must yield GET routes").toBeGreaterThan(0);
 
     // The threading has not started yet, so this gate is informational until
-    // areaScope appears in the routes. Once it does, it becomes binding and
+    // portfolioScope appears in the routes. Once it does, it becomes binding and
     // every remaining route must be annotated.
     const routeSrc = walk(path.join(API, "routes"), /\.ts$/)
       .filter((f) => !f.endsWith(".test.ts"))
       .map(read)
       .join("\n");
-    if (!/areaScope|areaWhere/.test(routeSrc)) return;
+    if (!/portfolioScope|portfolioWhere/.test(routeSrc)) return;
 
     const norm = (x: string) => x.replace(/:[A-Za-z_][A-Za-z0-9_]*/g, ":x");
     const missing: string[] = [];
@@ -830,7 +830,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
         if (!scopableGets.has(norm(d[2]))) continue;
         const body = src.slice(start, end);
         const m = [d[0], d[2]] as unknown as RegExpMatchArray;
-        if (/areaWhere|areaWhereVia|areaWhereOn|area-scope-allow:/.test(body)) continue;
+        if (/portfolioWhere|portfolioWhereVia|areaWhereOn|portfolio-scope-allow:/.test(body)) continue;
 
         if (PENDING_AREA_THREADING.has(`${rel}: GET ${m[1]}`)) { pendingSeenArea.add(`${rel}: GET ${m[1]}`); continue; }
         missing.push(`${rel}: GET ${m[1]}`);
@@ -838,7 +838,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     }
     expect(
       [...PENDING_AREA_THREADING].filter((r) => !pendingSeenArea.has(r)).sort(),
-      "These routes are on the area-threading backlog but no longer match a " +
+      "These routes are on the portfolio-threading backlog but no longer match a " +
         "route guarded by a threaded capability — the work landed, or the " +
         "route moved. Delete them from PENDING_AREA_THREADING.",
     ).toEqual([]);
@@ -846,7 +846,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     expect(
       missing,
       "These list reads can return another territory's rows. Apply " +
-        "areaWhere() or carry `// area-scope-allow: <reason>`. G10 catches a " +
+        "portfolioWhere() or carry `// portfolio-scope-allow: <reason>`. G10 catches a " +
         "MISSING filter; only the output test (G25) catches a WRONG one.",
     ).toEqual([]);
 
@@ -874,31 +874,31 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
       "groups still to thread — this number should fall to 0, never rise",
     ).toBeLessThanOrEqual(6);
   });
-  it("G13 — a retired area refuses new work and stays visible in reporting", () => {
-    // RETIRED IS NOT DELETED. An area is retired, never deleted, because
+  it("G13 — a retired portfolio refuses new work and stays visible in reporting", () => {
+    // RETIRED IS NOT DELETED. A portfolio is retired, never deleted, because
     // money and history are tagged to it: dropping it would restate last
     // year's numbers. So retirement has to mean exactly two things, and the
     // two pull in opposite directions —
     //
-    //   1. NOTHING NEW LANDS THERE. Every method that takes an area as a
-    //      DESTINATION must refuse a retired one. Miss one and the area
+    //   1. NOTHING NEW LANDS THERE. Every method that takes a portfolio as a
+    //      DESTINATION must refuse a retired one. Miss one and the portfolio
     //      quietly comes back to life, which is worse than never having
     //      retired it: the operator believes it is closed.
     //   2. IT STAYS IN REPORTING. The read paths must NOT filter retired
-    //      rows out, or retiring an area silently rewrites history — the
+    //      rows out, or retiring a portfolio silently rewrites history — the
     //      exact outcome retirement-instead-of-deletion exists to prevent.
     //
     // Those are easy to hold today and easy to break with one more write
     // path, which is why this is a gate rather than a convention.
-    const svc = read(path.join(API, "services", "areas.ts"));
-    expect(svc, "services/areas.ts must exist").not.toBe("");
+    const svc = read(path.join(API, "services", "portfolios.ts"));
+    expect(svc, "services/portfolios.ts must exist").not.toBe("");
 
-    // ── 1. Destination-taking writes refuse a retired area ──────────────
+    // ── 1. Destination-taking writes refuse a retired portfolio ──────────────
     //
     // `rename` and `revoke` are deliberately absent: renaming a retired
-    // area is legitimate (fixing a typo on a closed region), and `revoke`
-    // takes an assignmentId, not an area.
-    const DESTINATION_WRITES = ["create", "assign", "retagProperty", "retagOccurrence"];
+    // portfolio is legitimate (fixing a typo on a closed region), and `revoke`
+    // takes an assignmentId, not a portfolio.
+    const DESTINATION_WRITES = ["create", "assign", "setPropertyPortfolios"];
     const missing: string[] = [];
     for (const fn of DESTINATION_WRITES) {
       const at = svc.indexOf(`async ${fn}(`);
@@ -916,26 +916,26 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     }
     expect(
       missing,
-      "These methods accept an area as a DESTINATION and must refuse a " +
-        "retired one. A retired area that still accepts new work is not " +
+      "These methods accept a portfolio as a DESTINATION and must refuse a " +
+        "retired one. A retired portfolio that still accepts new work is not " +
         "retired, and the operator who closed it has no way to tell.",
     ).toEqual([]);
 
     // ── 2. Reads keep retired rows, and say which they are ──────────────
     for (const fn of ["list", "assignments"]) {
       const at = svc.indexOf(`async ${fn}(`);
-      expect(at, `areas.${fn} not found — renamed?`).toBeGreaterThan(-1);
+      expect(at, `portfolios.${fn} not found — renamed?`).toBeGreaterThan(-1);
       const next = svc.indexOf("\n  async ", at + 1);
       const body = svc.slice(at, next === -1 ? svc.length : next);
       expect(
         body,
-        `areas.${fn} must SELECT retiredAt, so a caller can tell a retired ` +
-          `area from a live one. Without it a picker cannot filter and a ` +
+        `portfolios.${fn} must SELECT retiredAt, so a caller can tell a retired ` +
+          `portfolio from a live one. Without it a picker cannot filter and a ` +
           `report cannot label.`,
       ).toMatch(/retiredAt:\s*true/);
       expect(
         body,
-        `areas.${fn} must NOT filter retired rows out — retirement must not ` +
+        `portfolios.${fn} must NOT filter retired rows out — retirement must not ` +
           `rewrite history. Filtering belongs in the PICKER, not the read.`,
       ).not.toMatch(/where:[\s\S]{0,200}retiredAt:\s*null/);
     }
@@ -947,34 +947,38 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     // quietly green, which is how `it.todo("G15")` outlived its own
     // implementation. Assert the subject is present.
     for (const fn of [...DESTINATION_WRITES, "list", "assignments", "setRetired"]) {
-      expect(svc, `areas.${fn} must exist for G13 to be about anything`)
+      expect(svc, `portfolios.${fn} must exist for G13 to be about anything`)
         .toContain(`async ${fn}(`);
     }
     // And that retirement is reachable at all.
     expect(
       read(path.join(API, "routes", "permissions.ts")),
       "the retire/unretire routes must exist",
-    ).toMatch(/"\/areas\/:id\/retire"/);
+    ).toMatch(/"\/portfolios\/:id\/retire"/);
   });
   // G15 is BUILT — it lives in its own file, `ui-capability-build-gate.test.ts`,
   // because it scans the web tree rather than this one. This `it.todo`
   // outlived the implementation and made three memory files report G15 as
   // unbuilt. A todo for something that exists is worse than no todo.
-  it("G16 — retagging a visit checks schedule.manage in BOTH areas", () => {
+  it("G16 — retagging a visit checks schedule.manage in BOTH portfolios", () => {
     // A SINGLE-SIDED CHECK IS THE WHOLE PROBLEM. Check only the
     // destination and a manager can pull revenue onto their own books from a
     // territory they have no part in; check only the source and they can
     // push a loss off themselves. Needing both means a move only ever happens
     // between two places the same person is answerable for.
-    const svc = read(path.join(API, "services", "areas.ts"));
-    const at = svc.indexOf("async retagOccurrence(");
-    expect(at, "areas.retagOccurrence not found — renamed?").toBeGreaterThan(-1);
+    const svc = read(path.join(API, "services", "portfolios.ts"));
+    // MOVED, NOT DROPPED. `retagOccurrence` is gone — an open visit
+    // follows its property now, so a per-visit override would be erased by
+    // the next resync — but the escalation it guarded is identical one
+    // level up, so the check lives on the call that moves work.
+    const at = svc.indexOf("async setPropertyPortfolios(");
+    expect(at, "portfolios.setPropertyPortfolios not found — renamed?").toBeGreaterThan(-1);
     const body = svc.slice(at, svc.indexOf("\n  /**", at + 1));
 
-    const checks = [...body.matchAll(/can\(\s*principal\s*,\s*"schedule\.manage"\s*,\s*\{\s*areaPath:\s*([^}]+)\}/g)];
+    const checks = [...body.matchAll(/can\(\s*principal\s*,\s*"schedule\.manage"\s*,\s*\{\s*portfolioPath:\s*([^}]+)\}/g)];
     expect(
       checks.length,
-      "both the source and the destination area must be checked — one call is " +
+      "both the source and the destination portfolio must be checked — one call is " +
         "a single-sided check",
     ).toBe(2);
     // And they must be DIFFERENT paths: two checks against the destination
@@ -983,7 +987,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     expect(
       new Set(paths).size,
       `both checks use the same path (${paths.join(" and ")}) — one must be the ` +
-        `source area and the other the destination`,
+        `source portfolio and the other the destination`,
     ).toBe(2);
 
     // The PRINCIPAL is passed in, never looked up — a fresh read would
@@ -996,12 +1000,33 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
       "it must not resolve the caller itself",
     ).not.toMatch(/capabilitiesForUsers\(|userCan\(/);
 
-    // G22 still holds: a finished visit's area is frozen.
+    // G22 STILL HOLDS, one call away.
+    //
+    // The freeze used to be an inline `if (occ.completedAt) throw` in
+    // `retagOccurrence`, because that method moved one visit. Membership
+    // now changes at the PROPERTY, and the fan-out to its visits runs
+    // through `resyncPortfoliosForProperty`, so that is where the rule has
+    // to be — both in the query that selects only open visits and in
+    // `syncOccurrencePortfolios`, which refuses a frozen one even if a
+    // caller hands it the id directly. Asserting it there rather than here
+    // keeps the gate pointed at the code that enforces it.
     expect(
       body,
-      "a completed visit's area is the territory the work happened in — moving " +
-        "it restates what every past rollup reports",
-    ).toMatch(/completedAt/);
+      "the fan-out to a property's visits must go through the helper that " +
+        "knows about completion, not write occurrence rows itself",
+    ).toMatch(/resyncPortfoliosForProperty\(/);
+
+    const occLib = read(path.join(API, "lib", "occurrencePortfolio.ts"));
+    expect(occLib, "lib/occurrencePortfolio.ts must exist for G22 to be about anything").not.toBe("");
+    expect(
+      occLib,
+      "a completed visit's portfolios are what the work counted toward — changing " +
+        "them restates what every past rollup reports",
+    ).toMatch(/if \(!occ \|\| occ\.completedAt\) return;/);
+    expect(
+      occLib,
+      "the resync must select only open visits rather than filtering after the read",
+    ).toMatch(/completedAt: null/);
   });
   it("G18 — no money or payroll route resolves to schedule.manage", () => {
     // Write-off, mark-paid, split recalculation and hours approval all
@@ -1091,15 +1116,15 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     ).toEqual([]);
   });
 
-  it("G26 — every occurrence creation decides its area, or says why not", () => {
-    // THE HOLE THIS CLOSED: `areaId` was written by nothing. The backfill
-    // migration placed every existing row in the root area and then the
+  it("G26 — every occurrence creation decides its portfolio, or says why not", () => {
+    // THE HOLE THIS CLOSED: `portfolioId` was written by nothing. The backfill
+    // migration placed every existing row in the root portfolio and then the
     // column was never touched again — so every visit created after it
-    // belonged to no area, and every territorial rollup would have returned
+    // belonged to no portfolio, and every territorial rollup would have returned
     // a number that quietly shrank over time.
     //
     // There are THIRTEEN creation sites. Four make a real visit and call
-    // `resolveOccurrenceArea`; the rest make tasks, reminders, events,
+    // `syncOccurrencePortfolios`; the rest make tasks, reminders, events,
     // announcements and light estimates, which happen at no property and so
     // belong to no territory. That distinction is worth stating per site
     // rather than inferring, which is what the annotation is for — the same
@@ -1112,20 +1137,27 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
       const lines = read(file).split("\n");
       lines.forEach((line, i) => {
         if (!/jobOccurrence\.create\(/.test(line)) return;
-        // The area decision, or the annotation, within the 8 lines around it.
-        const window = lines.slice(Math.max(0, i - 8), i + 10).join("\n");
-        if (/resolveOccurrenceArea\(/.test(window)) return;
-        if (/areaId:/.test(window)) return;
-        if (/occurrence-area-allow:/.test(window)) return;
+        // The portfolio decision, or the annotation, near the create.
+        //
+        // The forward reach is deliberately long. The old resolver ran
+        // BEFORE the create and handed it an id, so the decision sat a few
+        // lines above. The sync runs AFTER — it needs the new row's id —
+        // and a `jobOccurrence.create` data block is thirty-odd lines, so
+        // a window that only looked ten lines ahead would miss every one
+        // of them and report four false offenders.
+        const window = lines.slice(Math.max(0, i - 8), i + 45).join("\n");
+        if (/syncOccurrencePortfolios\(/.test(window)) return;
+        if (/portfolioId:/.test(window)) return;
+        if (/occurrence-portfolio-allow:/.test(window)) return;
         offenders.push(`${rel}:${i + 1}`);
       });
     }
     expect(
       offenders,
-      "A new occurrence must resolve its area through resolveOccurrenceArea " +
-        "— previous occurrence, then the job default, then the property — or " +
-        "carry `// occurrence-area-allow: <reason>` when it is not work at a " +
-        "property. A visit with no area appears in NO rollup.",
+      "A new occurrence must set its portfolios through syncOccurrencePortfolios, " +
+        "which copies the property's current memberships — or carry " +
+        "`// occurrence-portfolio-allow: <reason>` when it is not work at a " +
+        "property. A visit in no portfolio appears in NO rollup.",
     ).toEqual([]);
   });
 
@@ -1205,10 +1237,10 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
   it("G8 — no conditional branches on a role, tier or title NAME", () => {
     // Names are labels from a taxonomy the operator edits. Branching on one
     // turns a label into behaviour, so renaming "District" silently changes
-    // what the code does — and that is precisely what areas-as-assignment and
+    // what the code does — and that is precisely what portfolios-as-assignment and
     // roles-as-capabilities exist to prevent.
     const offenders: string[] = [];
-    // A ROLE NAME, an area TIER or a manager TITLE. Deliberately NOT the
+    // A ROLE NAME, a portfolio TIER or a manager TITLE. Deliberately NOT the
     // assignee `role` field, which is a different concept entirely —
     // claimer / observer / helper / primary describe a person's part in one
     // visit, carry no permissions, and comparing them is correct. The first
@@ -1216,7 +1248,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     const ASSIGNEE_VOCAB = /"(?:observer|helper|primary|claimer)"/;
     // `typeof x.title === "string"` is a TYPE GUARD, not a branch on a name,
     // and a bare `title` matches guide titles and request payloads. The
-    // subject here is specific: a ROLE's name, an AREA's tier, or a MANAGER
+    // subject here is specific: a ROLE's name, an PORTFOLIO's tier, or a MANAGER
     // TITLE from the MANAGER_TITLES taxonomy.
     const NAME_COMPARE =
       /\b(?:roleName|customRole\.name|role\.name|\.tier|tierName|managerTitle)\s*(?:===|!==)\s*["'`]/;
@@ -1237,11 +1269,11 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     ).toEqual([]);
   });
 
-  it("G11 — field capability is never narrowed by area", () => {
+  it("G11 — field capability is never narrowed by portfolio", () => {
     // Promotion must not shrink where somebody can work: a person looking
     // after one district still covers a visit in the next one when a
     // crewmate calls out. Both halves must hold — the set must exist, and
-    // areaScope must honour it rather than restating it.
+    // portfolioScope must honour it rather than restating it.
     const perm = read(PERM);
     expect(perm, "NEVER_AREA_SCOPED must exist and be exported").toMatch(
       /export const NEVER_AREA_SCOPED/,
@@ -1251,10 +1283,10 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
         new RegExp(`NEVER_AREA_SCOPED[\\s\\S]{0,300}"${cap.replace(".", "\\.")}"`),
       );
     }
-    const scope = read(path.join(API, "lib", "areaScope.ts"));
+    const scope = read(path.join(API, "lib", "portfolioScope.ts"));
     expect(
       scope,
-      "areaScope must honour NEVER_AREA_SCOPED rather than keep a second copy " +
+      "portfolioScope must honour NEVER_AREA_SCOPED rather than keep a second copy " +
         "— a capability added to one list and not the other reads as a data bug",
     ).toMatch(/NEVER_AREA_SCOPED\.has\(/);
   });
@@ -1353,7 +1385,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
   it("G25 — a route narrows by the capability it is GUARDED on", () => {
     // G10 CATCHES A MISSING FILTER. THIS CATCHES A WRONG ONE.
     //
-    // `areaWhere(principal, cap)` answers "which territories may this person
+    // `portfolioWhere(principal, cap)` answers "which territories may this person
     // see THROUGH cap". Pass a capability the route is not guarded on and the
     // answer is about the wrong grant:
     //
@@ -1395,7 +1427,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
         const body = src.slice(d.index!, i + 1 < decls.length ? decls[i + 1].index! : src.length);
         const entitlement = guards.get(d[3]);
         for (const a of body.matchAll(
-          /area(?:Where|WhereVia|WhereOn)\s*\((?:[^()]|\([^()]*\))*?"([a-z.\-]+)"/g,
+          /portfolio(?:Where|WhereVia|WhereOn)\s*\((?:[^()]|\([^()]*\))*?"([a-z.\-]+)"/g,
         )) {
           const cap = a[1];
           const where = `${rel}: ${d[1].toUpperCase()} ${d[2]}`;
@@ -1412,7 +1444,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
 
     expect(
       wrong,
-      "An area filter must ask about the SAME capability the route is " +
+      "A portfolio filter must ask about the SAME capability the route is " +
         "guarded on. A wider one stops narrowing for a territory-limited " +
         "caller; a narrower one empties the list for someone entitled to it. " +
         "Both leave a filter in place, so G10 stays green.",
@@ -1421,11 +1453,11 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
     // ── Negative control ────────────────────────────────────────────────
     //
     // The loop above is regexes over files. If the route layer stopped
-    // calling areaWhere, or the declaration pattern changed shape, `calls`
+    // calling portfolioWhere, or the declaration pattern changed shape, `calls`
     // empties and this passes while checking nothing.
     expect(
       calls.length,
-      "G25 found no area filters at all. Either threading was removed, or " +
+      "G25 found no portfolio filters at all. Either threading was removed, or " +
         "the route-declaration pattern changed and this gate is now blind.",
     ).toBeGreaterThanOrEqual(15);
   });
@@ -1435,8 +1467,8 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
   // other territory's rows come back. G10 proves a filter is present, G25
   // that it asks the right question — neither executes a query.
   //
-  // It cannot be written yet: the seed creates areas but ZERO
-  // AreaAssignment rows, so no persona is territory-limited and there is
+  // It cannot be written yet: the seed creates portfolios but ZERO
+  // PortfolioAssignment rows, so no persona is territory-limited and there is
   // nothing to be excluded from. Logged in project_deferred_work.md.
   // G27/G28 guard the STAFF floor and the entitlement write boundary. Both
   // subjects are step-1 code that does not exist yet: nothing grants STAFF on
@@ -2212,8 +2244,8 @@ describe("[G37] no source reads a field the cord-cut deleted", () => {
   });
 });
 
-describe("[G47] the area lens", () => {
-  it("G47 — the area lens narrows visibility and never authorization", () => {
+describe("[G47] the portfolio lens", () => {
+  it("G47 — the portfolio lens narrows visibility and never authorization", () => {
     // A LENS MAY HIDE A ROW. IT MAY NEVER REFUSE AN ACTION.
     //
     // `principal.lensPath` is the viewer's own "show me only Durham". It is
@@ -2225,7 +2257,7 @@ describe("[G47] the area lens", () => {
     // as a permissions bug and gets "fixed" by widening a grant.
     //
     // The rule is mechanical: `lensPath` may be DECLARED in the permissions
-    // package and READ by areaScope (which builds query filters) and by the
+    // package and READ by portfolioScope (which builds query filters) and by the
     // plugin that resolves it. Nowhere else.
     const permsSrc = read(path.resolve(API, "../../../packages/permissions/permissions.ts"));
     expect(permsSrc, "the permissions package is missing").not.toBe("");
@@ -2238,8 +2270,8 @@ describe("[G47] the area lens", () => {
     expect(
       logic.includes("lensPath"),
       "can() (or something after it in @repo/permissions) reads `lensPath`. " +
-        "The area lens must never decide whether an action is allowed — only " +
-        "which rows a query returns. See lib/areaLens.ts.",
+        "The portfolio lens must never decide whether an action is allowed — only " +
+        "which rows a query returns. See lib/portfolioLens.ts.",
     ).toBe(false);
 
     // And on the API side, only the files that are allowed to.
@@ -2250,10 +2282,10 @@ describe("[G47] the area lens", () => {
     // coordinates to forecast: a wrong value there anchors the weather on an
     // unhelpful town, which is a bad forecast, not a locked door. A handler
     // that branched on `lensPath` to decide whether to ANSWER would not
-    // qualify, however convenient — route that through areaWhere().
+    // qualify, however convenient — route that through portfolioWhere().
     const allowed = new Set([
-      path.join(API, "lib/areaScope.ts"),
-      path.join(API, "lib/areaLens.ts"),
+      path.join(API, "lib/portfolioScope.ts"),
+      path.join(API, "lib/portfolioLens.ts"),
       path.join(API, "plugins/rbac.ts"),
       path.join(API, "routes/weather.ts"),
     ]);
@@ -2262,9 +2294,9 @@ describe("[G47] the area lens", () => {
     );
     expect(
       offenders.map((f) => path.relative(API, f)),
-      "`lensPath` is read outside areaScope/areaLens/rbac. A lens belongs in " +
+      "`lensPath` is read outside portfolioScope/portfolioLens/rbac. A lens belongs in " +
         "a query filter, not in a handler's decision — route it through " +
-        "areaWhere() so it cannot turn into a refusal.",
+        "portfolioWhere() so it cannot turn into a refusal.",
     ).toEqual([]);
   });
 });

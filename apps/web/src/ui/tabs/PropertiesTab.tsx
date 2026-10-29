@@ -45,6 +45,7 @@ import PropertyPhotosManager from "@/src/ui/components/PropertyPhotosManager";
 import { TextLink, MapLink } from "@/src/ui/helpers/Link";
 import type { Scope } from "@/src/lib/scope";
 import { isFieldCleared } from "../../lib/scope";
+import { PortfolioBadges } from "@/src/lib/portfolios";
 
 // Constant representing the kind states for this entity.
 const kindStates = ["ALL", ...PROPERTY_KIND] as const;
@@ -576,21 +577,16 @@ export default function PropertiesTab({
                     {/* THE TERRITORY, beside the address it qualifies —
                         the same badge the job cards carry, so the two read
                         as the same fact. Visible on the card, not only
-                        inside the editor: "which area is this in" is a
+                        inside the editor: "which portfolio is this in" is a
                         question you ask while scanning a list, and having
                         to open each property to answer it is how a
                         mis-tagged one goes unnoticed.
                         OUTSIDE the MapLink: that opens a map of the
-                        address, and an area name is not part of one.
-                        Absent when the property has no area — and that
+                        address, and a portfolio name is not part of one.
+                        Absent when the property has no portfolio — and that
                         absence is INFORMATION, because an untagged
-                        property is invisible to every area-scoped reader. */}
-                    {(p as any)?.area?.name && (
-                      <Badge size="sm" variant="subtle" colorPalette="purple" flexShrink={0} display="inline-flex" alignItems="center" gap="1">
-                        <MapPin size={10} />
-                        {(p as any).area.name}
-                      </Badge>
-                    )}
+                        property is invisible to every portfolio-scoped reader. */}
+                    <PortfolioBadges of={p} />
                   </HStack>
                   <HStack gap={4} fontSize="xs" wrap="wrap">
                     <Text>

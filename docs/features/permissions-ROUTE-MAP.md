@@ -7,7 +7,7 @@
 > keeps it honest. Two ad-hoc "reconcile" scripts destroyed it in the past by
 > rewriting rows they did not understand — edit it by hand, let G5 check you.
 
-645 distinct method+path pairs, 0 unmapped, 63 entitlements.
+644 distinct method+path pairs, 0 unmapped, 63 entitlements.
 
 Nine duplicated read routes were DELETED outright rather than renamed: an `admin`-prefixed and a `super`-prefixed path for `/documents` (and the same for `/timeline`) ran the same handler twice, differing only in `restrictedVisible` — and gated on the SAME entitlement, so the URL prefix was the only thing separating them. That let the CLIENT pick its own privilege level by choosing a URL. A path is not a check. Each pair is now one route on a neutral path (`/documents`, `/timeline`) that decides how much to return from a capability.
 
@@ -53,22 +53,22 @@ reschedule visits". Gated as **G18**.
 > **`expenses.charge` has NO enforcing route today.** Stored, displayed,
 > checked nowhere. Step 2 must add the check to business-expense creation.
 
-## areas.manage  (7)
+## portfolios.manage  (7)
 | | |
 |---|---|
-| `DELETE` | `/area-assignments/:x` |
-| `PATCH` | `/areas/:x` |
-| `PATCH` | `/properties/:x/area` |
-| `POST` | `/area-assignments` |
-| `POST` | `/areas/:x/retire` |
-| `POST` | `/areas/:x/unretire` |
-| `POST` | `/areas` |
+| `DELETE` | `/portfolio-assignments/:x` |
+| `PATCH` | `/portfolios/:x` |
+| `PUT` | `/properties/:x/portfolios` |
+| `POST` | `/portfolio-assignments` |
+| `POST` | `/portfolios/:x/retire` |
+| `POST` | `/portfolios/:x/unretire` |
+| `POST` | `/portfolios` |
 
-## areas.view  (2)
+## portfolios.view  (2)
 | | |
 |---|---|
-| `GET` | `/area-assignments` |
-| `GET` | `/areas` |
+| `GET` | `/portfolio-assignments` |
+| `GET` | `/portfolios` |
 
 ## audit.view  (4)
 | | |
@@ -641,7 +641,7 @@ reschedule visits". Gated as **G18**.
 | `POST` | `/occurrences/:x/photos/confirm` |
 | `POST` | `/occurrences/:x/photos/upload-url` |
 
-## schedule.manage  (40)
+## schedule.manage  (39)
 | | |
 |---|---|
 | `DELETE` | `/events/:x` |
@@ -652,7 +652,6 @@ reschedule visits". Gated as **G18**.
 | `PATCH` | `/events/:x` |
 | `PATCH` | `/jobs/:x/default-assignees/:x/role` |
 | `PATCH` | `/jobs/:x` |
-| `PATCH` | `/occurrences/:x/area` |
 | `PATCH` | `/occurrences/:x/price` |
 | `PATCH` | `/occurrences/:x/stream-pause` |
 | `PATCH` | `/occurrences/:x` |

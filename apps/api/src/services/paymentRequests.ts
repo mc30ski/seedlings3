@@ -1056,10 +1056,10 @@ export const paymentRequests = {
   async listOutstanding(opts?: {
     claimerUserId?: string;
     cutoff?: Date | null;
-    /** From `areaWhere(principal, "money.view")`. This queries
-     *  JobOccurrence directly, which carries areaId itself, so the
+    /** From `portfolioWhere(principal, "money.view")`. This queries
+     *  JobOccurrence directly, which carries portfolioId itself, so the
      *  fragment is top-level rather than nested. Empty = unchanged. */
-    areaWhere?: Record<string, unknown>;
+    portfolioWhere?: Record<string, unknown>;
   }) {
     const expiryHours = Number(
       (await getSetting("PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS")) ?? DEFAULT_EXPIRY_HOURS,
@@ -1073,7 +1073,7 @@ export const paymentRequests = {
     const cutoff = opts?.cutoff ?? null;
     const occs = await prisma.jobOccurrence.findMany({
       where: {
-        ...(opts?.areaWhere ?? {}),
+        ...(opts?.portfolioWhere ?? {}),
         status: "PENDING_PAYMENT",
         paymentRequestSentAt: cutoff
           ? { not: null, gte: cutoff }

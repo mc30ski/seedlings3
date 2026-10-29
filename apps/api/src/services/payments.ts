@@ -49,7 +49,7 @@ import {
   type TipDesignation,
 } from "../lib/payoutMath";
 import { isW2, isFeeable } from "@repo/money";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
+import { syncOccurrencePortfolios } from "../lib/occurrencePortfolio";
 // Valid payment-method keys are the keys of the active PAYMENT_METHODS
 // taxonomy — not a DB enum. A typo in the Settings JSON, or a method that
 // isn't configured, is rejected at every write site. `client` may be a
@@ -226,14 +226,9 @@ async function createNextOccurrenceFrom(
   source: NextOccurrenceSource,
   next: { startAt: Date; endAt: Date | null },
 ): Promise<any> {
-  const areaId = await resolveOccurrenceArea(tx, {
-    jobId: source.jobId!,
-    previousOccurrenceId: source.id ?? null,
-  });
   const created = await tx.jobOccurrence.create({
     data: {
       jobId: source.jobId!,
-      areaId,
       kind: source.kind,
       startAt: next.startAt,
       endAt: next.endAt,
@@ -254,6 +249,7 @@ async function createNextOccurrenceFrom(
       guidanceNote: source.guidanceNote ?? null,
     } as any,
   });
+  await syncOccurrencePortfolios(tx, created.id);
 
   // Roster: the job's default CREW wins; failing that its per-user default
   // assignees; failing both the visit is left unassigned for someone to
@@ -1124,16 +1120,16 @@ export const payments: ServicesPayments = {
     if (cutoff) {
       where.createdAt = { ...(where.createdAt ?? {}), gte: maxDate(where.createdAt?.gte, cutoff) };
     }
-    // Area scoping — threaded exactly like the cutoff above: resolved at the
-    // route, merged here. A Payment reaches its area through the occurrence,
+    // Portfolio scoping — threaded exactly like the cutoff above: resolved at the
+    // route, merged here. A Payment reaches its portfolio through the occurrence,
     // so the caller passes an `occurrence`-nested fragment.
     //
     // EMPTY MEANS UNCHANGED. Someone holding money.view globally gets {} and
     // this query is byte-identical to its pre-feature shape. Only an
-    // area-limited principal narrows it. See lib/areaScope.ts invariant 1.
-    const areaFilter = params?.areaWhere ?? {};
-    if (Object.keys(areaFilter).length > 0) {
-      Object.assign(where, areaFilter);
+    // portfolio-limited principal narrows it. See lib/portfolioScope.ts invariant 1.
+    const portfolioFilter = params?.portfolioWhere ?? {};
+    if (Object.keys(portfolioFilter).length > 0) {
+      Object.assign(where, portfolioFilter);
     }
 
     const payments = await prisma.payment.findMany({
@@ -2468,18 +2464,18 @@ export const payments: ServicesPayments = {
     });
   },
 
-  async listPendingApprovals(cutoff?: Date | null, areaWhere?: Record<string, unknown>) {
+  async listPendingApprovals(cutoff?: Date | null, portfolioWhere?: Record<string, unknown>) {
     // Business Start Date filter — pre-cutoff pending approvals hidden.
     // A `books.view` holder can toggle the reveal header to see them when chasing the client.
     //
-    // Area scoping merges in the same way. Empty for a global money.view
+    // Portfolio scoping merges in the same way. Empty for a global money.view
     // holder, so this query is byte-identical to its pre-feature shape; a
-    // Payment reaches its area through the occurrence it settles.
+    // Payment reaches its portfolio through the occurrence it settles.
     return prisma.payment.findMany({
       where: {
         confirmed: false,
         ...cutoffWhere("Payment", cutoff ?? null),
-        ...(areaWhere ?? {}),
+        ...(portfolioWhere ?? {}),
       },
       orderBy: { createdAt: "asc" },
       include: {

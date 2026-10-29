@@ -114,31 +114,31 @@ export default async function meRoutes(app: FastifyInstance) {
     };
   });
 
-  // The areas this caller may point their LENS at.
+  // The portfolios this caller may point their LENS at.
   //
-  // Not `GET /areas`, which is gated on `areas.manage` — that endpoint is for
+  // Not `GET /portfolios`, which is gated on `portfolios.manage` — that endpoint is for
   // BUILDING the tree, and the people who need to narrow a view are mostly
   // not the people who edit territories. Choosing what to look at is not
   // administering anything.
   //
   // Each row is somewhere the caller can already see data, so offering it
   // discloses nothing: a global reader gets the live tree, and anyone else
-  // gets only their own granted subtrees. Retired areas are excluded because
-  // this feeds a PICKER — retirement hides an area from pickers and leaves it
+  // gets only their own granted subtrees. Retired portfolios are excluded because
+  // this feeds a PICKER — retirement hides a portfolio from pickers and leaves it
   // in reporting, so a lens already set to one keeps working.
   //
-  // A SOLE ROOT IS OMITTED. Its path prefixes every other area, so choosing
+  // A SOLE ROOT IS OMITTED. Its path prefixes every other portfolio, so choosing
   // it filters nothing while looking like it filters something; the picker's
-  // own "All areas" entry is the clear-the-lens option. With several roots
+  // own "All portfolios" entry is the clear-the-lens option. With several roots
   // each one is a real slice, so none are dropped.
   //
   // view-as-allow: the lens belongs to the SESSION doing the looking, not to
   // any worker being looked at. Viewing as someone else does not hand you
   // their territories, and must not — that would make view-as a way to read
   // a district you hold nothing in.
-  app.get("/me/areas", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
+  app.get("/me/portfolios", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
     const principal = req.principal;
-    const all = await prisma.area.findMany({
+    const all = await prisma.portfolio.findMany({
       where: { retiredAt: null },
       orderBy: [{ path: "asc" }],
       select: { id: true, name: true, tier: true, path: true, parentId: true },
@@ -148,9 +148,9 @@ export default async function meRoutes(app: FastifyInstance) {
     // subtrees they are granted. This deliberately asks "do they hold
     // anything globally", not "do they hold capability X" — the lens spans
     // every view at once, so there is no single capability to test it on.
-    const roles: Array<{ areaPath?: string }> = principal?.roles ?? [];
-    const global = principal?.kind === "system" || roles.some((r) => !r.areaPath);
-    const grantedPaths = roles.map((r) => r.areaPath).filter(Boolean) as string[];
+    const roles: Array<{ portfolioPath?: string }> = principal?.roles ?? [];
+    const global = principal?.kind === "system" || roles.some((r) => !r.portfolioPath);
+    const grantedPaths = roles.map((r) => r.portfolioPath).filter(Boolean) as string[];
     const visible = global
       ? all
       : all.filter((a) =>
@@ -159,17 +159,17 @@ export default async function meRoutes(app: FastifyInstance) {
 
     const roots = visible.filter((a) => a.parentId === null);
     // `trail` is the chain of names from the top of the tree down to this
-    // area, root excluded — so a notice can read "Chapel Hill → Carrboro"
+    // portfolio, root excluded — so a notice can read "Chapel Hill → Carrboro"
     // instead of a bare leaf name that two districts might share. Built
     // from `all`, not `visible`: an ancestor the caller cannot SELECT is
-    // still needed to describe where the area they can select sits.
+    // still needed to describe where the portfolio they can select sits.
     const nameById = new Map(all.map((a) => [a.id, a.name]));
     const trailOf = (path: string) =>
       path.split("/").filter(Boolean).slice(1).map((id) => nameById.get(id) ?? "?");
     const options = (roots.length === 1 ? visible.filter((a) => a.id !== roots[0]!.id) : visible).map(
       ({ id, name, tier, path }) => ({ id, name, tier, path, trail: trailOf(path) }),
     );
-    return { areas: options };
+    return { portfolios: options };
   });
 
   app.post("/me/sync", async (req: any, reply: FastifyReply) => {

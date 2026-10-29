@@ -21,8 +21,7 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
-import { areaWhere, areaWhereVia, withArea } from "../lib/areaScope";
+import { portfolioWhere, portfolioWhereVia, withPortfolio } from "../lib/portfolioScope";
 import { WORKER_TYPES, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { currentUserId, enrichSyncTasks, nextRecurrenceDate } from "./_shared";
 
@@ -43,9 +42,9 @@ export default async function displayRoutes(app: FastifyInstance) {
   // NAMED in prose here — the parser reads these comments literally and
   // matched it inside the sentence explaining its absence.)
   //
-  // WHY, AND WHAT IT LOOKED LIKE. This had ONLY the area filter below, and
-  // `areaWhereVia` returns no filter at all for a caller with no area grant
-  // — which is everybody, because no AreaAssignment rows exist yet. So the
+  // WHY, AND WHAT IT LOOKED LIKE. This had ONLY the portfolio filter below, and
+  // `portfolioWhereVia` returns no filter at all for a caller with no portfolio grant
+  // — which is everybody, because no PortfolioAssignment rows exist yet. So the
   // guard, `schedule.contribute` ("add notes, photos and guidance to a
   // visit"), was handing back 200 photos from every property in the book,
   // each with the customer's name and street address, to the base rung.
@@ -89,8 +88,8 @@ export default async function displayRoutes(app: FastifyInstance) {
 
     // The cross-job photo wall is a LIST, so it narrows to the territories
     // this caller may see — the photos hang off occurrences, which carry the
-    // area.
-    Object.assign(where, withArea(where, areaWhereVia(req.principal, "schedule.contribute", "occurrence")));
+    // portfolio.
+    Object.assign(where, withPortfolio(where, portfolioWhereVia(req.principal, "schedule.contribute", "occurrence")));
     const photos = await prisma.jobOccurrencePhoto.findMany({
       where,
       orderBy: { createdAt: "desc" },

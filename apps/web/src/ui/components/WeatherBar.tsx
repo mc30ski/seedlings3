@@ -155,13 +155,13 @@ export default function WeatherBar({
           serverLoc = null; // unset / ungeocodable / not permitted — handled below
         }
 
-        // "area" is the AREA LENS — the viewer has narrowed the app to one
+        // "portfolio" is the PORTFOLIO LENS — the viewer has narrowed the app to one
         // district, so the forecast follows them there. It outranks the
         // business address for the same reason it outranks everything else
         // on screen: every other number they are looking at is that
         // district's, and a forecast for head office would be the one panel
         // still answering about somewhere else.
-        if (serverLoc?.source === "area" || serverLoc?.source === "business") {
+        if (serverLoc?.source === "portfolio" || serverLoc?.source === "business") {
           latitude = serverLoc.lat;
           longitude = serverLoc.lng;
         } else {
@@ -225,7 +225,7 @@ export default function WeatherBar({
       }
     }
     void load();
-    // AND AGAIN WHEN THE AREA LENS MOVES. The bar lives in the header, not
+    // AND AGAIN WHEN THE PORTFOLIO LENS MOVES. The bar lives in the header, not
     // in the tab content, so the remount `pages/index.tsx` does on a lens
     // change does not reach it — without this the forecast would keep
     // showing the previous district while every panel below it had already

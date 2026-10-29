@@ -2307,7 +2307,7 @@ function PaymentsOversight({ canApproveMoney, scope }: { canApproveMoney: boolea
         )}
         {showJobs && displayedTotals.personTotals.length > 0 && (
           /* Per-person section is visually separated from the
-             aggregate-totals area above — distinct sub-card so the
+             aggregate-totals portfolio above — distinct sub-card so the
              operator can scan worker payouts as their own data block. */
           <Box
             mt={3}

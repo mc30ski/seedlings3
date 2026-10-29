@@ -14,8 +14,8 @@
  * every one of its answers depends on the STARTER ROLE SET being right. The
  * starter set is data a script writes, not a constant in the source, so its
  * contents are asserted where that script is tested. Here we assert only what
- * holds for ANY role set: the payroll gate, union semantics, the area prefix
- * rule, the never-area-scoped set, inheritance, perspectives, the system
+ * holds for ANY role set: the payroll gate, union semantics, the portfolio prefix
+ * rule, the never-portfolio-scoped set, inheritance, perspectives, the system
  * bypass, and the vocabulary itself.
  */
 import { describe, it, expect } from "vitest";
@@ -36,7 +36,7 @@ import {
   type Entitlement,
 } from "@repo/permissions";
 
-// Synthetic area paths. Real ones are cuids; the only property that matters
+// Synthetic portfolio paths. Real ones are cuids; the only property that matters
 // is that they are opaque ids delimited and terminated by "/".
 const NC = "/nc/";
 const TRIANGLE = "/nc/triangle/";
@@ -57,10 +57,10 @@ const role = (name: string, ...entitlements: Entitlement[]): RoleGrant => ({
   entitlements,
 });
 
-/** The same role held only inside an area subtree. */
-const inArea = (areaPath: string, name: string, ...entitlements: Entitlement[]): RoleGrant => ({
+/** The same role held only inside a portfolio subtree. */
+const inArea = (portfolioPath: string, name: string, ...entitlements: Entitlement[]): RoleGrant => ({
   ...role(name, ...entitlements),
-  areaPath,
+  portfolioPath,
 });
 
 describe("the entitlement vocabulary", () => {
@@ -69,8 +69,8 @@ describe("the entitlement vocabulary", () => {
     // the operation from working it: not being field-cleared used to
     // mean 'sees only their own', which made every read-only oversight
     // role an empty page.
-    // 66 since `areas.view` split off `areas.manage` — reading the
-    // territory is not rearranging it, and `areas` was the only noun
+    // 66 since `portfolios.view` split off `portfolios.manage` — reading the
+    // territory is not rearranging it, and `portfolios` was the only noun
     // in the vocabulary with a manage and no view.
     // 65 since `settings.view` split off `settings.manage` — the Settings
     // tab had no way to be opened read-only, so "see the rates" and
@@ -211,31 +211,31 @@ describe("can() — union semantics", () => {
   });
 });
 
-describe("can() — areas", () => {
-  it("an area-held role applies inside its own subtree", () => {
+describe("can() — portfolios", () => {
+  it("a portfolio-held role applies inside its own subtree", () => {
     const p = user({ roles: [inArea(RALEIGH, "District Manager", "schedule.manage")] });
-    expect(can(p, "schedule.manage", { areaPath: RALEIGH })).toBe(true);
+    expect(can(p, "schedule.manage", { portfolioPath: RALEIGH })).toBe(true);
   });
 
   it("and not in a sibling", () => {
     const p = user({ roles: [inArea(RALEIGH, "District Manager", "schedule.manage")] });
-    expect(can(p, "schedule.manage", { areaPath: DURHAM })).toBe(false);
+    expect(can(p, "schedule.manage", { portfolioPath: DURHAM })).toBe(false);
   });
 
   it("a parent assignment covers the whole subtree", () => {
     const p = user({ roles: [inArea(TRIANGLE, "Regional", "money.approve")] });
-    expect(can(p, "money.approve", { areaPath: RALEIGH })).toBe(true);
-    expect(can(p, "money.approve", { areaPath: DURHAM })).toBe(true);
+    expect(can(p, "money.approve", { portfolioPath: RALEIGH })).toBe(true);
+    expect(can(p, "money.approve", { portfolioPath: DURHAM })).toBe(true);
   });
 
   it("a child assignment does NOT cover its parent", () => {
     const p = user({ roles: [inArea(RALEIGH, "District Manager", "money.approve")] });
-    expect(can(p, "money.approve", { areaPath: TRIANGLE })).toBe(false);
-    expect(can(p, "money.approve", { areaPath: NC })).toBe(false);
+    expect(can(p, "money.approve", { portfolioPath: TRIANGLE })).toBe(false);
+    expect(can(p, "money.approve", { portfolioPath: NC })).toBe(false);
   });
 
-  it("a globally-held role is never caged by an area", () => {
-    // The rule that stops an area assignment demoting someone. An assignment
+  it("a globally-held role is never caged by a portfolio", () => {
+    // The rule that stops a portfolio assignment demoting someone. An assignment
     // can only ever ADD places you can see.
     const p = user({
       roles: [
@@ -243,22 +243,22 @@ describe("can() — areas", () => {
         inArea(RALEIGH, "District Manager", "schedule.manage"),
       ],
     });
-    expect(can(p, "books.manage", { areaPath: DURHAM })).toBe(true);
+    expect(can(p, "books.manage", { portfolioPath: DURHAM })).toBe(true);
   });
 
-  it("field capability is never narrowed by area", () => {
+  it("field capability is never narrowed by portfolio", () => {
     // Promotion must not shrink where you can work. Someone looking after
     // Raleigh still covers a Durham visit when a crewmate calls out.
     const p = user({
       roles: [inArea(RALEIGH, "Field Worker", "work.claim", "work.complete", "schedule.manage")],
     });
-    expect(can(p, "work.claim", { areaPath: DURHAM })).toBe(true);
-    expect(can(p, "work.complete", { areaPath: DURHAM })).toBe(true);
+    expect(can(p, "work.claim", { portfolioPath: DURHAM })).toBe(true);
+    expect(can(p, "work.complete", { portfolioPath: DURHAM })).toBe(true);
     // Everything else in the same role IS narrowed.
-    expect(can(p, "schedule.manage", { areaPath: DURHAM })).toBe(false);
+    expect(can(p, "schedule.manage", { portfolioPath: DURHAM })).toBe(false);
   });
 
-  it("an area-held capability counts when the request names no area", () => {
+  it("a portfolio-held capability counts when the request names no portfolio", () => {
     const p = user({ roles: [inArea(RALEIGH, "District Manager", "reports.view")] });
     expect(can(p, "reports.view")).toBe(true);
   });
@@ -407,13 +407,13 @@ describe("perspectives", () => {
     expect(isValidPerspective({ kind: "system", name: "cron" }, [])).toBe(false);
   });
 
-  it("an area-held role still narrows by area under a perspective", () => {
+  it("a portfolio-held role still narrows by portfolio under a perspective", () => {
     const p = user({
       roles: [inArea(RALEIGH, "District Manager", "schedule.manage")],
       perspective: { roleId: "r-DM", entitlements: ["schedule.manage"] },
     });
-    expect(can(p, "schedule.manage", { areaPath: RALEIGH })).toBe(true);
-    expect(can(p, "schedule.manage", { areaPath: DURHAM })).toBe(false);
+    expect(can(p, "schedule.manage", { portfolioPath: RALEIGH })).toBe(true);
+    expect(can(p, "schedule.manage", { portfolioPath: DURHAM })).toBe(false);
   });
 });
 
@@ -429,13 +429,13 @@ describe("heldCapabilities", () => {
     expect(heldCapabilities(p)).toEqual(["money.view", "payroll.view"]);
   });
 
-  it("ignores area entirely — it answers WHAT, never WHERE", () => {
+  it("ignores portfolio entirely — it answers WHAT, never WHERE", () => {
     // Which is exactly why it must not be used for gating: a gate asks about
-    // one capability and may carry an area, and answering through this would
+    // one capability and may carry a portfolio, and answering through this would
     // silently drop it.
     const p = user({ roles: [inArea(RALEIGH, "District Manager", "money.approve")] });
     expect(heldCapabilities(p)).toEqual(["money.approve"]);
-    expect(can(p, "money.approve", { areaPath: DURHAM })).toBe(false);
+    expect(can(p, "money.approve", { portfolioPath: DURHAM })).toBe(false);
   });
 });
 
@@ -513,7 +513,7 @@ describe("refusalPhrase — every refusal reads as a sentence", () => {
     expect(broken).toEqual([]);
   });
 
-  it("drops the em-dash aside and the area-scopable marker", () => {
+  it("drops the em-dash aside and the portfolio-scopable marker", () => {
     // Both are documentation for the role builder's reader, not part of
     // the action being refused.
     expect(refusalPhrase("books.export-tax")).toBe("download the tax exports");

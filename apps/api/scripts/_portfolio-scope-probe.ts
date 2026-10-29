@@ -1,9 +1,9 @@
 /**
- * G25's engine: drive every area-scopable READ as a principal who holds the
+ * G25's engine: drive every portfolio-scopable READ as a principal who holds the
  * capability ONLY inside Durham, and prove no Chapel Hill row comes back.
  *
  * WHY A SEPARATE PROBE RATHER THAN A STATIC SCAN
- * G10 already checks that an area-scopable route MENTIONS `areaWhere`. That
+ * G10 already checks that a portfolio-scopable route MENTIONS `portfolioWhere`. That
  * catches a missing filter and nothing else. It cannot catch the two failures
  * that actually matter: scoping on the wrong principal, and a prefix that
  * matches a sibling ("/a/b" matching "/a/bb"). Only looking at the ROWS can.
@@ -43,20 +43,20 @@ function guardedGets(): Array<{ ent: string; path: string }> {
 
 (async () => {
   const prisma = new PrismaClient();
-  const areas = await prisma.area.findMany({ select: { id: true, name: true, path: true } });
-  const durham = areas.find((a) => a.name === "Durham");
-  const chapel = areas.find((a) => a.name === "Chapel Hill");
-  if (!durham || !chapel) throw new Error("expected Durham and Chapel Hill areas in the dev tree");
+  const portfolios = await prisma.portfolio.findMany({ select: { id: true, name: true, path: true } });
+  const durham = portfolios.find((a) => a.name === "Durham");
+  const chapel = portfolios.find((a) => a.name === "Chapel Hill");
+  if (!durham || !chapel) throw new Error("expected Durham and Chapel Hill portfolios in the dev tree");
 
   // Ids that exist ONLY in Chapel Hill — seeing any of them is the failure.
   const foreign = new Set<string>();
-  for (const o of await prisma.jobOccurrence.findMany({ where: { areaId: chapel.id }, select: { id: true } })) foreign.add(o.id);
-  for (const p of await prisma.property.findMany({ where: { areaId: chapel.id }, select: { id: true } })) foreign.add(p.id);
+  for (const o of await prisma.jobOccurrence.findMany({ where: { portfolios: { some: { portfolioId: chapel.id } } }, select: { id: true } })) foreign.add(o.id);
+  for (const p of await prisma.property.findMany({ where: { portfolios: { some: { portfolioId: chapel.id } } }, select: { id: true } })) foreign.add(p.id);
   // Durham's OWN ids — a route that returns none of these is not "scoped",
   // it is broken, and an empty response would otherwise read as a pass.
   const mine = new Set<string>();
-  for (const o of await prisma.jobOccurrence.findMany({ where: { areaId: durham.id }, select: { id: true } })) mine.add(o.id);
-  for (const p of await prisma.property.findMany({ where: { areaId: durham.id }, select: { id: true } })) mine.add(p.id);
+  for (const o of await prisma.jobOccurrence.findMany({ where: { portfolios: { some: { portfolioId: durham.id } } }, select: { id: true } })) mine.add(o.id);
+  for (const p of await prisma.property.findMany({ where: { portfolios: { some: { portfolioId: durham.id } } }, select: { id: true } })) mine.add(p.id);
   console.log(`Durham path : ${durham.path}`);
   console.log(`own ids     : ${mine.size} (Durham occurrences + properties)`);
   console.log(`foreign ids : ${foreign.size} (Chapel Hill occurrences + properties)\n`);
@@ -83,7 +83,7 @@ function guardedGets(): Array<{ ent: string; path: string }> {
     CURRENT = {
       kind: "user",
       workerType: "EMPLOYEE",
-      roles: [{ roleId: "durham-lead", name: "Durham lead", entitlements: [r.ent as Entitlement], areaPath: durham.path }],
+      roles: [{ roleId: "durham-lead", name: "Durham lead", entitlements: [r.ent as Entitlement], portfolioPath: durham.path }],
       perspective: null,
     } as any;
     const url = r.path.replace(/:[A-Za-z0-9_]+/g, PROBE_ID);
@@ -104,13 +104,13 @@ function guardedGets(): Array<{ ent: string; path: string }> {
    * exemption list is indistinguishable from a backlog.
    */
   const GLOBAL_BY_DESIGN = new Map<string, string>([
-    ["books.view", "the company's books are the owner's — money never slices by territory, which also settles the '(area-scopable)' heading the Money group used to carry"],
-    ["audit.view", "most audit events belong to no area at all (settings changes, role grants, sign-ins), so a territorial filter would hide some and show others with no rule a reader could state"],
+    ["books.view", "the company's books are the owner's — money never slices by territory, which also settles the '(portfolio-scopable)' heading the Money group used to carry"],
+    ["audit.view", "most audit events belong to no portfolio at all (settings changes, role grants, sign-ins), so a territorial filter would hide some and show others with no rule a reader could state"],
   ]);
 
   const expected = results.filter((x) => x.leaked.length > 0 && GLOBAL_BY_DESIGN.has(x.ent));
   const leaks = results.filter((x) => x.leaked.length > 0 && !GLOBAL_BY_DESIGN.has(x.ent));
-  console.log(`area-scopable GETs answered 200 : ${results.length}`);
+  console.log(`portfolio-scopable GETs answered 200 : ${results.length}`);
   console.log(`leaked another territory's rows : ${leaks.length}\n`);
   const byEnt = new Map<string, number>();
   for (const l of leaks) byEnt.set(l.ent, (byEnt.get(l.ent) ?? 0) + 1);
@@ -118,7 +118,7 @@ function guardedGets(): Array<{ ent: string; path: string }> {
   const threadedShowingOwn = results.filter((x) => x.leaked.length === 0 && x.own > 0).length;
   const emptyOrNoIds = results.filter((x) => x.leaked.length === 0 && x.own === 0).length;
   console.log(`clean AND still returning Durham rows : ${threadedShowingOwn}`);
-  console.log(`clean but returned no area ids at all : ${emptyOrNoIds} (most carry no occurrence/property ids)`);
+  console.log(`clean but returned no portfolio ids at all : ${emptyOrNoIds} (most carry no occurrence/property ids)`);
   console.log("\nLEAKING ROUTES:");
   for (const l of leaks.sort((a, b) => a.ent.localeCompare(b.ent)))
     console.log(`  ${l.ent.padEnd(22)} GET ${l.path}`);

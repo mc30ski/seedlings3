@@ -292,7 +292,7 @@ const houseNumberOf = (s: string | null | undefined): number | null => {
  * ORANGE COUNTY REPORTS `gisacres` AS 0. Chatham and Durham populate it;
  * Orange — which is Chapel Hill, Carrboro and Hillsborough — does not, so the
  * headline figure in the dialog read "0.00 acres" for most of the service
- * area. It carries `recareano` (recorded area) instead, and the polygon is
+ * portfolio. It carries `recareano` (recorded portfolio) instead, and the polygon is
  * always there regardless.
  *
  * Planar shoelace is accurate at parcel scale: on one parcel it matched the
@@ -302,7 +302,7 @@ function acresFor(attrs: any, rings: number[][][] | null): { acres: number | nul
   const gis = Number(attrs?.gisacres);
   if (Number.isFinite(gis) && gis > 0) return { acres: gis, basis: "county GIS acreage" };
   const rec = Number(attrs?.recareano);
-  if (Number.isFinite(rec) && rec > 0) return { acres: rec, basis: "county recorded area" };
+  if (Number.isFinite(rec) && rec > 0) return { acres: rec, basis: "county recorded portfolio" };
   if (rings?.length) {
     const ring = rings[0];
     const midLat = ring.reduce((t, q) => t + q[1], 0) / ring.length;

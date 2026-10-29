@@ -16,15 +16,15 @@ import {
  * ROLES AND AREAS — the HTTP surface for the permissions model.
  *
  * This file existed as a gap for the whole build: the model, `can()`, the
- * area scoping and the services were all written, and NOTHING could reach
- * them. There was no way to define a role, grant one, make an area or assign
+ * portfolio scoping and the services were all written, and NOTHING could reach
+ * them. There was no way to define a role, grant one, make a portfolio or assign
  * anybody to it except by writing SQL. That is why `roles.define`,
- * `areas.manage`, `people.grant-roles` and `settings.manage` were entitlements
+ * `portfolios.manage`, `people.grant-roles` and `settings.manage` were entitlements
  * no route guarded — they had nothing to guard.
  *
  * HOW THESE ROUTES ARE GUARDED. Each one requires the entitlement that names
  * the thing it does — `roles.define` to shape a role, `people.grant-roles` to
- * hand one out, `areas.manage` for the territory tree. There is no legacy
+ * hand one out, `portfolios.manage` for the territory tree. There is no legacy
  * check, no `RoleVal`, and no cutover flag: those were removed with the
  * `Role` enum, and `requires(entitlement)` asks `can()` and nothing else.
  *
@@ -59,12 +59,12 @@ export default async function permissionRoutes(app: FastifyInstance) {
   const rolesDefine = requires("roles.define");
   const rolesView = requires("roles.view");
   const grantRoles = requires("people.grant-roles");
-  const areasManage = requires("areas.manage");
-  // READING THE TREE IS NOT REARRANGING IT. `areas` was the only noun in the
+  const portfoliosManage = requires("portfolios.manage");
+  // READING THE TREE IS NOT REARRANGING IT. `portfolios` was the only noun in the
   // catalogue with a `manage` and no `view`, so the only way to look at the
   // territory was to hold the power to retire it. Every other read/write
   // noun — clients, equipment, books, people, time, timeline — has the pair.
-  const areasView = requires("areas.view");
+  const portfoliosView = requires("portfolios.view");
   const scheduleManage = requires("schedule.manage");
 
   // ── The vocabulary ──────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ export default async function permissionRoutes(app: FastifyInstance) {
    * `GET /roles` returns `holders: 3`, which is enough to warn before an
    * edit and useless for acting on it. Both kinds of grant are returned
    * and labelled, because they answer different questions: a company-wide
-   * grant means "everywhere", an area grant means "here only", and a
+   * grant means "everywhere", a portfolio grant means "here only", and a
    * reader who cannot tell them apart will misread a boundary as absolute.
    */
   app.get("/roles/:id/holders", rolesView, async (req: any) =>
@@ -108,6 +108,8 @@ export default async function permissionRoutes(app: FastifyInstance) {
       description: b.description != null ? String(b.description) : null,
       inheritsFromId: b.inheritsFromId != null ? String(b.inheritsFromId) : null,
       entitlements: Array.isArray(b.entitlements) ? b.entitlements.map(String) : [],
+      // Optional, and normally absent — see the note on `create`.
+      key: b.key != null && String(b.key).trim() !== "" ? String(b.key) : null,
     });
   });
 
@@ -235,33 +237,33 @@ export default async function permissionRoutes(app: FastifyInstance) {
     return services.customRoles.revoke(uid, String(req.params.id), String(req.params.roleId));
   });
 
-  // ── Areas ───────────────────────────────────────────────────────────────
+  // ── Portfolios ───────────────────────────────────────────────────────────────
 
-  app.get("/areas", areasView, async () => services.areas.list());
+  app.get("/portfolios", portfoliosView, async () => services.portfolios.list());
 
-  app.post("/areas", areasManage, async (req: any) => {
+  app.post("/portfolios", portfoliosManage, async (req: any) => {
     const uid = await currentUserId(req);
     const b = req.body ?? {};
-    return services.areas.create(uid, {
+    return services.portfolios.create(uid, {
       name: String(b.name ?? ""),
       tier: b.tier != null ? String(b.tier) : null,
       parentId: b.parentId != null ? String(b.parentId) : null,
     });
   });
 
-  // Rename only — `parentId` is not accepted. Areas are never reparented
-  // (G14): the materialized path is what every area-scoped query matches on,
+  // Rename only — `parentId` is not accepted. Portfolios are never reparented
+  // (G14): the materialized path is what every portfolio-scoped query matches on,
   // so moving a subtree would change what history says. Copy-and-retire.
-  app.patch("/areas/:id", areasManage, async (req: any) => {
+  app.patch("/portfolios/:id", portfoliosManage, async (req: any) => {
     const uid = await currentUserId(req);
     const b = req.body ?? {};
     // A BLANK COORDINATE FIELD CLEARS THE POINT, it does not mean "unchanged"
     // — the editor always sends both, so `""` is the operator emptying the
     // box. `undefined` (key absent) is what means unchanged. Number() is not
     // used on its own because Number("") is 0, which would silently drop the
-    // area onto the equator off the coast of Africa.
+    // portfolio onto the equator off the coast of Africa.
     const coord = (v: any) => (v === null || v === "" ? null : Number(v));
-    return services.areas.rename(uid, String(req.params.id), {
+    return services.portfolios.rename(uid, String(req.params.id), {
       ...(b.name !== undefined ? { name: String(b.name) } : {}),
       ...(b.tier !== undefined ? { tier: b.tier == null ? null : String(b.tier) } : {}),
       ...(b.lat !== undefined ? { lat: coord(b.lat) } : {}),
@@ -269,74 +271,71 @@ export default async function permissionRoutes(app: FastifyInstance) {
     });
   });
 
-  app.post("/areas/:id/retire", areasManage, async (req: any) =>
-    services.areas.setRetired(await currentUserId(req), String(req.params.id), true),
+  app.post("/portfolios/:id/retire", portfoliosManage, async (req: any) =>
+    services.portfolios.setRetired(await currentUserId(req), String(req.params.id), true),
   );
-  app.post("/areas/:id/unretire", areasManage, async (req: any) =>
-    services.areas.setRetired(await currentUserId(req), String(req.params.id), false),
+  app.post("/portfolios/:id/unretire", portfoliosManage, async (req: any) =>
+    services.portfolios.setRetired(await currentUserId(req), String(req.params.id), false),
   );
 
   // ── Who looks after where ───────────────────────────────────────────────
 
-  app.get("/area-assignments", areasView, async (req: any) =>
-    services.areas.assignments({
+  app.get("/portfolio-assignments", portfoliosView, async (req: any) =>
+    services.portfolios.assignments({
       userId: typeof req.query?.userId === "string" ? req.query.userId : undefined,
-      areaId: typeof req.query?.areaId === "string" ? req.query.areaId : undefined,
+      portfolioId: typeof req.query?.portfolioId === "string" ? req.query.portfolioId : undefined,
     }),
   );
 
-  app.post("/area-assignments", areasManage, async (req: any) => {
+  app.post("/portfolio-assignments", portfoliosManage, async (req: any) => {
     const uid = await currentUserId(req);
     const b = req.body ?? {};
-    return services.areas.assign(uid, callerCapabilities(req), {
+    return services.portfolios.assign(uid, callerCapabilities(req), {
       userId: String(b.userId ?? ""),
-      areaId: String(b.areaId ?? ""),
+      portfolioId: String(b.portfolioId ?? ""),
       customRoleId: String(b.customRoleId ?? ""),
       isTemporary: !!b.isTemporary,
       note: b.note != null ? String(b.note) : null,
     });
   });
 
-  app.delete("/area-assignments/:id", areasManage, async (req: any) =>
-    services.areas.revoke(await currentUserId(req), String(req.params.id)),
+  app.delete("/portfolio-assignments/:id", portfoliosManage, async (req: any) =>
+    services.portfolios.revoke(await currentUserId(req), String(req.params.id)),
   );
 
-  // ── Moving work between areas ───────────────────────────────────────────
+  // ── Which portfolios a property belongs to ───────────────────────────────
 
   /**
-   * Put a property in an area. `areaId: null` takes it out of every area.
+   * Set a property's portfolios. An empty list takes it out of all of them.
    *
-   * `areas.manage` because this is structural: a property is a lasting
-   * customer relationship, so moving it decides whose books every future
-   * visit there lands on.
-   */
-  app.patch("/properties/:id/area", areasManage, async (req: any) => {
-    const uid = await currentUserId(req);
-    const b = req.body ?? {};
-    return services.areas.retagProperty(
-      uid,
-      String(req.params.id),
-      b.areaId == null ? null : String(b.areaId),
-    );
-  });
-
-  /**
-   * Move ONE visit to another area.
+   * ONE ENDPOINT FOR ADD, REMOVE AND MOVE. Membership is a set, so "these
+   * are the ones" is the only primitive that cannot drift: three verbs
+   * against a list is three chances to disagree about what the list now is.
    *
-   * Guarded by `schedule.manage` rather than `areas.manage`, because this is
-   * day-to-day correction rather than shaping the tree — and the service
-   * then checks that capability in BOTH the source and destination area
-   * (G16). The route guard alone is not the enforcement: holding
-   * `schedule.manage` somewhere is not holding it in the two places that
-   * matter.
+   * `portfolios.manage` because this is structural — a property is a
+   * lasting customer relationship, so this decides whose books its work
+   * lands on. The route guard is not the whole enforcement: the service
+   * then checks `schedule.manage` in EVERY portfolio being added to and
+   * removed from (G16), because holding it somewhere is not holding it in
+   * the places that matter.
+   *
+   * This replaces `PATCH /occurrences/:id/portfolio`, which moved a single
+   * visit. An open visit follows its property now, so a per-visit override
+   * would be erased by the next resync; the rule it enforced moved here.
    */
-  app.patch("/occurrences/:id/area", scheduleManage, async (req: any) => {
+  app.put("/properties/:id/portfolios", portfoliosManage, async (req: any) => {
     const uid = await currentUserId(req);
-    return services.areas.retagOccurrence(
+    const raw = (req.body ?? {}).portfolioIds;
+    if (!Array.isArray(raw)) {
+      throw app.httpErrors.badRequest(
+        "`portfolioIds` must be an array — send [] to remove the property from every portfolio.",
+      );
+    }
+    return services.portfolios.setPropertyPortfolios(
       uid,
       req.principal as Principal,
       String(req.params.id),
-      String(req.body?.areaId ?? ""),
+      raw.map((x: unknown) => String(x)),
     );
   });
 }

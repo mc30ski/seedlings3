@@ -61,7 +61,7 @@ test("an inventory-backed charge reprices when the quantity changes, and stock f
   // hold; scanning from the top opened sixteen dialogs and found none, then
   // reported "no inventory charge exists" — which was false. Search for the
   // property the seeded hold sits on.
-  await page.locator("#jobs-search").fill("Pool Area Grounds");
+  await page.locator("#jobs-search").fill("Pool Portfolio Grounds");
   await page.waitForTimeout(2500);
 
   // The +/- pair exists ONLY on an inventory-backed row — its amount is

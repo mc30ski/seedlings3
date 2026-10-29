@@ -1,5 +1,5 @@
 import { prisma } from "../db/prisma";
-import { withArea } from "../lib/areaScope";
+import { withPortfolio } from "../lib/portfolioScope";
 import {
   Prisma,
   ClientStatus,
@@ -110,11 +110,11 @@ export const clients: ServicesClients = {
     q?: string;
     status?: ClientStatus | "ALL";
     limit?: number;
-    /** Territory filter from `areaWhere(principal, "clients.view")`. A
-     *  Client has no `areaId` of its own — it reaches territory through its
+    /** Territory filter from `portfolioWhere(principal, "clients.view")`. A
+     *  Client has no `portfolioId` of its own — it reaches territory through its
      *  properties — so the caller passes the raw fragment and this function
      *  wraps it in the relation hop. */
-    areaWhere?: Record<string, unknown>;
+    portfolioWhere?: Record<string, unknown>;
     /**
      * Narrow to the clients this user is actually on the work for.
      *
@@ -124,7 +124,7 @@ export const clients: ServicesClients = {
      * the browser, so the whole customer book sat in the network response
      * of somebody the UI was busy telling "you only see the clients you
      * are assigned to". The list is the thing that hands out ids, and
-     * `/clients/:id` leans on that in its own `area-scope-allow` note —
+     * `/clients/:id` leans on that in its own `portfolio-scope-allow` note —
      * "every list that hands out ids IS filtered" — which was not yet
      * true for this caller.
      *
@@ -149,11 +149,11 @@ export const clients: ServicesClients = {
     // hiding them would make the client list disagree with the job list.
     // Scoping the PROPERTIES shown for that client is a separate filter,
     // applied on its own read.
-    if (params?.areaWhere && Object.keys(params.areaWhere).length > 0) {
-      where = withArea(where, { properties: { some: params.areaWhere } });
+    if (params?.portfolioWhere && Object.keys(params.portfolioWhere).length > 0) {
+      where = withPortfolio(where, { properties: { some: params.portfolioWhere } });
     }
     if (params?.assignedToUserId) {
-      where = withArea(where, {
+      where = withPortfolio(where, {
         properties: {
           some: {
             jobs: {
@@ -222,10 +222,10 @@ export const clients: ServicesClients = {
           // with work in two districts is a real client of both leads. It
           // says nothing about which of their properties this reader may
           // see, and without this `where` the preview hands a Durham lead
-          // the Chapel Hill addresses of a shared client. The area probe
+          // the Chapel Hill addresses of a shared client. The portfolio probe
           // caught exactly that: the client row was correctly scoped and the
           // rows nested inside it were not.
-          where: params?.areaWhere ?? {},
+          where: params?.portfolioWhere ?? {},
           select: {
             id: true,
             kind: true,

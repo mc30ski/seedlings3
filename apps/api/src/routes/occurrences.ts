@@ -21,8 +21,8 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, paymentSplitCutoffWhere, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
-import { areaWhere, areaWhereOn, areaWhereVia, withArea } from "../lib/areaScope";
+import { syncOccurrencePortfolios } from "../lib/occurrencePortfolio";
+import { portfolioWhere, portfolioWhereVia, withPortfolio } from "../lib/portfolioScope";
 import { WORKER_TYPES, classify, isFeeable, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { currentUserId, enrichSyncTasks, nextRecurrenceDate, occInEditableState } from "./_shared";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
@@ -444,9 +444,9 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
   });
   // Get linked occurrences for an occurrence
   app.get("/occurrences/:id/linked", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -657,7 +657,7 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
       );
       return {
         count: await countDueStreamPauseReminders(
-          areaWhere(req.principal, "schedule.view"),
+          portfolioWhere(req.principal, "schedule.view"),
         ),
       };
     },
@@ -672,7 +672,7 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
         "../services/occurrenceStreamPause"
       );
       return listDueStreamPauseReminders(
-        areaWhere(req.principal, "schedule.view"),
+        portfolioWhere(req.principal, "schedule.view"),
       );
     },
   );
@@ -917,7 +917,7 @@ ${details}
 ${pricingGuide ? `\nCompany pricing guide (use these rates as your baseline):\n${pricingGuide}\n` : ""}
 STEP 1 — INTERNAL BREAKDOWN (for business eyes only):
 - Use the company pricing guide rates as your baseline where applicable
-- Use the address to determine local market rates for the area (materials, labor, delivery)
+- Use the address to determine local market rates for the portfolio (materials, labor, delivery)
 - If the notes contain measurements, square footage, material quantities (e.g. yards of mulch), use those exact numbers
 - Itemize: materials (with per-unit costs), delivery, labor (hours × rate), additional services
 - Show subtotal of costs
@@ -1212,7 +1212,7 @@ Respond ONLY with valid JSON in this exact format:
     //   - the resolver (for resolved requests in history)
     // Territory via the visit the request is about. A change request is
     // only ever meaningful alongside its occurrence, so it narrows with it.
-    Object.assign(where, withArea(where, areaWhereVia(req.principal, "schedule.view", "occurrence")));
+    Object.assign(where, withPortfolio(where, portfolioWhereVia(req.principal, "schedule.view", "occurrence")));
     return prisma.occurrenceChangeRequest.findMany({
       where,
       orderBy: { createdAt: "desc" },
@@ -1339,14 +1339,9 @@ Respond ONLY with valid JSON in this exact format:
             },
           });
           if (!existingNext) {
-            const nextAreaId = await resolveOccurrenceArea(tx, {
-              jobId: occ.jobId!,
-              previousOccurrenceId: occ.id,
-            });
             const nextOcc = await tx.jobOccurrence.create({
               data: {
                 jobId: occ.jobId!,
-                areaId: nextAreaId,
                 kind: occ.kind,
                 startAt: nextStart,
                 endAt: nextEnd,
@@ -1362,6 +1357,7 @@ Respond ONLY with valid JSON in this exact format:
                 frequencyDays: (occ as any).frequencyDays ?? null,
               } as any,
             });
+            await syncOccurrencePortfolios(tx, nextOcc.id);
             // Same carry every other next-visit path runs. See
             // lib/instructionCarry.ts.
             await carryInstructionsToNewOccurrence(tx as any, {
@@ -1474,9 +1470,9 @@ Respond ONLY with valid JSON in this exact format:
     // A badge that counts rows the list will not show sends people looking
     // for work that is not theirs, and reads as a bug in the list.
     const count = await prisma.occurrenceChangeRequest.count({
-      where: withArea<Prisma.OccurrenceChangeRequestWhereInput>(
+      where: withPortfolio<Prisma.OccurrenceChangeRequestWhereInput>(
         { status: "PENDING" },
-        areaWhereVia(req.principal, "schedule.view", "occurrence"),
+        portfolioWhereVia(req.principal, "schedule.view", "occurrence"),
       ),
     });
     return { count };
@@ -1490,11 +1486,11 @@ Respond ONLY with valid JSON in this exact format:
     // Same filter as GET /occurrences/unapproved-hours, for the same reason:
     // the badge and the queue it opens have to be the same number.
     const count = await prisma.jobOccurrence.count({
-      where: withArea<Prisma.JobOccurrenceWhereInput>({
+      where: withPortfolio<Prisma.JobOccurrenceWhereInput>({
         completedAt: { not: null },
         hoursApprovedAt: null,
         workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
-      }, areaWhere(req.principal, "time.approve")),
+      }, portfolioWhere(req.principal, "time.approve")),
     });
     return { count };
   });
@@ -1513,11 +1509,11 @@ Respond ONLY with valid JSON in this exact format:
       // was contextually typed by `where`, and passing it through a generic
       // helper loses that — `workflow: { in: [...] }` then widens to
       // string[] and stops being checked against the enum.
-      where: withArea<Prisma.JobOccurrenceWhereInput>({
+      where: withPortfolio<Prisma.JobOccurrenceWhereInput>({
         completedAt: { not: null },
         hoursApprovedAt: null,
         workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
-      }, areaWhere(req.principal, "time.approve")),
+      }, portfolioWhere(req.principal, "time.approve")),
       orderBy: { completedAt: "asc" },
       select: {
         id: true,
@@ -1649,7 +1645,7 @@ Respond ONLY with valid JSON in this exact format:
       const canManageSchedule = callerCan(req, "schedule.manage");
       if (!canManageSchedule) throw app.httpErrors.forbidden("Viewing as another worker requires schedule authority.");
     }
-    return services.board.getBoard(areaWhere(req.principal, "schedule.view"));
+    return services.board.getBoard(portfolioWhere(req.principal, "schedule.view"));
   });
   app.get("/occurrences", req_scheduleView, async (req: any) => {
     const { from, to, includeOccId, viewAsUserId, selfScoped } = (req.query || {}) as { from?: string; to?: string; includeOccId?: string; viewAsUserId?: string; selfScoped?: string };
@@ -1665,7 +1661,7 @@ Respond ONLY with valid JSON in this exact format:
     // this through (a client should always see their own service history
     // regardless of the operator's internal accounting cutoff).
     const cutoff = await resolveCutoff(req);
-    const occs = await services.jobs.listAllOccurrences({ from, to, cutoff, areaWhere: areaWhere(req.principal, "schedule.view") });
+    const occs = await services.jobs.listAllOccurrences({ from, to, cutoff, portfolioWhere: portfolioWhere(req.principal, "schedule.view") });
 
     // Merge pinned occurrences that fall outside the date range (not reminders — those get ghost cards)
     const callerUid = await currentUserId(req);
@@ -1888,7 +1884,7 @@ Respond ONLY with valid JSON in this exact format:
       isSelfScopedRequest || viewAsUserId ? uid : null;
     try {
       const ghosts = await services.jobs.listNextOccurrenceGhosts({
-        areaWhere: areaWhereOn(req.principal, "schedule.view", "defaultArea"),
+        portfolioWhere: portfolioWhereVia(req.principal, "schedule.view", "property"),
         from, to, cutoff,
         assigneeUserId: ghostAssigneeUserId,
       });
@@ -1901,7 +1897,7 @@ Respond ONLY with valid JSON in this exact format:
     }
   });
   app.get("/occurrences/:id/hourly-weather", req_scheduleView, async (req: any) => {
-    // area-scope-allow: weather for a point in time and space — it reveals
+    // portfolio-scope-allow: weather for a point in time and space — it reveals
     //   nothing about the visit, and the forecast is the same whoever asks
     return hourlyForecastForOccurrence(String(req.params.id), {
       refresh: String((req.query as any)?.refresh ?? "") === "1",
@@ -1926,7 +1922,7 @@ Respond ONLY with valid JSON in this exact format:
     }
     try {
       return await services.jobs.countGhostExpiry({
-        areaWhere: areaWhereOn(req.principal, "schedule.view", "defaultArea"),
+        portfolioWhere: portfolioWhereVia(req.principal, "schedule.view", "property"),
         assigneeUserId: isSelfScopedRequest || viewAsUserId ? uid : null,
         cutoff,
       });
@@ -1936,8 +1932,8 @@ Respond ONLY with valid JSON in this exact format:
     }
   });
   app.get("/occurrences/mine", req_scheduleView, async (req: any) => {
-    // area-scope-allow: already scoped to the caller's own assignments —
-    //   area would narrow "my jobs" to "my jobs in my district", and a
+    // portfolio-scope-allow: already scoped to the caller's own assignments —
+    //   portfolio would narrow "my jobs" to "my jobs in my district", and a
     //   worker covering another district would lose sight of work they are
     //   on
     const uid = await currentUserId(req);
@@ -1975,7 +1971,7 @@ Respond ONLY with valid JSON in this exact format:
     return occs;
   });
   app.get("/occurrences/available", req_scheduleView, async (req: any) => {
-    return services.jobs.listAvailableOccurrences(areaWhere(req.principal, "schedule.view"));
+    return services.jobs.listAvailableOccurrences(portfolioWhere(req.principal, "schedule.view"));
   });
   app.post("/occurrences/:id/claim", req_workClaim, async (req: any) => {
     const uid = await currentUserId(req);
@@ -1996,9 +1992,9 @@ Respond ONLY with valid JSON in this exact format:
   // Mirrors the server-side gate so the client + server agree on
   // who counts as ready.
   app.get("/occurrences/:id/team-workday-check", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -2055,9 +2051,9 @@ Respond ONLY with valid JSON in this exact format:
   // (new property) or the occurrence isn't tied to a property (light
   // estimates with only an address string).
   app.get("/occurrences/:id/site-hint", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -2320,7 +2316,7 @@ Respond ONLY with valid JSON in this exact format:
   // in-handler-scoped: you must be ON this visit, or hold money.record /
   // schedule.manage — see the block comment inside the handler.
   app.get("/occurrences/:id/comms-handoff", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery — same reasoning as
+    // portfolio-scope-allow: a by-id read, not discovery — same reasoning as
     // `/clients/:id`. Lists narrow territorially; reaching one record you
     // already hold the id for does not, and the handler applies its own
     // on-this-visit-or-money-authority check below.
@@ -2657,7 +2653,7 @@ Respond ONLY with valid JSON in this exact format:
   // view-as-allow: the invoice is a property of the OCCURRENCE and is
   // identical for every caller; there is no per-worker state to impersonate.
   app.get("/occurrences/:id/invoice-preview", req_scheduleView, async (req: any) => {
-    // area-scope-allow: by-id read, not discovery — see the same note on the
+    // portfolio-scope-allow: by-id read, not discovery — see the same note on the
     //   sibling occurrence reads. Kept SHORT on purpose: the job-materials
     //   gate matches `callerCan(req, "money.view")` within a fixed window
     //   after this declaration, and a longer comment pushed it out of range.
@@ -3027,7 +3023,7 @@ Respond ONLY with valid JSON in this exact format:
     return services.jobs.unclaimOccurrence(uid, callerCanFn(req), String(req.params.id));
   });
   app.get("/occurrences/pinned", req_scheduleView, async (req: any) => {
-    // area-scope-allow: returns only rows this caller pinned; a pin is
+    // portfolio-scope-allow: returns only rows this caller pinned; a pin is
     //   personal, not territorial
     const uid = await currentUserId(req);
     const pins = await prisma.pinnedOccurrence.findMany({
@@ -3055,7 +3051,7 @@ Respond ONLY with valid JSON in this exact format:
     return { ok: true };
   });
   app.get("/occurrences/liked", req_scheduleView, async (req: any) => {
-    // area-scope-allow: returns only rows this caller liked; personal, not
+    // portfolio-scope-allow: returns only rows this caller liked; personal, not
     //   territorial
     const uid = await currentUserId(req);
     const likes = await prisma.likedOccurrence.findMany({
@@ -3374,7 +3370,7 @@ Respond ONLY with valid JSON in this exact format:
     return { deleted: true };
   });
   app.get("/reminders", req_scheduleView, async (req: any) => {
-    // area-scope-allow: reminders are rows this caller set for themselves
+    // portfolio-scope-allow: reminders are rows this caller set for themselves
     const uid = await currentUserId(req);
     return prisma.reminder.findMany({
       where: { userId: uid, dismissedAt: null },
@@ -3720,9 +3716,9 @@ Respond ONLY with valid JSON in this exact format:
     return photo;
   });
   app.get("/occurrences/:id/photos", req_scheduleContribute, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -3780,9 +3776,9 @@ Respond ONLY with valid JSON in this exact format:
   });
   // ── Occurrence Property Photos (worker read) ──
   app.get("/occurrences/:id/property-photos", req_scheduleView, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS
@@ -4095,9 +4091,9 @@ Respond ONLY with valid JSON in this exact format:
     return updated;
   });
   app.get("/occurrences/:id/comments", req_scheduleContribute, async (req: any) => {
-    // area-scope-allow: a by-id read, not discovery. Lists narrow
+    // portfolio-scope-allow: a by-id read, not discovery. Lists narrow
     //   territorially; reaching a specific record does not, because
-    //   `work.claim` and `work.complete` are deliberately never area-scoped
+    //   `work.claim` and `work.complete` are deliberately never portfolio-scoped
     //   so people can cover another district — and a worker covering a visit
     //   needs the record behind it. You also cannot reach this without
     //   already holding the id, and every list that hands out ids IS

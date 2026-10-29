@@ -426,7 +426,7 @@ async function resolveSeedUserIds() {
   await prisma.user.update({ where: { id: MICHAEL_ID }, data: { isOwner: true } });
   console.log("  LLC owner flag set on Michael (sole owner).");
 
-  // STAFF_DEFAULT_ROLE_ID, AREA_TIER_NAMES and MANAGER_TITLES are created
+  // STAFF_DEFAULT_ROLE_ID, PORTFOLIO_TIER_NAMES and MANAGER_TITLES are created
   // by `installStarterRoles` (called above), not here — production never
   // runs this seed, and a setting that only exists in the seed has to be
   // hand-written into Neon on every promotion.
@@ -663,11 +663,11 @@ const SETTING_SECTIONS: Record<string, string> = {
   EXPENSE_CATEGORIES: "catalogs",
   EQUIPMENT_RENTAL_INCOME_CONFIG: "catalogs",
   GUIDE_CATEGORIES: "catalogs",
-  // What a LEVEL of the area tree is called where you operate — "Region",
-  // "District", "Route". The schema does not care; `Area.tier` is a free
+  // What a LEVEL of the portfolio tree is called where you operate — "Region",
+  // "District", "Route". The schema does not care; `Portfolio.tier` is a free
   // string. This exists so two people typing the same level spell it the
   // same way.
-  AREA_TIER_NAMES: "catalogs",
+  PORTFOLIO_TIER_NAMES: "catalogs",
   // Suggested names when creating a custom role. SUGGESTIONS, not a
   // vocabulary: a role's name is free text, because the whole point of
   // custom roles is that we cannot know yours in advance.
@@ -938,7 +938,7 @@ async function seedDatabase() {
     data: { type: "PERSON", displayName: "Garcia Family", notesInternal: "Paused for winter, resume March" },
   });
   const oldClient = await prisma.client.create({
-    data: { type: "PERSON", displayName: "Dawson Residence", status: "ARCHIVED", notesInternal: "Moved out of area, no longer servicing", archivedAt: daysAgo(60) },
+    data: { type: "PERSON", displayName: "Dawson Residence", status: "ARCHIVED", notesInternal: "Moved out of portfolio, no longer servicing", archivedAt: daysAgo(60) },
   });
   const lakesideChurch = await prisma.client.create({
     data: { type: "ORGANIZATION", displayName: "Lakeside Community Church" },
@@ -1022,13 +1022,13 @@ async function seedDatabase() {
     data: { clientId: martinezFamily.id, displayName: "Weekend Cabin", street1: "129 Sanford Rd", city: "Pittsboro", state: "NC", postalCode: "27312", country: "US", kind: "SINGLE", pointOfContactId: martinezPrimary.id, lotSize: 12000, lotSizeUnit: "sqft" },
   });
   const willowbrookCommon = await prisma.property.create({
-    data: { clientId: willowbrookHoa.id, displayName: "Common Areas", street1: "101 City Hall Plaza", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: willowbrookManager.id, lotSize: 5, lotSizeUnit: "acres", accessNotes: "HOA maintenance shed has supplies" },
+    data: { clientId: willowbrookHoa.id, displayName: "Common Portfolios", street1: "101 City Hall Plaza", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "AGGREGATE_SITE", pointOfContactId: willowbrookManager.id, lotSize: 5, lotSizeUnit: "acres", accessNotes: "HOA maintenance shed has supplies" },
   });
   const willowbrookPool = await prisma.property.create({
-    data: { clientId: willowbrookHoa.id, displayName: "Pool Area Grounds", street1: "315 Holland St", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: willowbrookManager.id, lotSize: 15000, lotSizeUnit: "sqft" },
+    data: { clientId: willowbrookHoa.id, displayName: "Pool Portfolio Grounds", street1: "315 Holland St", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: willowbrookManager.id, lotSize: 15000, lotSizeUnit: "sqft" },
   });
   const willowbrookEntrance = await prisma.property.create({
-    data: { clientId: willowbrookHoa.id, displayName: "Entrance Median", street1: "1107 Minerva Ave", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: willowbrookOps.id, lotSize: 3000, lotSizeUnit: "sqft", accessNotes: "High visibility area" },
+    data: { clientId: willowbrookHoa.id, displayName: "Entrance Median", street1: "1107 Minerva Ave", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: willowbrookOps.id, lotSize: 3000, lotSizeUnit: "sqft", accessNotes: "High visibility portfolio" },
   });
   const chenHome = await prisma.property.create({
     data: { clientId: chenResidence.id, displayName: "Home", street1: "307 Watts St", city: "Durham", state: "NC", postalCode: "27701", country: "US", kind: "SINGLE", pointOfContactId: chenPrimary.id, lotSize: 4000, lotSizeUnit: "sqft" },
@@ -1081,7 +1081,7 @@ async function seedDatabase() {
     // Per-job billing example: $4/day cap, 4 equivalent jobs → $1/job. Lets
     // dev exercise the new model alongside flat-daily pieces on the same
     // equipment list.
-    data: { type: "MOWER", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", longDesc: "Self-propelled 21\" push mower. Use for small yards, tight areas, or slopes where stand-on is unsafe. Variable speed drive. Bag or mulch — switch plate under deck. Runs on regular unleaded.", status: "MAINTENANCE", energy: "Gas", dailyRate: 4.0, equivalentJobs: 4, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
+    data: { type: "MOWER", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", longDesc: "Self-propelled 21\" push mower. Use for small yards, tight portfolios, or slopes where stand-on is unsafe. Variable speed drive. Bag or mulch — switch plate under deck. Runs on regular unleaded.", status: "MAINTENANCE", energy: "Gas", dailyRate: 4.0, equivalentJobs: 4, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
   });
   const mower4 = await prisma.equipment.create({
     data: { type: "MOWER", brand: "Toro", model: "TimeCutter 42\"", shortDesc: "Zero-turn residential mower", longDesc: "42\" zero-turn with 22.5hp Toro V-Twin. Good mid-size option for residential lawns too large for a push mower but too small for the Scags. Lap bars for steering. Fuel shutoff valve on left side.", status: "AVAILABLE", energy: "Gas", dailyRate: 6.0, qrSlug: "toro-tc42-001" },
@@ -1117,7 +1117,7 @@ async function seedDatabase() {
     data: { type: "BLOWER", brand: "Echo", model: "PB-580T", shortDesc: "Backpack blower (mid-range)", longDesc: "58.2cc, 510 CFM. Lighter and quieter than the big blowers. Good for residential post-mow cleanup where you don't need maximum power. Less fuel consumption — runs longer on a tank.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 2.0, qrSlug: "echo-pb580t-001" },
   });
   await prisma.equipment.create({
-    data: { type: "BLOWER", brand: "EGO", model: "LB6504", shortDesc: "Battery backpack blower", longDesc: "56V battery, 600 CFM. Use for noise-restricted areas and early morning residential jobs. About 30 min runtime on turbo, 60 min on low. Charge overnight. Significantly quieter than gas units.", status: "AVAILABLE", energy: "Battery", dailyRate: 2.0, qrSlug: "ego-lb6504-001" },
+    data: { type: "BLOWER", brand: "EGO", model: "LB6504", shortDesc: "Battery backpack blower", longDesc: "56V battery, 600 CFM. Use for noise-restricted portfolios and early morning residential jobs. About 30 min runtime on turbo, 60 min on low. Charge overnight. Significantly quieter than gas units.", status: "AVAILABLE", energy: "Battery", dailyRate: 2.0, qrSlug: "ego-lb6504-001" },
   });
   // Edgers
   const edger1 = await prisma.equipment.create({
@@ -1157,7 +1157,7 @@ async function seedDatabase() {
     data: { type: "WASHER", brand: "Simpson", model: "MSH3125", shortDesc: "3100 PSI gas pressure washer", longDesc: "3100 PSI, 2.5 GPM, Honda GC190 engine. Use for driveways, sidewalks, fences, and siding. 25° nozzle for general cleaning, 15° for stubborn stains. Never use 0° on surfaces — will gouge. Bring own water hose (min 50ft).", status: "AVAILABLE", energy: "Gas", dailyRate: 8.0, qrSlug: "simpson-msh3125-001" },
   });
   await prisma.equipment.create({
-    data: { type: "WASHER", brand: "Sun Joe", model: "SPX3000", shortDesc: "2030 PSI electric pressure washer", longDesc: "2030 PSI, 1.76 GPM, electric motor. Lower power than the Simpson but much quieter and no fumes — good for covered patios, screened porches, and indoor-adjacent areas. Needs a standard outdoor outlet (GFCI).", status: "AVAILABLE", energy: "Electric", dailyRate: 5.0, qrSlug: "sunjoe-spx3000-001" },
+    data: { type: "WASHER", brand: "Sun Joe", model: "SPX3000", shortDesc: "2030 PSI electric pressure washer", longDesc: "2030 PSI, 1.76 GPM, electric motor. Lower power than the Simpson but much quieter and no fumes — good for covered patios, screened porches, and indoor-adjacent portfolios. Needs a standard outdoor outlet (GFCI).", status: "AVAILABLE", energy: "Electric", dailyRate: 5.0, qrSlug: "sunjoe-spx3000-001" },
   });
   // Misc
   const trailer = await prisma.equipment.create({
@@ -1530,10 +1530,10 @@ async function seedDatabase() {
 
   // Willowbrook HOA - 2 recurring
   const willowbrookWeekly = await prisma.job.create({
-    data: { propertyId: willowbrookCommon.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 250.0, estimatedMinutes: 120, notes: "Common area maintenance. Includes the main green space, walking paths (edge both sides), playground perimeter, and the retention pond embankment. Susan wants the grass kept at 3 inches max. Skip the area behind the clubhouse if an event is set up — check the bulletin board at the entrance. The irrigation system runs Tuesday mornings so the ground may be wet early." },
+    data: { propertyId: willowbrookCommon.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 250.0, estimatedMinutes: 120, notes: "Common portfolio maintenance. Includes the main green space, walking paths (edge both sides), playground perimeter, and the retention pond embankment. Susan wants the grass kept at 3 inches max. Skip the portfolio behind the clubhouse if an event is set up — check the bulletin board at the entrance. The irrigation system runs Tuesday mornings so the ground may be wet early." },
   });
   const willowbrookPoolMow = await prisma.job.create({
-    data: { propertyId: willowbrookPool.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 14, defaultPrice: 75.0, estimatedMinutes: 30, notes: "Pool area trim and blow" },
+    data: { propertyId: willowbrookPool.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 14, defaultPrice: 75.0, estimatedMinutes: 30, notes: "Pool portfolio trim and blow" },
   });
 
   // Chen - 1 one-off, 1 estimate
@@ -1559,7 +1559,7 @@ async function seedDatabase() {
 
   // Sunrise HOA - 1 recurring
   const sunriseWeekly = await prisma.job.create({
-    data: { propertyId: sunriseCommon.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 350.0, estimatedMinutes: 180, notes: "Full common area service" },
+    data: { propertyId: sunriseCommon.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 350.0, estimatedMinutes: 180, notes: "Full common portfolio service" },
   });
 
   // Patel - 1 recurring, 1 one-off
@@ -1572,7 +1572,7 @@ async function seedDatabase() {
 
   // River Bend Office Park - 1 recurring
   const riverBendWeekly = await prisma.job.create({
-    data: { propertyId: riverBendCampus.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 400.0, estimatedMinutes: 150, notes: "Full campus grounds maintenance. Three buildings with separate lawn areas. Building A has the main entrance with flower beds that need weekly weeding. Building B has a courtyard that requires hand trimming around the benches. Building C backs up to the creek — do NOT blow debris into the water (environmental compliance). Parking lot islands need edging every other week. Tom usually meets us at 7am at the loading dock with the gate code." },
+    data: { propertyId: riverBendCampus.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 400.0, estimatedMinutes: 150, notes: "Full campus grounds maintenance. Three buildings with separate lawn portfolios. Building A has the main entrance with flower beds that need weekly weeding. Building B has a courtyard that requires hand trimming around the benches. Building C backs up to the creek — do NOT blow debris into the water (environmental compliance). Parking lot islands need edging every other week. Tom usually meets us at 7am at the loading dock with the gate code." },
   });
 
   // Kim - 1 recurring
@@ -1630,7 +1630,7 @@ async function seedDatabase() {
     { jobId: willowbrookWeekly.id, collectionName: "Long-Edge Cleanup", sortOrder: 110 },
     { jobId: sunriseWeekly.id, collectionName: "Standard Mowing" },
     { jobId: riverBendWeekly.id, collectionName: "Standard Mowing" },
-    // Tight-spaces / fenced backyard pool area
+    // Tight-spaces / fenced backyard pool portfolio
     { jobId: willowbrookPoolMow.id, collectionName: "Tight Spaces Mowing" },
     // Leaf cleanup
     { jobId: chenLeafCleanup.id, collectionName: "Fall Cleanup" },
@@ -3165,7 +3165,7 @@ async function seedDatabase() {
 
   // Dawson archived
   await prisma.auditEvent.create({
-    data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: MICHAEL_ID, metadata: { clientId: oldClient.id, displayName: "Dawson Residence", status: "ARCHIVED", reason: "Moved out of area" }, createdAt: daysAgo(60, 11) },
+    data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: MICHAEL_ID, metadata: { clientId: oldClient.id, displayName: "Dawson Residence", status: "ARCHIVED", reason: "Moved out of portfolio" }, createdAt: daysAgo(60, 11) },
   });
 
   // ── Fee/margin settings ────────────────────────────────────────────────────
@@ -3739,9 +3739,9 @@ async function seedDatabase() {
     update: { value: timelineCategoriesValue, description: "Timeline event categories. Array of {key, label, description}.", updatedById: MICHAEL_ID },
   });
 
-  // ── Area tiers + role-name suggestions ──────────────────────────────────
+  // ── Portfolio tiers + role-name suggestions ──────────────────────────────────
   //
-  // Both are SUGGESTION lists, not vocabularies. `Area.tier` and
+  // Both are SUGGESTION lists, not vocabularies. `Portfolio.tier` and
   // `CustomRole.name` are free strings and stay that way: an operator who
   // runs "Zones" rather than "Districts" must not have to ask us. What the
   // list buys is spelling — two people naming the same level the same way,
@@ -3751,9 +3751,9 @@ async function seedDatabase() {
   // would imply the values mean something to the code. They do not.
   const areaTierNamesValue = JSON.stringify(["Region", "District", "Territory", "Route"]);
   await prisma.setting.upsert({
-    where: { key: "AREA_TIER_NAMES" },
-    create: { key: "AREA_TIER_NAMES", value: areaTierNamesValue, description: "What a level of the area tree is called where you operate. Array of strings. Suggestions only — Area.tier accepts any text.", updatedById: MICHAEL_ID },
-    update: { description: "What a level of the area tree is called where you operate. Array of strings. Suggestions only — Area.tier accepts any text." },
+    where: { key: "PORTFOLIO_TIER_NAMES" },
+    create: { key: "PORTFOLIO_TIER_NAMES", value: areaTierNamesValue, description: "What a level of the portfolio tree is called where you operate. Array of strings. Suggestions only — Portfolio.tier accepts any text.", updatedById: MICHAEL_ID },
+    update: { description: "What a level of the portfolio tree is called where you operate. Array of strings. Suggestions only — Portfolio.tier accepts any text." },
   });
 
   const managerTitlesValue = JSON.stringify([
@@ -3962,7 +3962,7 @@ async function seedDatabase() {
     { key: "pricing_blow_standard", label: "Blow off hardscapes", description: "Clean drive, walks, and patios after mow/trim/edge.", unit: "per visit", amount: 15, sortOrder: 40, jobTags: ["BLOW"] },
     { key: "pricing_hedge_small", label: "Hedge - small (under 6 ft)", description: "Boxwood, privet, ornamental. Per-visit shape-up; heavier rejuvenation cuts billed at labor rate.", unit: "per visit", amount: 75, sortOrder: 50, jobTags: ["HEDGE"] },
     { key: "pricing_leaf_cleanup_yard", label: "Leaf cleanup - typical yard", description: "Bag-and-haul leaf cleanup on a residential lot. Pricing scales with leaf load; storm cleanup is separate.", unit: "per visit", amount: 180, sortOrder: 60, jobTags: ["LEAF_CLEANUP"] },
-    { key: "pricing_aeration_5k", label: "Aeration - up to 5,000 sq ft", description: "Core aeration with double-pass on compacted areas. Add seed/starter fertilizer separately.", unit: "per visit", amount: 145, sortOrder: 70, jobTags: ["AERATION"] },
+    { key: "pricing_aeration_5k", label: "Aeration - up to 5,000 sq ft", description: "Core aeration with double-pass on compacted portfolios. Add seed/starter fertilizer separately.", unit: "per visit", amount: 145, sortOrder: 70, jobTags: ["AERATION"] },
     { key: "pricing_mulch_per_yard", label: "Mulch - installed", description: "Premium hardwood mulch, spread to 2-3\" depth. Edging touchup included.", unit: "per cubic yard installed", amount: 95, sortOrder: 80, jobTags: ["MULCH"] },
     { key: "pricing_weed_beds", label: "Weed beds", description: "Hand-pull weeds and apply pre-emergent in landscape beds.", unit: "per visit", amount: 60, sortOrder: 90, jobTags: ["WEED"] },
     { key: "pricing_fertilize_lawn", label: "Fertilize lawn", description: "Granular fertilizer application, broadcast spreader. Mid-grade NPK; weed-and-feed is +$25.", unit: "per visit", amount: 85, sortOrder: 100, jobTags: ["FERTILIZE"] },
@@ -4245,7 +4245,7 @@ async function seedDatabase() {
 
   // 5. Missing next occurrence: completed repeating job, no SCHEDULED sibling
   const orphanJob = await prisma.job.create({
-    data: { propertyId: sunriseCommon.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 180.0, estimatedMinutes: 90, notes: "Weekly common area mow — next occurrence should have been auto-created" },
+    data: { propertyId: sunriseCommon.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 180.0, estimatedMinutes: 90, notes: "Weekly common portfolio mow — next occurrence should have been auto-created" },
   });
   await prisma.jobOccurrence.create({
     // hoursApprovedAt stamped explicitly because this row bypasses the
@@ -4322,7 +4322,7 @@ async function seedDatabase() {
   const followupThompson = await prisma.jobOccurrence.create({
     data: {
       title: "Follow up on Thompson pricing",
-      notes: "Discuss new pricing for expanded service area. They want a quote for the back lot.",
+      notes: "Discuss new pricing for expanded service portfolio. They want a quote for the back lot.",
       startAt: daysFromNow(2, 9),
       status: "SCHEDULED",
       source: "MANUAL",
@@ -4696,14 +4696,14 @@ async function seedDatabase() {
 
   await applySettingSections();
 
-  // ── Areas ─────────────────────────────────────────────────────────────
+  // ── Portfolios ─────────────────────────────────────────────────────────────
   //
-  // The root area and its backfill were a MIGRATION
+  // The root portfolio and its backfill were a MIGRATION
   // (20261011235100_create_root_area_and_backfill), which places every
   // existing row in the root exactly once. That is right for a real
   // database and useless for dev: `clearDatabase()` wipes properties, jobs
   // and occurrences, the migration has already run and will not run again,
-  // so every reseed left `areaId` NULL on everything — 0 of 120
+  // so every reseed left `portfolioId` NULL on everything — 0 of 120
   // occurrences, and every territorial rollup reading zero.
   //
   // So the seed reproduces it. A tier below the root exists too, because a
@@ -4714,33 +4714,33 @@ async function seedDatabase() {
   // This read `findFirst({ where: { parentId: null } })` with no ordering.
   // Two things go wrong with that. Postgres returns an arbitrary row, so a
   // reseed could latch onto a different root each time; and the e2e
-  // mutation specs create their OWN root-level areas (`E2E_MUT_… Area`), so
-  // the arbitrary row was sometimes a scratch area — which the `update`
-  // below then RENAMED to "All areas" before building a fresh Durham and
+  // mutation specs create their OWN root-level portfolios (`E2E_MUT_… Portfolio`), so
+  // the arbitrary row was sometimes a scratch portfolio — which the `update`
+  // below then RENAMED to "All properties" before building a fresh Durham and
   // Chapel Hill beneath it.
   //
   // The result was a complete new tree per run: ten roots, ten Durhams, ten
   // Chapel Hills, with the real data stranded under whichever one happened
-  // to win. Found 2026-10-18 by scripts/verify-area-scope.ts, which asked a
+  // to win. Found 2026-10-18 by scripts/verify-portfolio-scope.ts, which asked a
   // territory-limited principal for Durham's properties and got rows from a
   // DIFFERENT Durham.
-  const existingRoot = await prisma.area.findFirst({
-    where: { parentId: null, name: "All areas" },
+  const existingRoot = await prisma.portfolio.findFirst({
+    where: { parentId: null, name: "All properties" },
     orderBy: { id: "asc" },
     select: { id: true },
   });
-  const rootArea = await prisma.area.upsert({
+  const rootPortfolio = await prisma.portfolio.upsert({
     where: { id: existingRoot?.id ?? "__none__" },
-    create: { name: "All areas", parentId: null, path: "" },
-    update: { name: "All areas" },
+    create: { name: "All properties", parentId: null, path: "" },
+    update: { name: "All properties" },
     select: { id: true, path: true },
   });
 
   // Fold away any duplicate trees a previous run left behind. Only ones
   // holding nothing — this can never strand work.
-  const dupRoots = await prisma.area.findMany({
+  const dupRoots = await prisma.portfolio.findMany({
     where: {
-      parentId: null, name: "All areas", id: { not: rootArea.id },
+      parentId: null, name: "All properties", id: { not: rootPortfolio.id },
       properties: { none: {} }, occurrences: { none: {} }, assignments: { none: {} },
       children: { every: { properties: { none: {} }, occurrences: { none: {} }, assignments: { none: {} } } },
     },
@@ -4748,22 +4748,22 @@ async function seedDatabase() {
   });
   if (dupRoots.length > 0) {
     const childIds = dupRoots.flatMap((r) => r.children.map((c) => c.id));
-    if (childIds.length) await prisma.area.deleteMany({ where: { id: { in: childIds } } });
-    await prisma.area.deleteMany({ where: { id: { in: dupRoots.map((r) => r.id) } } });
-    console.log(`  Removed ${dupRoots.length} duplicate area tree(s) from earlier reseeds.`);
+    if (childIds.length) await prisma.portfolio.deleteMany({ where: { id: { in: childIds } } });
+    await prisma.portfolio.deleteMany({ where: { id: { in: dupRoots.map((r) => r.id) } } });
+    console.log(`  Removed ${dupRoots.length} duplicate portfolio tree(s) from earlier reseeds.`);
   }
-  if (!rootArea.path) {
-    await prisma.area.update({
-      where: { id: rootArea.id },
-      data: { path: `/${rootArea.id}/` },
+  if (!rootPortfolio.path) {
+    await prisma.portfolio.update({
+      where: { id: rootPortfolio.id },
+      data: { path: `/${rootPortfolio.id}/` },
     });
   }
-  const rootPath = `/${rootArea.id}/`;
+  const rootPath = `/${rootPortfolio.id}/`;
 
   // TWO LEVELS BENEATH THE ROOT, not one.
   //
   // A flat tree proves prefix matching and nothing else. The questions that
-  // actually decide whether area scoping works are about DEPTH: does a grant
+  // actually decide whether portfolio scoping works are about DEPTH: does a grant
   // on a parent cover its grandchildren, does a lens on a branch pull in the
   // leaves below it, and does a sibling branch stay out of both. None of
   // those have a wrong answer available in a one-level tree.
@@ -4784,14 +4784,14 @@ async function seedDatabase() {
   // Named after cities the fixture genuinely has, and nested the way the
   // geography actually runs: Carrboro and Hillsborough are Orange County
   // neighbours of Chapel Hill, Pittsboro is Chatham County.
-  const AREA_TREE: Array<{
+  const PORTFOLIO_TREE: Array<{
     name: string;
     tier: string;
     lat?: number;
     lng?: number;
     children?: Array<{ name: string; tier: string; lat?: number; lng?: number }>;
   }> = [
-    // Coordinates anchor the weather forecast when this area is the lens.
+    // Coordinates anchor the weather forecast when this portfolio is the lens.
     // Seeded so a fresh database can exercise that; Chatham is left blank on
     // purpose, so the "falls back to the business address" path is in the
     // fixture too.
@@ -4815,17 +4815,17 @@ async function seedDatabase() {
     parentId: string,
     parentPath: string,
   ): Promise<string> {
-    const existing = await prisma.area.findFirst({
+    const existing = await prisma.portfolio.findFirst({
       where: { name: node.name, parentId },
       select: { id: true },
     });
     const row = existing
       ? existing
-      : await prisma.area.create({
+      : await prisma.portfolio.create({
           data: { name: node.name, tier: node.tier, parentId, path: "pending" },
           select: { id: true },
         });
-    await prisma.area.update({
+    await prisma.portfolio.update({
       where: { id: row.id },
       // The path is rewritten every run rather than only on create: a node
       // whose ANCESTOR was rebuilt would otherwise keep a path pointing at
@@ -4837,33 +4837,33 @@ async function seedDatabase() {
   }
 
   /** name → id, for every node in the fixture at any depth. */
-  const areaIds: Record<string, string> = {};
-  for (const top of AREA_TREE) {
-    const id = await seedArea(top, rootArea.id, rootPath);
-    areaIds[top.name] = id;
+  const portfolioIds: Record<string, string> = {};
+  for (const top of PORTFOLIO_TREE) {
+    const id = await seedArea(top, rootPortfolio.id, rootPath);
+    portfolioIds[top.name] = id;
     for (const child of top.children ?? []) {
-      areaIds[child.name] = await seedArea(child, id, `${rootPath}${id}/`);
+      portfolioIds[child.name] = await seedArea(child, id, `${rootPath}${id}/`);
     }
   }
   // Kept under the old name so the placement code below reads unchanged.
-  const districts = areaIds;
+  const districts = portfolioIds;
 
-  // ── Place the data in areas ───────────────────────────────────────────
+  // ── Place the data in portfolios ───────────────────────────────────────────
   //
   // Runs HERE, not with the tree above, because it needs properties, jobs
   // and occurrences to exist. Placing them when the tree was created put
-  // 0 of 120 occurrences in an area and said so cheerfully.
+  // 0 of 120 occurrences in an portfolio and said so cheerfully.
   // Remove districts the fixture no longer names — same class of problem as
-  // the stale custom roles: `clearDatabase()` preserves Area, so a district
+  // the stale custom roles: `clearDatabase()` preserves Portfolio, so a district
   // from an earlier fixture survives as an empty territory that looks real.
   // Only ones with nothing pointing at them, so this can never orphan work.
   //
-  // Scans EVERY non-root area, not just the root's children — the fixture is
+  // Scans EVERY non-root portfolio, not just the root's children — the fixture is
   // two levels deep now, so a leaf dropped from a nested branch is just as
   // stale as a district dropped from the top and was previously invisible to
   // this sweep. The root itself is excluded: it is never part of the
   // fixture's name list and deleting it would take the tree with it.
-  const stale = await prisma.area.findMany({
+  const stale = await prisma.portfolio.findMany({
     where: {
       parentId: { not: null },
       name: { notIn: Object.keys(districts) },
@@ -4875,8 +4875,8 @@ async function seedDatabase() {
     select: { id: true, name: true },
   });
   if (stale.length > 0) {
-    await prisma.area.deleteMany({ where: { id: { in: stale.map((a) => a.id) } } });
-    console.log(`  Removed ${stale.length} empty area(s) from an earlier fixture: ${stale.map((a) => a.name).join(", ")}`);
+    await prisma.portfolio.deleteMany({ where: { id: { in: stale.map((a) => a.id) } } });
+    console.log(`  Removed ${stale.length} empty portfolio(s) from an earlier fixture: ${stale.map((a) => a.name).join(", ")}`);
   }
 
   // Properties split by their real city, so the fixture is not arbitrary;
@@ -4886,97 +4886,116 @@ async function seedDatabase() {
   // contradicted the model: the root is the container, not a place — it has
   // no tier, no coordinates and nobody in charge of it. A property tagged
   // there is in "everywhere", which is not an answer.
-  for (const [city, areaId] of [
+  for (const [city, portfolioId] of [
     ["Durham", districts["Durham"]],
     ["Chapel Hill", districts["Chapel Hill"]],
     ["Carrboro", districts["Carrboro"]],
     ["Hillsborough", districts["Hillsborough"]],
     ["Pittsboro", districts["Pittsboro"]],
   ] as const) {
-    await prisma.property.updateMany({ where: { city }, data: { areaId } });
-  }
-  // Safety net for a city the list above does not name. It lands on the root
-  // rather than staying null, and SAYS SO — an untagged property is allowed
-  // but discouraged, and one appearing silently is how the fixture drifts
-  // away from the map above.
-  const unplaced = await prisma.property.count({ where: { areaId: null } });
-  if (unplaced > 0) {
-    const cities = await prisma.property.findMany({
-      where: { areaId: null }, select: { city: true }, distinct: ["city"],
+    const inCity = await prisma.property.findMany({ where: { city }, select: { id: true } });
+    if (inCity.length === 0) continue;
+    await prisma.propertyPortfolio.createMany({
+      data: inCity.map((pr) => ({ propertyId: pr.id, portfolioId })),
+      skipDuplicates: true,
     });
-    await prisma.property.updateMany({ where: { areaId: null }, data: { areaId: rootArea.id } });
+  }
+
+  // Safety net for a city the list above does not name. It lands on the root
+  // rather than in nothing, and SAYS SO — belonging to no portfolio is
+  // allowed but discouraged, and one appearing silently is how the fixture
+  // drifts away from the map above.
+  const unplacedProps = await prisma.property.findMany({
+    where: { portfolios: { none: {} } },
+    select: { id: true, city: true },
+  });
+  if (unplacedProps.length > 0) {
+    await prisma.propertyPortfolio.createMany({
+      data: unplacedProps.map((pr) => ({ propertyId: pr.id, portfolioId: rootPortfolio.id })),
+      skipDuplicates: true,
+    });
+    const cities = [...new Set(unplacedProps.map((c) => c.city ?? "(no city)"))];
     console.log(
-      `  ${unplaced} propert(ies) had no area and were put on the root — ` +
-        `add a leaf for: ${cities.map((c) => c.city ?? "(no city)").join(", ")}`,
+      `  ${unplacedProps.length} propert(ies) were in no portfolio and were put on ` +
+        `the root — add a leaf for: ${cities.join(", ")}`,
     );
   }
 
-  // Jobs default to their property's area; occurrences follow the job. This
-  // is the same order `resolveOccurrenceArea` uses at runtime.
-  const propsWithArea = await prisma.property.findMany({
-    where: { areaId: { not: null } },
-    select: { id: true, areaId: true },
+  // OCCURRENCES FOLLOW THEIR PROPERTY, which is the runtime rule too — see
+  // `syncOccurrencePortfolios`. There is no job-level default any more: the
+  // chain it fed was removed when open visits started following the
+  // property directly, so seeding one would be seeding a dead field.
+  const allMemberships = await prisma.propertyPortfolio.findMany({
+    select: { propertyId: true, portfolioId: true },
   });
-  for (const prop of propsWithArea) {
-    await prisma.job.updateMany({
-      where: { propertyId: prop.id },
-      data: { defaultAreaId: prop.areaId },
-    });
+  const byProperty = new Map<string, string[]>();
+  for (const m of allMemberships) {
+    byProperty.set(m.propertyId, [...(byProperty.get(m.propertyId) ?? []), m.portfolioId]);
   }
-  const jobsWithArea = await prisma.job.findMany({
-    where: { defaultAreaId: { not: null } },
-    select: { id: true, defaultAreaId: true },
+  const occs = await prisma.jobOccurrence.findMany({
+    select: { id: true, completedAt: true, job: { select: { propertyId: true } } },
   });
-  for (const job of jobsWithArea) {
-    await prisma.jobOccurrence.updateMany({
-      where: { jobId: job.id },
-      data: { areaId: job.defaultAreaId },
-    });
+  const occRows = occs.flatMap((o) =>
+    (byProperty.get(o.job?.propertyId ?? "") ?? []).map((portfolioId) => ({
+      occurrenceId: o.id,
+      portfolioId,
+      // Completed visits are frozen the moment they are seeded, so the
+      // fixture starts in the state the app maintains rather than one the
+      // first resync would have to repair.
+      frozenAt: o.completedAt,
+    })),
+  );
+  if (occRows.length) {
+    await prisma.jobOccurrencePortfolio.createMany({ data: occRows, skipDuplicates: true });
   }
-  await prisma.jobOccurrence.updateMany({ where: { areaId: null }, data: { areaId: rootArea.id } });
   console.log(
-    `  Areas: root + ${Object.keys(districts).length} districts; ` +
-      `${propsWithArea.length} properties and ` +
-      `${await prisma.jobOccurrence.count({ where: { areaId: { not: null } } })} occurrences placed.`,
+    `  Portfolios: root + ${Object.keys(districts).length} districts; ` +
+      `${allMemberships.length} property memberships and ` +
+      `${occRows.length} occurrence memberships placed.`,
   );
 
   // ── A TERRITORY-LIMITED PERSON ────────────────────────────────────────
   //
-  // Without one, area scoping cannot be tested at all. Every other persona
+  // Without one, portfolio scoping cannot be tested at all. Every other persona
   // holds its role COMPANY-WIDE, and a company-wide grant wins: for them
-  // `visibleAreaPaths` correctly returns null (no narrowing), so a test
+  // `visiblePortfolioPaths` correctly returns null (no narrowing), so a test
   // would pass while proving nothing. The gap was invisible for exactly
-  // that reason — 33 areas seeded and zero assignments.
+  // that reason — 33 portfolios seeded and zero assignments.
   //
   // This person holds NO company-wide role. Their only grant is an
-  // AreaAssignment of the DISTRICT LEAD role inside Durham, which is what
-  // makes them narrowed: `visibleAreaPaths` returns Durham's path alone,
+  // PortfolioAssignment of the DISTRICT LEAD role inside Durham, which is what
+  // makes them narrowed: `visiblePortfolioPaths` returns Durham's path alone,
   // and every threaded read must drop Chapel Hill's rows for them.
   //
-  // THE ROLE CHANGED FROM ADMIN TO DISTRICT LEAD (2026-10-26). The fixture
+  // THE ROLE CHANGED FROM ADMIN TO PORTFOLIO LEAD (2026-10-26). The fixture
   // was Admin-in-Durham, and Admin deliberately lacks `reports.business`
-  // so INSIGHTS stays off the Admin tier — which left the one persona named
-  // "District Lead" unable to roll up the district they lead. District Lead
-  // inherits Admin and adds that single capability, so the lead sees their
-  // area's business numbers while every company-wide Admin is unchanged.
+  // so INSIGHTS stays off the Admin tier — which left the one persona who
+  // leads a portfolio unable to roll it up. Portfolio Lead inherits Admin
+  // and adds that single capability, so the lead sees their portfolio's
+  // business numbers while every company-wide Admin is unchanged.
+  //
+  // The role was called "District Lead" until 2026-10-29. It carries one
+  // entitlement beyond Admin and nothing in it is about districts, while
+  // tiers are operator-defined free text — so the old name contradicted
+  // itself the moment somebody led a Route.
   //
   // Deliberately NOT one of the Clerk-backed personas. Re-pointing an
   // existing one would change what the persona-mutation specs assert.
   //
   // SIGNED IN AS, since 2026-10-22. This used to say the fixture exists to
   // be "queried directly rather than signed in as", and that was the whole
-  // weakness: area scoping was proven by unit tests over hand-built
+  // weakness: portfolio scoping was proven by unit tests over hand-built
   // principals and by a direct query, never by a request from a real
   // narrowed user. It now has a Clerk account and a Playwright persona, so
   // the sweep drives it through the UI like any other.
   const districtLeadId = "seed-district-lead-durham";
   const durhamId = districts["Durham"];
-  // Falls back to Admin if the District Lead role is not installed yet —
+  // Falls back to Admin if the Portfolio Lead role is not installed yet —
   // a database seeded before `install-starter-roles.ts` gained it would
   // otherwise skip the whole fixture and take the persona with it.
   const leadRole =
     (await prisma.customRole.findUnique({
-      where: { key: "seedlings.district-lead" },
+      where: { key: "seedlings.portfolio-lead" },
       select: { id: true },
     })) ??
     (await prisma.customRole.findUnique({
@@ -4993,14 +5012,14 @@ async function seedDatabase() {
         // exactly why this fixture had no persona for so long.
         clerkUserId: "user_3L4dcamBCzjUi4HM66iShU6jRFx",
         email: "admin+districtlead@seedlingslawncare.com",
-        displayName: "District Lead (Durham)",
+        displayName: "Portfolio Lead (Durham)",
         isApproved: true,
         workerType: "EMPLOYEE",
       },
       update: {
         isApproved: true,
         workerType: "EMPLOYEE",
-        displayName: "District Lead (Durham)",
+        displayName: "Portfolio Lead (Durham)",
         // Carried in the UPDATE branch too: a database seeded before the
         // Clerk account existed still holds `seed_seed-district-lead-durham`,
         // and an upsert that only sets these on create would leave it there
@@ -5011,39 +5030,39 @@ async function seedDatabase() {
     });
     // Company-wide grants would defeat the fixture — strip any that exist.
     await prisma.userCustomRole.deleteMany({ where: { userId: districtLeadId } });
-    // And any assignment to a DIFFERENT area. A stale one (a Durham from a
+    // And any assignment to a DIFFERENT portfolio. A stale one (a Durham from a
     // duplicate tree, say) makes the principal hold two subtrees, so the
     // scoped read legitimately returns both and the fixture stops being
     // "limited to one territory" without ever looking wrong.
-    await prisma.areaAssignment.deleteMany({
-      where: { userId: districtLeadId, NOT: { areaId: durhamId } },
+    await prisma.portfolioAssignment.deleteMany({
+      where: { userId: districtLeadId, NOT: { portfolioId: durhamId } },
     });
     // And any Durham assignment carrying a DIFFERENT role — the fixture was
-    // Admin-in-Durham before District Lead existed, and an upsert alone
+    // Admin-in-Durham before Portfolio Lead existed, and an upsert alone
     // would leave that row in place so the persona held both.
-    await prisma.areaAssignment.deleteMany({
-      where: { userId: districtLeadId, areaId: durhamId, NOT: { customRoleId: leadRole.id } },
+    await prisma.portfolioAssignment.deleteMany({
+      where: { userId: districtLeadId, portfolioId: durhamId, NOT: { customRoleId: leadRole.id } },
     });
-    await prisma.areaAssignment.upsert({
+    await prisma.portfolioAssignment.upsert({
       where: {
-        userId_areaId_customRoleId: {
-          userId: districtLeadId, areaId: durhamId, customRoleId: leadRole.id,
+        userId_portfolioId_customRoleId: {
+          userId: districtLeadId, portfolioId: durhamId, customRoleId: leadRole.id,
         },
       },
       create: {
-        userId: districtLeadId, areaId: durhamId, customRoleId: leadRole.id,
-        grantedById: MICHAEL_ID, note: "Area-scope fixture — Durham only.",
+        userId: districtLeadId, portfolioId: durhamId, customRoleId: leadRole.id,
+        grantedById: MICHAEL_ID, note: "Portfolio-scope fixture — Durham only.",
       },
       update: { suspendedAt: null },
     });
-    console.log("  District Lead (Durham) — District Lead inside Durham only, no company-wide role.");
+    console.log("  Portfolio Lead (Durham) — Portfolio Lead inside Durham only, no company-wide role.");
   }
 
   // Second prune. The pass above skips a duplicate tree that still holds an
   // assignment; clearing the stale ones just made some of those empty.
-  const nowEmpty = await prisma.area.findMany({
+  const nowEmpty = await prisma.portfolio.findMany({
     where: {
-      parentId: null, name: "All areas", id: { not: rootArea.id },
+      parentId: null, name: "All properties", id: { not: rootPortfolio.id },
       properties: { none: {} }, occurrences: { none: {} }, assignments: { none: {} },
       children: { every: { properties: { none: {} }, occurrences: { none: {} }, assignments: { none: {} } } },
     },
@@ -5051,9 +5070,9 @@ async function seedDatabase() {
   });
   if (nowEmpty.length > 0) {
     const kids = nowEmpty.flatMap((r) => r.children.map((c) => c.id));
-    if (kids.length) await prisma.area.deleteMany({ where: { id: { in: kids } } });
-    await prisma.area.deleteMany({ where: { id: { in: nowEmpty.map((r) => r.id) } } });
-    console.log(`  Removed ${nowEmpty.length} further duplicate area tree(s).`);
+    if (kids.length) await prisma.portfolio.deleteMany({ where: { id: { in: kids } } });
+    await prisma.portfolio.deleteMany({ where: { id: { in: nowEmpty.map((r) => r.id) } } });
+    console.log(`  Removed ${nowEmpty.length} further duplicate portfolio tree(s).`);
   }
 
 
@@ -9284,7 +9303,7 @@ Creeping red, chewings, and hard fescue. The shade-and-neglect group.
 
 - Mow **2.5–4"**.
 - Best shade tolerance of anything on this list.
-- Poor traffic tolerance — not for play areas or dog runs.
+- Poor traffic tolerance — not for play portfolios or dog runs.
 
 ## Mowing heights, all together
 

@@ -21,8 +21,7 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, paymentSplitCutoffWhere, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
-import { areaWhere, areaWhereVia } from "../lib/areaScope";
+import { portfolioWhere, portfolioWhereVia } from "../lib/portfolioScope";
 import { WORKER_TYPES, classify, isFeeable, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { currentUserId, enrichSyncTasks, nextRecurrenceDate, occInEditableState } from "./_shared";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
@@ -725,7 +724,7 @@ export default async function peopleRoutes(app: FastifyInstance) {
     // it, delete it, or build their own structure that never contains it,
     // and this list would then be wrong or empty with nothing to explain
     // why. It also silently excluded anyone holding the equivalent access
-    // through an area assignment, since the role filter reads company-wide
+    // through a portfolio assignment, since the role filter reads company-wide
     // grants only.
     //
     // `work.claim` is the thing actually meant: clearance to pick work up.

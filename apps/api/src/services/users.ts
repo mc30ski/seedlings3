@@ -67,12 +67,13 @@ export const users: ServicesUsers = {
           where: { suspendedAt: null, customRole: { suspendedAt: null } },
           select: { customRoleId: true },
         },
-        areaAssignments: {
-          where: { suspendedAt: null, customRole: { suspendedAt: null }, area: { retiredAt: null } },
+        portfolioAssignments: {
+          where: { suspendedAt: null, customRole: { suspendedAt: null }, portfolio: { retiredAt: null } },
           select: {
+            id: true,
             customRoleId: true,
             isTemporary: true,
-            area: { select: { id: true, name: true } },
+            portfolio: { select: { id: true, name: true } },
           },
         },
       },
@@ -128,33 +129,40 @@ export const users: ServicesUsers = {
 
     return rows.map((u) => {
       const companyWide = (u.customRoles ?? []).map((g) => ({
+        /** Null company-wide: a global grant is revoked by role, a
+         *  portfolio-scoped one by its own row. */
+        grantId: null as string | null,
         roleId: g.customRoleId,
         key: rolesById.get(g.customRoleId)?.key ?? null,
         name: rolesById.get(g.customRoleId)?.name ?? "(unknown role)",
-        areaId: null as string | null,
-        areaName: null as string | null,
+        portfolioId: null as string | null,
+        portfolioName: null as string | null,
         isTemporary: false,
       }));
-      const areaScoped = (u.areaAssignments ?? []).map((g) => ({
+      const areaScoped = (u.portfolioAssignments ?? []).map((g) => ({
+        /** `PortfolioAssignment.id` — what DELETE /portfolio-assignments/:id
+         *  takes, so the person's own card can revoke without first going
+         *  to find the grant in the tree. */
+        grantId: g.id,
         roleId: g.customRoleId,
         key: rolesById.get(g.customRoleId)?.key ?? null,
         name: rolesById.get(g.customRoleId)?.name ?? "(unknown role)",
-        areaId: g.area.id,
-        areaName: g.area.name,
+        portfolioId: g.portfolio.id,
+        portfolioName: g.portfolio.name,
         isTemporary: g.isTemporary,
       }));
 
       // COMPANY-WIDE GRANTS ONLY, deliberately.
       //
       // `heldCapabilities` is a union over grants and does not look at
-      // `areaPath` — that is `can()`'s job, which needs the area of the
+      // `portfolioPath` — that is `can()`'s job, which needs the portfolio of the
       // RECORD being acted on and there is no record here. Folding the
-      // area-scoped grants in would therefore report "runs the schedule"
+      // portfolio-scoped grants in would therefore report "runs the schedule"
       // for someone who only runs Durham's, and the directory would read as
       // if they were someone with `people.manage` of the business. They are not.
       //
-      // The area grants are not lost: each one is its own entry in
-      // `roleGrants` with its area name, which is how a badge says
+      // The portfolio grants are not lost: each one is its own entry in
+      // `roleGrants` with its portfolio name, which is how a badge says
       // "Admin — Durham" rather than "Admin".
       //
       // No perspective either. A perspective is something a person looks through at
@@ -171,7 +179,7 @@ export const users: ServicesUsers = {
         perspective: null,
       });
 
-      const { customRoles: _c, areaAssignments: _a, ...user } = u as typeof u & Record<string, unknown>;
+      const { customRoles: _c, portfolioAssignments: _a, ...user } = u as typeof u & Record<string, unknown>;
       return {
         ...(user as typeof u),
         roleGrants: [...companyWide, ...areaScoped],
@@ -486,9 +494,9 @@ export const users: ServicesUsers = {
                 where: { suspendedAt: null, customRole: { suspendedAt: null } },
                 include: { customRole: { include: { entitlements: true } } },
               },
-              areaAssignments: {
+              portfolioAssignments: {
                 where: { suspendedAt: null, customRole: { suspendedAt: null } },
-                include: { area: { select: { path: true, name: true } } },
+                include: { portfolio: { select: { id: true, path: true, name: true } } },
               },
             },
     });
@@ -507,9 +515,9 @@ export const users: ServicesUsers = {
                     where: { suspendedAt: null, customRole: { suspendedAt: null } },
                     include: { customRole: { include: { entitlements: true } } },
                   },
-                  areaAssignments: {
+                  portfolioAssignments: {
                     where: { suspendedAt: null, customRole: { suspendedAt: null } },
-                    include: { area: { select: { path: true, name: true } } },
+                    include: { portfolio: { select: { id: true, path: true, name: true } } },
                   },
                 },
         });
@@ -547,9 +555,9 @@ export const users: ServicesUsers = {
                     where: { suspendedAt: null, customRole: { suspendedAt: null } },
                     include: { customRole: { include: { entitlements: true } } },
                   },
-                  areaAssignments: {
+                  portfolioAssignments: {
                     where: { suspendedAt: null, customRole: { suspendedAt: null } },
-                    include: { area: { select: { path: true, name: true } } },
+                    include: { portfolio: { select: { id: true, path: true, name: true } } },
                   },
                 },
         });
@@ -658,27 +666,27 @@ export const users: ServicesUsers = {
         },
       ]),
     );
-    // Company-wide grants only. Area-scoped ones do not change which PERSPECTIVES
+    // Company-wide grants only. Portfolio-scoped ones do not change which PERSPECTIVES
     // are on offer — a perspective narrows what you may do, not where, and
-    // mixing an area grant in would offer a perspective the person only holds in
+    // mixing a portfolio grant in would offer a perspective the person only holds in
     // one territory as if they held it everywhere.
-    // AREA GRANTS COUNT HERE TOO.
+    // PORTFOLIO GRANTS COUNT HERE TOO.
     //
     // This read `customRoles` alone, so somebody whose ONLY access is an
-    // AreaAssignment — which is the entire point of the feature — came back
+    // PortfolioAssignment — which is the entire point of the feature — came back
     // with zero capabilities and zero perspectives. The server authorized
     // them correctly all along (`currentUser.me` builds `req.principal`
     // from BOTH lists, twenty lines of a sibling file away), so the API
-    // worked and the browser showed them the no-access notice. Area
+    // worked and the browser showed them the no-access notice. Portfolio
     // scoping has never been usable in the UI because of this line.
     //
-    // The narrowing still happens server-side: `visibleAreaPaths` reads
-    // `areaPath` off the principal's grants. What this list decides is what
+    // The narrowing still happens server-side: `visiblePortfolioPaths` reads
+    // `portfolioPath` off the principal's grants. What this list decides is what
     // the person may DO at all, which is not a territorial question — a
     // Durham-only Admin can do Admin things, inside Durham.
     const heldRoleIds = [
       ...(user!.customRoles ?? []).map((ucr: any) => ucr.customRoleId),
-      ...((user as any)!.areaAssignments ?? []).map((aa: any) => aa.customRoleId),
+      ...((user as any)!.portfolioAssignments ?? []).map((aa: any) => aa.customRoleId),
     ];
     const perspectives = availablePerspectives(heldRoleIds, rolesById as never);
     const perspective = resolvePerspective(perspectives, impersonateHeader ?? null);
@@ -714,10 +722,10 @@ export const users: ServicesUsers = {
 
     // WHERE THIS PERSON'S VIEW IS NARROWED TO, for the app-wide notice.
     //
-    // Area scoping was threaded through ~30 query sites and announced in
+    // Portfolio scoping was threaded through ~30 query sites and announced in
     // TWO of them, so a district lead saw shorter lists on every tab with
     // nothing anywhere saying "Durham". That is the exact failure the whole
-    // area design is built around — a territory's rows vanishing looks
+    // portfolio design is built around — a territory's rows vanishing looks
     // identical to that territory being empty — and the header chip does
     // not cover it: the chip hides itself when there is nothing to choose
     // between, which is precisely the grant-limited case.
@@ -725,14 +733,30 @@ export const users: ServicesUsers = {
     // Computed from the caller's OWN grants rather than per-capability,
     // because one banner cannot be per-capability. `mixed` carries the
     // honesty: somebody holding one role company-wide and another inside an
-    // area is narrowed on SOME views and not others, so the notice softens
+    // portfolio is narrowed on SOME views and not others, so the notice softens
     // rather than claiming every tab is filtered.
-    const grantedAreas: Array<{ path: string; name: string }> = [
+    // THE ROLE TRAVELS WITH THE PORTFOLIO.
+    //
+    // A grant is (person, role, portfolio) and the notice only ever said
+    // the portfolio — so a district lead read "Showing Durham only" with
+    // no indication of which powers were in force there, and could not
+    // tell a Bookkeeper-in-Durham view from a Coordinator-in-Durham one.
+    // Keyed by path AND role, because the same person may hold two
+    // different roles in two portfolios and collapsing them would pick
+    // one arbitrarily.
+    const grantedAreas: Array<{ id: string; path: string; name: string; role: string }> = [
       ...new Map(
-        (((user as any)!.areaAssignments ?? []) as any[])
-          .map((aa) => aa.area)
-          .filter((a: any) => a?.path)
-          .map((a: any) => [a.path as string, { path: a.path as string, name: a.name as string }]),
+        (((user as any)!.portfolioAssignments ?? []) as any[])
+          .filter((aa) => aa?.portfolio?.path)
+          .map((aa) => [
+            `${aa.portfolio.path}|${aa.customRoleId}`,
+            {
+              id: aa.portfolio.id as string,
+              path: aa.portfolio.path as string,
+              name: aa.portfolio.name as string,
+              role: rolesById.get(aa.customRoleId)?.name ?? "a role",
+            },
+          ]),
       ).values(),
     ];
 
@@ -742,26 +766,69 @@ export const users: ServicesUsers = {
     // looking at a narrowed screen nothing about how much of the business
     // they are missing.
     //
-    // Only queried when there IS an area grant — `/me` is on the hot path
+    // Only queried when there IS a portfolio grant — `/me` is on the hot path
     // for every request and most people have none.
-    let areaTrails: string[][] = [];
+    let areaTrails: Array<{ id: string; trail: string[]; role: string }> = [];
     if (grantedAreas.length > 0) {
-      const all = await prisma.area.findMany({ select: { id: true, name: true, path: true } });
+      const all = await prisma.portfolio.findMany({ select: { id: true, name: true, path: true } });
       const nameById = new Map(all.map((a) => [a.id, a.name]));
       // The path is "/rootId/childId/…", so its ids ARE the chain. The root
       // is dropped: it is the container, not a place, and prefixing every
-      // trail with "All areas" says nothing.
+      // trail with "All portfolios" says nothing.
       areaTrails = grantedAreas
-        .map((a) =>
-          a.path.split("/").filter(Boolean).slice(1).map((id) => nameById.get(id) ?? "?"),
-        )
-        .filter((t) => t.length > 0)
-        .sort((x, y) => x.join("/").localeCompare(y.join("/")));
+        .map((a) => ({
+          id: a.id,
+          trail: a.path.split("/").filter(Boolean).slice(1).map((id) => nameById.get(id) ?? "?"),
+          role: a.role,
+        }))
+        .filter((t) => t.trail.length > 0)
+        .sort((x, y) => x.trail.join("/").localeCompare(y.trail.join("/")));
     }
 
-    const hasCompanyWideRole = ((user!.customRoles ?? []) as any[]).length > 0;
-    const areaScope =
-      areaTrails.length === 0 ? null : { trails: areaTrails, mixed: hasCompanyWideRole };
+    const companyWideRoleIds = ((user!.customRoles ?? []) as any[]).map((g) => g.customRoleId);
+    const hasCompanyWideRole = companyWideRoleIds.length > 0;
+
+    // DOES THE GRANT NARROW ANYTHING AT ALL?
+    //
+    // A portfolio grant can only ADD places somebody can see. If every
+    // capability it carries is already held company-wide, it filters
+    // nothing — the holder sees the whole business and is merely RECORDED
+    // as leading that portfolio. The owner assigning themselves District
+    // Lead of Durham is exactly this, and the notice must not tell them
+    // their view is limited to Durham when it is not.
+    //
+    // Three states, and the banner says a different true thing for each:
+    //   narrows=false          → recorded as leading it; nothing filtered
+    //   narrows + mixed        → SOME tabs filtered, others company-wide
+    //   narrows + not mixed    → everything they see is that portfolio
+    const companyWideCaps = new Set<string>();
+    for (const rid of companyWideRoleIds) {
+      for (const e of flattenRole(rid, rolesById as never)) companyWideCaps.add(e);
+    }
+    const grantedRoleIds = [
+      ...new Set((((user as any)!.portfolioAssignments ?? []) as any[]).map((aa) => aa.customRoleId)),
+    ];
+    const narrows = grantedRoleIds.some((rid) =>
+      flattenRole(rid, rolesById as never).some((e: string) => !companyWideCaps.has(e)),
+    );
+    const coveredBy = narrows
+      ? []
+      : [...new Set(companyWideRoleIds.map((r) => rolesById.get(r)?.name).filter(Boolean))];
+
+    const portfolioScope =
+      areaTrails.length === 0
+        ? null
+        : {
+            // `trails` is kept as the bare chains so nothing that only
+            // needs the names has to know about roles.
+            trails: areaTrails.map((g) => g.trail),
+            grants: areaTrails,
+            mixed: hasCompanyWideRole,
+            /** False when the grant filters nothing — see above. */
+            narrows,
+            /** The company-wide roles that already cover it, when it does not. */
+            coveredBy,
+          };
 
     const me = {
       id: user!.id,
@@ -769,11 +836,11 @@ export const users: ServicesUsers = {
       /**
        * The territories this person's access is confined to, or null when
        * it is not confined at all. Each entry is the chain from the top of
-       * the tree down to the granted area ("Chapel Hill", "Carrboro"), with
+       * the tree down to the granted portfolio ("Chapel Hill", "Carrboro"), with
        * the root left out. `mixed` means they ALSO hold something
        * company-wide, so only some views are narrowed.
        */
-      areaScope,
+      portfolioScope,
       /** Perspectives this person may look through, lowest access first. The web
        *  renders the top-tab dropdown from this. */
       // `icon` is here because a field has to survive THREE hops to reach

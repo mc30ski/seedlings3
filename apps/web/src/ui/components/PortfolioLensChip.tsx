@@ -1,9 +1,9 @@
 "use client";
 
-// THE AREA LENS, in the title bar — "show me only Durham".
+// THE PORTFOLIO LENS, in the title bar — "show me only Durham".
 //
 // A LENS IS NOT A GRANT, and this control only exists because they are
-// different things. A grant (an AreaAssignment) decides what you are ALLOWED
+// different things. A grant (an PortfolioAssignment) decides what you are ALLOWED
 // to see and only ever widens. This decides what you are LOOKING AT and only
 // ever narrows, inside what your grants already reach. So somebody who can
 // see the whole company can still ask to read one district — which is the
@@ -14,7 +14,7 @@
 // WHY IT IS LOUD WHEN SET. This is the feature's one real hazard: "Chapel
 // Hill earned nothing this month" and "you have been looking at Durham since
 // Tuesday" put the identical empty screen in front of you. The choice is
-// persisted, so the chip names the area whenever one is in force — that
+// persisted, so the chip names the portfolio whenever one is in force — that
 // badge is what pays for the persistence.
 //
 // Mirrors ThemeChip/RoleChip's structure (relative box, click-outside,
@@ -22,7 +22,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Box, HStack, Text } from "@chakra-ui/react";
-import { Check, MapPin } from "lucide-react";
+import { Check, Layers } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import {
   getAreaLens,
@@ -31,9 +31,9 @@ import {
   type AreaLensOption,
 } from "@/src/lib/impersonation";
 
-export default function AreaLensChip() {
+export default function PortfolioLensChip() {
   const [open, setOpen] = useState(false);
-  const [areas, setAreas] = useState<AreaLensOption[]>([]);
+  const [portfolios, setAreas] = useState<AreaLensOption[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -54,12 +54,12 @@ export default function AreaLensChip() {
     let cancelled = false;
     (async () => {
       try {
-        // Not `/areas`, which is gated on `areas.manage` — administering the
+        // Not `/portfolios`, which is gated on `portfolios.manage` — administering the
         // tree and choosing what to look at are different jobs held by
-        // different people. `/me/areas` answers with the subtrees THIS caller
+        // different people. `/me/portfolios` answers with the subtrees THIS caller
         // can already see, so the list itself discloses nothing.
-        const res = await apiGet<{ areas: AreaLensOption[] }>("/api/me/areas");
-        if (!cancelled) setAreas(res.areas ?? []);
+        const res = await apiGet<{ portfolios: AreaLensOption[] }>("/api/me/portfolios");
+        if (!cancelled) setAreas(res.portfolios ?? []);
       } catch {
         // A header control must never be the thing that breaks the app. No
         // list means no picker, and everything carries on unlensed.
@@ -91,14 +91,14 @@ export default function AreaLensChip() {
   // alone already sees Durham and nothing else, so offering them "Durham" as
   // a filter would be a control that cannot change anything — and a control
   // that does nothing teaches people to distrust the ones that do.
-  if (areas.length < 2) return null;
+  if (portfolios.length < 2) return null;
 
-  const activeArea = areas.find((a) => a.id === active) ?? null;
-  // An id we hold no row for — an area retired since the choice was made, so
+  const activeArea = portfolios.find((a) => a.id === active) ?? null;
+  // An id we hold no row for — a portfolio retired since the choice was made, so
   // it is gone from this picker but still filtering on the server. Name it
   // rather than render a lens that looks like none.
   const lensOn = active !== null;
-  const label = activeArea?.name ?? (lensOn ? "One area" : null);
+  const label = activeArea?.name ?? (lensOn ? "One portfolio" : null);
 
   function choose(id: string | null, name: string | null) {
     setOpen(false);
@@ -124,7 +124,7 @@ export default function AreaLensChip() {
         rounded="full"
         // QUIET OFF, LOUD ON — but the same SIZE either way.
         //
-        // This carried the area's name in a filled pill, which read clearly
+        // This carried the portfolio's name in a filled pill, which read clearly
         // and cost more header than the header has: beside the theme icon,
         // the roles chip, the alert badge and the avatar, a word-width
         // control pushed the row. It is a filled circle now, exactly the
@@ -147,15 +147,18 @@ export default function AreaLensChip() {
         // space; it must not cost the answer to "narrowed to WHERE". The
         // tooltip and the accessible name both carry it, the open panel
         // marks the row, and the INSIGHTS note says it in words — that note
-        // is now the one place the area is spelled out on screen, so do not
+        // is now the one place the portfolio is spelled out on screen, so do not
         // quietly drop it when editing Dashboard.
-        aria-label={lensOn ? `Viewing ${label} only — click to change area` : "Viewing all areas — click to narrow to one"}
+        aria-label={lensOn ? `Viewing ${label} only — click to change portfolio` : "Viewing all portfolios — click to narrow to one"}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={lensOn ? `Viewing ${label} only` : "Viewing all areas"}
-        data-testid="area-lens-chip"
+        title={lensOn ? `Viewing ${label} only` : "Viewing all portfolios"}
+        data-testid="portfolio-lens-chip"
       >
-        <MapPin size={15} />
+        {/* The portfolio glyph, matching the Portfolios tab. A map pin
+            said "place", and a portfolio need not be one — the tree
+            already carries nodes tiered as Route. */}
+        <Layers size={15} />
       </HStack>
 
       {open && (
@@ -191,22 +194,22 @@ export default function AreaLensChip() {
           </Box>
 
           <LensRow
-            label="All areas"
-            hint="Everywhere you can see"
+            label="All portfolios"
+            hint="All properties you have access to"
             active={!lensOn}
             onClick={() => choose(null, null)}
-            testId="area-lens-option-all"
+            testId="portfolio-lens-option-all"
           />
 
-          {areas.map((a) => (
+          {portfolios.map((a) => (
             <LensRow
               key={a.id}
               label={a.name}
               hint={a.tier ?? undefined}
-              indent={indentOf(a, areas)}
+              indent={indentOf(a, portfolios)}
               active={a.id === active}
               onClick={() => choose(a.id, a.name)}
-              testId={`area-lens-option-${a.id}`}
+              testId={`portfolio-lens-option-${a.id}`}
             />
           ))}
         </Box>
@@ -222,7 +225,7 @@ export default function AreaLensChip() {
  * node's depth — and normalised against the SHALLOWEST option on offer, so
  * the top of whatever subtree you can see sits flush at zero. That matters
  * because the list is already filtered: a sole root is dropped, and an
- * area-limited reader is only offered their own branch. Indenting by raw
+ * portfolio-limited reader is only offered their own branch. Indenting by raw
  * depth would push their whole list in by however deep their territory
  * happens to sit, which says nothing about anything.
  */
@@ -250,10 +253,10 @@ function LensRow({
       data-testid={testId}
       w="full"
       // Indent is on the PADDING here rather than a margin, unlike the
-      // Areas tab: these rows have a full-width hover and selected state,
+      // Portfolios tab: these rows have a full-width hover and selected state,
       // and a margin would leave an unhighlighted gutter down the left of
       // every nested row.
-      // 20px a level, the same step the Areas tab's tree uses — the two
+      // 20px a level, the same step the Portfolios tab's tree uses — the two
       // are the same hierarchy and should read as the same shape.
       pl={`${12 + indent * 20}px`}
       pr={3}

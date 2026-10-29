@@ -10,11 +10,11 @@
 //     target (a ClientContact id), different semantics (identity swap, and
 //     read-only), different lifecycle.
 //
-//  3. AREA LENS — "show me only Durham". Narrows WHERE, where a perspective
+//  3. PORTFOLIO LENS — "show me only Durham". Narrows WHERE, where a perspective
 //     narrows WHAT YOU MAY DO. Unrelated mechanisms and freely combined: you
 //     can look at Durham through a scheduler's perspective. Sent as
-//     `X-Area-Lens` carrying an Area id; the server intersects it with the
-//     areas you are granted, so a forged value shows you LESS, never more.
+//     `X-Portfolio-Lens` carrying an Portfolio id; the server intersects it with the
+//     portfolios you are granted, so a forged value shows you LESS, never more.
 //
 // WHAT CHANGED. This file used to store a role literal under
 // `X-Impersonate-As`, which SWAPPED the caller's roles array for a synthetic
@@ -216,28 +216,49 @@ export async function setClientImpersonation(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AREA LENS — "show me only Durham", for somebody entitled to see more.
+// PORTFOLIO LENS — "show me only Durham", for somebody entitled to see more.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const AREA_LENS_STORAGE_KEY = "seedlings_areaLensId";
-/** The chosen area's NAME, cached so the header chip can render before
- *  `/me/areas` has answered. Display only; nothing resolves on it. */
+/** The chosen portfolio's NAME, cached so the header chip can render before
+ *  `/me/portfolios` has answered. Display only; nothing resolves on it. */
 export const AREA_LENS_NAME_STORAGE_KEY = "seedlings_areaLensName";
 
-/** One entry of `GET /me/areas` — somewhere this caller may point the lens. */
+/**
+ * "ALL" means the viewer DELIBERATELY chose the whole business.
+ *
+ * An absent key and an explicit all-portfolios choice used to be the same
+ * state — both null. They cannot be, now that leading a portfolio sets
+ * your default view to it: without a way to record "I chose All", the
+ * default would reassert itself on every load and the chip would be a
+ * control you could operate but not obey.
+ */
+export const AREA_LENS_ALL = "ALL";
+
+/** True once the viewer has picked something, including "All portfolios". */
+export function hasChosenAreaLens(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return !!localStorage.getItem(AREA_LENS_STORAGE_KEY);
+  } catch {
+    return false;
+  }
+}
+
+/** One entry of `GET /me/portfolios` — somewhere this caller may point the lens. */
 export type AreaLensOption = {
   id: string;
   name: string;
   tier: string | null;
   path: string;
-  /** Names from the top of the tree down to this area, root excluded —
+  /** Names from the top of the tree down to this portfolio, root excluded —
    *  e.g. ["Chapel Hill", "Carrboro"]. Server-built; the client has no
    *  reliable way to name an ancestor it may not be allowed to select. */
   trail?: string[];
 };
 
 /**
- * The area id being looked through, or null for "everywhere I can see".
+ * The portfolio id being looked through, or null for "everywhere I can see".
  *
  * PERSISTED ON PURPOSE, which is only safe because the chip in the header
  * renders whenever this is set. A lens you cannot see is the feature's one
@@ -249,7 +270,8 @@ export function getAreaLens(): string | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(AREA_LENS_STORAGE_KEY);
-    if (!raw) return null;
+    // Absent, or an explicit "show me everything" — either way, no filter.
+    if (!raw || raw === AREA_LENS_ALL) return null;
     // Same shape check the server's `parseAreaLensHeader` applies, so junk
     // is dropped here rather than sent and silently ignored.
     return /^[A-Za-z0-9_-]{10,40}$/.test(raw) ? raw : null;
@@ -258,7 +280,7 @@ export function getAreaLens(): string | null {
   }
 }
 
-/** The cached name of the chosen area. Display only — see the key's note. */
+/** The cached name of the chosen portfolio. Display only — see the key's note. */
 export function getAreaLensName(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -270,22 +292,25 @@ export function getAreaLensName(): string | null {
 }
 
 /**
- * Look at one area, or pass null to go back to everywhere.
+ * Look at one portfolio, or pass null to go back to everywhere.
  *
  * Purge-and-refetch rather than reload, for the same reason `setPerspective`
  * does it: every response on screen was fetched through the OUTGOING lens,
  * so they are all stale — but throwing the whole app away to change which
  * district you are reading is not what the feature is.
  */
-export async function setAreaLens(areaId: string | null, name?: string | null): Promise<void> {
+export async function setAreaLens(portfolioId: string | null, name?: string | null): Promise<void> {
   if (typeof window === "undefined") return;
   try {
-    if (areaId) {
-      localStorage.setItem(AREA_LENS_STORAGE_KEY, areaId);
+    if (portfolioId) {
+      localStorage.setItem(AREA_LENS_STORAGE_KEY, portfolioId);
       if (name) localStorage.setItem(AREA_LENS_NAME_STORAGE_KEY, name);
       else localStorage.removeItem(AREA_LENS_NAME_STORAGE_KEY);
     } else {
-      localStorage.removeItem(AREA_LENS_STORAGE_KEY);
+      // Record the choice rather than erase it. Clearing the key would
+      // read as "never chose", and the default-to-your-portfolio below
+      // would put the filter straight back on the next load.
+      localStorage.setItem(AREA_LENS_STORAGE_KEY, AREA_LENS_ALL);
       localStorage.removeItem(AREA_LENS_NAME_STORAGE_KEY);
     }
   } catch {
@@ -299,9 +324,9 @@ export async function setAreaLens(areaId: string | null, name?: string | null): 
   }
 }
 
-/** Fired after the area lens changes. `pages/index.tsx` listens and remounts
+/** Fired after the portfolio lens changes. `pages/index.tsx` listens and remounts
  *  the open tab, the same way it does for a perspective change. */
-export const AREA_LENS_CHANGED_EVENT = "seedlings3:area-lens-changed";
+export const AREA_LENS_CHANGED_EVENT = "seedlings3:portfolio-lens-changed";
 
 /** Drop cached API responses. They were fetched under the OUTGOING lens,
  *  so every one of them may be an answer the caller is no longer entitled
@@ -332,4 +357,48 @@ async function purgeAndReload(): Promise<void> {
     /* not fatal */
   }
   window.location.reload();
+}
+
+
+/**
+ * LEADING A PORTFOLIO SETS YOUR DEFAULT VIEW TO IT.
+ *
+ * `portfolioScope` narrows a person whose access comes only from a grant.
+ * It deliberately does NOT narrow somebody who holds the same capability
+ * company-wide — invariant 1 in `portfolioScope.ts`, which exists so a
+ * grant can never quietly take access away.
+ *
+ * That left the owner assigning themselves District Lead of Durham with a
+ * record and nothing else: every list still showed the whole business.
+ * What they wanted was the ordinary consequence of leading a patch —
+ * their jobs, their properties, their money — without losing a single tab.
+ *
+ * A lens does exactly that, and is the one narrowing a global reader
+ * accepts, because it is a request rather than a restriction. So a grant
+ * seeds the lens instead of changing what a grant means:
+ *
+ *   · data narrows, because the lens is in force
+ *   · tabs and controls do not, because those come from capabilities
+ *   · "All portfolios" is one click away, and sticks once chosen
+ *
+ * Only with exactly ONE granted portfolio. With two, their default view is
+ * already both, and picking one for them would be inventing a preference.
+ */
+export function applyDefaultAreaLens(
+  grants: Array<{ id: string; trail: string[] }> | undefined,
+): boolean {
+  if (typeof window === "undefined") return false;
+  if (hasChosenAreaLens()) return false;
+  if (!grants || grants.length !== 1) return false;
+  const only = grants[0];
+  if (!only?.id) return false;
+  try {
+    localStorage.setItem(AREA_LENS_STORAGE_KEY, only.id);
+    const name = only.trail?.[only.trail.length - 1];
+    if (name) localStorage.setItem(AREA_LENS_NAME_STORAGE_KEY, name);
+    window.dispatchEvent(new Event(AREA_LENS_CHANGED_EVENT));
+    return true;
+  } catch {
+    return false;
+  }
 }

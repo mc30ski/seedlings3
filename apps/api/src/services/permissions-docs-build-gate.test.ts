@@ -6,7 +6,7 @@ import { ENTITLEMENTS, ENTITLEMENT_GROUPS } from "@repo/permissions";
 /**
  * THE PERMISSIONS DESIGN DOCS STAY INTERNALLY CONSISTENT.
  *
- * The design for roles/entitlements/areas lives in three documents and took
+ * The design for roles/entitlements/portfolios lives in three documents and took
  * five audit passes. Its decision log exists so "was this recorded?" is a
  * table lookup rather than a claim about somebody's memory.
  *

@@ -34,9 +34,9 @@ export const currentUser: ServicesCurrentUser = {
           where: { suspendedAt: null, customRole: { suspendedAt: null } },
           include: { customRole: { include: { entitlements: true } } },
         },
-        areaAssignments: {
+        portfolioAssignments: {
           where: { suspendedAt: null, customRole: { suspendedAt: null } },
-          include: { area: { select: { path: true } } },
+          include: { portfolio: { select: { path: true } } },
         },
       },
     });
@@ -87,9 +87,9 @@ export const currentUser: ServicesCurrentUser = {
           where: { suspendedAt: null, customRole: { suspendedAt: null } },
           include: { customRole: { include: { entitlements: true } } },
         },
-        areaAssignments: {
+        portfolioAssignments: {
           where: { suspendedAt: null, customRole: { suspendedAt: null } },
-          include: { area: { select: { path: true } } },
+          include: { portfolio: { select: { path: true } } },
         },
       },
       });
@@ -144,12 +144,12 @@ export const currentUser: ServicesCurrentUser = {
         name: byId.get(ucr.customRoleId)?.name ?? "",
         entitlements: flattenRole(ucr.customRoleId, byId as never),
       })),
-      // Held within one area's subtree.
-      ...(user!.areaAssignments ?? []).map((aa) => ({
+      // Held within one portfolio's subtree.
+      ...(user!.portfolioAssignments ?? []).map((aa) => ({
         roleId: aa.customRoleId,
         name: byId.get(aa.customRoleId)?.name ?? "",
         entitlements: flattenRole(aa.customRoleId, byId as never),
-        areaPath: aa.area?.path,
+        portfolioPath: aa.portfolio?.path,
       })),
     ];
 
@@ -158,7 +158,7 @@ export const currentUser: ServicesCurrentUser = {
     const perspectives = availablePerspectives(
       [
         ...(user!.customRoles ?? []).map((ucr) => ucr.customRoleId),
-        ...(user!.areaAssignments ?? []).map((aa) => aa.customRoleId),
+        ...(user!.portfolioAssignments ?? []).map((aa) => aa.customRoleId),
       ],
       byId as never,
     );

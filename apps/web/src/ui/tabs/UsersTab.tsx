@@ -112,15 +112,16 @@ type ApiUser = {
    * so that field arrived undefined and every `u.roles.some(...)` below
    * threw before the tab could render.
    *
-   * A grant with an `areaId` is held only in that area. It is a separate
+   * A grant with an `portfolioId` is held only in that portfolio. It is a separate
    * badge ("Admin — Durham"), and it is NOT in `capabilities`.
    */
   roleGrants: Array<{
     roleId: string;
     key: string | null;
     name: string;
-    areaId: string | null;
-    areaName: string | null;
+    grantId: string | null;
+    portfolioId: string | null;
+    portfolioName: string | null;
     isTemporary: boolean;
   }>;
   /** What this person can do company-wide. Resolved by the server through
@@ -791,7 +792,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
     // Do they hold it through some OTHER role as well? Then this one going
     // changes nothing about the door.
     const viaOthers = (target.roleGrants ?? [])
-      .filter((g) => g.roleId !== roleId && !g.areaId)
+      .filter((g) => g.roleId !== roleId && !g.portfolioId)
       .some((g) => (roleCatalogue.find((r) => r.id === g.roleId)?.effective ?? [])
         .includes("people.grant-roles"));
     if (viaOthers) return false;
@@ -1175,7 +1176,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                         capabilities, so a Bookkeeper showed up wearing none
                         of them and a role the operator built themselves was
                         invisible in the directory that lists it. An
-                        area-scoped grant says which area.
+                        portfolio-scoped grant says which portfolio.
                         SHOWN ONLY WHERE THE ROLES SECTION IS NOT. These
                         still carry the whole weight on the rows that have
                         no section: a client, yourself, a pending sign-up,
@@ -1185,11 +1186,11 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                         it, so this strip would only be repeating it. */}
                     {!rolesSectionShown && (u.roleGrants ?? []).map((g) => (
                       <Badge
-                        key={`${g.roleId}:${g.areaId ?? ""}`}
-                        colorPalette={g.areaId ? "teal" : "purple"}
+                        key={`${g.roleId}:${g.portfolioId ?? ""}`}
+                        colorPalette={g.portfolioId ? "teal" : "purple"}
                         variant={g.isTemporary ? "outline" : "subtle"}
                       >
-                        {g.areaName ? `${g.name} — ${g.areaName}` : g.name}
+                        {g.portfolioName ? `${g.name} — ${g.portfolioName}` : g.name}
                       </Badge>
                     ))}
                     {u.isOwner && <Badge colorPalette="purple" variant="solid">LLC Owner</Badge>}
@@ -1334,6 +1335,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                                 onGrant={(roleId, roleName, move) =>
                                   addRole(u.id, roleId, roleName, move)
                                 }
+                                onChanged={load}
                                 onRevokeRequest={(roleId, roleName) =>
                                   setRevokeRoleConfirm({
                                     userId: u.id,
@@ -1834,7 +1836,7 @@ export default function UsersTab({ readOnly = false, scope }: TabRolePropType) {
                       A person can hold more than one role, and holding more only ever adds.
                       What they may do is the union of every role they hold; a tab appears
                       for them when one of their roles allows something on it. A grant can
-                      also be limited to an <Em>area</Em>, in which case it applies there
+                      also be limited to an <Em>portfolio</Em>, in which case it applies there
                       and nowhere else.
                     </Text>
                   </Box>
@@ -2139,9 +2141,9 @@ function WorkerTeamRoster() {
  * a grant of any other role, and they posted the deleted enum so none of
  * them worked.
  *
- * Area grants are shown and NOT removable here. A grant scoped to an area
+ * Portfolio grants are shown and NOT removable here. A grant scoped to a portfolio
  * reads "Admin — Durham" and means something different from the same role
- * held company-wide; revoking it belongs with the area assignment that
+ * held company-wide; revoking it belongs with the portfolio assignment that
  * created it, not next to a company-wide badge it only resembles.
  *
  * The picker offers only what the person does not already hold. The server
@@ -2155,14 +2157,79 @@ function RoleGrantControls({
   catalogue,
   onGrant,
   onRevokeRequest,
+  onChanged,
 }: {
   user: ApiUser;
   catalogue: RoleOption[];
   onGrant: (roleId: string, roleName: string, move: boolean) => void;
   onRevokeRequest: (roleId: string, roleName: string) => void;
+  /** Reload the directory after a portfolio-scoped grant changes. */
+  onChanged: () => void | Promise<void>;
 }) {
-  const companyWide = user.roleGrants.filter((g) => !g.areaId);
-  const areaScoped = user.roleGrants.filter((g) => g.areaId);
+  /**
+   * GRANTS FROM THE PERSON'S SIDE.
+   *
+   * Portfolio-scoped grants could only be made on the Portfolios tab, with
+   * the node fixed and the person picked second. That is the wrong way
+   * round for the question people actually ask — "what does Jacob look
+   * after?" — and it meant the one screen that lists somebody's roles
+   * could show a scoped grant and not change it.
+   *
+   * Same two endpoints the tree uses, so there is one rule and one audit
+   * trail however you arrive: POST /portfolio-assignments to grant,
+   * DELETE /portfolio-assignments/:id to revoke.
+   */
+  const [portfolios, setPortfolios] = useState<Array<{ id: string; name: string; depth: number }> | null>(null);
+  const [pickPortfolio, setPickPortfolio] = useState<string | null>(null);
+  const [pickRole, setPickRole] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState(false);
+  const [confirmRevokeScoped, setConfirmRevokeScoped] = useState<{ grantId: string; label: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await apiGet<Array<{ id: string; name: string; depth: number; parentId: string | null; retiredAt: string | null }>>("/api/portfolios");
+        // The ROOT is not a place to be put in charge of — the service
+        // refuses it (PORTFOLIO_IS_THE_ROOT) because "everywhere" is an
+        // ordinary company-wide grant, which the picker above already
+        // does. Retired ones are out for the same reason pickers hide
+        // them: nobody new looks after a closed portfolio.
+        if (!cancelled) {
+          setPortfolios(
+            (rows ?? [])
+              .filter((r) => r.parentId !== null && !r.retiredAt)
+              .map((r) => ({ id: r.id, name: r.name, depth: r.depth })),
+          );
+        }
+      } catch {
+        if (!cancelled) setPortfolios([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  async function assignHere() {
+    if (!pickPortfolio || !pickRole) return;
+    setAssigning(true);
+    try {
+      await apiPost("/api/portfolio-assignments", {
+        userId: user.id,
+        portfolioId: pickPortfolio,
+        customRoleId: pickRole,
+      });
+      setPickPortfolio(null);
+      setPickRole(null);
+      await onChanged();
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Could not assign.", err) });
+    } finally {
+      setAssigning(false);
+    }
+  }
+
+  const companyWide = user.roleGrants.filter((g) => !g.portfolioId);
+  const areaScoped = user.roleGrants.filter((g) => g.portfolioId);
   const heldIds = new Set(user.roleGrants.map((g) => g.roleId));
 
   // EVERY ROLE THEY DO NOT HOLD, perspectives included.
@@ -2388,13 +2455,35 @@ function RoleGrantControls({
         ))}
         {areaScoped.map((g) => (
           <Badge
-            key={`${g.roleId}:${g.areaId}`}
+            key={`${g.roleId}:${g.portfolioId}`}
             size="sm"
             variant="outline"
             colorPalette="purple"
-            title="Held only in this area. Change it where the area is assigned."
+            title={`${g.name}, held only in ${g.portfolioName ?? "one portfolio"}.`}
           >
-            {g.name} — {g.areaName ?? "an area"}
+            <HStack gap={1}>
+              <Text>{g.name} — {g.portfolioName ?? "a portfolio"}</Text>
+              {/* REVOKABLE FROM HERE. The title used to read "change it
+                  where the portfolio is assigned", which was the honest
+                  description of a one-way street: grants could only be
+                  made or removed from the tree, with the node fixed and
+                  the person picked second. That is backwards from how
+                  anybody thinks about it — you start from the person. */}
+              {g.grantId && (
+                <Box
+                  as="button"
+                  aria-label={`Revoke ${g.name} in ${g.portfolioName ?? "this portfolio"}`}
+                  onClick={() => setConfirmRevokeScoped({
+                    grantId: g.grantId!,
+                    label: `${g.name} in ${g.portfolioName ?? "this portfolio"}`,
+                  })}
+                  cursor="pointer"
+                  lineHeight="1"
+                >
+                  <X size={11} />
+                </Box>
+              )}
+            </HStack>
           </Badge>
         ))}
       </HStack>
@@ -2454,6 +2543,112 @@ function RoleGrantControls({
           </Portal>
         </Select.Root>
       )}
+      {/* MANAGES — a portfolio-scoped grant, made from the PERSON.
+          It could only be made from the tree before, with the node fixed
+          and the person picked second, which is backwards from the
+          question anybody actually asks: "what does Jacob look after?".
+          Same two endpoints the tree uses, so there is one rule and one
+          audit trail however you arrive. */}
+      {portfolios !== null && portfolios.length > 0 && (
+        <HStack gap={2} wrap="wrap" mt={1}>
+          <Select.Root
+            size="sm"
+            width="full"
+            maxW="52"
+            collection={createListCollection({
+              items: portfolios.map((pf) => ({ label: pf.name, value: pf.id })),
+            })}
+            value={pickPortfolio ? [pickPortfolio] : []}
+            onValueChange={(e) => setPickPortfolio(e.value[0] ?? null)}
+          >
+            <Select.HiddenSelect />
+            <Select.Control>
+              <Select.Trigger>
+                <Select.ValueText placeholder="Also manages…" />
+              </Select.Trigger>
+              <Select.IndicatorGroup><Select.Indicator /></Select.IndicatorGroup>
+            </Select.Control>
+            <Portal>
+              <Select.Positioner>
+                <Select.Content maxH="300px" overflowY="auto">
+                  {portfolios.map((pf) => (
+                    <Select.Item
+                      key={pf.id}
+                      item={{ label: pf.name, value: pf.id }}
+                      ps={2 + Math.max(0, pf.depth - 1) * 3}
+                    >
+                      <Select.ItemText>{pf.name}</Select.ItemText>
+                      <Select.ItemIndicator />
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Positioner>
+            </Portal>
+          </Select.Root>
+          <Select.Root
+            size="sm"
+            width="full"
+            maxW="44"
+            collection={createListCollection({
+              items: catalogue.filter((r) => !r.suspendedAt).map((r) => ({ label: r.name, value: r.id })),
+            })}
+            value={pickRole ? [pickRole] : []}
+            onValueChange={(e) => setPickRole(e.value[0] ?? null)}
+          >
+            <Select.HiddenSelect />
+            <Select.Control>
+              <Select.Trigger>
+                <Select.ValueText placeholder="as…" />
+              </Select.Trigger>
+              <Select.IndicatorGroup><Select.Indicator /></Select.IndicatorGroup>
+            </Select.Control>
+            <Portal>
+              <Select.Positioner>
+                <Select.Content maxH="300px" overflowY="auto">
+                  {catalogue.filter((r) => !r.suspendedAt).map((r) => (
+                    <Select.Item key={r.id} item={{ label: r.name, value: r.id }}>
+                      <Select.ItemText>{r.name}</Select.ItemText>
+                      <Select.ItemIndicator />
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Positioner>
+            </Portal>
+          </Select.Root>
+          <Button
+            size="xs"
+            colorPalette="purple"
+            loading={assigning}
+            disabled={!pickPortfolio || !pickRole}
+            onClick={() => void assignHere()}
+          >
+            Assign
+          </Button>
+        </HStack>
+      )}
+      <ConfirmDialog
+        open={!!confirmRevokeScoped}
+        title="Revoke this portfolio grant?"
+        message={
+          confirmRevokeScoped
+            ? `${user.displayName || user.email} will no longer hold ${confirmRevokeScoped.label}. Anything they hold company-wide is untouched.`
+            : ""
+        }
+        confirmLabel="Revoke"
+        confirmColorPalette="red"
+        onConfirm={async () => {
+          const t = confirmRevokeScoped;
+          setConfirmRevokeScoped(null);
+          if (!t) return;
+          try {
+            await apiDelete(`/api/portfolio-assignments/${encodeURIComponent(t.grantId)}`);
+            await onChanged();
+          } catch (err: any) {
+            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Could not revoke.", err) });
+          }
+        }}
+        onCancel={() => setConfirmRevokeScoped(null)}
+      />
       </VStack>
     </Box>
   );
@@ -2489,15 +2684,15 @@ function EffectivePermissions({ userId, canRead }: { userId: string; canRead: bo
   type Row = {
     entitlement: string;
     copy: string | null;
-    scope: "global" | "area";
+    scope: "global" | "portfolio";
     overriddenByGlobal: boolean;
     via: Array<{
       roleId: string;
       roleName: string;
       writtenOn: string;
-      scope: "global" | "area";
-      areaId: string | null;
-      areaName: string | null;
+      scope: "global" | "portfolio";
+      portfolioId: string | null;
+      portfolioName: string | null;
     }>;
   };
   const [open, setOpen] = useState(false);
@@ -2586,13 +2781,13 @@ function EffectivePermissions({ userId, canRead }: { userId: string; canRead: bo
                               <Text fontSize="xs" color={r ? undefined : "fg.muted"}>
                                 {e.copy}
                               </Text>
-                              {r?.scope === "area" && (
+                              {r?.scope === "portfolio" && (
                                 <Badge size="sm" variant="subtle" colorPalette="purple">
-                                  {r.via.find((v) => v.scope === "area")?.areaName ?? "one area"} only
+                                  {r.via.find((v) => v.scope === "portfolio")?.portfolioName ?? "one portfolio"} only
                                 </Badge>
                               )}
                               {/* Held both ways means held EVERYWHERE — the
-                                  area grant adds nothing. Saying so stops a
+                                  portfolio grant adds nothing. Saying so stops a
                                   reader concluding the person is confined. */}
                               {r?.overriddenByGlobal && (
                                 <Badge size="sm" variant="subtle" colorPalette="gray">

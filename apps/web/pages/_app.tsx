@@ -131,10 +131,10 @@ function AppInner({ Component, pageProps }: AppProps) {
   }, []);
 
   // Minimize top gap:
-  // - In standalone: exactly the safe-area inset (tight, clears Dynamic Island).
+  // - In standalone: exactly the safe-portfolio inset (tight, clears Dynamic Island).
   // - In browsers: tiny 2px breathing room.
   const TOP_PAD = useMemo(
-    () => (standalone ? "env(safe-area-inset-top, 0px)" : "2px"),
+    () => (standalone ? "env(safe-portfolio-inset-top, 0px)" : "2px"),
     [standalone]
   );
 

@@ -1,16 +1,16 @@
 /**
- * Does area scoping actually EXCLUDE another territory's rows?
+ * Does portfolio scoping actually EXCLUDE another territory's rows?
  *
  * G10 asserts a scopable read carries a filter. G25 asserts the filter asks
  * about the right capability. Neither runs a query — both read source. This
  * script is the missing third thing: it builds a real principal from the
- * database, applies the real `areaWhere` fragment, runs the real Prisma
+ * database, applies the real `portfolioWhere` fragment, runs the real Prisma
  * query, and compares the rows against the unscoped answer.
  *
  * It lives here rather than in the build gate because the gate is DB-free
  * and finishes in seconds; this needs a seeded database.
  *
- *   npx tsx scripts/verify-area-scope.ts
+ *   npx tsx scripts/verify-portfolio-scope.ts
  *
  * Expects `npm run db:seed` to have run: it needs the Durham / Chapel Hill
  * districts and the District Lead (Durham) fixture, who holds Admin inside
@@ -18,7 +18,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { flattenRole, type Entitlement } from "@repo/permissions";
-import { areaWhere, areaWhereOn, visibleAreaPaths } from "../src/lib/areaScope";
+import { portfolioWhere, visiblePortfolioPaths } from "../src/lib/portfolioScope";
 
 const prisma = new PrismaClient();
 const LEAD = "seed-district-lead-durham";
@@ -29,7 +29,7 @@ async function principalFor(userId: string) {
     where: { id: userId },
     include: {
       customRoles: { where: { suspendedAt: null } },
-      areaAssignments: { where: { suspendedAt: null }, include: { area: true } },
+      portfolioAssignments: { where: { suspendedAt: null }, include: { portfolio: true } },
     },
   });
   if (!user) throw new Error(`no such user: ${userId}`);
@@ -50,11 +50,11 @@ async function principalFor(userId: string) {
         name: byId.get(ucr.customRoleId)?.name ?? "",
         entitlements: flattenRole(ucr.customRoleId, byId as never),
       })),
-      ...user.areaAssignments.map((aa) => ({
+      ...user.portfolioAssignments.map((aa) => ({
         roleId: aa.customRoleId,
         name: byId.get(aa.customRoleId)?.name ?? "",
         entitlements: flattenRole(aa.customRoleId, byId as never),
-        areaPath: aa.area?.path,
+        portfolioPath: aa.portfolio?.path,
       })),
     ],
     perspective: null,
@@ -76,34 +76,34 @@ function check(label: string, ok: boolean, detail: string) {
     })).id,
   );
 
-  const durham = await prisma.area.findFirstOrThrow({ where: { name: "Durham" } });
-  const chapel = await prisma.area.findFirstOrThrow({ where: { name: "Chapel Hill" } });
+  const durham = await prisma.portfolio.findFirstOrThrow({ where: { name: "Durham" } });
+  const chapel = await prisma.portfolio.findFirstOrThrow({ where: { name: "Chapel Hill" } });
   console.log(`\nDurham      ${durham.path}`);
   console.log(`Chapel Hill ${chapel.path}\n`);
 
   // ── The fixture itself has to be narrowed, or nothing below means anything.
-  const paths = visibleAreaPaths(lead as never, "clients.view");
+  const paths = visiblePortfolioPaths(lead as never, "clients.view");
   check(
     "the District Lead is territory-limited (not global)",
     Array.isArray(paths) && paths.length === 1 && paths[0] === durham.path,
-    `visibleAreaPaths returned ${JSON.stringify(paths)} — null means NO narrowing, which would make every assertion below vacuous.`,
+    `visiblePortfolioPaths returned ${JSON.stringify(paths)} — null means NO narrowing, which would make every assertion below vacuous.`,
   );
   check(
     "the owner is NOT narrowed",
-    visibleAreaPaths(owner as never, "clients.view") === null,
+    visiblePortfolioPaths(owner as never, "clients.view") === null,
     "a company-wide grant must win; if this narrows, global reads are broken.",
   );
 
-  // ── Properties: the model carries areaId directly.
+  // ── Properties: membership is a join, so `some` is the question.
   const allProps = await prisma.property.count();
   const leadProps = await prisma.property.findMany({
-    where: { ...areaWhere(lead as never, "clients.view") },
-    select: { id: true, city: true, areaId: true },
+    where: { ...portfolioWhere(lead as never, "clients.view") },
+    select: { id: true, city: true, portfolios: { select: { portfolioId: true } } },
   });
   check(
     "Property read excludes the other district",
-    leadProps.length > 0 && leadProps.every((p) => p.areaId === durham.id),
-    `${leadProps.length}/${allProps} returned; offenders: ${leadProps.filter((p) => p.areaId !== durham.id).map((p) => p.city).join(", ") || "none"}`,
+    leadProps.length > 0 && leadProps.every((p) => p.portfolios.some((m) => m.portfolioId === durham.id)),
+    `${leadProps.length}/${allProps} returned; offenders: ${leadProps.filter((p) => !p.portfolios.some((m) => m.portfolioId === durham.id)).map((p) => p.city).join(", ") || "none"}`,
   );
   check(
     "Property read is non-empty (the filter narrows, it does not erase)",
@@ -113,30 +113,27 @@ function check(label: string, ok: boolean, detail: string) {
 
   // ── Occurrences: the row the money hangs off.
   const leadOccs = await prisma.jobOccurrence.findMany({
-    where: { ...areaWhere(lead as never, "schedule.view") },
-    select: { id: true, areaId: true },
+    where: { ...portfolioWhere(lead as never, "schedule.view") },
+    select: { id: true, portfolios: { select: { portfolioId: true } } },
   });
   const allOccs = await prisma.jobOccurrence.count();
   check(
     "JobOccurrence read excludes the other district",
-    leadOccs.length > 0 && leadOccs.every((o) => o.areaId === durham.id),
-    `${leadOccs.length}/${allOccs} returned; ${leadOccs.filter((o) => o.areaId !== durham.id).length} from outside Durham`,
+    leadOccs.length > 0 && leadOccs.every((o) => o.portfolios.some((m) => m.portfolioId === durham.id)),
+    `${leadOccs.length}/${allOccs} returned; ${leadOccs.filter((o) => !o.portfolios.some((m) => m.portfolioId === durham.id)).length} from outside Durham`,
   );
 
-  // ── Job reaches its area through `defaultArea`, not `area`.
-  const leadJobs = await prisma.job.findMany({
-    where: { ...areaWhereOn(lead as never, "schedule.view", "defaultArea") },
-    select: { id: true, defaultAreaId: true },
-  });
-  check(
-    "Job read (via defaultArea) excludes the other district",
-    leadJobs.length > 0 && leadJobs.every((j) => j.defaultAreaId === durham.id),
-    `${leadJobs.length} returned; ${leadJobs.filter((j) => j.defaultAreaId !== durham.id).length} from outside Durham`,
-  );
+  // ── JOBS NO LONGER CARRY A PORTFOLIO OF THEIR OWN.
+  //
+  // There was a check here for `Job.defaultAreaId`, the projection default
+  // that answered "where do future occurrences land". That field is gone:
+  // an open visit follows its property's current memberships directly, so
+  // there is no unanswerable case left to default. A job's portfolios are
+  // its property's, which the Property check above already proves.
 
   // ── The prefix rule: a sibling must not leak. This is the bug the
   //    trailing delimiter exists to prevent, so assert it on real rows.
-  const chapelCount = await prisma.property.count({ where: { areaId: chapel.id } });
+  const chapelCount = await prisma.property.count({ where: { portfolios: { some: { portfolioId: chapel.id } } } });
   check(
     "the other district genuinely has rows to leak",
     chapelCount > 0,
@@ -145,7 +142,7 @@ function check(label: string, ok: boolean, detail: string) {
 
   // ── And the owner still sees everything.
   const ownerProps = await prisma.property.count({
-    where: { ...areaWhere(owner as never, "clients.view") },
+    where: { ...portfolioWhere(owner as never, "clients.view") },
   });
   check(
     "a global reader still sees every row",

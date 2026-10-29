@@ -1131,7 +1131,7 @@ function SocialLinksEditor({ value, onChange, onSave, onCancel, saving, original
 /**
  * Editor for a setting whose value is a plain array of strings.
  *
- * AREA_TIER_NAMES and MANAGER_TITLES are both that shape, and the generic
+ * PORTFOLIO_TIER_NAMES and MANAGER_TITLES are both that shape, and the generic
  * path fell through to a raw JSON text box — so editing them meant typing
  * brackets and quotes correctly, and one stray character saved a broken
  * value. `PaymentFromOptionsEditor` looks similar but its rows are
@@ -2436,7 +2436,7 @@ export default function SettingsTab({ me }: TabPropsType) {
         "DOCUMENT_TYPES",
         "DOCUMENT_MAX_SIZE_MB",
         "TIMELINE_CATEGORIES",
-        "AREA_TIER_NAMES",
+        "PORTFOLIO_TIER_NAMES",
         "MANAGER_TITLES",
         "REPEATING_JOB_OCCURRENCE_PAUSE_REASONS",
         "SOCIAL_LINKS",
@@ -2942,7 +2942,7 @@ export default function SettingsTab({ me }: TabPropsType) {
                         }
                         // Plain string arrays — a row per entry rather
                         // than hand-edited JSON.
-                        if (s.key === "AREA_TIER_NAMES" || s.key === "MANAGER_TITLES") {
+                        if (s.key === "PORTFOLIO_TIER_NAMES" || s.key === "MANAGER_TITLES") {
                           return (
                             <StringListEditor
                               value={editValue}
@@ -2950,7 +2950,7 @@ export default function SettingsTab({ me }: TabPropsType) {
                               onSave={() => handleSave(s.key)}
                               onCancel={() => setEditingKey(null)}
                               saving={saving}
-                              placeholder={s.key === "AREA_TIER_NAMES" ? "e.g. District" : "e.g. Crew Lead"}
+                              placeholder={s.key === "PORTFOLIO_TIER_NAMES" ? "e.g. District" : "e.g. Crew Lead"}
                             />
                           );
                         }
@@ -3055,11 +3055,11 @@ export default function SettingsTab({ me }: TabPropsType) {
                             </Text>
                           );
                         }
-                        // AREA_TIER_NAMES / MANAGER_TITLES are plain string
+                        // PORTFOLIO_TIER_NAMES / MANAGER_TITLES are plain string
                         // arrays. The generic path printed the raw JSON,
                         // brackets and quotes included, which reads as
                         // something the operator broke.
-                        if (s.key === "AREA_TIER_NAMES" || s.key === "MANAGER_TITLES") {
+                        if (s.key === "PORTFOLIO_TIER_NAMES" || s.key === "MANAGER_TITLES") {
                           try {
                             const items = JSON.parse(s.value || "[]");
                             if (Array.isArray(items) && items.every((x) => typeof x === "string")) {

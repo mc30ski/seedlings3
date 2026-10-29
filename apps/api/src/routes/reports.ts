@@ -20,8 +20,7 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, paymentSplitCutoffWhere, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { resolveOccurrenceArea } from "../lib/occurrenceArea";
-import { areaWhere, areaWhereVia, withArea } from "../lib/areaScope";
+import { portfolioWhere, portfolioWhereVia, withPortfolio } from "../lib/portfolioScope";
 import { WORKER_TYPES, classify, isFeeable, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
 import { cached } from "../lib/cache";
@@ -86,7 +85,7 @@ export default async function reportRoutes(app: FastifyInstance) {
     // anchor is the right semantic for per-worker job counts and earnings.
     const cutoff = await resolveCutoff(req);
 
-    // AREA-SCOPED, and it stays on `reports.view` rather than moving to
+    // PORTFOLIO-SCOPED, and it stays on `reports.view` rather than moving to
     // `reports.business`.
     //
     // Moving it was the tidier-sounding answer — this reads like a company
@@ -95,20 +94,20 @@ export default async function reportRoutes(app: FastifyInstance) {
     // so the move would have taken Statistics away from company-wide staff
     // in order to narrow it for one district lead.
     //
-    // `areaWhere` already draws that line correctly. Someone holding
+    // `portfolioWhere` already draws that line correctly. Someone holding
     // `reports.view` company-wide gets an empty fragment and the query is
-    // byte-identical to before; only an area-limited holder is narrowed.
+    // byte-identical to before; only a portfolio-limited holder is narrowed.
     //
     // THE NUMBERS BECOME PARTIAL WHEN IT NARROWS, and that is reported
     // rather than hidden: a worker who worked two districts appears in each
     // with only that district's hours and earnings, so neither row is their
-    // real week. `areaScope` below tells the UI to say so. Never let this
+    // real week. `portfolioScope` below tells the UI to say so. Never let this
     // ship as an unlabelled per-person earnings figure — it is exactly the
     // number that gets screenshotted into a pay conversation.
-    const statsArea = areaWhere(req.principal, "reports.view");
+    const statsArea = portfolioWhere(req.principal, "reports.view");
     // Typed explicitly: inline, the object was contextually typed by
     // `findMany` and the status strings narrowed to the enum. Passing it
-    // through `withArea` first loses that, and the error surfaces as a
+    // through `withPortfolio` first loses that, and the error surfaces as a
     // confusing complaint about `in`.
     const statsWhere: Prisma.JobOccurrenceWhereInput = {
       status: { in: [JobOccurrenceStatus.CLOSED, JobOccurrenceStatus.PENDING_PAYMENT] },
@@ -116,7 +115,7 @@ export default async function reportRoutes(app: FastifyInstance) {
       ...occurrenceWorkDateCutoff(cutoff),
     };
     const occurrences = await prisma.jobOccurrence.findMany({
-      where: withArea(statsWhere, statsArea),
+      where: withPortfolio(statsWhere, statsArea),
       select: {
         id: true,
         status: true,
@@ -390,15 +389,15 @@ export default async function reportRoutes(app: FastifyInstance) {
           return safe;
         });
 
-    // NO `areaScope` IN THIS RESPONSE. It carried the area names so this
+    // NO `portfolioScope` IN THIS RESPONSE. It carried the portfolio names so this
     // one page could say "Durham only", and that notice now lives once,
-    // above the tab row, driven by `me.areaScope` (see AreaScopeNotice).
+    // above the tab row, driven by `me.portfolioScope` (see PortfolioScopeNotice).
     // Two sources for one sentence is how they end up disagreeing — and in
     // the meantime they simply both rendered, stacking the same fact twice
     // on one screen.
     //
     // The FILTER above is untouched: these figures are still narrowed for
-    // an area-limited reader. Only the announcement moved.
+    // a portfolio-limited reader. Only the announcement moved.
     return {
       workers: workersOut,
       totalOccurrences: occurrences.filter((o) => o.workflow !== "ESTIMATE" && !o.isEstimate).length,
@@ -408,11 +407,11 @@ export default async function reportRoutes(app: FastifyInstance) {
   app.get("/operations", req_reportsBusiness, async (req: any) => {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
 
-    // NO AREA PARAM HERE ANY MORE. This route briefly took `?areaId=` and
+    // NO PORTFOLIO PARAM HERE ANY MORE. This route briefly took `?portfolioId=` and
     // ANDed it on, which worked but made this one panel the only place in
     // the app you could narrow by district. The lens moved to the header
-    // and onto the principal (lib/areaLens.ts), so the plain
-    // `areaWhere(principal, …)` calls below honour it — along with the
+    // and onto the principal (lib/portfolioLens.ts), so the plain
+    // `portfolioWhere(principal, …)` calls below honour it — along with the
     // hundred other query sites, and anything written next year. One
     // control, not one per panel.
     const todayKey = etToday();
@@ -440,11 +439,11 @@ export default async function reportRoutes(app: FastifyInstance) {
     // disagree with the JobsTab list. AND[] is the safe combinator.
     const occurrences = await prisma.jobOccurrence.findMany({
       // TERRITORIAL, decided 2026-10-14: a district lead's operations
-      // numbers are their district's. `withArea` appends to the existing
+      // numbers are their district's. `withPortfolio` appends to the existing
       // AND rather than replacing it — this query already uses AND for its
       // date window, which is exactly the collision that spreading the
       // fragment at the top level would have lost.
-      where: withArea<Prisma.JobOccurrenceWhereInput>({
+      where: withPortfolio<Prisma.JobOccurrenceWhereInput>({
         workflow: { notIn: [OccurrenceWorkflow.TASK] },
         AND: [
           {
@@ -455,7 +454,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           },
           ...(cutoff ? [occurrenceWorkDateCutoff(cutoff)] : []),
         ],
-      }, areaWhere(req.principal, "reports.business")),
+      }, portfolioWhere(req.principal, "reports.business")),
       include: {
         assignees: { select: { userId: true, role: true } },
         payment: paymentIncludeWithCutoff(cutoff, { include: { splits: true } }),
@@ -482,10 +481,10 @@ export default async function reportRoutes(app: FastifyInstance) {
     // reports a BY WORKFLOW breakdown in which TASK is one of the bars.
     // Reusing that result would have silently shown zero tasks forever.
     //
-    // Same window, same area scoping, same cutoff as everything else on
+    // Same window, same portfolio scoping, same cutoff as everything else on
     // this endpoint; only the workflow filter differs.
     const rollupRows = await prisma.jobOccurrence.findMany({
-      where: withArea<Prisma.JobOccurrenceWhereInput>({
+      where: withPortfolio<Prisma.JobOccurrenceWhereInput>({
         AND: [
           {
             OR: [
@@ -495,7 +494,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           },
           ...(cutoff ? [occurrenceWorkDateCutoff(cutoff)] : []),
         ],
-      }, areaWhere(req.principal, "reports.business")),
+      }, portfolioWhere(req.principal, "reports.business")),
       select: {
         status: true, workflow: true, isTentative: true, isClientConfirmed: true,
         isEstimate: true, jobId: true, price: true, proposalAmount: true,
@@ -1778,7 +1777,7 @@ export default async function reportRoutes(app: FastifyInstance) {
     // The business-wide rollup is a DIFFERENT surface: `/operations`, on
     // `reports.business`, whose copy says "across the company" and which
     // stays global on purpose.
-    const areaFilter = areaWhere(req.principal, "reports.view");
+    const portfolioFilter = portfolioWhere(req.principal, "reports.view");
     const subsetSet = new Set(subsetIds);
 
     // Business Start Date filter — resolved once for the entire aggregate.
@@ -1889,7 +1888,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           status: { notIn: ["CANCELED", "ARCHIVED"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
       }),
       prisma.jobOccurrence.count({
@@ -1898,7 +1897,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           status: "SCHEDULED" as any,
           workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
       }),
       prisma.jobOccurrence.count({
@@ -1906,7 +1905,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           status: "PENDING_PAYMENT" as any,
           startAt: { gte: lookbackStart },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
           // Pre-cutoff Awaiting Payment hidden per Business Start Date design.
           ...workDateCutoff,
         },
@@ -1917,7 +1916,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           workflow: "ESTIMATE",
           startAt: { gte: lookbackStart },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
       }),
       prisma.jobOccurrence.groupBy({
@@ -1927,7 +1926,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           workflow: { in: ["ANNOUNCEMENT", "FOLLOWUP", "EVENT"] as any },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
         _count: { _all: true },
       }),
@@ -1937,7 +1936,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           workflow: "TASK",
           startAt: { lt: tomorrowMidnight },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
       }),
       prisma.jobOccurrence.count({
@@ -1945,7 +1944,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           status: { in: ["IN_PROGRESS", "PAUSED"] as any },
           startAt: { gte: lookbackStart },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
       }),
       prisma.jobOccurrence.count({
@@ -1954,7 +1953,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
       }),
       prisma.jobOccurrence.findMany({
@@ -1963,7 +1962,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
         select: moneySelect,
       }),
@@ -1973,7 +1972,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
         select: moneySelect,
       }),
@@ -1997,7 +1996,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           // Cutoff is additive — take the LATER bound.
           completedAt: { gte: cutoff && cutoff > sevenDaysAgo ? cutoff : sevenDaysAgo, lt: todayMidnight, not: null },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
         select: {
           startedAt: true,
@@ -2013,7 +2012,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           // Cutoff is additive with the 13-week window.
           completedAt: { gte: cutoff && cutoff > trendStart ? cutoff : trendStart, not: null },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
         select: { completedAt: true, ...moneySelect },
       }),
@@ -2025,7 +2024,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           isClientConfirmed: false,
           jobId: { not: null },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
         select: { job: { select: { property: { select: { clientId: true } } } } },
       }),
@@ -2054,7 +2053,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           status: { in: ["IN_PROGRESS", "PAUSED"] as any },
           startAt: { gte: lookbackStart },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
         select: {
           id: true,
@@ -2105,7 +2104,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           status: { in: ["COMPLETED", "PENDING_PAYMENT", "CLOSED"] as any },
           completedAt: { gte: todayMidnight, lt: tomorrowMidnight },
           ...assigneeSubsetFilter,
-          ...areaFilter,
+          ...portfolioFilter,
         },
         select: {
           id: true,

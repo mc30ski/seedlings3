@@ -4,8 +4,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   // THE SCHEMA ENGINE MUST NOT GO THROUGH THE POOLER.
   //
   // Both Neon URLs are `-pooler` hosts, which is right for Prisma Client
@@ -91,12 +91,12 @@ enum AuditScope {
   // do, so none may happen without a trail.
   ROLE
 
-  // The area tree decides who sees what money, so creating, renaming,
-  // retiring and the guided move all leave a trail. AREA_ASSIGNMENT is
+  // The portfolio tree decides who sees what money, so creating, renaming,
+  // retiring and the guided move all leave a trail. PORTFOLIO_ASSIGNMENT is
   // separate because granting someone a role in a territory is a different
   // act from reshaping the territory itself.
-  AREA
-  AREA_ASSIGNMENT
+  PORTFOLIO
+  PORTFOLIO_ASSIGNMENT
 }
 
 enum AuditVerb {
@@ -543,15 +543,15 @@ model User {
   displaysRevoked    Display[]            @relation("DisplayRevokedBy")
   publicPhotosHidden JobOccurrencePhoto[] @relation("PublicPhotoHiddenBy")
 
-  // Roles + entitlements. These are grants held GLOBALLY; an area-scoped
-  // grant lives on AreaAssignment, added with areas.
+  // Roles + entitlements. These are grants held GLOBALLY; a portfolio-scoped
+  // grant lives on PortfolioAssignment.
   customRoles        UserCustomRole[] @relation("UserCustomRoleUser")
   customRolesGranted UserCustomRole[] @relation("UserCustomRoleGrantor")
   customRolesCreated CustomRole[]     @relation("CustomRoleCreator")
 
-  /// Roles held within an area's subtree. These DO grant.
-  areaAssignments        AreaAssignment[] @relation("AreaAssignmentUser")
-  areaAssignmentsGranted AreaAssignment[] @relation("AreaAssignmentGrantor")
+  /// Roles held within a portfolio's subtree. These DO grant.
+  portfolioAssignments        PortfolioAssignment[] @relation("PortfolioAssignmentUser")
+  portfolioAssignmentsGranted PortfolioAssignment[] @relation("PortfolioAssignmentGrantor")
 }
 
 // ─── Roles and entitlements ──────────────────────────────────────────────
@@ -628,13 +628,13 @@ model CustomRole {
   entitlements RoleEntitlement[]
   userGrants   UserCustomRole[]
 
-  /// The same role, held within an area rather than globally.
-  areaGrants AreaAssignment[]
+  /// The same role, held within a portfolio rather than globally.
+  portfolioGrants PortfolioAssignment[]
 
   /// Immutable identifier for roles a STARTER SCRIPT owns ("seedlings.worker").
   /// The script upserts by key, so re-running it after adding entitlements
   /// rebuilds the role while preserving its id — and therefore every
-  /// UserCustomRole and AreaAssignment pointing at it. `name` is an editable
+  /// UserCustomRole and PortfolioAssignment pointing at it. `name` is an editable
   /// label and can never be the key. User-created roles have none.
   key String? @unique
 
@@ -1124,15 +1124,17 @@ model Property {
   jobs   Job[]
   photos PropertyPhoto[]
 
-  /// Exactly ONE area, and optional. A column, not a join table: a property
-  /// is in one place. Unassigned is allowed but warned for its CONSEQUENCE
-  /// — its work appears in no area's rollup.
-  areaId String?
-  area   Area?   @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  /// ANY NUMBER OF PORTFOLIOS, including none.
+  ///
+  /// This was `areaId`, a single column, on the reasoning that "a property
+  /// is in one place". True of a place and false of a portfolio: the same
+  /// property is legitimately in Briar Chapel AND on somebody's route AND
+  /// in a set of accounts one person knows. Membership in none is still
+  /// allowed and still means its work appears in no rollup.
+  portfolios PropertyPortfolio[]
 
   @@index([clientId])
   @@index([kind])
-  @@index([areaId])
 }
 
 // ----- Post-MVP: per-unit granularity inside aggregate-site Properties -----
@@ -1262,14 +1264,8 @@ model Job {
   followups              FollowupJob[]
   recommendedCollections JobRecommendedCollection[]
 
-  /// Where FUTURE occurrences in this chain land, when the previous one
-  /// cannot say. A projection default, never the source of truth for money.
-  defaultAreaId String?
-  defaultArea   Area?   @relation(fields: [defaultAreaId], references: [id], onDelete: Restrict)
-
   @@index([defaultGroupId])
   @@index([clientBulkPausedAt])
-  @@index([defaultAreaId])
 }
 
 model JobContact {
@@ -1638,11 +1634,20 @@ model JobOccurrence {
   followupJobs     FollowupJob[]
   changeRequests   OccurrenceChangeRequest[]
 
-  /// Stamped at creation, editable while SCHEDULED, FROZEN at completion —
-  /// the same rule as completion splits (G22). Money rides the occurrence,
-  /// so moving a property must never rewrite what a closed visit earned.
-  areaId String?
-  area   Area?   @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  /// WHICH PORTFOLIOS THIS VISIT COUNTS TOWARD.
+  ///
+  /// Kept in step with the property's own memberships while the visit is
+  /// open, and FROZEN at completion (G12/G22). Money rides the occurrence,
+  /// so re-tagging a property must never rewrite what a closed visit
+  /// earned — but it must reach the visits not yet done, or a portfolio
+  /// built to plan next week's work would stay empty until the next
+  /// 14-day cycle regenerated everything.
+  ///
+  /// Rows exist for open visits too, rather than deriving them through
+  /// `job.property` on the fly, so every portfolio-scoped query keeps ONE shape
+  /// instead of branching on `completedAt`. The cost is a bounded fan-out
+  /// write when a property's membership changes.
+  portfolios JobOccurrencePortfolio[]
 
   @@index([linkGroupId])
   @@index([assignedGroupId])
@@ -1651,7 +1656,6 @@ model JobOccurrence {
   @@index([kind])
   @@index([hoursApprovedAt])
   @@index([streamResumeReminderAt])
-  @@index([areaId])
 }
 
 /// One pause of a repeating stream, kept after it ends.
@@ -4599,66 +4603,106 @@ model DisplayPairing {
   @@index([expiresAt])
 }
 
-/// A place the business works: a region, a county, a town. The tree models
-/// AREAS, not people — owning an area is accountability for a place, never
-/// authority over a person.
-model Area {
-  id       String  @id @default(cuid())
+/// A NAMED GROUPING OF PROPERTIES that somebody is assigned to manage.
+///
+/// This was `Area`, and the word outgrew the thing. Nothing here ever
+/// required a node to be a place: `lat`/`lng` are optional, `tier` is free
+/// text, and the tree was already being used for routes. A portfolio may
+/// be geographic — then give it coordinates — or it may be a driving
+/// round, or the accounts one person knows. What it always is: a set of
+/// properties with an owner, nested so that an assignment cascades.
+///
+/// The tree models PROPERTIES, not people — owning a portfolio is
+/// accountability for work, never authority over a person.
+model Portfolio {
+  id       String      @id @default(cuid())
   name     String
-  /// Display label from the AREA_TIER_NAMES setting ("Region", "District").
+  /// Display label from the PORTFOLIO_TIER_NAMES setting ("Region", "Route").
   /// The schema does not care what you call a level; only the shape matters.
   tier     String?
   parentId String?
   /// Restrict, not Cascade: deleting a parent must never silently orphan or
-  /// delete the places beneath it. Areas are RETIRED, never deleted.
-  parent   Area?   @relation("AreaTree", fields: [parentId], references: [id], onDelete: Restrict)
-  children Area[]  @relation("AreaTree")
+  /// delete what is beneath it. Portfolios are RETIRED, never deleted.
+  parent   Portfolio?  @relation("PortfolioTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Portfolio[] @relation("PortfolioTree")
 
   /// Materialized path of IDS, delimited and terminated: "/ck3.../ck7.../".
   /// Ids because names are neither unique nor stable — a slug path breaks on
-  /// rename, and two areas may legitimately both be called "Raleigh". The
+  /// rename, and two portfolios may legitimately both be called "Raleigh". The
   /// trailing delimiter is load-bearing: without it a prefix test matches a
   /// sibling whose id merely starts with the same characters.
   path String
 
   /// Where this territory IS, for the weather forecast.
   ///
-  /// Optional, and deliberately NOT derived from the properties in the area.
+  /// Optional, and deliberately NOT derived from the properties in it.
   /// A centroid of the customer list moves every time a client joins or
   /// leaves, which would make the forecast anchor drift for reasons that have
   /// nothing to do with geography. An operator picks the point once.
   ///
   /// Blank means "no opinion": the weather falls back to BUSINESS_ADDRESS,
-  /// exactly as it did before areas existed. There is no inheritance from a
-  /// parent area — a blank child is blank, not "whatever the region says" —
+  /// exactly as it did before portfolios existed. There is no inheritance
+  /// from a parent — a blank child is blank, not "whatever the region says" —
   /// because a silent inherited coordinate is indistinguishable from a
   /// deliberate one when the forecast turns out to be for the wrong town.
   lat Float?
   lng Float?
 
-  /// Retired areas are hidden from PICKERS and still present in REPORTING —
+  /// Retired portfolios are hidden from PICKERS and still present in REPORTING —
   /// history has to resolve through a closed territory.
   retiredAt DateTime?
   createdAt DateTime  @default(now())
 
-  assignments AreaAssignment[]
-  properties  Property[]
-  occurrences JobOccurrence[]
-  jobDefaults Job[] // Job.defaultArea
+  assignments PortfolioAssignment[]
+  properties  PropertyPortfolio[]
+  occurrences JobOccurrencePortfolio[]
 
   @@index([path])
   @@index([parentId])
   @@index([retiredAt])
 }
 
+/// A role held WITHIN one portfolio's subtree. This is what actually grants.
+/// A property's membership of a portfolio. Many-to-many by design.
+model PropertyPortfolio {
+  propertyId  String
+  portfolioId String
+  property    Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Restrict)
 
-/// A role held WITHIN one area's subtree. This is what actually grants.
-model AreaAssignment {
+  addedAt   DateTime @default(now())
+  addedById String?
+
+  @@id([propertyId, portfolioId])
+  @@index([portfolioId])
+}
+
+/// WHAT A VISIT COUNTED TOWARD, synced while open and frozen at completion.
+///
+/// Restrict on the portfolio, not Cascade: retiring a portfolio must never
+/// silently rewrite the history of visits that counted toward it. Cascade
+/// on the occurrence, because deleting the visit deletes its own record.
+model JobOccurrencePortfolio {
+  occurrenceId String
+  portfolioId  String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  portfolio    Portfolio     @relation(fields: [portfolioId], references: [id], onDelete: Restrict)
+
+  /// Set when the visit completed and this row stopped tracking the
+  /// property. Null means the row is still following membership. G12/G22
+  /// assert nothing writes a row whose occurrence is already complete.
+  frozenAt DateTime?
+
+  @@id([occurrenceId, portfolioId])
+  @@index([portfolioId])
+}
+
+model PortfolioAssignment {
   id           String     @id @default(cuid())
   userId       String
-  user         User       @relation("AreaAssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
-  areaId       String
-  area         Area       @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  user         User       @relation("PortfolioAssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  portfolioId  String
+  portfolio    Portfolio  @relation(fields: [portfolioId], references: [id], onDelete: Restrict)
   customRoleId String
   customRole   CustomRole @relation(fields: [customRoleId], references: [id], onDelete: Cascade)
 
@@ -4672,9 +4716,9 @@ model AreaAssignment {
   suspendedAt DateTime?
   grantedAt   DateTime  @default(now())
   grantedById String?
-  grantedBy   User?     @relation("AreaAssignmentGrantor", fields: [grantedById], references: [id], onDelete: SetNull)
+  grantedBy   User?     @relation("PortfolioAssignmentGrantor", fields: [grantedById], references: [id], onDelete: SetNull)
 
-  @@unique([userId, areaId, customRoleId])
+  @@unique([userId, portfolioId, customRoleId])
   @@index([userId])
-  @@index([areaId])
+  @@index([portfolioId])
 }
