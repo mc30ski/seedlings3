@@ -263,10 +263,16 @@ export const portfolios = {
           );
         }
 
-        const [liveChildren, openWork] = await Promise.all([
+        const [liveChildren, openWork, leads] = await Promise.all([
           tx.portfolio.count({ where: { parentId: portfolioId, retiredAt: null } }),
           tx.jobOccurrence.count({
             where: { portfolios: { some: { portfolioId } }, completedAt: null },
+          }),
+          // WHO STILL LEADS IT. Suspended grants do not count — they are
+          // already switched off and retiring cannot make them worse.
+          tx.portfolioAssignment.findMany({
+            where: { portfolioId, suspendedAt: null },
+            select: { user: { select: { displayName: true, email: true } } },
           }),
         ]);
         if (liveChildren > 0) {
@@ -278,9 +284,40 @@ export const portfolios = {
         }
         if (openWork > 0) {
           throw new ServiceError(
-            "AREA_HAS_OPEN_WORK",
+            "PORTFOLIO_HAS_OPEN_WORK",
             `${openWork} visit(s) here are not finished. Retag or complete them first — ` +
               `retiring now would hide them from every picker while leaving them on the schedule.`,
+            400,
+          );
+        }
+        // SOMEBODY STILL LEADS IT.
+        //
+        // The third thing that depends on a portfolio, and the one that was
+        // missing. Scoping deliberately ignores `retiredAt` (invariant 4 —
+        // history has to resolve through a closed portfolio), so retiring
+        // one somebody is assigned to does NOT revoke them: they stay
+        // confined to it exactly as before. What changes is that
+        // `GET /me/portfolios` filters retired nodes out, so their lens
+        // chip loses its only option and disappears — leaving a person
+        // narrowed to a portfolio that no picker in the app will name.
+        //
+        // Nothing breaks loudly. They simply keep seeing a subset with no
+        // way to ask what it is, and the operator who retired it is told
+        // nothing. Refusing, and naming who, is the same shape as the two
+        // checks above: a portfolio is retirable when nothing still
+        // depends on it.
+        if (leads.length > 0) {
+          const who = leads
+            .map((a) => a.user.displayName || a.user.email || "somebody")
+            .slice(0, 3)
+            .join(", ");
+          const more = leads.length > 3 ? ` and ${leads.length - 3} more` : "";
+          throw new ServiceError(
+            "PORTFOLIO_HAS_LEADS",
+            `${who}${more} still lead${leads.length === 1 ? "s" : ""} this portfolio. ` +
+              `Move or revoke ${leads.length === 1 ? "that grant" : "those grants"} first — ` +
+              `retiring now would leave ${leads.length === 1 ? "them" : "them"} confined to a ` +
+              `portfolio that no picker in the app will show.`,
             400,
           );
         }
