@@ -133,11 +133,22 @@ function check(label: string, ok: boolean, detail: string) {
 
   // ── The prefix rule: a sibling must not leak. This is the bug the
   //    trailing delimiter exists to prevent, so assert it on real rows.
-  const chapelCount = await prisma.property.count({ where: { portfolios: { some: { portfolioId: chapel.id } } } });
+  //
+  // COUNTED OVER THE SUBTREE, not the node. This asked for rows attached
+  // to Chapel Hill ITSELF, which was the same question only while the tree
+  // was one level deep. It stopped being so on 2026-10-29, when Chapel
+  // Hill became a district whose properties hang off the zones beneath it
+  // — and the negative control started failing while nothing was wrong,
+  // which is the better of the two ways for it to break. A lens on a
+  // district returns its whole subtree, so that is what has to be
+  // non-empty for "excludes the other district" to mean anything.
+  const chapelCount = await prisma.property.count({
+    where: { portfolios: { some: { portfolio: { path: { startsWith: chapel.path } } } } },
+  });
   check(
     "the other district genuinely has rows to leak",
     chapelCount > 0,
-    "Chapel Hill is empty, so 'excludes the other district' is trivially true.",
+    "Chapel Hill's subtree is empty, so 'excludes the other district' is trivially true.",
   );
 
   // ── And the owner still sees everything.

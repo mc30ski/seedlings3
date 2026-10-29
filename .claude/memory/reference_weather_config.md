@@ -84,7 +84,7 @@ area on the Areas tab. Precedence in `GET /weather/location` is now
 
 Dev areas carry real points (Durham 35.994/-78.899, Chapel Hill 35.913/-79.056)
 so the two forecast differently and a test cannot pass by coincidence. Bound by
-the "forecast follows the lens" case in `area-lens-owner.spec.ts`.
+the "forecast follows the lens" case in `portfolio-lens-owner.spec.ts`.
 
 **THE AREA MAP (2026-10-26)** — Areas tab → pick an area → List/Map
 toggle. Leaflet + OpenStreetMap tiles; no API key, no cost.

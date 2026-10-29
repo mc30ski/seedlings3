@@ -127,10 +127,28 @@ export default async function meRoutes(app: FastifyInstance) {
   // this feeds a PICKER — retirement hides a portfolio from pickers and leaves it
   // in reporting, so a lens already set to one keeps working.
   //
-  // A SOLE ROOT IS OMITTED. Its path prefixes every other portfolio, so choosing
-  // it filters nothing while looking like it filters something; the picker's
-  // own "All portfolios" entry is the clear-the-lens option. With several roots
-  // each one is a real slice, so none are dropped.
+  // AN OPTION MUST EXCLUDE SOMETHING, or it is not a filter.
+  //
+  // A lens that returns everything the caller can already see is a control
+  // that cannot change anything, and the picker already has one of those:
+  // "All portfolios", which clears the lens. So an entry is offered only
+  // when something the caller can otherwise see falls OUTSIDE it.
+  //
+  // This was written as "omit a sole root", which is the same rule for the
+  // only tree that existed when it was written — one level deep, so the
+  // root was the only node that could cover everything. It stopped being
+  // the same rule the moment a State and a Market were added above the
+  // districts (2026-10-29): somebody granted Durham alone was then offered
+  // "North Carolina", "Triangle" and "Durham", three entries returning the
+  // identical rows, because the lens is intersected with their grants and
+  // all three intersect to Durham. Three controls that do nothing is worse
+  // than one.
+  //
+  // So the rule is stated directly: drop any node whose subtree contains
+  // the caller's ENTIRE reach — their granted subtrees, or the roots
+  // themselves for a global reader. For one root and a global reader that
+  // drops exactly the root, which is what the old wording achieved; with
+  // several roots each one still excludes the others, so none are dropped.
   //
   // view-as-allow: the lens belongs to the SESSION doing the looking, not to
   // any worker being looked at. Viewing as someone else does not hand you
@@ -158,6 +176,9 @@ export default async function meRoutes(app: FastifyInstance) {
         );
 
     const roots = visible.filter((a) => a.parentId === null);
+    // What this caller can reach at all. For a global reader that is the
+    // roots; for anyone else, the subtrees they are granted.
+    const reach = global ? roots.map((r) => r.path) : grantedPaths;
     // `trail` is the chain of names from the top of the tree down to this
     // portfolio, root excluded — so a notice can read "Chapel Hill → Carrboro"
     // instead of a bare leaf name that two districts might share. Built
@@ -166,9 +187,12 @@ export default async function meRoutes(app: FastifyInstance) {
     const nameById = new Map(all.map((a) => [a.id, a.name]));
     const trailOf = (path: string) =>
       path.split("/").filter(Boolean).slice(1).map((id) => nameById.get(id) ?? "?");
-    const options = (roots.length === 1 ? visible.filter((a) => a.id !== roots[0]!.id) : visible).map(
-      ({ id, name, tier, path }) => ({ id, name, tier, path, trail: trailOf(path) }),
-    );
+    const options = visible
+      // `g.startsWith(a.path)` is "a contains g" — path containment, the
+      // same test the scope filter uses, so the picker and the filter can
+      // never disagree about what a lens would return.
+      .filter((a) => !(reach.length > 0 && reach.every((g) => g.startsWith(a.path))))
+      .map(({ id, name, tier, path }) => ({ id, name, tier, path, trail: trailOf(path) }));
     return { portfolios: options };
   });
 

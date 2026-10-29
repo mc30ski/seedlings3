@@ -1,0 +1,25 @@
+-- DROP A COLUMN NOTHING WROTE AND NOTHING READ.
+--
+-- `JobOccurrencePortfolio.frozenAt` was meant to record the moment a
+-- visit's portfolio attribution stopped following its property. The
+-- function that would have stamped it, `freezeOccurrencePortfolios`, was
+-- never called from anywhere in the application — the only writer was
+-- `prisma/seed.ts`.
+--
+-- So in production the column was NULL on every completed visit while dev
+-- had it populated. Nothing was broken by that, because the stamp is not
+-- what protects history: a completed visit's rows are left alone because
+-- `resyncPortfoliosForProperty` selects only open visits and
+-- `syncOccurrencePortfolios` returns early on a completed one. G22 asserts
+-- both of those, and they were proven against real rows before this ran.
+--
+-- The hazard was the NEXT reader. A column called `frozenAt` invites a
+-- report filtering `frozenAt IS NOT NULL`, which would have returned
+-- nothing in production and the right answer in dev — the worst shape of
+-- wrong. Whether a row is frozen is `occurrence."completedAt" IS NOT NULL`,
+-- and now that is the only way to ask.
+--
+-- NO DATA IS LOST THAT ANYTHING COULD USE: no query in the codebase reads
+-- this column, and the fact it carried is derivable from the occurrence it
+-- hangs off.
+ALTER TABLE "JobOccurrencePortfolio" DROP COLUMN "frozenAt";

@@ -1,11 +1,11 @@
 ---
 name: project_area_tree_for_the_business
-description: "Proposed real-world area hierarchy for Seedlings (Chapel Hill / Briar Chapel / Chatham) from a 2026-10-27 production analysis — agreed in outline, NOT built, two open questions"
+description: "Proposed real-world portfolio tree for Seedlings (Chapel Hill / Briar Chapel / Chatham) from a 2026-10-27 production analysis — tree NOT built; the TIER VOCABULARY it uses was settled and shipped to code 2026-10-29"
 metadata:
   node_type: memory
   type: project
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-10-28T13:52:17.269Z
+  modified: 2026-10-29T00:00:00.000Z
 ---
 
 Drafted 2026-10-27 from a read-only analysis of the production database.
@@ -118,6 +118,67 @@ in the Roles → People view has never rendered, and the `districtLead`
 Playwright persona (described elsewhere as a Durham-only Admin) holds no
 grants at all — area-scoping e2e coverage may currently be vacuous. See
 [[project_area_hierarchy_design]].
+
+## The tier vocabulary — SETTLED and in code, 2026-10-29
+
+`PORTFOLIO_TIER_NAMES` is no longer a flat string list. It is an array of
+`{ name, description }`, and the description is shown under the tier picker
+in `PortfoliosTab` — because the words do not explain themselves and an
+operator choosing blind mixes Zone and Route inside a week.
+
+**A spine, and two kinds that cut across it:**
+
+| Tier | What it is |
+|---|---|
+| **State** | A legal boundary — payroll tax, licensing, insurance, wage floors. Not just the map. |
+| **Market** | A metro and the area it commutes to. The unit you open or close. |
+| **District** | One person's span of accountability. The rung a lead is usually granted on. |
+| **Zone** | A patch with a boundary — a town, a postcode, a subdivision. You could draw it. |
+| **Route** | A journey, in order. **Sequence** is what makes it a route; if order does not matter it is a zone. |
+| **Book** | A set of accounts one person keeps, wherever they are. Defined by WHO, not WHERE. |
+
+State → Market → District → Zone **nest, in that order**. Route and Book do
+not: they sit at the lowest node containing everything they touch, and a
+property belongs to one **as well as** its zone — which is what the
+many-to-many membership in [[project_portfolios_design]] is for.
+
+**Dropped deliberately:** *Region* (only earns a place above State; type it
+when the business is that size) and *Territory* (means "district" to some
+people and "a rep's patch" to others — two words for one rung is the exact
+confusion the list exists to prevent).
+
+Where it lives, all four kept in step:
+`scripts/install-starter-roles.ts` (production, upgraded through
+`supersedes` so an edited vocabulary is never overwritten) ·
+`prisma/seed.ts` (dev — **reseeded 2026-10-29, verified in the dev row**) ·
+a dedicated `PortfolioTierNamesEditor` on SettingsTab · **G49** in
+`permissions-build-gate.test.ts`, which fails the build if the two source
+copies drift or if the key is ever routed back at `StringListEditor` (that
+editor coerces rows with `String(x)` and would silently save
+`"[object Object]"` over the whole vocabulary). Both halves of G49 were
+negative-controlled.
+
+**Production still needs the installer re-run** to pick the new value up —
+its row is still the old four strings, which is one of the `supersedes`
+entries, so it will upgrade cleanly. The user runs it.
+
+## The production tree in this vocabulary (measured 2026-10-28)
+
+| Portfolio | Tier | Properties | 90-day visits | Collected |
+|---|---|---|---|---|
+| North Carolina → Triangle | State → Market | 78 | 502 | $35,532 |
+| Chapel Hill | District | 67 | 425 | $29,097 |
+|  → Chapel Hill West | Zone | 30 | | |
+|  → Briar Chapel | Zone | 24 | | |
+|  → Chapel Hill East | Zone | 9 | | |
+|  → Carrboro | Zone | 4 | | |
+| Chatham / Pittsboro | District | 11 | 77 | $6,435 |
+| Mike's Book | Book | 5 | 45 | $2,865 |
+
+Two properties are unplaced (the bad records below). Briar Chapel is a
+**Zone, not a Route** — it is a subdivision with a boundary, and nothing
+about the order of visits inside it is load-bearing. Mike's Book is a Book
+whose properties **also** sit in their geographic zones.
 
 ## Open questions, to answer before building
 

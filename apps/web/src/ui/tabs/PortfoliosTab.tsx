@@ -93,14 +93,37 @@ type UserOption = {
 };
 
 /** Read PORTFOLIO_TIER_NAMES out of the settings payload, tolerating anything. */
-function parseTierNames(rows: Array<{ key: string; value: string }>): string[] {
+/** A tier the operator may pick, and the help text shown once they do. */
+type TierOption = { name: string; description?: string };
+
+/**
+ * Read PORTFOLIO_TIER_NAMES, tolerating BOTH shapes it has had.
+ *
+ * It shipped as `["District", "Route"]` and is now
+ * `[{ name, description }]`, so the description can be shown where the
+ * choice is made. Both are accepted on purpose: the installer only
+ * replaces a value it recognises as one it shipped, so an operator who
+ * edited their vocabulary keeps the old shape indefinitely and must not
+ * lose their suggestions for it.
+ *
+ * Anything else degrades to "no suggestions" rather than throwing and
+ * taking the tree down with it.
+ */
+function parseTierNames(rows: Array<{ key: string; value: string }>): TierOption[] {
   const raw = (Array.isArray(rows) ? rows : []).find((r) => r.key === "PORTFOLIO_TIER_NAMES")?.value;
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    // A malformed taxonomy must degrade to "no suggestions", never throw and
-    // take the whole tree down with it.
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((x): TierOption | null => {
+        if (typeof x === "string") return x ? { name: x } : null;
+        if (x && typeof x === "object" && typeof x.name === "string" && x.name) {
+          return { name: x.name, description: typeof x.description === "string" ? x.description : undefined };
+        }
+        return null;
+      })
+      .filter((x): x is TierOption => x !== null);
   } catch {
     return [];
   }
@@ -138,7 +161,7 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
       path.split("/").filter(Boolean).slice(1).map((id) => nameById.get(id) ?? "?"),
     [nameById],
   );
-  const [tierNames, setTierNames] = useState<string[]>([]);
+  const [tierNames, setTierNames] = useState<TierOption[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -408,7 +431,11 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
         </Card.Root>
       ) : (
         <HStack align="start" gap={4} wrap={{ base: "wrap", lg: "nowrap" }}>
-          <VStack align="stretch" gap={1} minW={{ base: "full", lg: "72" }} maxW={{ lg: "72" }} w="full">
+          {/* WIDER SINCE THE TREE GOT DEEPER. 18rem was sized for a
+              two-level tree; the real vocabulary is five
+              (State → Market → District → Zone, plus the root), and every
+              level spends width on indent before the name gets any. */}
+          <VStack align="stretch" gap={1} minW={{ base: "full", lg: "80" }} maxW={{ lg: "80" }} w="full">
             {visible.map((a) => {
               const total = rollup[a.id] ?? a._count.properties;
               const own = a._count.properties;
@@ -427,7 +454,14 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
                 //
                 // Depth comes from the materialized path, already computed
                 // by the server — the tree is rendered without re-walking it.
-                ml={`${a.depth * 20}px`}
+                //
+                // 14px a level, and it STOPS STEPPING after six. Indent is
+                // paid for out of the name's width, so an unbounded one
+                // means a deep enough tree where no row can be read — the
+                // nesting would be perfectly legible and the portfolios
+                // anonymous. Six levels is one more than the vocabulary
+                // has; past that the shape is carried by the twisties.
+                ml={`${Math.min(a.depth, 6) * 14}px`}
                 rounded="md"
                 borderWidth="1px"
                 borderColor={a.id === selectedId ? "blue.emphasized" : "border"}
@@ -472,15 +506,21 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
                     pr={2}
                     py={1.5}
                     cursor="pointer"
+                    title={a.tier ? `${a.name} — ${a.tier}` : a.name}
                     onClick={() => { pickedRef.current = true; setSelectedId(a.id); }}
                   >
-                    <HStack justify="space-between" gap={2}>
-                      <HStack gap={1.5} minW={0}>
-                        <Text fontSize="sm" fontWeight={a.depth === 0 ? "semibold" : "normal"} truncate>
+                    <HStack justify="space-between" gap={2} align="start">
+                      <HStack gap={1.5} minW={0} wrap="wrap">
+                        {/* WRAPS, NEVER TRUNCATES. A portfolio's name is
+                            the only thing on the row that identifies it,
+                            and "Chapel Hi…" and "Chapel Hil…" are the same
+                            row to a reader. Two lines cost a few pixels of
+                            height; a clipped name costs the answer. */}
+                        <Text fontSize="sm" fontWeight={a.depth === 0 ? "semibold" : "normal"} lineHeight="short">
                           {a.name}
                         </Text>
                         {a.tier && (
-                          <Text fontSize="2xs" color="fg.muted" flexShrink={0}>
+                          <Text fontSize="2xs" color="fg.muted" flexShrink={0} lineHeight="short" pt="2px">
                             {a.tier}
                           </Text>
                         )}
@@ -505,9 +545,31 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
                           nobody in charge of it, so "owned by the root" is
                           not a thing that can be true. Its number is simply
                           everything. */}
-                      <Text fontSize="2xs" color="fg.muted" flexShrink={0} whiteSpace="nowrap">
-                        {total} propert{total === 1 ? "y" : "ies"}
-                        {!isRootRow(a) && total !== own && ` (${own} own)`}
+                      {/* THE NUMBER, NOT THE SENTENCE.
+                          This read "22 properties (0 own)" — about 110px
+                          that never yielded, on a row whose name was
+                          already paying for the indent. At four levels
+                          down the name had sixty pixels left and every
+                          branch rendered as an ellipsis. The count is a
+                          column to SCAN, so it only needs its digits; the
+                          words live in the tooltip and in the detail panel
+                          beside it, where there is room to say them. */}
+                      <Text
+                        fontSize="2xs"
+                        color="fg.muted"
+                        flexShrink={0}
+                        whiteSpace="nowrap"
+                        lineHeight="short"
+                        pt="2px"
+                        title={
+                          `${total} propert${total === 1 ? "y" : "ies"}` +
+                          (!isRootRow(a) && total !== own ? ` — ${own} tagged here, the rest below` : "")
+                        }
+                      >
+                        {total}
+                        {!isRootRow(a) && total !== own && (
+                          <Text as="span" color="fg.subtle"> · {own} own</Text>
+                        )}
                       </Text>
                     </HStack>
                   </Box>
@@ -545,19 +607,26 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
 }
 
 /**
- * Tier picker — SUGGESTIONS, not a vocabulary.
+ * Tier picker — CHOOSE FROM THE LIST, and the list is editable.
  *
- * `Portfolio.tier` is a free string and stays one: an operator who runs "Zones"
- * rather than "Districts" must not have to ask us to add it. What the
- * `PORTFOLIO_TIER_NAMES` taxonomy buys is SPELLING — two people naming the same
- * level the same way, so the tree reads consistently.
+ * There was an "Other (specify…)" escape here, and it was right while the
+ * taxonomy was six bare words nobody could extend without a developer. It
+ * is wrong now: `PORTFOLIO_TIER_NAMES` is operator-editable on the Settings
+ * tab AND each entry carries the sentence that defines it, so a tier typed
+ * straight into this box is a level with no definition anywhere — which is
+ * the exact confusion the descriptions were added to end. Somebody who
+ * needs "Borough" adds it once, with its meaning, and everyone gets it.
  *
- * So the control is a Select over the configured names plus an "Other"
- * escape that reveals a text box, the same shape the Payment From picker
- * uses. Never a native <select>.
+ * `Portfolio.tier` is still a free string in the schema and the API still
+ * accepts anything; this is a UI decision about where a new level is born,
+ * not a new constraint on the data.
+ *
+ * A saved tier that is NOT in the list is still shown and still selected —
+ * it is real data, and blanking it on open would be a silent edit. It is
+ * offered as an option marked as off-list so it reads as something to
+ * resolve. Once it is changed it cannot be chosen again, which is the
+ * point. Never a native <select>.
  */
-const TIER_OTHER = "__other__";
-
 function TierField({
   value,
   onChange,
@@ -565,53 +634,35 @@ function TierField({
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: string[];
+  options: TierOption[];
 }) {
-  // A saved tier that is not in the taxonomy is not an error — the operator
-  // typed it before the list existed, or deliberately went off-list. Start
-  // in free-text mode so it is visible and editable rather than silently
-  // reset to blank by a Select that cannot represent it.
-  const [other, setOther] = useState(() => !!value && !options.includes(value));
+  const offList = !!value && !options.some((o) => o.name === value);
   const collection = useMemo(
     () =>
       createListCollection({
         items: [
-          { label: "(none)", value: "" },
-          ...options.map((t) => ({ label: t, value: t })),
-          { label: "Other (specify…)", value: TIER_OTHER },
-        ],
+          { label: "(none)", value: "", description: undefined },
+          ...options.map((t) => ({ label: t.name, value: t.name, description: t.description })),
+          ...(offList
+            ? [{ label: value, value, description: "Not in the configured list — pick a listed tier, or add this one in Settings." }]
+            : []),
+        ] as Array<{ label: string; value: string; description?: string }>,
       }),
-    [options],
+    [options, offList, value],
   );
-  if (other) {
-    return (
-      <HStack gap={2}>
-        <Input
-          size="sm"
-          placeholder="Tier — e.g. County, Route"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-        />
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => { setOther(false); onChange(""); }}
-        >
-          Use list
-        </Button>
-      </HStack>
-    );
-  }
+  // The description of the tier currently chosen. This is the only place the
+  // vocabulary is explained at the point of use — "Zone" and "Route" are
+  // ordinary English words whose difference here is a real rule (a route has
+  // an order; a zone has a boundary), and an operator picking blind will mix
+  // them within a week.
+  const chosen = collection.items.find((o) => o.value === value);
   return (
+    <VStack align="stretch" gap={1}>
     <Select.Root
       size="sm"
       collection={collection}
       value={[value]}
-      onValueChange={(e) => {
-        const v = e.value[0] ?? "";
-        if (v === TIER_OTHER) { setOther(true); onChange(""); return; }
-        onChange(v);
-      }}
+      onValueChange={(e) => onChange(e.value[0] ?? "")}
     >
       <Select.HiddenSelect />
       <Select.Control>
@@ -627,7 +678,14 @@ function TierField({
           <Select.Content>
             {collection.items.map((it) => (
               <Select.Item item={it} key={it.value}>
-                {it.label}
+                <VStack align="start" gap={0}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                  {it.description ? (
+                    <Text fontSize="xs" color="fg.muted" lineHeight="short">
+                      {it.description}
+                    </Text>
+                  ) : null}
+                </VStack>
                 <Select.ItemIndicator />
               </Select.Item>
             ))}
@@ -635,10 +693,19 @@ function TierField({
         </Select.Positioner>
       </Portal>
     </Select.Root>
+    {chosen?.description ? (
+      <Text fontSize="xs" color="fg.muted" lineHeight="short">
+        {chosen.description}
+      </Text>
+    ) : null}
+    <Text fontSize="2xs" color="fg.subtle">
+      Levels come from Settings → Catalogs → Portfolio tier names. Add one there, with its description, and it appears here.
+    </Text>
+    </VStack>
   );
 }
 
-function NewAreaButton({ portfolios, tierNames, onCreated }: { portfolios: Portfolio[]; tierNames: string[]; onCreated: () => void | Promise<void> }) {
+function NewAreaButton({ portfolios, tierNames, onCreated }: { portfolios: Portfolio[]; tierNames: TierOption[]; onCreated: () => void | Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [tier, setTier] = useState("");
@@ -764,7 +831,7 @@ function AreaDetail({
   assignments: Assignment[];
   roles: RoleOption[];
   users: UserOption[];
-  tierNames: string[];
+  tierNames: TierOption[];
   scope: Scope;
   onChanged: () => void | Promise<void>;
 }) {
@@ -797,6 +864,44 @@ function AreaDetail({
   const [confirm, setConfirm] = useState<
     { kind: "retire" | "unretire" } | { kind: "revoke"; id: string; who: string; role: string } | null
   >(null);
+
+  /**
+   * WHAT IS STILL IN HERE, said before you retire it.
+   *
+   * The server refuses a retire over live children, unfinished work or a
+   * current lead — three things that would BREAK. Properties are not one
+   * of them: a retired portfolio stays in reporting on purpose, so the
+   * properties in it keep counting and nothing is wrong. That is exactly
+   * why it needs saying. Nothing breaks, nothing is refused, and the
+   * portfolio holding thirty addresses simply stops appearing in every
+   * picker — so the next person to look for them has no name to search.
+   *
+   * Both numbers, because they answer different questions: what is tagged
+   * HERE is what you would have to re-home, and what is in the SUBTREE is
+   * what disappears from the pickers along with it.
+   */
+  const retireOwn = portfolio._count?.properties ?? 0;
+  const retireSubtree = portfolio.rollup?.properties ?? retireOwn;
+  const retireMessage = `Retire ${portfolio.name}. Nobody new can be assigned to it and it drops out of the pickers. Existing work and history keep pointing at it, and this can be undone.`;
+  /** The count, in the yellow panel the dialog keeps for "why this matters". */
+  const retireWarning = (() => {
+    if (retireSubtree === 0) return undefined;
+    // A CONTAINER READS DIFFERENTLY FROM A LEAF. "0 properties are tagged
+    // here, 8 counting everything beneath it" is true and reads as a
+    // glitch; a district whose properties all live in its zones is the
+    // normal shape, not a zero.
+    const count =
+      retireOwn === 0
+        ? `Nothing is tagged directly here, but ${retireSubtree} propert${retireSubtree === 1 ? "y" : "ies"} sit${retireSubtree === 1 ? "s" : ""} in the portfolios beneath it.`
+        : retireSubtree > retireOwn
+          ? `${retireOwn} propert${retireOwn === 1 ? "y is" : "ies are"} tagged here, ${retireSubtree} counting everything beneath it.`
+          : `${retireOwn} propert${retireOwn === 1 ? "y is" : "ies are"} tagged here.`;
+    return (
+      `${count} They stay where they are and keep counting toward reports — ` +
+      `retiring hides the portfolio from the pickers, not its history. Move them first if ` +
+      `anyone will need to find them by portfolio.`
+    );
+  })();
 
   const dirty =
     name !== portfolio.name ||
@@ -928,7 +1033,10 @@ function AreaDetail({
             >
               {mayManage ? "Editing portfolio" : "Portfolio details"}
             </Text>
-            <Text fontSize="sm" fontWeight="semibold" truncate>
+            {/* Wraps for the same reason the tree rows do — this is the
+                heading that says WHICH portfolio is being edited, and a
+                clipped one makes the whole panel ambiguous. */}
+            <Text fontSize="sm" fontWeight="semibold" lineHeight="short">
               {portfolio.name}
             </Text>
           </Box>
@@ -1245,12 +1353,13 @@ function AreaDetail({
           confirm?.kind === "revoke"
             ? `${confirm.who} stops holding ${confirm.role} in ${portfolio.name}. If they hold it company-wide as well, nothing changes for them.`
             : confirm?.kind === "retire"
-              ? `Retire ${portfolio.name}. Nobody new can be assigned to it and it drops out of the pickers. Existing work and history keep pointing at it, and this can be undone.`
+              ? retireMessage
               : `Bring ${portfolio.name} back. It can be assigned to and picked again.`
         }
         confirmLabel={
           confirm?.kind === "revoke" ? "Remove" : confirm?.kind === "retire" ? "Retire" : "Un-retire"
         }
+        warning={confirm?.kind === "retire" ? retireWarning : undefined}
         confirmColorPalette={confirm?.kind === "unretire" ? "green" : "red"}
         onConfirm={async () => {
           const c = confirm;

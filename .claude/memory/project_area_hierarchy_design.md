@@ -130,7 +130,7 @@ Three things not to undo:
   without removing the persistence recreates the exact silent failure the
   area feature exists to avoid. Hidden entirely below two selectable areas.
 
-Binding: `area-lens-owner.spec.ts` (3 cases) + the lens block in
+Binding: `portfolio-lens-owner.spec.ts` (3 cases) + the lens block in
 `areaScope.test.ts` (11 cases) + the "A grant is not a lens" section of
 `docs/features/permissions.md`.
 

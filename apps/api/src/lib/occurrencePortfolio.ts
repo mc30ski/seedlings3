@@ -90,23 +90,25 @@ export async function syncOccurrencePortfolios(
   }
 }
 
-/**
- * Freeze what a visit counted toward, at completion.
+/*
+ * THERE IS NO `freezeOccurrencePortfolios`, AND THERE IS NO `frozenAt`.
  *
- * Idempotent, and it never adds or removes a row — it only stamps the ones
- * already there. A visit completing is not the moment to discover new
- * membership; it is the moment to stop tracking it.
+ * Both existed, and both were removed on 2026-10-29. The function was
+ * never called from anywhere in the app — only the seed ever wrote the
+ * column — so in production the stamp would have been NULL on every
+ * completed visit while dev had it set, and the first report filtering
+ * `frozenAt IS NOT NULL` would have returned nothing and looked right.
+ *
+ * Nothing was broken by its absence, because the stamp was never what
+ * protected history. `completedAt` on the occurrence is. A completed
+ * visit's rows are left alone twice over: `resyncPortfoliosForProperty`
+ * selects only open visits, and `syncOccurrencePortfolios` returns early
+ * on a completed one even if handed the id directly. G22 asserts both.
+ *
+ * A second column saying the same thing as `completedAt`, written in one
+ * place and read in none, is a fact with two sources and no reader — so
+ * the answer is `occurrence.completedAt != null`, and only that.
  */
-export async function freezeOccurrencePortfolios(
-  tx: Prisma.TransactionClient,
-  occurrenceId: string,
-  at: Date,
-): Promise<void> {
-  await tx.jobOccurrencePortfolio.updateMany({
-    where: { occurrenceId, frozenAt: null },
-    data: { frozenAt: at },
-  });
-}
 
 /**
  * Re-sync every OPEN visit on a property, after its membership changed.

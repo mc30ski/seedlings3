@@ -14,7 +14,7 @@ import { DEFAULT_PAUSE_REASONS, PAUSE_REASONS_SETTING_KEY } from "../src/service
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
-import { etAddDays, etEndOfDay, etFormatDate, etInstantFromParts, etMidnight, etToday, toEtDateKey } from "../src/lib/dates";
+import { etAddDays, etEndOfDay, etFormatDate, etFormatDateOpts, etInstantFromParts, etMidnight, etToday, toEtDateKey } from "../src/lib/dates";
 import { legacyReceiptNumberFor } from "../src/lib/receiptNumber";
 import { getObjectBuffer, putObjectBuffer, headObject } from "../src/lib/r2";
 import { createHash } from "crypto";
@@ -3747,13 +3747,29 @@ async function seedDatabase() {
   // list buys is spelling — two people naming the same level the same way,
   // so the tree reads consistently and a report can group on it.
   //
-  // Shape is a flat string array, like a simple taxonomy. Anything richer
-  // would imply the values mean something to the code. They do not.
-  const areaTierNamesValue = JSON.stringify(["Region", "District", "Territory", "Route"]);
+  // Each tier carries its own help text, shown under the picker in
+  // PortfoliosTab. State → Market → District → Zone nest in that order;
+  // Route and Book cut ACROSS the spine and sit at the lowest node that
+  // contains everything they touch. Keep this list byte-identical to the
+  // one in `scripts/install-starter-roles.ts`, which is what production
+  // gets — a dev tree labelled with a vocabulary production does not have
+  // teaches the wrong words.
+  const areaTierNamesValue = JSON.stringify([
+    { name: "State", description: "A legal boundary. Payroll tax, licensing, insurance and wage floors change here — not just the map." },
+    { name: "Market", description: "A metro and the area it commutes to. The unit you open or close, and the unit two of them compete for investment." },
+    { name: "District", description: "One person's span of accountability. This is the rung a lead is usually granted on." },
+    { name: "Zone", description: "A patch with a boundary — a town, a postcode, a subdivision. Contiguous; you could draw it on a map." },
+    { name: "Route", description: "A journey. What one crew drives in a day, in order. Sequence is what makes it a route; if the order does not matter, it is a zone." },
+    { name: "Book", description: "A set of accounts one person keeps, wherever they are. Defined by who does the work, not by where it is." },
+  ]);
+  const areaTierNamesDescription =
+    "What a level of the portfolio tree is called where you operate. An array " +
+    "of { name, description }; the description is shown under the picker. " +
+    "Suggestions only — Portfolio.tier accepts any text.";
   await prisma.setting.upsert({
     where: { key: "PORTFOLIO_TIER_NAMES" },
-    create: { key: "PORTFOLIO_TIER_NAMES", value: areaTierNamesValue, description: "What a level of the portfolio tree is called where you operate. Array of strings. Suggestions only — Portfolio.tier accepts any text.", updatedById: MICHAEL_ID },
-    update: { description: "What a level of the portfolio tree is called where you operate. Array of strings. Suggestions only — Portfolio.tier accepts any text." },
+    create: { key: "PORTFOLIO_TIER_NAMES", value: areaTierNamesValue, description: areaTierNamesDescription, updatedById: MICHAEL_ID },
+    update: { description: areaTierNamesDescription },
   });
 
   const managerTitlesValue = JSON.stringify([
@@ -4760,58 +4776,95 @@ async function seedDatabase() {
   }
   const rootPath = `/${rootPortfolio.id}/`;
 
-  // TWO LEVELS BENEATH THE ROOT, not one.
+  // THE DEV TREE MIRRORS PRODUCTION'S SHAPE, not its contents.
   //
-  // A flat tree proves prefix matching and nothing else. The questions that
-  // actually decide whether portfolio scoping works are about DEPTH: does a grant
-  // on a parent cover its grandchildren, does a lens on a branch pull in the
-  // leaves below it, and does a sibling branch stay out of both. None of
-  // those have a wrong answer available in a one-level tree.
+  // The real business's tree (designed 2026-10-29) is
+  // **State → Market → District → Zone** as a nesting SPINE, with
+  // **Route** and **Book** cutting ACROSS it — a route is a day's drive in
+  // order, a book is one person's accounts wherever they are, and neither
+  // respects a boundary. Dev has different cities and a quarter of the
+  // properties, but from here it has the same SHAPE, so a question
+  // answered on this fixture is answered for production: does a grant
+  // three levels up reach a leaf, does a lens on a district pull in its
+  // zones, does a sibling stay out of both.
   //
-  // NOTHING IS REPARENTED TO BUILD THIS. Durham and Chapel Hill keep the ids
-  // and paths they already have, so the districtLead fixture, the e2e
-  // constants and any coordinates set by hand all survive a reseed — and the
-  // app forbids reparenting anyway (G14), so a seed that did it would be
-  // modelling a state no operator can reach. The second level is added
-  // BENEATH them.
+  // WHAT THE OLD FIXTURE COULD NOT ASK. Every property was in exactly one
+  // portfolio, so the `COUNT(DISTINCT …)` roll-up in `portfolios.list()` —
+  // written precisely because a parent must not count a shared property
+  // twice — had no case in dev that could tell it from a naive sum. The
+  // Route and the Book overlap the zones on purpose, and the Market's
+  // roll-up is now strictly less than the sum of its children.
   //
-  // EVERY NODE HOLDS REAL ROWS, with one deliberate exception: Chatham has
-  // no properties of its own and five beneath it. That is the case worth
-  // having — a branch whose lens must return its child's rows — and it is
-  // not the same as the empty "Raleigh" an earlier fixture created, which
-  // had nothing anywhere under it and exercised nothing.
+  // A FLAT TREE PROVES PREFIX MATCHING AND NOTHING ELSE; the questions
+  // that decide whether scoping works are about DEPTH, and none of them
+  // has a wrong answer available one level down.
   //
-  // Named after cities the fixture genuinely has, and nested the way the
-  // geography actually runs: Carrboro and Hillsborough are Orange County
-  // neighbours of Chapel Hill, Pittsboro is Chatham County.
-  const PORTFOLIO_TREE: Array<{
+  // Tier names come from PORTFOLIO_TIER_NAMES, seeded above. Keep the two
+  // in step: a tier the picker does not offer is a label nobody can
+  // reproduce, and the picker no longer has a free-text escape.
+  type PortfolioNode = {
     name: string;
     tier: string;
+    /** Coordinates anchor the weather forecast when this node is the lens. */
     lat?: number;
     lng?: number;
-    children?: Array<{ name: string; tier: string; lat?: number; lng?: number }>;
-  }> = [
-    // Coordinates anchor the weather forecast when this portfolio is the lens.
-    // Seeded so a fresh database can exercise that; Chatham is left blank on
-    // purpose, so the "falls back to the business address" path is in the
-    // fixture too.
-    { name: "Durham", tier: "District", lat: 35.994, lng: -78.8986 },
+    /** Properties in these cities belong to THIS node. */
+    cities?: string[];
+    children?: PortfolioNode[];
+  };
+
+  const PORTFOLIO_TREE: PortfolioNode[] = [
     {
-      name: "Chapel Hill", tier: "District", lat: 35.9132, lng: -79.0558,
+      // One state, because the fixture is one state. The rung exists so
+      // the depth is real and so "add Virginia" is an obvious next node
+      // rather than a reshape — and a reshape is what cannot be done
+      // (G14 forbids reparenting; the way to move work is copy-and-retire).
+      name: "North Carolina", tier: "State",
       children: [
-        { name: "Carrboro", tier: "Route", lat: 35.9101, lng: -79.0753 },
-        { name: "Hillsborough", tier: "Route", lat: 36.0754, lng: -79.0998 },
+        {
+          name: "Triangle", tier: "Market", lat: 35.9132, lng: -79.0558,
+          children: [
+            // Durham holds its properties DIRECTLY — a district with no
+            // zones under it is a real shape, and production's Chatham is
+            // exactly that. It is also the districtLead fixture's grant,
+            // so that persona now exercises a grant three levels below the
+            // root rather than one.
+            { name: "Durham", tier: "District", lat: 35.994, lng: -78.8986, cities: ["Durham"] },
+            {
+              name: "Chapel Hill", tier: "District", lat: 35.9132, lng: -79.0558,
+              children: [
+                { name: "Chapel Hill West", tier: "Zone", lat: 35.9132, lng: -79.0558, cities: ["Chapel Hill"] },
+                { name: "Carrboro", tier: "Zone", lat: 35.9101, lng: -79.0753, cities: ["Carrboro"] },
+                { name: "Hillsborough", tier: "Zone", lat: 36.0754, lng: -79.0998, cities: ["Hillsborough"] },
+                // A ROUTE, not a zone: its members are the ones serviced on
+                // the same day, and they are spread across all three zones
+                // above. Membership is computed below from the occurrences
+                // the fixture actually generated. It sits HERE, under the
+                // district, because that is the lowest node containing
+                // everything it touches.
+                { name: "Chapel Hill Route", tier: "Route" },
+              ],
+            },
+            {
+              // No coordinates ON PURPOSE — the weather path has to fall
+              // back to the business address, and that branch needs a case.
+              name: "Chatham", tier: "District",
+              children: [{ name: "Pittsboro", tier: "Zone", lat: 35.7196, lng: -79.1778, cities: ["Pittsboro"] }],
+            },
+            // A BOOK: the accounts one person keeps, wherever they are.
+            // Its clients sit in Durham, Chapel Hill and Pittsboro, so the
+            // lowest node containing them is the Market — which is where
+            // the real "Mike's Book" lands too.
+            { name: "Mike's Book", tier: "Book" },
+          ],
+        },
       ],
-    },
-    {
-      name: "Chatham", tier: "District",
-      children: [{ name: "Pittsboro", tier: "Route", lat: 35.7196, lng: -79.1778 }],
     },
   ];
 
   /** Upsert one node by (name, parent) and stamp its path. Returns its id. */
   async function seedArea(
-    node: { name: string; tier: string; lat?: number; lng?: number },
+    node: PortfolioNode,
     parentId: string,
     parentPath: string,
   ): Promise<string> {
@@ -4838,13 +4891,77 @@ async function seedDatabase() {
 
   /** name → id, for every node in the fixture at any depth. */
   const portfolioIds: Record<string, string> = {};
-  for (const top of PORTFOLIO_TREE) {
-    const id = await seedArea(top, rootPortfolio.id, rootPath);
-    portfolioIds[top.name] = id;
-    for (const child of top.children ?? []) {
-      portfolioIds[child.name] = await seedArea(child, id, `${rootPath}${id}/`);
+  /** Ids the fixture just produced — anything else under the root is stale. */
+  const fixtureIds = new Set<string>([rootPortfolio.id]);
+  /** city → the node that owns it, derived from the tree so the two cannot drift. */
+  const cityOwner = new Map<string, string>();
+
+  async function seedBranch(nodes: PortfolioNode[], parentId: string, parentPath: string) {
+    for (const node of nodes) {
+      const id = await seedArea(node, parentId, parentPath);
+      portfolioIds[node.name] = id;
+      fixtureIds.add(id);
+      for (const city of node.cities ?? []) cityOwner.set(city, id);
+      if (node.children?.length) await seedBranch(node.children, id, `${parentPath}${id}/`);
     }
   }
+  await seedBranch(PORTFOLIO_TREE, rootPortfolio.id, rootPath);
+
+  // ── Remove whatever the fixture no longer describes ────────────────────────
+  //
+  // THIS USED TO MATCH ON NAME, and that stopped being safe the moment the
+  // tree gained depth. The shape changed on 2026-10-29 — Durham, Chapel
+  // Hill and Chatham moved from the root to three levels down — and a
+  // name-based sweep SPARES the old root-level Durham, because "Durham" is
+  // still in the fixture. The result is two Durhams with the same name and
+  // different ids: the exact duplicate-tree failure this sweep exists to
+  // prevent, arriving through the one door it did not watch.
+  //
+  // So it matches on IDENTITY: anything under our root that this run did
+  // not just create or update is gone. Deepest-first, or the parent delete
+  // trips its children's FK.
+  //
+  // Nothing real can be lost here. `clearDatabase()` has already removed
+  // every property and occurrence, so the only rows that can point at a
+  // doomed node are GRANTS — and a grant is somebody's access, so a node
+  // holding one that is not the districtLead fixture's is left standing
+  // and reported rather than quietly deleted.
+  const underRoot = await prisma.portfolio.findMany({
+    where: { path: { startsWith: rootPath }, id: { not: rootPortfolio.id } },
+    select: {
+      id: true, name: true, path: true,
+      _count: { select: { properties: true, occurrences: true } },
+      assignments: { select: { userId: true } },
+    },
+  });
+  const doomed = underRoot.filter((n) => !fixtureIds.has(n.id));
+  const keptBack: string[] = [];
+  const removable: typeof doomed = [];
+  for (const n of doomed) {
+    const foreignGrant = n.assignments.some((a) => a.userId !== "seed-district-lead-durham");
+    if (foreignGrant || n._count.properties > 0 || n._count.occurrences > 0) {
+      keptBack.push(`${n.name} (${n.assignments.length} grant(s), ${n._count.properties} propert(ies))`);
+    } else {
+      removable.push(n);
+    }
+  }
+  if (removable.length > 0) {
+    // Deepest path first. A node's path contains its ancestors', so string
+    // length orders the tree bottom-up without another query.
+    removable.sort((a, b) => b.path.length - a.path.length);
+    await prisma.portfolioAssignment.deleteMany({
+      where: { portfolioId: { in: removable.map((n) => n.id) } },
+    });
+    for (const n of removable) await prisma.portfolio.delete({ where: { id: n.id } });
+    console.log(
+      `  Removed ${removable.length} portfolio(s) the fixture no longer describes: ` +
+        `${removable.map((n) => n.name).join(", ")}`,
+    );
+  }
+  if (keptBack.length > 0) {
+    console.log(`  LEFT STANDING (not in the fixture, but holds something): ${keptBack.join("; ")}`);
+  }
+
   // Kept under the old name so the placement code below reads unchanged.
   const districts = portfolioIds;
 
@@ -4852,47 +4969,18 @@ async function seedDatabase() {
   //
   // Runs HERE, not with the tree above, because it needs properties, jobs
   // and occurrences to exist. Placing them when the tree was created put
-  // 0 of 120 occurrences in an portfolio and said so cheerfully.
-  // Remove districts the fixture no longer names — same class of problem as
-  // the stale custom roles: `clearDatabase()` preserves Portfolio, so a district
-  // from an earlier fixture survives as an empty territory that looks real.
-  // Only ones with nothing pointing at them, so this can never orphan work.
+  // 0 of 120 occurrences in a portfolio and said so cheerfully.
   //
-  // Scans EVERY non-root portfolio, not just the root's children — the fixture is
-  // two levels deep now, so a leaf dropped from a nested branch is just as
-  // stale as a district dropped from the top and was previously invisible to
-  // this sweep. The root itself is excluded: it is never part of the
-  // fixture's name list and deleting it would take the tree with it.
-  const stale = await prisma.portfolio.findMany({
-    where: {
-      parentId: { not: null },
-      name: { notIn: Object.keys(districts) },
-      properties: { none: {} },
-      occurrences: { none: {} },
-      assignments: { none: {} },
-      children: { none: {} },
-    },
-    select: { id: true, name: true },
-  });
-  if (stale.length > 0) {
-    await prisma.portfolio.deleteMany({ where: { id: { in: stale.map((a) => a.id) } } });
-    console.log(`  Removed ${stale.length} empty portfolio(s) from an earlier fixture: ${stale.map((a) => a.name).join(", ")}`);
-  }
-
-  // Properties split by their real city, so the fixture is not arbitrary;
-  // anything else lands in the root rather than nowhere.
-  // EVERY SEEDED CITY HAS A LEAF, so nothing falls through to the root.
+  // Properties split by their real city, and the city → node map is READ
+  // OFF THE TREE rather than written out again here. The two lists drifting
+  // apart is how a city quietly lost its leaf and every property in it
+  // landed on the root.
+  //
   // Properties sitting ON the root were the old behaviour and it quietly
   // contradicted the model: the root is the container, not a place — it has
   // no tier, no coordinates and nobody in charge of it. A property tagged
   // there is in "everywhere", which is not an answer.
-  for (const [city, portfolioId] of [
-    ["Durham", districts["Durham"]],
-    ["Chapel Hill", districts["Chapel Hill"]],
-    ["Carrboro", districts["Carrboro"]],
-    ["Hillsborough", districts["Hillsborough"]],
-    ["Pittsboro", districts["Pittsboro"]],
-  ] as const) {
+  for (const [city, portfolioId] of cityOwner) {
     const inCity = await prisma.property.findMany({ where: { city }, select: { id: true } });
     if (inCity.length === 0) continue;
     await prisma.propertyPortfolio.createMany({
@@ -4901,7 +4989,75 @@ async function seedDatabase() {
     });
   }
 
-  // Safety net for a city the list above does not name. It lands on the root
+  // ── The two portfolios that cut across the spine ───────────────────────────
+  //
+  // Both ADD a second membership to properties that already have a
+  // geographic one. That overlap is the point: it is what makes the
+  // parent's distinct roll-up differ from the sum of its children, and
+  // until this fixture no dev row exercised it.
+
+  // A ROUTE IS A DAY'S DRIVE. The fixture cannot express ORDER — there is
+  // no sequence column, and inventing one would be modelling a feature
+  // that does not exist — but it can express the part that decides
+  // membership: the properties in this district serviced on the same
+  // weekday. The day is whichever one the generated schedule actually made
+  // busiest, so the fixture never ends up with an empty route, and it is
+  // logged because it moves with the seed date.
+  const chapelHillRouteId = districts["Chapel Hill Route"];
+  if (chapelHillRouteId) {
+    const districtCities = ["Chapel Hill", "Carrboro", "Hillsborough"];
+    const openVisits = await prisma.jobOccurrence.findMany({
+      where: {
+        completedAt: null,
+        startAt: { not: null },
+        job: { property: { city: { in: districtCities } } },
+      },
+      select: { startAt: true, job: { select: { propertyId: true } } },
+    });
+    const byWeekday = new Map<string, Set<string>>();
+    for (const v of openVisits) {
+      if (!v.startAt || !v.job?.propertyId) continue;
+      // ET, through the canonical helper — the server runs UTC and a bare
+      // locale call lands on the wrong day for anything after 8pm.
+      const weekday = etFormatDateOpts(v.startAt, { weekday: "long" });
+      byWeekday.set(weekday, (byWeekday.get(weekday) ?? new Set()).add(v.job.propertyId));
+    }
+    const busiest = [...byWeekday.entries()].sort(
+      (a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]),
+    )[0];
+    if (busiest && busiest[1].size > 0) {
+      await prisma.propertyPortfolio.createMany({
+        data: [...busiest[1]].map((propertyId) => ({ propertyId, portfolioId: chapelHillRouteId })),
+        skipDuplicates: true,
+      });
+      console.log(
+        `  Chapel Hill Route — ${busiest[1].size} propert(ies) serviced on ${busiest[0]}, ` +
+          `overlapping the zones beneath Chapel Hill.`,
+      );
+    }
+  }
+
+  // A BOOK IS DEFINED BY WHO, NOT WHERE: the accounts one person keeps.
+  // Named clients rather than a geographic rule, because a rule with a
+  // boundary would make it a zone. These three span Durham, Chapel Hill
+  // and Pittsboro, which is why the node sits at the Market.
+  const mikesBookId = districts["Mike's Book"];
+  if (mikesBookId) {
+    const BOOK_CLIENTS = ["Martinez Family", "River Bend Office Park"];
+    const owned = await prisma.property.findMany({
+      where: { client: { displayName: { in: BOOK_CLIENTS } } },
+      select: { id: true },
+    });
+    if (owned.length > 0) {
+      await prisma.propertyPortfolio.createMany({
+        data: owned.map((pr) => ({ propertyId: pr.id, portfolioId: mikesBookId })),
+        skipDuplicates: true,
+      });
+      console.log(`  Mike's Book — ${owned.length} propert(ies) across ${BOOK_CLIENTS.length} client(s), in three districts.`);
+    }
+  }
+
+  // Safety net for a city the tree does not name. It lands on the root
   // rather than in nothing, and SAYS SO — belonging to no portfolio is
   // allowed but discouraged, and one appearing silently is how the fixture
   // drifts away from the map above.
@@ -4933,16 +5089,16 @@ async function seedDatabase() {
     byProperty.set(m.propertyId, [...(byProperty.get(m.propertyId) ?? []), m.portfolioId]);
   }
   const occs = await prisma.jobOccurrence.findMany({
-    select: { id: true, completedAt: true, job: { select: { propertyId: true } } },
+    select: { id: true, job: { select: { propertyId: true } } },
   });
   const occRows = occs.flatMap((o) =>
     (byProperty.get(o.job?.propertyId ?? "") ?? []).map((portfolioId) => ({
       occurrenceId: o.id,
       portfolioId,
-      // Completed visits are frozen the moment they are seeded, so the
-      // fixture starts in the state the app maintains rather than one the
-      // first resync would have to repair.
-      frozenAt: o.completedAt,
+      // NO `frozenAt` TO SET — the column was dropped on 2026-10-29. A
+      // completed visit's rows are frozen because the occurrence is
+      // completed, not because a second column says so. The seed used to
+      // be the only thing that wrote it, which is how it was spotted.
     })),
   );
   if (occRows.length) {

@@ -274,9 +274,65 @@ describe("[G8, G19-G23] structural invariants", () => {
 describe("[G12, G14, G17, G22, G26] portfolio invariants", () => {
   const hasAreas = () => /model Portfolio\b/.test(schema());
 
-  it.skipIf(!hasAreas())("G12/G22 — portfolioId is never written on a completed occurrence", () => {
-    const svc = read(path.join(API, "services", "jobs.ts"));
-    expect(svc).not.toMatch(/status:\s*JobOccurrenceStatus\.(COMPLETED|CLOSED)[\s\S]{0,200}portfolioId:/);
+  it.skipIf(!hasAreas())("G12/G22 — only the helper that knows about completion writes a visit's portfolios", () => {
+    /**
+     * WHAT THIS USED TO SAY, AND WHY IT SAID NOTHING.
+     *
+     * It asserted that `services/jobs.ts` never writes `portfolioId:`
+     * near a COMPLETED status. That was the rule while a visit's
+     * portfolio was a single column on `JobOccurrence`. The column was
+     * replaced by the `JobOccurrencePortfolio` join in the 2026-10-28
+     * rename, so from that day the pattern could not match anything and
+     * the gate passed by having nothing to look at.
+     *
+     * THE RULE IS UNCHANGED: a completed visit's portfolios are what the
+     * work counted toward, and rewriting them restates what every past
+     * rollup reports. What enforces it is `lib/occurrencePortfolio.ts` —
+     * the resync selects only open visits, and `syncOccurrencePortfolios`
+     * returns early on a completed one even if handed the id directly.
+     *
+     * So the thing worth asserting is that NOBODY GOES AROUND IT. A
+     * `createMany` on this table anywhere else is a write that has not
+     * checked `completedAt`, and it would not fail — it would quietly
+     * move money that had already been counted somewhere else.
+     *
+     * The seed is exempt: it builds the fixture from scratch, after
+     * `clearDatabase()`, with no history to restate.
+     */
+    const offenders = apiFiles()
+      .filter((f) => !/lib[/\\]occurrencePortfolio\.ts$/.test(f))
+      .filter((f) => /jobOccurrencePortfolio\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\b/.test(read(f)))
+      .map((f) => path.relative(path.join(API, ".."), f));
+    expect(
+      offenders,
+      "Writes to JobOccurrencePortfolio belong in lib/occurrencePortfolio.ts, " +
+        "which is the only place that checks whether the visit is already " +
+        "complete. A write elsewhere restates history without failing.",
+    ).toEqual([]);
+
+    // AND THE GUARD IT RELIES ON IS STILL THERE. Pointing the gate at the
+    // chokepoint is only worth anything while the chokepoint checks.
+    const lib = read(path.join(API, "lib", "occurrencePortfolio.ts"));
+    expect(lib, "lib/occurrencePortfolio.ts not found").not.toBe("");
+    expect(
+      lib,
+      "the sync must refuse a completed visit even when handed its id",
+    ).toMatch(/if \(!occ \|\| occ\.completedAt\) return;/);
+
+    // `frozenAt` WAS DROPPED (migration 20261029180000). It was written
+    // only by the seed and read by nothing, so in production it was NULL
+    // on every completed visit — a column whose name promised a fact it
+    // did not carry. Whether a row is frozen is the occurrence's
+    // `completedAt`, and reintroducing a second answer brings back a fact
+    // with two sources.
+    // Anchored on a FIELD DECLARATION, not the word: the model's own doc
+    // comment explains why the column is gone, and a bare /frozenAt/ would
+    // fail on the explanation.
+    expect(
+      schema(),
+      "frozenAt was removed on purpose — completion is the only record of a " +
+        "frozen attribution. See migration 20261029180000.",
+    ).not.toMatch(/^\s*frozenAt\s+DateTime/m);
   });
 
   it.skipIf(!hasAreas())("G14 — nothing reparents a portfolio", () => {
@@ -2417,5 +2473,97 @@ describe("[G48] inventory.pull is not a clearance test", () => {
         "Clearance is `work.claim`; crew pay is `work.claim || money.view`. " +
         "Read it only to decide whether somebody may take equipment out.",
     ).toEqual([]);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// G49 — THE TIER VOCABULARY IS {name, description}, AND BOTH COPIES AGREE.
+//
+// `PORTFOLIO_TIER_NAMES` carries a sentence per tier because the words do
+// not explain themselves: "Zone" and "Route" are ordinary English whose
+// difference HERE is a rule (a route has an order; a zone has a boundary).
+// The sentence is shown under the picker in PortfoliosTab, which is the only
+// place it can prevent the mistake.
+//
+// Two ways to lose it, both silent:
+//
+//  1. Routing the key back at `StringListEditor` on the Settings tab. That
+//     editor coerces every row with `String(x)`, so one save would write
+//     `"[object Object]"` six times over the vocabulary — no error, no
+//     parse failure, just a tier list of identical nonsense.
+//  2. Letting the seed and the installer drift. The seed is what dev gets
+//     and the installer is what production gets; a dev tree labelled with
+//     words production does not have teaches the wrong vocabulary to the
+//     person building the real tree.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("[G49] portfolio tier vocabulary", () => {
+  /** Pull `{ name: "…", description: "…" }` pairs out of a source block. */
+  function tiersIn(src: string, startMarker: string): Array<[string, string]> {
+    const start = src.indexOf(startMarker);
+    if (start === -1) return [];
+    const end = src.indexOf("]", start);
+    const block = src.slice(start, end === -1 ? undefined : end);
+    return [...block.matchAll(/\{\s*name:\s*"([^"]+)",\s*description:\s*"([^"]*)"/g)].map(
+      (m) => [m[1], m[2]] as [string, string],
+    );
+  }
+
+  it("the seed and the installer ship the same tiers, word for word", () => {
+    const installer = tiersIn(
+      read(path.join(API, "../scripts/install-starter-roles.ts")),
+      'key: "PORTFOLIO_TIER_NAMES"',
+    );
+    const seed = tiersIn(
+      read(path.join(API, "../prisma/seed.ts")),
+      "const areaTierNamesValue = JSON.stringify(",
+    );
+
+    expect(installer.length, "could not parse the tiers out of install-starter-roles.ts").toBeGreaterThan(3);
+    expect(
+      seed,
+      "`PORTFOLIO_TIER_NAMES` in prisma/seed.ts has drifted from " +
+        "scripts/install-starter-roles.ts. The seed is what DEV gets and the " +
+        "installer is what PRODUCTION gets; when they differ, the tree you " +
+        "practise on is labelled with words the real one does not have. " +
+        "Change both, and add the old value to the installer's `supersedes` " +
+        "list so an unedited database is upgraded rather than left behind.",
+    ).toEqual(installer);
+
+    for (const [name, description] of installer) {
+      expect(description.length, `tier "${name}" has no description — the sentence is the point`).toBeGreaterThan(20);
+    }
+  });
+
+  it("the Settings tab does not edit the tiers with the string-list editor", () => {
+    const settingsTab = read(path.join(WEB, "src/ui/tabs/SettingsTab.tsx"));
+    expect(settingsTab, "SettingsTab.tsx not found").not.toBe("");
+
+    // For each dispatch to StringListEditor, the NEAREST `if` above it —
+    // matching forward from the `if` instead would run straight past the
+    // branch that is correctly handled and blame it for the next one.
+    const offenders: string[] = [];
+    let at = settingsTab.indexOf("<StringListEditor");
+    while (at !== -1) {
+      const before = settingsTab.slice(0, at);
+      const ifAt = before.lastIndexOf("if (");
+      const guard = ifAt === -1 ? "" : before.slice(ifAt, before.indexOf("{", ifAt));
+      if (guard.includes("PORTFOLIO_TIER_NAMES")) offenders.push(guard.trim());
+      at = settingsTab.indexOf("<StringListEditor", at + 1);
+    }
+    expect(
+      offenders,
+      "`StringListEditor` coerces each row with String(x), so saving a " +
+        "{name, description} value through it writes \"[object Object]\" over " +
+        "the whole vocabulary — no error, nothing to notice. Tier names have " +
+        "their own editor: PortfolioTierNamesEditor.",
+    ).toEqual([]);
+
+    expect(
+      settingsTab.includes("<PortfolioTierNamesEditor"),
+      "PORTFOLIO_TIER_NAMES has no dedicated editor on the Settings tab, so " +
+        "it falls through to the raw JSON box — brackets, quotes and six " +
+        "sentences to retype by hand.",
+    ).toBe(true);
   });
 });
