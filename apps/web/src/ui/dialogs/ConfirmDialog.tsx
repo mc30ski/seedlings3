@@ -169,7 +169,20 @@ export default function ConfirmDialog({
   }, [pricingHints, pricingReferenceTags]);
   const referenceTotal = referenceMatches.reduce((s, r) => s + r.amount, 0);
 
-  const hasInput = !!inputPlaceholder;
+  // AN INPUT THE CONFIRM DEPENDS ON MUST BE SHOWN.
+  //
+  // This read `!!inputPlaceholder` alone, while `canConfirm` below gates
+  // on `requiredInputValue`. A caller passing `requiredInputValue` and no
+  // placeholder therefore got a dialog with no text box and a Confirm
+  // button that could never be enabled — not a refusal with a reason, a
+  // control that silently does nothing. It shipped: Suspend and Delete on
+  // a role were both unusable in production, and the only clue was the
+  // button looking slightly pale.
+  //
+  // A disabled control with no way to satisfy it is worse than no control,
+  // because the reader concludes they lack permission and goes looking for
+  // the wrong problem.
+  const hasInput = !!inputPlaceholder || requiredInputValue != null;
   const hasAmount = !!amountLabel;
   // When requiredInputValue is set, the typed input MUST match it
   // (case-insensitive, trimmed) — overrides inputOptional.
@@ -239,7 +252,9 @@ export default function ConfirmDialog({
                   {requiredInputValue != null ? (
                     <input
                       type="text"
-                      placeholder={inputPlaceholder}
+                      // The value they must type IS the hint. Nothing else
+                      // would be more useful in the box.
+                      placeholder={inputPlaceholder ?? requiredInputValue ?? ""}
                       value={inputValue}
                       onChange={(e) => setInputValue(e.target.value)}
                       autoComplete="off"
