@@ -131,7 +131,7 @@ export default function PWAPullToRefresh({
   if (!active) return null;
 
   // Visual indicator: sits below the status bar / Dynamic Island
-  const insetTop = "env(safe-portfolio-inset-top, 0px)";
+  const insetTop = "env(safe-area-inset-top, 0px)";
   const progress = Math.min(pull / threshold, 1);
 
   return (

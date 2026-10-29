@@ -307,7 +307,7 @@ export default function RedactPhotoDialog({ file, onCommit, onCancel }: Props) {
                     <Text as="span" fontWeight="medium"> Blur</Text> softens instead. Skip if you
                     don&apos;t need to hide anything.
                   </Text>
-                  {/* Wrapper takes the actual content-portfolio width so the photo
+                  {/* Wrapper takes the actual content-area width so the photo
                       can never exceed it. The overlay sits centered inside
                       this wrapper. */}
                   <Box

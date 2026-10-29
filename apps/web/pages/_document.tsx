@@ -34,7 +34,7 @@ const SHIELD_CSS = `
 #pre-splash-shield {
   position: fixed;
   /* Anchored above the top-left AND below the bottom-right of the
-     viewport so any URL-bar / safe-portfolio / dvh-vs-lvh mismatch during
+     viewport so any URL-bar / safe-area / dvh-vs-lvh mismatch during
      the initial paint (particularly on mobile PWAs, where the visual
      viewport can grow after first paint as the URL bar hides) still
      has nothing visible behind the shield. 200vh is enough to cover
@@ -129,7 +129,7 @@ const SHIELD_REMOVER_JS = `
   // Preferred trigger: AppSplash's overlay lands in DOM with the
   // data attribute. Fires the moment React commits the overlay.
   // We wait an extra HANDOFF_HOLD_MS after that to let the browser
-  // finish any URL-bar / safe-portfolio transition still in progress — if
+  // finish any URL-bar / safe-area transition still in progress — if
   // dvh grows during that window, both layers are still covering the
   // viewport so nothing ever peeks through. Empirically 500ms is more
   // than enough for the initial-load URL-bar auto-hide on mobile
