@@ -255,6 +255,9 @@ export type AreaLensOption = {
    *  e.g. ["Chapel Hill", "Carrboro"]. Server-built; the client has no
    *  reliable way to name an ancestor it may not be allowed to select. */
   trail?: string[];
+  /** Properties here AND below, each counted once. Server-built: a client
+   *  summing children would double-count anything in two portfolios. */
+  propertyCount?: number;
 };
 
 /**

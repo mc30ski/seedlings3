@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { AUDIT } from "../lib/auditActions";
 import { resyncPortfoliosForProperty } from "../lib/occurrencePortfolio";
@@ -55,36 +56,127 @@ export const portfolios = {
    *
    * Retired portfolios are included; callers filter for pickers.
    */
-  async list() {
-    const [rows, propTotals, occTotals] = await Promise.all([
+  async list(params?: {
+    /** Subtrees the caller may see PROPERTIES in (`clients.view`), or null
+     *  for no restriction. `[]` means nowhere, so every count is 0. */
+    propertyPaths?: string[] | null;
+    /** Subtrees the caller may see VISITS in (`schedule.view`). */
+    occurrencePaths?: string[] | null;
+  }) {
+    /**
+     * EVERY COUNT ON THIS TAB IS SCOPED, and it has to be scoped the SAME
+     * WAY the panel beside it is.
+     *
+     * This method used to count every row in the database. Two bugs came
+     * out of that, one visible and one not:
+     *
+     *   · The tree said "Carrboro · 4" while the panel under it said
+     *     "Nothing in Carrboro yet", because the panel goes through
+     *     `GET /properties?portfolioId=`, which ANDs the caller's
+     *     `portfolioWhere` — their grants AND their chosen lens. With a
+     *     lens set anywhere else the two disagreed, with nothing on
+     *     screen to explain it.
+     *   · A portfolio-limited lead saw property and visit counts for the
+     *     WHOLE COMPANY, including districts they hold nothing in.
+     *
+     * So visibility is decided by whether the PROPERTY is visible, not
+     * whether the node is — which is what the panel does, and the only
+     * way the two can agree. A property in a visible zone and also in a
+     * Book the caller cannot see still counts under that Book, exactly as
+     * the panel lists it there.
+     */
+    const pathsOr = (paths: string[], col: string) =>
+      Prisma.join(
+        paths.map((p) => Prisma.sql`${Prisma.raw(col)} LIKE ${p} || '%'`),
+        " OR ",
+      );
+
+    // "This membership's property is one the caller may see."
+    const propVisible =
+      params?.propertyPaths == null
+        ? Prisma.sql`TRUE`
+        : params.propertyPaths.length === 0
+          ? Prisma.sql`FALSE`
+          : Prisma.sql`EXISTS (
+              SELECT 1 FROM "PropertyPortfolio" vp
+                JOIN "Portfolio" v ON v."id" = vp."portfolioId"
+               WHERE vp."propertyId" = pp."propertyId"
+                 AND (${pathsOr(params.propertyPaths, 'v."path"')}))`;
+
+    // The same question for a visit, asked THROUGH ITS PROPERTY — because
+    // that is how every occurrence list scopes itself
+    // (`portfolioWhereVia(principal, "schedule.view", "property")`). A
+    // task with no job has no property and so is never territorial.
+    const occVisible =
+      params?.occurrencePaths == null
+        ? Prisma.sql`TRUE`
+        : params.occurrencePaths.length === 0
+          ? Prisma.sql`FALSE`
+          : Prisma.sql`EXISTS (
+              SELECT 1 FROM "JobOccurrence" o
+                JOIN "Job" j ON j."id" = o."jobId"
+                JOIN "PropertyPortfolio" vp ON vp."propertyId" = j."propertyId"
+                JOIN "Portfolio" v ON v."id" = vp."portfolioId"
+               WHERE o."id" = op."occurrenceId"
+                 AND (${pathsOr(params.occurrencePaths, 'v."path"')}))`;
+
+    const [rows, propOwn, propTotals, occOwn, occTotals] = await Promise.all([
       prisma.portfolio.findMany({
         orderBy: [{ path: "asc" }],
         select: {
           id: true, name: true, tier: true, parentId: true, path: true, lat: true, lng: true,
           retiredAt: true,
-          _count: { select: { properties: true, occurrences: true, assignments: true } },
+          // Assignments are PEOPLE, not territory, and are not narrowed:
+          // who looks after a portfolio is the point of the tab.
+          _count: { select: { assignments: true } },
         },
       }),
+      // OWN counts come from the same predicate as the rollups rather than
+      // from Prisma's `_count`, so one filter cannot drift from the other.
+      prisma.$queryRaw<Array<{ id: string; n: bigint }>>`
+        SELECT pp."portfolioId" AS "id", COUNT(DISTINCT pp."propertyId") AS n
+          FROM "PropertyPortfolio" pp
+         WHERE ${propVisible}
+         GROUP BY pp."portfolioId"`,
       // `d.path LIKE p.path || '%'` is the subtree, and it includes the node
       // itself because a path is a prefix of itself. The trailing delimiter
       // the paths are stored with is what stops "/a/b/" matching "/a/bb/".
+      // The visibility test rides on the JOIN's ON clause, not a WHERE, so
+      // a node with nothing visible in it still appears with a 0.
       prisma.$queryRaw<Array<{ id: string; n: bigint }>>`
         SELECT p."id", COUNT(DISTINCT pp."propertyId") AS n
           FROM "Portfolio" p
           LEFT JOIN "Portfolio" d ON d."path" LIKE p."path" || '%'
-          LEFT JOIN "PropertyPortfolio" pp ON pp."portfolioId" = d."id"
+          LEFT JOIN "PropertyPortfolio" pp
+                 ON pp."portfolioId" = d."id" AND ${propVisible}
          GROUP BY p."id"`,
+      prisma.$queryRaw<Array<{ id: string; n: bigint }>>`
+        SELECT op."portfolioId" AS "id", COUNT(DISTINCT op."occurrenceId") AS n
+          FROM "JobOccurrencePortfolio" op
+         WHERE ${occVisible}
+         GROUP BY op."portfolioId"`,
       prisma.$queryRaw<Array<{ id: string; n: bigint }>>`
         SELECT p."id", COUNT(DISTINCT op."occurrenceId") AS n
           FROM "Portfolio" p
           LEFT JOIN "Portfolio" d ON d."path" LIKE p."path" || '%'
-          LEFT JOIN "JobOccurrencePortfolio" op ON op."portfolioId" = d."id"
+          LEFT JOIN "JobOccurrencePortfolio" op
+                 ON op."portfolioId" = d."id" AND ${occVisible}
          GROUP BY p."id"`,
     ]);
-    const props = new Map(propTotals.map((r) => [r.id, Number(r.n)]));
-    const occs = new Map(occTotals.map((r) => [r.id, Number(r.n)]));
+    const n = (rowsIn: Array<{ id: string; n: bigint }>) =>
+      new Map(rowsIn.map((r) => [r.id, Number(r.n)]));
+    const propOwnBy = n(propOwn);
+    const props = n(propTotals);
+    const occOwnBy = n(occOwn);
+    const occs = n(occTotals);
     return rows.map((r) => ({
       ...r,
+      _count: {
+        ...r._count,
+        /** Narrowed, like everything else on this tab. */
+        properties: propOwnBy.get(r.id) ?? 0,
+        occurrences: occOwnBy.get(r.id) ?? 0,
+      },
       /** Depth from the root, for rendering the tree without re-walking it. */
       depth: r.path.split("/").filter(Boolean).length - 1,
       /** This portfolio AND everything beneath it, each thing counted once. */

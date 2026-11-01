@@ -1257,6 +1257,29 @@ function PortfolioTierNamesEditor({ value, onChange, onSave, onCancel, saving }:
 
   const write = (next: Array<{ name: string; description: string }>) => onChange(JSON.stringify(next));
 
+  /**
+   * REORDER, because the order is the only thing in this list that is not
+   * a label.
+   *
+   * The array order is what the tier picker offers, top to bottom, and the
+   * tiers are not peers: State contains Market contains District contains
+   * Zone, while Route and Book cut across them. A picker that offers them
+   * in whatever sequence they were typed invites choosing the wrong level,
+   * and the only way to fix the order was to retype every name and
+   * sentence in the right sequence by hand.
+   *
+   * Buttons rather than drag-and-drop: this tab is used on a phone, where
+   * a drag handle inside a scrolling form is a fight, and a six-row list
+   * is two taps from anywhere.
+   */
+  const move = (idx: number, by: -1 | 1) => {
+    const to = idx + by;
+    if (to < 0 || to >= items.length) return;
+    const next = items.slice();
+    [next[idx], next[to]] = [next[to], next[idx]];
+    write(next);
+  };
+
   if (parseError) {
     return (
       <VStack align="stretch" gap={2} w="full">
@@ -1273,7 +1296,7 @@ function PortfolioTierNamesEditor({ value, onChange, onSave, onCancel, saving }:
   return (
     <VStack align="stretch" gap={3} w="full">
       <Text fontSize="2xs" color="fg.muted">
-        What a level of the portfolio tree is called, and what it means. The description is shown under the picker when that tier is chosen. Suggestions only — a portfolio&apos;s tier accepts any text.
+        What a level of the portfolio tree is called, and what it means. The description is shown under the picker when that tier is chosen, and the picker lists them in <Em>this order</Em> — so put the widest level first. Suggestions only — a portfolio&apos;s tier accepts any text.
       </Text>
       {items.map((row, idx) => (
         <VStack key={idx} align="stretch" gap={1} w="full">
@@ -1292,6 +1315,30 @@ function PortfolioTierNamesEditor({ value, onChange, onSave, onCancel, saving }:
               onChange={(e) => write(items.map((r, i) => (i === idx ? { ...r, description: e.target.value } : r)))}
               flex="1"
             />
+            <HStack gap={0}>
+              <Button
+                size="sm"
+                variant="ghost"
+                px="1"
+                disabled={idx === 0}
+                onClick={() => move(idx, -1)}
+                aria-label={`Move ${row.name || "entry"} up`}
+                title="Move up"
+              >
+                ↑
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                px="1"
+                disabled={idx === items.length - 1}
+                onClick={() => move(idx, 1)}
+                aria-label={`Move ${row.name || "entry"} down`}
+                title="Move down"
+              >
+                ↓
+              </Button>
+            </HStack>
             <Button
               size="sm"
               variant="ghost"

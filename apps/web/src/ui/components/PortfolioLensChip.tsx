@@ -98,6 +98,21 @@ export default function PortfolioLensChip() {
   // that does nothing teaches people to distrust the ones that do.
   if (portfolios.length < 2) return null;
 
+  // "ALL" IS THE SHALLOWEST OPTION'S COUNT, not a sum.
+  //
+  // Every option already carries its SUBTREE total, so the top of the
+  // visible tree is the total — and adding the rows up would double-count
+  // anything in two portfolios, which is exactly what Mike's Book is.
+  const allCount = portfolios.length
+    ? portfolios.reduce(
+        (best, a) =>
+          a.path.split("/").filter(Boolean).length < best.depth
+            ? { depth: a.path.split("/").filter(Boolean).length, n: a.propertyCount }
+            : best,
+        { depth: Number.MAX_SAFE_INTEGER, n: undefined as number | undefined },
+      ).n
+    : undefined;
+
   const activeArea = portfolios.find((a) => a.id === active) ?? null;
   // An id we hold no row for — a portfolio retired since the choice was made, so
   // it is gone from this picker but still filtering on the server. Name it
@@ -201,6 +216,10 @@ export default function PortfolioLensChip() {
           <LensRow
             label="All portfolios"
             hint="All properties you have access to"
+            // The total is the sum of nothing — it is the distinct count
+            // across every portfolio offered, which is what "all" means
+            // here and cannot be derived by adding the rows below.
+            count={allCount}
             active={!lensOn}
             onClick={() => choose(null, null)}
             testId="portfolio-lens-option-all"
@@ -212,6 +231,7 @@ export default function PortfolioLensChip() {
               label={a.name}
               hint={a.tier ?? undefined}
               indent={indentOf(a, portfolios)}
+              count={a.propertyCount}
               active={a.id === active}
               onClick={() => choose(a.id, a.name)}
               testId={`portfolio-lens-option-${a.id}`}
@@ -295,7 +315,7 @@ function indentOf(a: AreaLensOption, all: readonly AreaLensOption[]): number {
 }
 
 function LensRow({
-  label, hint, indent = 0, active, onClick, testId, wrapHint = false,
+  label, hint, indent = 0, active, onClick, testId, wrapHint = false, count,
 }: {
   label: string;
   hint?: string;
@@ -303,6 +323,10 @@ function LensRow({
   active: boolean;
   onClick: () => void;
   testId: string;
+  /** Properties in this portfolio and below. Right-aligned, quiet — it is
+   *  there to help you choose, not to be read as a headline. Omitted
+   *  rather than shown as 0 on rows where it means nothing. */
+  count?: number;
   /** Let the hint run to two lines instead of clipping.
    *
    *  Off for the portfolio rows, whose hint is a one-word tier and where a
@@ -351,6 +375,11 @@ function LensRow({
           </Text>
         )}
       </Box>
+      {count !== undefined && (
+        <Text fontSize="2xs" color="fg.muted" flexShrink={0} whiteSpace="nowrap" title={`${count} propert${count === 1 ? "y" : "ies"}`}>
+          {count}
+        </Text>
+      )}
       {active && <Check size={14} />}
     </HStack>
   );

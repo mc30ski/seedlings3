@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { makeGuards } from "../lib/routeGuards";
 import { services } from "../services";
+import { visiblePortfolioPaths } from "../lib/portfolioScope";
 
 import {
   ENTITLEMENT_GROUPS,
@@ -239,7 +240,26 @@ export default async function permissionRoutes(app: FastifyInstance) {
 
   // ── Portfolios ───────────────────────────────────────────────────────────────
 
-  app.get("/portfolios", portfoliosView, async () => services.portfolios.list());
+  // THE COUNTS ARE NARROWED HERE, because only the route has the principal.
+  //
+  // `clients.view` for properties and `schedule.view` for visits: the same
+  // capabilities the property and occurrence LISTS scope themselves on, so
+  // a tree row's number and the list that opens under it answer the same
+  // question. This replaces counting every row in the database, which
+  // showed a portfolio-limited lead the whole company's volume.
+  //
+  // `ignoreLens` BECAUSE THIS TAB IS THE MAP OF THE BUSINESS. The tree
+  // always lists every node regardless of lens — the lens has never hidden
+  // a row — so narrowing only the COUNTS left a visible Carrboro reading 0
+  // while it held four properties. You cannot use the map to decide where
+  // to point the lens if the lens empties the map. Grants still apply, so
+  // a lead still sees only their own territory.
+  app.get("/portfolios", portfoliosView, async (req: any) =>
+    services.portfolios.list({
+      propertyPaths: visiblePortfolioPaths(req.principal, "clients.view", { ignoreLens: true }),
+      occurrencePaths: visiblePortfolioPaths(req.principal, "schedule.view", { ignoreLens: true }),
+    }),
+  );
 
   app.post("/portfolios", portfoliosManage, async (req: any) => {
     const uid = await currentUserId(req);

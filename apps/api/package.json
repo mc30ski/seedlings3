@@ -26,7 +26,8 @@
     "postinstall": "npm run prisma:generate",
     "routemap": "tsx scripts/build-route-map.ts",
     "routemap:check": "tsx scripts/build-route-map.ts --check",
-    "portfolios:check": "tsx scripts/_portfolio-scope-probe.ts"
+    "portfolios:check": "tsx scripts/_portfolio-scope-probe.ts",
+    "portfolio:tree": "tsx scripts/build-portfolio-tree.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts",

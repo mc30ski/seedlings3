@@ -187,12 +187,38 @@ export default async function meRoutes(app: FastifyInstance) {
     const nameById = new Map(all.map((a) => [a.id, a.name]));
     const trailOf = (path: string) =>
       path.split("/").filter(Boolean).slice(1).map((id) => nameById.get(id) ?? "?");
+    // HOW MANY PROPERTIES EACH ONE HOLDS, counted over the SUBTREE and
+    // DISTINCT.
+    //
+    // The picker said "Chapel Hill West · Zone" and nothing about size, so
+    // choosing between eleven portfolios meant opening the Portfolios tab
+    // to find out which were worth looking at. A count turns the list into
+    // information.
+    //
+    // Distinct over the subtree for the same reason `portfolios.list()`
+    // is: a property in a zone AND in a Book is one property, and a parent
+    // that summed its children would report more than exist.
+    const counts = new Map<string, number>(
+      (
+        await prisma.$queryRaw<Array<{ id: string; n: bigint }>>`
+          SELECT p."id", COUNT(DISTINCT pp."propertyId") AS n
+            FROM "Portfolio" p
+            LEFT JOIN "Portfolio" d ON d."path" LIKE p."path" || '%'
+            LEFT JOIN "PropertyPortfolio" pp ON pp."portfolioId" = d."id"
+           GROUP BY p."id"`
+      ).map((r) => [r.id, Number(r.n)]),
+    );
+
     const options = visible
       // `g.startsWith(a.path)` is "a contains g" — path containment, the
       // same test the scope filter uses, so the picker and the filter can
       // never disagree about what a lens would return.
       .filter((a) => !(reach.length > 0 && reach.every((g) => g.startsWith(a.path))))
-      .map(({ id, name, tier, path }) => ({ id, name, tier, path, trail: trailOf(path) }));
+      .map(({ id, name, tier, path }) => ({
+        id, name, tier, path, trail: trailOf(path),
+        /** Properties in this portfolio AND everything beneath it, each counted once. */
+        propertyCount: counts.get(id) ?? 0,
+      }));
     return { portfolios: options };
   });
 
