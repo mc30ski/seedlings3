@@ -40,6 +40,23 @@ import {
   type AreaLensOption,
 } from "@/src/lib/impersonation";
 
+/**
+ * One line of the banner's own text, as a box to centre things in.
+ *
+ * `1lh` resolves to this element's computed line-height, so it tracks the
+ * font size and the `short` token without either being repeated here.
+ * Supported everywhere this app runs; where it is not, the height falls
+ * back to the content and the row degrades to what it did before.
+ */
+const FIRST_LINE = {
+  flexShrink: 0,
+  fontSize: "xs",
+  lineHeight: "short",
+  h: "1lh",
+  display: "flex",
+  alignItems: "center",
+} as const;
+
 export default function PortfolioScopeNotice({
   portfolioScope,
   activeTab,
@@ -231,20 +248,21 @@ export default function PortfolioScopeNotice({
           `align="start"` because the glyph belongs beside the FIRST line,
           not floating against the middle of a wrapped block. */}
       <HStack gap={2} align="start">
-        {/* CENTRED ON THE FIRST LINE, by giving the glyph a box exactly one
-            line tall and centring inside it. A hand-tuned `mt` was doing
-            this by eye and sat a couple of pixels low; this is the same
-            arithmetic the browser is already doing for the text, so the
-            two agree at any font size and stay agreeing when the text
-            wraps to three lines. 15px = 12px text × the `short` line
-            height. */}
-        <Box
-          flexShrink={0}
-          color={loud ? "purple.fg" : "fg.muted"}
-          h="15px"
-          display="flex"
-          alignItems="center"
-        >
+        {/* EVERY ITEM IN THIS ROW IS CENTRED ON THE TEXT'S FIRST LINE.
+            `align="start"` is what lets the text wrap to three lines on a
+            phone without dragging the glyph and the button down with it,
+            but on its own it TOP-aligns things of different heights — so
+            the 13px glyph, the 16.5px line and the 21px pill ended up with
+            three different centres, measured at 96.5 / 97.3 / 99.5.
+
+            The fix is one shared line box, `FIRST_LINE` below. The height
+            is `1lh` — one line of this element's own text — rather than a
+            number: two previous attempts hardcoded 15px, which was 12px ×
+            the WRONG line-height token (`short` is 1.375, not 1.25). The
+            browser already knows the answer; asking it cannot drift. An
+            item taller than the line overhangs it symmetrically, which is
+            what "centred on the first line" means. */}
+        <Box {...FIRST_LINE} color={loud ? "purple.fg" : "fg.muted"}>
           <Layers size={13} />
         </Box>
         <Text
@@ -367,7 +385,7 @@ export default function PortfolioScopeNotice({
             with and without the filter — not read off the code, which is
             how a 500 on the job list went unnoticed. Re-measure before
             editing them. */}
-        <Box position="relative" flexShrink={0}>
+        <Box position="relative" {...FIRST_LINE}>
           {/* A LABELLED CONTROL, not a lone glyph. As a bare 13px icon this
               read as decoration on a strip that is already purple and
               already iconed — nobody clicks a second small symbol next to
@@ -454,6 +472,11 @@ export default function PortfolioScopeNotice({
             data-testid="portfolio-scope-dismiss"
             onClick={() => { void setAreaLens(null); }}
             flexShrink={0}
+            // Centred on the first line like everything else in the row;
+            // the 18px circle overhangs the 16.5px line by less than a
+            // pixel either side.
+            alignSelf="start"
+            mt="-0.75px"
             display="inline-flex"
             alignItems="center"
             justifyContent="center"

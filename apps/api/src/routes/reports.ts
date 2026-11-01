@@ -398,12 +398,210 @@ export default async function reportRoutes(app: FastifyInstance) {
     //
     // The FILTER above is untouched: these figures are still narrowed for
     // a portfolio-limited reader. Only the announcement moved.
+    /**
+     * THE TERRITORY'S OWN NUMBERS, alongside the per-person ones.
+     *
+     * Statistics answers "how is each PERSON doing" and had no answer for
+     * "how is this PLACE doing" — so a lens narrowed every bar on the page
+     * and the page never said what the place itself earned.
+     *
+     * Computed from the occurrences already loaded, so it costs no query.
+     * It is the total over whatever this reader is scoped to: with a lens
+     * set that is the lensed portfolio, unlensed it is the whole business,
+     * and the UI labels it from the lens rather than the server guessing.
+     *
+     * REVENUE IS `payment.amountPaid`, the same raw cash-flow field
+     * `/operations` totals — not margin, not price, not the invoice. Two
+     * definitions of revenue on two pages is how two people quote
+     * different numbers from one business.
+     *
+     * NOT AN AVERAGE OF AVERAGES. `avgJobValue` divides the period's
+     * revenue by the period's visits rather than meaning the per-visit
+     * figures, which weights a $400 job the same as a $40 one.
+     */
+    const realOccs = occurrences.filter((o) => o.workflow !== "ESTIMATE" && !o.isEstimate);
+    const revenue = realOccs.reduce((sum, o) => sum + (o.payment?.amountPaid ?? 0), 0);
+    const propertyIds = new Set<string>();
+    for (const o of realOccs) if (o.job?.property?.id) propertyIds.add(o.job.property.id);
+    const visits = realOccs.length;
+
     return {
       workers: workersOut,
-      totalOccurrences: occurrences.filter((o) => o.workflow !== "ESTIMATE" && !o.isEstimate).length,
+      totalOccurrences: realOccs.length,
       daysInRange: allDays.size,
+      /** The scoped territory as a whole — see the note above. */
+      territory: {
+        revenue,
+        visits,
+        /** Properties that produced work in the range, not properties that
+         *  are filed here: a zone with 30 properties and 4 visited says
+         *  something a membership count cannot. */
+        propertiesWorked: propertyIds.size,
+        avgJobValue: visits > 0 ? revenue / visits : 0,
+        revenuePerProperty: propertyIds.size > 0 ? revenue / propertyIds.size : 0,
+      },
     };
   });
+  /**
+   * PORTFOLIO PERFORMANCE — territories compared against each other.
+   *
+   * Insights → Performance. Statistics compares PEOPLE, who are a flat
+   * list; this compares PLACES, which are a tree. You cannot draw a row
+   * per portfolio without first choosing a level, so this answers one
+   * question at a time: **how do the children of X compare?** Drilling in
+   * is another call with a different `parentId`.
+   *
+   * `reports.view`, the same capability Statistics and its endpoint use.
+   *
+   * THE LENS IS IGNORED HERE, deliberately. A lens narrows to ONE
+   * portfolio and a comparison of one row is not a comparison. Asking to
+   * compare the children of X IS the narrowing for this request, which is
+   * the same rule the Portfolios tab follows. Grants still apply, so a
+   * district lead compares their own zones and sees nothing else.
+   *
+   * ROWS DO NOT SUM TO THE WHOLE. A property in a zone AND in a Book
+   * counts toward both rows, because it genuinely belongs to both. The UI
+   * says so; without that the first person to add up a column finds a
+   * discrepancy and assumes the numbers are broken.
+   */
+  app.get("/reports/portfolio-performance", req_reportsView, async (req: any) => {
+    const { parentId, from, to } = (req.query || {}) as {
+      parentId?: string; from?: string; to?: string;
+    };
+
+    // Default range: this month to date, matching what Statistics opens on.
+    const toKey = (to || etToday()) as EtDateKey;
+    const fromKey = (from || etStartOfMonth()) as EtDateKey;
+
+    // THE PREVIOUS PERIOD IS THE SAME LENGTH, immediately before — so
+    // "this month vs last" compares 31 days with 31 days rather than with
+    // a calendar month of a different length. Built from the canonical
+    // helpers; raw date arithmetic here is what the date gate exists to
+    // stop.
+    const span = etDaysBetween(fromKey, toKey);
+    const prevToKey = etAddDays(fromKey, -1);
+    const prevFromKey = etAddDays(prevToKey, -span);
+
+    const parent = parentId
+      ? await prisma.portfolio.findUnique({
+          where: { id: String(parentId) },
+          select: { id: true, name: true, path: true },
+        })
+      : await prisma.portfolio.findFirst({
+          where: { parentId: null },
+          select: { id: true, name: true, path: true },
+        });
+    if (!parent) return { parent: null, rows: [], direct: null, range: null };
+
+    const children = await prisma.portfolio.findMany({
+      where: { parentId: parent.id },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, tier: true, path: true, color: true, retiredAt: true,
+                _count: { select: { children: true } } },
+    });
+
+    const cutoff = await resolveCutoff(req);
+    // ONE QUERY FOR BOTH PERIODS, split in memory below — two round trips
+    // for two halves of one answer is the kind of thing that makes a page
+    // feel slow for no reason.
+    const occurrences = await prisma.jobOccurrence.findMany({
+      where: withPortfolio(
+        {
+          status: { in: [JobOccurrenceStatus.CLOSED, JobOccurrenceStatus.PENDING_PAYMENT] },
+          completedAt: { gte: etMidnight(prevFromKey), lte: etEndOfDay(toKey) },
+          ...occurrenceWorkDateCutoff(cutoff),
+        },
+        occurrencePortfolioWhere(req.principal, "reports.view", { ignoreLens: true }),
+      ),
+      select: {
+        completedAt: true,
+        workflow: true,
+        isEstimate: true,
+        payment: {
+          where: cutoff ? { createdAt: { gte: cutoff }, skippedAt: null } : { skippedAt: null },
+          select: { amountPaid: true },
+        },
+        job: {
+          select: {
+            property: {
+              select: { id: true, portfolios: { select: { portfolio: { select: { path: true } } } } },
+            },
+          },
+        },
+      },
+    });
+
+    const periodStart = etMidnight(fromKey).getTime();
+    type Bucket = { revenue: number; visits: number; props: Set<string> };
+    const empty = (): Bucket => ({ revenue: 0, visits: 0, props: new Set() });
+    const now = new Map<string, Bucket>();
+    const prev = new Map<string, Bucket>();
+    for (const c of children) { now.set(c.id, empty()); prev.set(c.id, empty()); }
+    // `""` is work whose property sits in the parent itself and in none of
+    // its children — real, and invisible if the table only lists children.
+    now.set("", empty());
+    prev.set("", empty());
+
+    for (const o of occurrences) {
+      if (o.workflow === "ESTIMATE" || o.isEstimate) continue;
+      const prop = o.job?.property;
+      if (!prop) continue;
+      const paths = prop.portfolios.map((m) => m.portfolio.path);
+      const into = (o.completedAt?.getTime() ?? 0) >= periodStart ? now : prev;
+
+      // EVERY CHILD IT BELONGS TO, not the first. A property in two of
+      // them is in two of them; picking one would silently halve a row.
+      let matched = false;
+      for (const c of children) {
+        if (!paths.some((p) => p.startsWith(c.path))) continue;
+        matched = true;
+        const b = into.get(c.id)!;
+        b.revenue += o.payment?.amountPaid ?? 0;
+        b.visits += 1;
+        b.props.add(prop.id);
+      }
+      if (!matched && paths.some((p) => p.startsWith(parent.path))) {
+        const b = into.get("")!;
+        b.revenue += o.payment?.amountPaid ?? 0;
+        b.visits += 1;
+        b.props.add(prop.id);
+      }
+    }
+
+    const shape = (id: string, name: string, extra: Record<string, unknown>) => {
+      const b = now.get(id)!;
+      const p = prev.get(id)!;
+      return {
+        id: id || null,
+        name,
+        ...extra,
+        revenue: b.revenue,
+        visits: b.visits,
+        propertiesWorked: b.props.size,
+        avgJobValue: b.visits > 0 ? b.revenue / b.visits : 0,
+        revenuePerProperty: b.props.size > 0 ? b.revenue / b.props.size : 0,
+        previous: { revenue: p.revenue, visits: p.visits },
+      };
+    };
+
+    const direct = shape("", `Directly in ${parent.name}`, { tier: null, color: null, hasChildren: false, retired: false });
+    return {
+      parent: { id: parent.id, name: parent.name },
+      rows: children.map((c) =>
+        shape(c.id, c.name, {
+          tier: c.tier,
+          color: c.color,
+          hasChildren: c._count.children > 0,
+          retired: !!c.retiredAt,
+        }),
+      ),
+      // Omitted entirely when there is none, so the table does not carry a
+      // permanent zero row for a condition that is usually absent.
+      direct: direct.visits > 0 ? direct : null,
+      range: { from: fromKey, to: toKey, prevFrom: prevFromKey, prevTo: prevToKey },
+    };
+  });
+
   app.get("/operations", req_reportsBusiness, async (req: any) => {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
 

@@ -29,6 +29,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { payClassLabel } from "../../lib/paymentMath";
+import { AREA_LENS_CHANGED_EVENT, getAreaLens, getAreaLensName } from "@/src/lib/impersonation";
 import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 
 type WorkerStat = {
@@ -58,7 +59,15 @@ type StatsResponse = {
   workers: WorkerStat[];
   totalOccurrences: number;
   daysInRange: number;
-
+  /** The scoped TERRITORY's own numbers, not any one person's. Present
+   *  whether or not a lens is set; the lens decides what it covers. */
+  territory?: {
+    revenue: number;
+    visits: number;
+    propertiesWorked: number;
+    avgJobValue: number;
+    revenuePerProperty: number;
+  };
 };
 
 function formatDuration(mins: number): string {
@@ -136,6 +145,22 @@ export default function StatisticsTab({ myId, scope }: Props = {}) {
   // "this person earned nothing", which is a lie about somebody's pay.
   const showsPay = !!scope?.can?.("payroll.view");
   const [data, setData] = useState<StatsResponse | null>(null);
+  /**
+   * WHICH PORTFOLIO THE TERRITORY BLOCK IS ABOUT.
+   *
+   * The server returns totals for whatever this reader is scoped to and
+   * does not guess at a label — unlensed that is the whole business, and
+   * calling it a portfolio would be wrong. The name lives in localStorage
+   * with the lens, so it is read after mount: reading during render would
+   * make the server and the client disagree on the first pass.
+   */
+  const [lensName, setLensName] = useState<string | null>(null);
+  useEffect(() => {
+    const read = () => setLensName(getAreaLens() ? getAreaLensName() ?? "this portfolio" : null);
+    read();
+    window.addEventListener(AREA_LENS_CHANGED_EVENT, read);
+    return () => window.removeEventListener(AREA_LENS_CHANGED_EVENT, read);
+  }, []);
   const [viewMode, setViewMode] = usePersistedState<"cards" | "charts">("stats_view", "cards");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -366,6 +391,63 @@ export default function StatisticsTab({ myId, scope }: Props = {}) {
               above the tab row the two stacked — the same fact twice on
               one screen, which on a phone pushed the first number below
               the fold. One notice, one place: PortfolioScopeNotice. */}
+          {/* THE TERRITORY ITSELF, above the per-person bars.
+              This page answers "how is each PERSON doing" and had no
+              answer for "how is this PLACE doing" — so setting a lens
+              narrowed every bar on the screen and the screen never said
+              what the place earned.
+
+              ONLY WITH A LENS SET. Unlensed these are the whole
+              business's numbers, which the Money tabs already report and
+              which would read as a second, subtly different headline
+              here. A block that appears when you narrow is also the
+              clearest way to show that narrowing did something. */}
+          {lensName && data.territory && (
+            <Box
+              mb={4}
+              p={3}
+              rounded="xl"
+              borderWidth="1px"
+              borderColor="purple.emphasized"
+              bg="purple.subtle"
+            >
+              <HStack justify="space-between" mb={2} wrap="wrap" gap={2}>
+                <Text fontSize="sm" fontWeight="semibold" color="purple.fg">
+                  {lensName}
+                </Text>
+                <Text fontSize="2xs" color="fg.muted">
+                  over the selected range · money as organized now
+                </Text>
+              </HStack>
+              <HStack gap={5} wrap="wrap">
+                {[
+                  { label: "Revenue", value: `$${data.territory.revenue.toFixed(2)}` },
+                  { label: "Visits", value: String(data.territory.visits) },
+                  { label: "Properties worked", value: String(data.territory.propertiesWorked) },
+                  { label: "Avg job", value: `$${data.territory.avgJobValue.toFixed(2)}` },
+                  { label: "Per property", value: `$${data.territory.revenuePerProperty.toFixed(2)}` },
+                ].map((t) => (
+                  <VStack key={t.label} gap={0} align="start">
+                    <Text fontSize="lg" fontWeight="bold" color="purple.fg" lineHeight="short">
+                      {t.value}
+                    </Text>
+                    <Text fontSize="2xs" color="fg.muted">{t.label}</Text>
+                  </VStack>
+                ))}
+              </HStack>
+              {/* SAID, NOT IMPLIED. "Properties worked" is properties that
+                  produced a visit in this range — not properties filed
+                  here. A zone with thirty properties and four visited is
+                  a fact worth seeing, and the two numbers being different
+                  is not an error. */}
+              <Text fontSize="2xs" color="fg.muted" mt={2}>
+                Properties worked counts those that produced a visit in this range, not
+                everything filed here. Revenue is cash collected, the same figure the
+                Money tabs total.
+              </Text>
+            </Box>
+          )}
+
           {/* Summary bar */}
           <HStack gap={4} mb={4} p={3} bg="blue.faint" rounded="xl" borderWidth="1px" borderColor="blue.emphasized" wrap="wrap" justify="center">
             <VStack gap={0}>

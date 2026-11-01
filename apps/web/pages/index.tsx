@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, ReactNode } from "re
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, Dialog, HStack,
   Spacer, Portal, Spinner, Text, VStack } from "@chakra-ui/react";
-import { AlertTriangle, ArrowLeftCircle, Banknote, BarChart3, ChevronDown, Link2, LineChart, TrendingUp } from "lucide-react";
+import { AlertTriangle, ArrowLeftCircle, Banknote, BarChart3, ChevronDown, Link2, LineChart, Medal, TrendingUp } from "lucide-react";
 import OnClockBubble from "@/src/ui/components/OnClockBubble";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
@@ -68,6 +68,7 @@ import SharePhotosWorkflow from "@/src/ui/workflows/SharePhotosWorkflow";
 // lead rolls up their own district: a company-wide holder sees the
 // company, a portfolio-limited one sees their portfolio and the page says which.
 import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
+import PerformanceTab from "@/src/ui/tabs/PerformanceTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 import HomeTab from "@/src/ui/tabs/HomeTab";
@@ -95,9 +96,9 @@ import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 import { Me, ClientTabs, StaffTabs, EventTypes } from "@/src/lib/types";
-import { FiActivity, FiAlertCircle, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiHome, FiLayers, FiLink, FiMapPin, FiMonitor, FiNavigation, FiPackage, FiRefreshCw, FiSearch, FiSettings, FiShield, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
+import { FiActivity, FiAlertCircle, FiArchive, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBox, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiGift, FiGlobe, FiHome, FiLayers, FiLink, FiList, FiMap, FiMapPin, FiMonitor, FiNavigation, FiPackage, FiRefreshCw, FiRotateCcw, FiScissors, FiSearch, FiSettings, FiShield, FiSmile, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
 import { GrUserSettings } from "react-icons/gr";
-import { AiOutlineTeam } from "react-icons/ai";
+import { AiOutlineIdcard, AiOutlineTeam } from "react-icons/ai";
 import { TfiMoney } from "react-icons/tfi";
 
 import ScrollableUnderlineTabs, {
@@ -1012,7 +1013,8 @@ export default function HomePage() {
     {
       value: "my-jobs",
       label: "My Properties",
-      icon: FiBriefcase,
+      // Unique across every tab (see the note on the array): a client's whole set of properties, next to staff Properties' single pin.
+          icon: FiMap,
       // A customer tab. Shown to somebody attached to a customer record,
       // which is what makes them a customer — not the absence of two
       // particular staff capabilities. An operator in a client "View as"
@@ -1042,7 +1044,8 @@ export default function HomePage() {
     {
       value: "public",
       label: "Community",
-      icon: FiActivity,
+      // Unique across every tab (see the note on the array): the public-facing world; Engagement keeps the activity pulse.
+          icon: FiGlobe,
       content: <ClientFeedTab />,
     },
     {
@@ -1054,7 +1057,8 @@ export default function HomePage() {
       // job-recipe manager).
       value: "client-services",
       label: "Services",
-      icon: FiClipboard,
+      // Unique across every tab (see the note on the array): the services you receive; Jobs keeps the clipboard.
+          icon: FiList,
       content: <ClientServicesTab />,
     },
     {
@@ -1074,7 +1078,8 @@ export default function HomePage() {
       // breaks every code already out in the world.
       value: "client-promotions",
       label: "Promotions",
-      icon: FiTag,
+      // Unique across every tab (see the note on the array): an offer; Pricing keeps the price tag.
+          icon: FiGift,
       content: <ClientPromotionsTab />,
     },
   ];
@@ -1305,7 +1310,8 @@ export default function HomePage() {
           // extra server round-trip.
           value: "collections",
           label: "Collections",
-          icon: FiPackage,
+          // Unique across every tab (see the note on the array): a kit of equipment; Supplies keeps the package.
+          icon: FiArchive,
           content: wrapWithInlineMessage(
             <CollectionsTab
               scope={scopeBase}
@@ -1405,7 +1411,8 @@ export default function HomePage() {
           // The "Pending Users" alert chip in the title bar routes here.
           value: "users",
           label: "Users",
-          icon: AiOutlineTeam,
+          // Unique across every tab (see the note on the array): account records; Crews keeps the team.
+          icon: AiOutlineIdcard,
           content: wrapWithInlineMessage(
             <UsersTab scope={scopeBase} />
           ),
@@ -1578,7 +1585,8 @@ export default function HomePage() {
           // Engagement above.
           value: "history",
           label: "History",
-          icon: FiFileText,
+          // Unique across every tab (see the note on the array): looking back, which Statements (a document) is not.
+          icon: FiRotateCcw,
           content: wrapWithInlineMessage(<HistoryTab scope={scopeBase} />),
           category: "Records",
           categoryIcon: FiBarChart2,
@@ -1650,6 +1658,27 @@ export default function HomePage() {
           categoryIcon: LineChart,
         },
         {
+          // Portfolios compared against each other — `reports.view`, the
+          // same capability Statistics uses, because it reads the same
+          // kind of figure about a different subject.
+          //
+          // DECLARED INSIDE THE INSIGHTS RUN. Category order is
+          // declaration order, so a tab placed in another category's run
+          // splits that category and the nav draws it twice — which is
+          // what happened when Statistics first landed among the Money
+          // tabs.
+          value: "performance",
+          label: "Performance",
+          // A MEDAL — ranking, which is what comparing territories is.
+          // Not BarChart3 (Statistics) and not TrendingUp (Forecast):
+          // three tabs in one category sharing a glyph is how the chip
+          // stops telling you which one you are on.
+          icon: Medal,
+          content: wrapWithInlineMessage(<PerformanceTab scope={scopeBase} />),
+          category: "Insights",
+          categoryIcon: LineChart,
+        },
+        {
           // Pay-structure simulator — `forecasts.view`. Deliberately NOT
           // part of Reconcile or the P&L: those report what happened, this
           // asks what should change. Keeping them separate stops a
@@ -1673,7 +1702,8 @@ export default function HomePage() {
           // settings but never mutate).
           value: "tools-mowing",
           label: "Mowing",
-          icon: FiTool,
+          // Unique across every tab (see the note on the array): cutting; Inventory keeps the wrench.
+          icon: FiScissors,
           content: wrapWithInlineMessage(<MowingJobTool />),
           category: "Tools",
           categoryIcon: FiTool,
@@ -1681,7 +1711,8 @@ export default function HomePage() {
         {
           value: "tools-mulch",
           label: "Mulch",
-          icon: FiTool,
+          // Unique across every tab (see the note on the array): bagged material; Inventory keeps the wrench.
+          icon: FiBox,
           content: wrapWithInlineMessage(<MulchJobTool />),
           category: "Tools",
           categoryIcon: FiTool,
@@ -1761,7 +1792,8 @@ export default function HomePage() {
     {
       value: "client",
       label: "Client",
-      icon: FiHome,
+      // Unique across every tab (see the note on the array): the customer; Home keeps the house.
+          icon: FiSmile,
       visible: true,
       innerTabs: clientTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content })),
     },
@@ -1774,7 +1806,8 @@ export default function HomePage() {
       // not a different set of screens.
       value: "staff",
       label: "Work",
-      icon: FiUser,
+      // Unique across every tab (see the note on the array): the working day outdoors; Profile keeps the person.
+          icon: FiSun,
       visible: () => !!isSignedIn && !!me?.isApproved && anyTabVisible(staffTabs),
       headerSlot: (
         <>

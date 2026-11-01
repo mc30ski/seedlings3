@@ -216,3 +216,52 @@ describe("G44 — tab visibility table", () => {
     expect(fn, "hasCapabilityTab must skip ALWAYS rows").toMatch(/need\s*!==\s*ALWAYS/);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// G51 — NO TWO TABS WEAR THE SAME ICON.
+//
+// The chip in the breadcrumb shows the open tab's glyph, so a shared icon
+// makes two tabs look like the same place. It had drifted badly: 46 tabs
+// were using 35 icons, with `FiTool` on three of them (Inventory, Mowing,
+// Mulch) and ten more pairs — Jobs and the client's Services both a
+// clipboard, Pricing and the client's Promotions both a tag, Users and
+// Crews both a team.
+//
+// It drifts because there is no single list to check against: the older
+// tabs import from `react-icons` and the newer ones from `lucide-react`,
+// so picking a glyph means remembering what forty-five other tabs already
+// use across two libraries. Nobody does that, which is what a gate is for.
+// ───────────────────────────────────────────────────────────────────────────
+describe("G51 — every tab has its own icon", () => {
+  it("no icon is used by two tabs", () => {
+    const src = fs.readFileSync(path.join(WEB, "pages/index.tsx"), "utf8");
+    // Each registration is `value` then `label` then `icon`, in that order.
+    // Anchored on the trio rather than on `icon:` alone, which also matches
+    // the category icons and anything else holding a component.
+    const re = /value:\s*"([a-zA-Z0-9_-]+)",\s*\n\s*label:\s*"([^"]+)",[\s\S]*?\n\s*icon:\s*([A-Za-z0-9_]+),/g;
+    const byIcon = new Map<string, string[]>();
+    for (const m of src.matchAll(re)) {
+      const [, value, , icon] = m;
+      byIcon.set(icon, [...(byIcon.get(icon) ?? []), value]);
+    }
+
+    // The regex is the fragile part, so assert it still FINDS the tabs
+    // before trusting what it says about them. Silently matching nothing
+    // would make this gate pass for ever.
+    expect(
+      byIcon.size,
+      "no tab registrations were found — the `value`/`label`/`icon` shape in " +
+        "pages/index.tsx has changed and this gate is now reading nothing.",
+    ).toBeGreaterThan(30);
+
+    const shared = [...byIcon.entries()]
+      .filter(([, tabs]) => tabs.length > 1)
+      .map(([icon, tabs]) => `${icon} → ${tabs.join(", ")}`);
+    expect(
+      shared,
+      "Two tabs cannot share an icon: the breadcrumb chip shows only the " +
+        "glyph, so they read as the same place. Pick an unused one from the " +
+        "same library the tab already imports from.",
+    ).toEqual([]);
+  });
+});
