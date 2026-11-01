@@ -252,14 +252,46 @@ property stays in its portfolios and keeps counting in the tree's rollup
 (measured — the rollup SQL never joins `Property`, so status cannot affect
 it).
 
+## Production data cleaned up — 2026-10-31
+
+Four writes to production, each explicitly authorised by the user and each
+dry-run first. All audited; no money row touched; totals unchanged
+throughout (509 payments / $37,462.37).
+
+1. **20 `completedAt` timestamps backfilled.** Those visits had
+   `status = CLOSED` and no completion timestamp — work entered after the
+   fact before the flow stamped one. Portfolio attribution reads
+   `completedAt`, not `status`, so they were being treated as still-open
+   and would have followed their property around. Written from `endAt`,
+   which equalled `startAt` on all twenty.
+2. **Three abandoned records deleted** — Claire [?] (+ property, job,
+   2 visits), Scott [?] / "132 Marshall?" (never had a job at all), and
+   Keria Gould / 1108 Valley Rose Way (a 36-hour July lead whose single
+   auto-generated visit was deleted when the client was paused).
+
+**Production is now 90 properties, and ALL 90 place cleanly** by the
+ZIP/street rules — 35 Chapel Hill West · 28 Briar Chapel · 12 Chapel Hill
+East · 11 Chatham · 4 Carrboro. No unplaced list, no exceptions.
+
+Two residues:
+- **8 orphaned R2 objects** from the Hampton Ct visit. Rows cascaded; the
+  files did not. Keys are in that occurrence's audit entry.
+- Any future cleanup of a PRE-CUTOFF record hits the same wall — see the
+  delete-guard defect in [[project_deferred_work]].
+
 ## Not yet done
 
 - **Rule-assisted bulk tagging** (by ZIP, by street). The Add picker is
   one at a time, which is fine for maintenance and slow for the first
   load of 93. The rollout script in the section above is still the plan
   for that.
-- **E2E**: `portfolio-lens-owner` is green (4/4, 2026-10-29). The rest of the
-  suite has still not been run against the rename.
+- **E2E**: `portfolio-lens-owner` is green (4/4, re-run 2026-10-31). The
+  rest of the suite has still not been run against the rename OR against
+  the money basis — see [[project_portfolio_money_basis]].
+- **The placement script is NOT written.** Deliberately: deploy first, so
+  the money basis exists before the tree does. Otherwise filtering to a
+  zone hides 12 outstanding payment requests and 5 completed-unbilled
+  visits — live money, on the screen you chase it from.
 
 Rollout caution carried from [[project_area_tree_for_the_business]]: the
 re-tag script must also update the **67 open occurrences**, or recurring

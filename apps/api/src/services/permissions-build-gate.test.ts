@@ -858,7 +858,7 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
       .filter((f) => !f.endsWith(".test.ts"))
       .map(read)
       .join("\n");
-    if (!/portfolioScope|portfolioWhere/.test(routeSrc)) return;
+    if (!/portfolioScope|portfolioWhere/i.test(routeSrc)) return;
 
     const norm = (x: string) => x.replace(/:[A-Za-z_][A-Za-z0-9_]*/g, ":x");
     const missing: string[] = [];
@@ -886,7 +886,13 @@ describe("[G6-G7, G9, G11, G13, G15-G16, G25, G28-G29] awaiting the feature", ()
         if (!scopableGets.has(norm(d[2]))) continue;
         const body = src.slice(start, end);
         const m = [d[0], d[2]] as unknown as RegExpMatchArray;
-        if (/portfolioWhere|portfolioWhereVia|areaWhereOn|portfolio-scope-allow:/.test(body)) continue;
+        // `occurrencePortfolioWhere` / `occurrencePaymentPortfolioWhere` are
+        // the money-basis variants — the same filter, choosing between the
+        // visit's own membership and its property's. Matched
+        // case-insensitively so a camel-cased wrapper cannot read as an
+        // unfiltered query: this test failed exactly that way when the
+        // basis helpers landed, which is the gate working.
+        if (/portfolioWhere|portfolioWhereVia|areaWhereOn|portfolio-scope-allow:/i.test(body)) continue;
 
         if (PENDING_AREA_THREADING.has(`${rel}: GET ${m[1]}`)) { pendingSeenArea.add(`${rel}: GET ${m[1]}`); continue; }
         missing.push(`${rel}: GET ${m[1]}`);
@@ -2565,5 +2571,163 @@ describe("[G49] portfolio tier vocabulary", () => {
         "it falls through to the raw JSON box — brackets, quotes and six " +
         "sentences to retype by hand.",
     ).toBe(true);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// G50 — THE PURPLE STRIP MUST NOT CLAIM A TAB IT DOES NOT FILTER.
+//
+// `PortfolioScopeNotice` renders ONCE, above the tab row, so it speaks for
+// whatever tab is underneath. Only some tabs are portfolio-filtered; on the
+// rest it used to say "showing Durham only" over a page showing the whole
+// company. That is the dangerous direction of wrong — the reader takes the
+// company's figure for the portfolio's.
+//
+// It now keys on `FILTERED_TABS`, a hand-written list, and a hand-written
+// list is exactly the thing that rots. This asserts the two ways it can:
+// naming a tab whose endpoints do not filter, and losing the wiring that
+// makes the list do anything at all.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("[G50] the portfolio strip tells the truth about the open tab", () => {
+  // The lists moved out of the notice on 2026-10-31, so the tab row could
+  // read the same ones — the strip speaks for the open tab, the row marks
+  // the others, and two copies would eventually disagree.
+  const TABS = path.join(WEB, "src/lib/portfolioFilteredTabs.ts");
+  const NOTICE = path.join(WEB, "src/ui/components/PortfolioScopeNotice.tsx");
+
+  it("the strip is told which tab is open, and uses it", () => {
+    const notice = read(NOTICE);
+    expect(notice, "PortfolioScopeNotice.tsx not found").not.toBe("");
+    expect(notice, "the notice must accept the open tab").toMatch(/activeTab\?*:/);
+    expect(
+      notice,
+      "it must drop the word 'only' on a tab it does not filter — that word is " +
+        "a claim about the whole screen",
+    ).toMatch(/!tabIsFiltered\(activeTab\)[\s\S]{0,80}" only"|tabIsFiltered\(activeTab\) \? "" : " only"|leadsOnly \|\| partial \|\| !tabIsFiltered\(activeTab\)/);
+
+    const page = read(path.join(WEB, "pages/index.tsx"));
+    expect(
+      page,
+      "index.tsx renders the strip above the tab row, so it has to pass the " +
+        "open tab down or the list can never apply",
+    ).toMatch(/<PortfolioScopeNotice[\s\S]{0,700}activeTab=/);
+  });
+
+  it("every tab it calls filtered is one the API actually filters", () => {
+    /**
+     * The oracle is the API: a tab is filtered when some route file calls
+     * `portfolioWhere` / `portfolioWhereVia`. Ten route files IMPORT those
+     * helpers and never call them, so the import list is NOT the oracle —
+     * reading it is how this would go wrong.
+     *
+     * Matched loosely, by tab name against route-file names and endpoint
+     * paths, because the mapping from tab to route is not mechanical. The
+     * point is to catch a tab added to the list with no filtering behind
+     * it anywhere, not to prove the mapping exactly.
+     */
+    const notice = read(TABS);
+    const block = notice.slice(notice.indexOf("FILTERED_TABS"), notice.indexOf("]);", notice.indexOf("FILTERED_TABS")));
+    const claimed = [...block.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+    expect(claimed.length, "could not parse FILTERED_TABS").toBeGreaterThan(3);
+
+    // Every file with a real call site, plus the endpoint paths in it.
+    const routeDir = path.join(API, "routes");
+    //
+    // THE HAYSTACK IS FILE NAMES AND ENDPOINT PATHS, NOT FILE BODIES.
+    //
+    // It was whole bodies, and the negative control for this test did not
+    // fail: adding "compliance" to FILTERED_TABS passed, because the word
+    // appears in a comment inside a file that happens to filter. A check
+    // that matches prose matches anything.
+    const filtering = readdirSync(routeDir)
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+      .map((f) => ({ name: f.replace(/\.ts$/, ""), body: read(path.join(routeDir, f)) }))
+      // Case-insensitive: the money surfaces call
+      // `occurrencePortfolioWhere` / `occurrencePaymentPortfolioWhere`, and
+      // a case-sensitive match read those files as unfiltered — which made
+      // this gate claim Payments was overclaiming when it was not.
+      .filter((f) => /portfolioWhere(Via)?\(/i.test(f.body.replace(/^import[^\n]*$/gm, "")));
+    const endpoints = filtering.flatMap((f) => [
+      f.name,
+      ...[...f.body.matchAll(/app\.(?:get|post|patch|put)\(\s*"([^"]+)"/g)].map((m) => m[1]),
+    ]);
+    const haystack = endpoints.join("\n").toLowerCase();
+
+    // EVERY CLAIMED TAB NAMES THE ENDPOINT THAT BACKS IT.
+    //
+    // Matching the tab's NAME against the endpoint list was too loose:
+    // "equipment" passed, because a filtering route file has an
+    // equipment-shaped path on it, while the Equipment TAB is not filtered
+    // at all. Found by negative control, not by reading.
+    //
+    // So the mapping is explicit. A tab added to FILTERED_TABS with no
+    // entry here fails, which is the point — "which endpoint makes this
+    // true" is precisely the question the list exists to answer.
+    const TAB_ENDPOINTS: Record<string, string[]> = {
+      jobs: ["/jobs", "/occurrences", "/board"],
+      services: ["/occurrences"],
+      clients: ["/clients"],
+      properties: ["/properties"],
+      payments: ["/payments"],
+      collections: ["/payments"],
+      statistics: ["/statistics"],
+      home: ["/dashboard-summary/aggregate", "/operations"],
+      tasks: ["/payments/pending", "/payment-requests/outstanding"],
+      displays: ["/photos"],
+    };
+
+    const undeclared = claimed.filter((t) => !TAB_ENDPOINTS[t]);
+    expect(
+      undeclared,
+      "FILTERED_TABS claims these tabs are portfolio-filtered but this gate " +
+        "has no record of WHICH endpoint makes that true. Add the endpoint " +
+        "here, or take the tab out of the list.",
+    ).toEqual([]);
+
+    const unbacked = claimed
+      .filter((t) => TAB_ENDPOINTS[t])
+      .filter((t) => !TAB_ENDPOINTS[t]!.some((ep) => haystack.includes(ep.toLowerCase())));
+    expect(
+      unbacked,
+      "The endpoints these tabs rely on are no longer in any route file that " +
+        "CALLS portfolioWhere. Either the filtering was removed — in which " +
+        "case the strip is now overclaiming on that tab — or the route was " +
+        "renamed and this map needs updating.",
+    ).toEqual([]);
+  });
+
+  it("every money tab is also a filtered tab", () => {
+    // MONEY_TABS says "this tab shows money, so tell the reader which
+    // basis is in force". A tab in there but not in FILTERED_TABS would
+    // report a basis for a figure the filter never touched — a label on a
+    // number that did not change, which is its own kind of lie.
+    const notice = read(TABS);
+    const setOf = (name: string) => {
+      const at = notice.indexOf(name);
+      return [...notice.slice(at, notice.indexOf("]);", at)).matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+    };
+    const filtered = new Set(setOf("FILTERED_TABS"));
+    const stray = setOf("MONEY_TABS").filter((t) => !filtered.has(t));
+    expect(
+      stray,
+      "MONEY_TABS must be a subset of FILTERED_TABS — a tab the portfolio " +
+        "filter does not touch has no basis to report.",
+    ).toEqual([]);
+  });
+
+  it("does not claim the whole-business reports", () => {
+    // Ledger, Reconcile and Forecast are gated on books.view / forecasts.view,
+    // which are global-only by design. The popover copy named the Ledger as
+    // narrowed for weeks; it is the one money surface that is not.
+    const notice = read(TABS);
+    const block = notice.slice(notice.indexOf("FILTERED_TABS"), notice.indexOf("]);", notice.indexOf("FILTERED_TABS")));
+    for (const tab of ["ledger", "reconcile", "forecast"]) {
+      expect(
+        block.includes(`"${tab}"`),
+        `"${tab}" is a whole-business report and is never portfolio-filtered. ` +
+          "Listing it makes the strip claim a narrowing that did not happen.",
+      ).toBe(false);
+    }
   });
 });

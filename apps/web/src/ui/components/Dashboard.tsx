@@ -26,7 +26,7 @@ import {
   Badge, Box, HStack, IconButton, Select, Spinner, Text, VStack, createListCollection,
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, LayoutDashboard, RefreshCw } from "lucide-react";
-import { getAreaLensName, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
+import { getAreaLensName, getMoneyBasis, AREA_LENS_CHANGED_EVENT, type MoneyBasis } from "@/src/lib/impersonation";
 import type { LucideIcon } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import {
@@ -200,8 +200,12 @@ export function Dashboard({
   // rather than during render: it comes from localStorage, which does not
   // exist on the server, so reading it inline would hydrate the wrong text.
   const [lensName, setLensName] = useState<string | null>(null);
+  // WHICH QUESTION THE MONEY ON THIS CARD IS ANSWERING. Same effect, same
+  // event, because the two change together and a note showing one of them
+  // stale is worse than a note showing neither.
+  const [moneyBasis, setMoneyBasisState] = useState<MoneyBasis>("today");
   useEffect(() => {
-    const read = () => setLensName(getAreaLensName());
+    const read = () => { setLensName(getAreaLensName()); setMoneyBasisState(getMoneyBasis()); };
     read();
     window.addEventListener(AREA_LENS_CHANGED_EVENT, read);
     return () => window.removeEventListener(AREA_LENS_CHANGED_EVENT, read);
@@ -773,6 +777,28 @@ export function Dashboard({
                         : insightsScope === "current"
                           ? "Business-wide — the whole company, as it stands right now."
                           : "Business-wide — the whole company over the selected period."}
+                      {/* AND WHICH MONEY. Only when a portfolio is
+                          actually in force — unnarrowed, both bases give
+                          the same total and the clause would be noise on
+                          every card in the app.
+
+                          The basis is visible rather than remembered. A
+                          money figure whose meaning depends on a setting
+                          you cannot see is how two people read one screen
+                          and quote different numbers, each correctly. */}
+                      {scopeLabel && (
+                        <Text as="span">
+                          {" Money shown "}
+                          <Text as="span" fontWeight="semibold">
+                            {moneyBasis === "today"
+                              ? "as organized now"
+                              : "as it happened"}
+                          </Text>
+                          {moneyBasis === "today"
+                            ? " — everything these properties have ever earned."
+                            : " — only what was earned while tagged here."}
+                        </Text>
+                      )}
                     </Text>
                   </Box>
                 )}

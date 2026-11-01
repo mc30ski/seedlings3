@@ -61,6 +61,7 @@ import {
   type Entitlement,
   type Principal,
 } from "@repo/permissions";
+import type { MoneyBasis } from "./moneyBasis";
 
 /** An empty `where` fragment: the query is unchanged. */
 const NO_FILTER = {} as const;
@@ -180,6 +181,80 @@ export function portfolioWhere(
       some: { portfolio: { OR: paths.map((p) => ({ path: { startsWith: p } })) } },
     },
   };
+}
+
+/**
+ * The portfolio fragment for a query rooted on a **JobOccurrence**, under
+ * the caller's chosen money basis.
+ *
+ * Every portfolio-scoped money surface is rooted on an occurrence — either
+ * directly (statistics, operations, outstanding requests) or one relation
+ * away (a Payment, through `occurrence`). So one helper covers all of them.
+ *
+ *   happened → the occurrence's OWN membership, frozen when it completed.
+ *   today    → its property's CURRENT membership, however recently set.
+ *
+ * The two differ by one join, and that join is the entire feature: a
+ * completed visit's own rows never change, while its property's do. See
+ * lib/moneyBasis.ts for which question each answers and why "today" is the
+ * default.
+ *
+ * SAFETY IS UNCHANGED. `paths` comes from the same `visiblePortfolioPaths`
+ * either way — grants widen, the lens narrows, the two intersect. The
+ * basis decides which ROWS match a path, never which paths are usable, so
+ * no basis can reach a portfolio the caller does not already hold. The
+ * impossible-condition branch stays impossible in both.
+ */
+export function occurrencePortfolioWhere(
+  principal: Principal | undefined,
+  capability: Entitlement,
+  basis: MoneyBasis,
+): Record<string, unknown> {
+  const own = portfolioWhere(principal, capability);
+
+  // Global authority: unchanged query, both bases.
+  if (Object.keys(own).length === 0) return NO_FILTER;
+
+  // HOLDS IT NOWHERE — the impossible condition — is left EXACTLY as the
+  // one-basis code emitted it, deliberately.
+  //
+  // `{ portfolios: { none: {} } }` on the occurrence is "has no portfolio
+  // at all". Rewritten through the join it becomes "whose PROPERTY has no
+  // portfolio at all", which in production matches three real untagged
+  // properties. That would be a new way for rows to reach somebody who
+  // holds the capability nowhere — a basis must never widen anything, and
+  // this is the one place it could. The guard should have refused the
+  // request long before here either way.
+  const paths = visiblePortfolioPaths(principal, capability);
+  if (paths !== null && paths.length === 0) return own;
+
+  if (basis === "happened") return own;
+  // "today": the same test, one join further out — the property's current
+  // membership instead of the visit's frozen one.
+  return { job: { property: own } };
+}
+
+/**
+ * Same, for a **Payment** — one relation above the occurrence.
+ *
+ * THE RELATION IS WRITTEN OUT, not passed in. `portfolioWhereVia` takes it
+ * as a string and carries an `untyped-fragment-allow:` for the privilege,
+ * because it serves models that reach a portfolio by several different
+ * paths. This one does not: every money surface is either the occurrence
+ * itself or a Payment, and `Payment.occurrence` is the only relation it
+ * will ever nest under. A parameter here would buy nothing and cost the
+ * compiler's check — which is the exact shape that let
+ * `areaWhereOn(…, "defaultPortfolio")` survive the deletion of the field
+ * it named and 500 every job list.
+ */
+export function occurrencePaymentPortfolioWhere(
+  principal: Principal | undefined,
+  capability: Entitlement,
+  basis: MoneyBasis,
+): Record<string, unknown> {
+  const inner = occurrencePortfolioWhere(principal, capability, basis);
+  if (Object.keys(inner).length === 0) return NO_FILTER;
+  return { occurrence: inner };
 }
 
 /**

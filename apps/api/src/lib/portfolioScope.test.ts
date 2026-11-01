@@ -16,6 +16,8 @@ import {
   visiblePortfolioPaths,
   portfolioWhere,
   portfolioWhereVia,
+  occurrencePortfolioWhere,
+  occurrencePaymentPortfolioWhere,
   isPortfolioLimited,
 } from "./portfolioScope";
 import { can } from "@repo/permissions";
@@ -34,6 +36,9 @@ import type { Entitlement, Principal, RoleGrant } from "@repo/permissions";
 type Shape = {
   portfolios: { some: { portfolio: { OR: Array<{ path: { startsWith: string } }> } } };
 };
+
+/** The "today" basis: the same test, one join out through the property. */
+type TodayShape = { job: { property: Shape } };
 
 const NC = "/nc/";
 const TRIANGLE = "/nc/triangle/";
@@ -358,5 +363,87 @@ describe("the portfolio lens narrows, and can never widen", () => {
     // Held in Raleigh AND Durham, looking at Durham: only Durham survives.
     const p = lensed(DURHAM, inArea(RALEIGH, "money.view"), inArea(DURHAM, "money.view"));
     expect(visiblePortfolioPaths(p, "money.view")).toEqual([DURHAM]);
+  });
+});
+
+describe("money basis — which membership a money figure is filtered on", () => {
+  /**
+   * TYPED, like the fragments above, and for the same reason. A stale
+   * shape here compiles fine as `Record<string, unknown>` and simply
+   * matches no rows — every money figure under a lens silently reads zero,
+   * with no error anywhere. That exact bug shipped once already on
+   * `portfolioWhere` during the Area → Portfolio rename.
+   */
+  const scoped = user({ roles: [inArea(DURHAM, "money.view")] });
+
+  it("'happened' reads the visit's OWN frozen membership", () => {
+    const f = occurrencePortfolioWhere(scoped, "money.view", "happened") as unknown as Shape;
+    expect(f.portfolios.some.portfolio.OR).toEqual([{ path: { startsWith: DURHAM } }]);
+    expect(f).not.toHaveProperty("job");
+  });
+
+  it("'today' reads the PROPERTY's current membership", () => {
+    const f = occurrencePortfolioWhere(scoped, "money.view", "today") as unknown as TodayShape;
+    expect(f.job.property.portfolios.some.portfolio.OR).toEqual([
+      { path: { startsWith: DURHAM } },
+    ]);
+  });
+
+  it("both bases use the SAME paths — a basis can never widen access", () => {
+    // The security property. If these ever diverge, a basis has become a
+    // way to reach a portfolio the caller does not hold.
+    const a = occurrencePortfolioWhere(scoped, "money.view", "happened") as unknown as Shape;
+    const b = occurrencePortfolioWhere(scoped, "money.view", "today") as unknown as TodayShape;
+    expect(b.job.property.portfolios.some.portfolio.OR).toEqual(
+      a.portfolios.some.portfolio.OR,
+    );
+  });
+
+  it("global authority is unfiltered in BOTH bases", () => {
+    // Invariant 1: off-state must be byte-identical to pre-feature. A
+    // basis that wrapped an empty fragment would turn "unchanged" into a
+    // constraint and hide every row with no property.
+    const owner = user({ roles: [global_("money.view")] });
+    expect(occurrencePortfolioWhere(owner, "money.view", "happened")).toEqual({});
+    expect(occurrencePortfolioWhere(owner, "money.view", "today")).toEqual({});
+  });
+
+  it("holding it NOWHERE stays the impossible condition, unwrapped, in both bases", () => {
+    // `{ portfolios: { none: {} } }` means "has no portfolio". Rewritten
+    // through the join it would mean "whose PROPERTY has no portfolio",
+    // which matches real untagged properties — a new way for rows to
+    // reach somebody who holds the capability nowhere. A basis must never
+    // widen anything, and this is the one place it could.
+    const nobody = user({ roles: [inArea(DURHAM, "schedule.view")] });
+    const happened = occurrencePortfolioWhere(nobody, "money.view", "happened");
+    const today = occurrencePortfolioWhere(nobody, "money.view", "today");
+    expect(happened).toEqual({ portfolios: { none: {} } });
+    expect(today).toEqual({ portfolios: { none: {} } });
+    expect(today).not.toHaveProperty("job");
+  });
+
+  it("the lens narrows both bases", () => {
+    const owner = user({ roles: [global_("money.view")], lensPath: DURHAM });
+    const f = occurrencePortfolioWhere(owner, "money.view", "today") as unknown as TodayShape;
+    expect(f.job.property.portfolios.some.portfolio.OR).toEqual([
+      { path: { startsWith: DURHAM } },
+    ]);
+  });
+
+  it("a Payment nests one relation further out", () => {
+    const f = occurrencePaymentPortfolioWhere(scoped, "money.view", "today") as any;
+    expect(f.occurrence.job.property.portfolios.some.portfolio.OR).toEqual([
+      { path: { startsWith: DURHAM } },
+    ]);
+    const g = occurrencePaymentPortfolioWhere(scoped, "money.view", "happened") as any;
+    expect(g.occurrence.portfolios.some.portfolio.OR).toEqual([
+      { path: { startsWith: DURHAM } },
+    ]);
+  });
+
+  it("a global reader's Payment query is unchanged in both bases", () => {
+    const owner = user({ roles: [global_("money.view")] });
+    expect(occurrencePaymentPortfolioWhere(owner, "money.view", "today")).toEqual({});
+    expect(occurrencePaymentPortfolioWhere(owner, "money.view", "happened")).toEqual({});
   });
 });

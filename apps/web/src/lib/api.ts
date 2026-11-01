@@ -36,6 +36,7 @@ async function authHeaders(h: Headers) {
 const PERSPECTIVE_STORAGE_KEY = "seedlings_perspectiveRoleId";
 const CLIENT_IMPERSONATE_STORAGE_KEY = "seedlings_impersonateClientContact";
 const AREA_LENS_STORAGE_KEY = "seedlings_areaLensId";
+const MONEY_BASIS_STORAGE_KEY = "seedlings_moneyBasis";
 function attachImpersonateHeader(h: Headers) {
   if (!IS_BROWSER) return;
   try {
@@ -67,6 +68,17 @@ function attachImpersonateHeader(h: Headers) {
     // than WHAT MAY BE DONE, and it can never produce a 403.
     const lens = localStorage.getItem(AREA_LENS_STORAGE_KEY);
     if (lens) h.set("X-Portfolio-Lens", lens);
+    // WHICH QUESTION A PORTFOLIO-FILTERED MONEY FIGURE ANSWERS — the
+    // property's membership today, or the visit's own membership when it
+    // completed. Sent only when it is the non-default, so the absence of
+    // the header and the default mean the same thing in one place rather
+    // than two. It can only ever change which rows come back, never which
+    // portfolios the caller may ask about, so a forged value is a
+    // reporting choice and not an escalation.
+    // See apps/api/src/lib/moneyBasis.ts.
+    if (localStorage.getItem(MONEY_BASIS_STORAGE_KEY) === "happened") {
+      h.set("X-Money-Basis", "happened");
+    }
   } catch {
     // localStorage can throw in private mode / disabled storage; just skip.
   }

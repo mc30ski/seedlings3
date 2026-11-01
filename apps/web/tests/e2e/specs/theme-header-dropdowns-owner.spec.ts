@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openHeaderDrawer } from "../helpers/nav";
 
 // Dropdowns that open FROM THE TITLE BAR inherit its `color`, which is
 // `chrome.headerFg` — white in High contrast, pale green in Spring, cream in
@@ -23,6 +24,8 @@ for (const theme of THEMES) {
     await page.goto("/");
     await page.waitForLoadState("networkidle").catch(() => {});
     await page.waitForTimeout(2500);
+    // The theme chip is behind the header drawer, closed by default.
+    await openHeaderDrawer(page);
 
     const check = async (label: string) => {
       const rows = await page.evaluate(() => {
