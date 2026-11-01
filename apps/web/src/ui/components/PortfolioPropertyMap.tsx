@@ -20,10 +20,24 @@
 // time, so a top-level import breaks the server render; and it is only
 // needed by whoever actually opens the map.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, HStack, Progress, Text } from "@chakra-ui/react";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { portfolioNames } from "@/src/lib/portfolios";
+import { paletteFor, resolvePaletteColor, type PortfolioPalette } from "@/src/lib/portfolioColors";
+
+/**
+ * One band of the legend: a portfolio whose properties are drawn together
+ * in one colour.
+ *
+ * DEEPEST FIRST, which is what makes the colouring mean anything. A
+ * property in both a zone and the district above it belongs, visually, to
+ * the zone — the most specific true answer — and that is the same rule the
+ * grouped list uses, so the two cannot disagree about where a property is
+ * filed.
+ */
+export type MapBand = { id: string; name: string; color: string | null };
 
 type Point = {
   id: string;
@@ -47,13 +61,31 @@ type PointsResponse = {
   unplaceable: number;
 };
 
-export default function PortfolioPropertyMap({ portfolioId }: { portfolioId: string }) {
+export default function PortfolioPropertyMap({
+  portfolioId,
+  portfolioName,
+  bands,
+}: {
+  portfolioId: string;
+  portfolioName: string;
+  /** The portfolios beneath this one, deepest first. Empty for a leaf, and
+   *  then the map is a single colour — there is nothing to tell apart. */
+  bands: MapBand[];
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const layerRef = useRef<any>(null);
   const leafletRef = useRef<any>(null);
 
   const [data, setData] = useState<PointsResponse | null>(null);
+  /** Full-page. A 420px strip is enough to see that pins exist and not
+   *  enough to see where they are relative to each other, which is the
+   *  question the map is for. */
+  const [expanded, setExpanded] = useState(false);
+  /** Bands switched OFF. Stored as the hidden set rather than the shown
+   *  one so a band added later (a new zone) starts visible — the opposite
+   *  default would silently hide new work. */
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [resolving, setResolving] = useState(false);
   const [failed, setFailed] = useState(false);
   // Stops the batch loop when the component goes away mid-flight — each
@@ -151,6 +183,39 @@ export default function PortfolioPropertyMap({ portfolioId }: { portfolioId: str
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolioId, !!data]);
 
+  /**
+   * Which band each point belongs to, and how many are in each.
+   *
+   * `bands` arrives deepest-first, so the FIRST match is the most specific
+   * portfolio the property is in — a property in both Briar Chapel and the
+   * Chapel Hill district above it is drawn as Briar Chapel. The band id
+   * `""` is the catch-all: in this portfolio directly, or in none of the
+   * descendants.
+   */
+  const bandOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of data?.points ?? []) {
+      const ids = new Set((p.portfolios ?? []).map((x) => x.portfolio.id));
+      m.set(p.id, bands.find((b) => ids.has(b.id))?.id ?? "");
+    }
+    return m;
+  }, [data, bands]);
+
+  const counts = useMemo(() => {
+    const c = new Map<string, number>();
+    for (const [, bandId] of bandOf) c.set(bandId, (c.get(bandId) ?? 0) + 1);
+    return c;
+  }, [bandOf]);
+
+  /** Palette per band id, including the catch-all. Index-based fallback
+   *  runs over the band order, so auto-coloured siblings stay distinct. */
+  const paletteOf = useMemo(() => {
+    const m = new Map<string, PortfolioPalette>();
+    bands.forEach((b, i) => m.set(b.id, paletteFor(b, i)));
+    m.set("", paletteFor({ color: "purple" }, 0));
+    return m;
+  }, [bands]);
+
   // 3. Draw. Leaflet is imported here, not at module scope.
   useEffect(() => {
     let cancelled = false;
@@ -182,17 +247,25 @@ export default function PortfolioPropertyMap({ portfolioId }: { portfolioId: str
       // default rather than freezing one theme's palette into the code.
       const token = (name: string) =>
         getComputedStyle(document.documentElement).getPropertyValue(name).trim() || undefined;
-      const inPortfolio = token("--chakra-colors-purple-solid");
       const noPortfolio = token("--chakra-colors-red-solid");
       const centre = token("--chakra-colors-blue-solid");
 
-      const placed = data.points.filter((p) => p.lat != null && p.lng != null);
+      // Hidden bands are not drawn AND not framed, so switching the big
+      // one off actually zooms into what is left rather than leaving the
+      // view sitting over the gap it used to fill.
+      const placed = data.points.filter(
+        (p) => p.lat != null && p.lng != null && !hidden.has(bandOf.get(p.id) ?? ""),
+      );
       for (const p of placed) {
         // A property in NO portfolio is drawn differently on purpose — the
         // map is the best place to notice one, and such a property is
         // invisible to every portfolio-scoped reader and counts toward no
         // rollup. Being in several is normal and needs no special mark.
-        const colour = p.portfolios.length > 0 ? inPortfolio : noPortfolio;
+        const band = bandOf.get(p.id) ?? "";
+        const colour =
+          p.portfolios.length === 0
+            ? noPortfolio
+            : resolvePaletteColor(paletteOf.get(band) ?? "purple");
         L.circleMarker([p.lat!, p.lng!], {
           radius: 7,
           color: colour,
@@ -250,7 +323,28 @@ export default function PortfolioPropertyMap({ portfolioId }: { portfolioId: str
       }
     })();
     return () => { cancelled = true; };
-  }, [data]);
+    // Redraws on a legend toggle and after the container resizes, because
+    // both change what should be on screen and neither changes `data`.
+  }, [data, hidden, bandOf, paletteOf]);
+
+  // Leaflet measures its container ONCE. Growing the box to full page
+  // without telling it leaves the tiles rendered at the old size, which
+  // looks like a half-loaded map rather than a resized one.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try { mapRef.current?.invalidateSize(); } catch { /* not mounted */ }
+    }, 60);
+    return () => clearTimeout(t);
+  }, [expanded]);
+
+  // Escape leaves full-page. A map covering the window with its own close
+  // button somewhere in the corner is a trap on a laptop.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
 
   // Tear the map down with the component, or Leaflet keeps the container.
   useEffect(() => () => {
@@ -265,8 +359,31 @@ export default function PortfolioPropertyMap({ portfolioId }: { portfolioId: str
   const pending = data?.pending ?? 0;
   const unplaceable = data?.unplaceable ?? 0;
 
+  /** The legend, catch-all last. Bands with nothing in them are dropped —
+   *  a colour key listing zones that contribute no pins is noise. */
+  const legend = [
+    ...bands.map((b) => ({ id: b.id, name: b.name, palette: paletteOf.get(b.id)! })),
+    { id: "", name: `In ${portfolioName} directly`, palette: paletteOf.get("")! },
+  ].filter((b) => (counts.get(b.id) ?? 0) > 0);
+
   return (
-    <Box>
+    <Box
+      // FULL PAGE IS A FIXED OVERLAY, not a taller box. Growing in place
+      // would leave the map below the tab chrome and the detail panel,
+      // scrolled halfway down a long page — which is the position the
+      // expand is trying to escape.
+      {...(expanded
+        ? {
+            position: "fixed" as const,
+            inset: 0,
+            zIndex: 1400,
+            bg: "bg.panel",
+            p: 3,
+            display: "flex",
+            flexDirection: "column" as const,
+          }
+        : {})}
+    >
       {/* THE PROGRESS LINE. Without it a map that fills in over a minute
           reads as broken rather than busy — and the denominator is the
           point: "2/51" says both that it is working and how long it has
@@ -285,16 +402,86 @@ export default function PortfolioPropertyMap({ portfolioId }: { portfolioId: str
         </Box>
       )}
 
-      <Box
-        ref={hostRef}
-        h="420px"
-        w="full"
-        rounded="md"
-        borderWidth="1px"
-        borderColor="border"
-        overflow="hidden"
-        data-testid="portfolio-map"
-      />
+      {/* THE KEY, AND THE CONTROL. Each band is a toggle, because the
+          question a colour-coded map answers is usually about one or two
+          of them — "where does Briar Chapel actually reach" is unanswerable
+          while forty-eight of its pins are buried under everything else.
+
+          The count rides on the chip so the legend doubles as the
+          breakdown, which is the number somebody came to the map for
+          anyway. A band switched off keeps its colour at low opacity
+          rather than turning grey: grey would read as a band that HAS no
+          colour, and that is a different thing. */}
+      {legend.length > 1 && (
+        <HStack gap={1.5} wrap="wrap" mb={2}>
+          {legend.map((b) => {
+            const off = hidden.has(b.id);
+            return (
+              <HStack
+                key={b.id || "__direct__"}
+                as="button"
+                onClick={() =>
+                  setHidden((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(b.id)) next.delete(b.id);
+                    else next.add(b.id);
+                    return next;
+                  })
+                }
+                aria-pressed={!off}
+                aria-label={`${off ? "Show" : "Hide"} ${b.name}`}
+                gap={1.5}
+                px={2}
+                py={1}
+                rounded="full"
+                borderWidth="1px"
+                borderColor={off ? "border" : `${b.palette}.solid`}
+                bg={off ? "transparent" : `${b.palette}.subtle`}
+                opacity={off ? 0.55 : 1}
+                cursor="pointer"
+              >
+                <Box w="10px" h="10px" rounded="full" bg={`${b.palette}.solid`} opacity={off ? 0.4 : 1} />
+                <Text fontSize="2xs" textDecoration={off ? "line-through" : undefined}>
+                  {b.name}
+                </Text>
+                <Text fontSize="2xs" color="fg.muted">{counts.get(b.id) ?? 0}</Text>
+              </HStack>
+            );
+          })}
+          {hidden.size > 0 && (
+            <Button size="2xs" variant="ghost" onClick={() => setHidden(new Set())}>
+              Show all
+            </Button>
+          )}
+        </HStack>
+      )}
+
+      <Box position="relative" flex={expanded ? "1" : undefined} minH={0}>
+        <Box
+          ref={hostRef}
+          h={expanded ? "full" : "420px"}
+          w="full"
+          rounded="md"
+          borderWidth="1px"
+          borderColor="border"
+          overflow="hidden"
+          data-testid="portfolio-map"
+        />
+        <Button
+          size="xs"
+          variant="solid"
+          colorPalette="gray"
+          position="absolute"
+          top={2}
+          right={2}
+          zIndex={500}
+          onClick={() => setExpanded((v) => !v)}
+          aria-label={expanded ? "Shrink the map" : "Expand the map to the whole page"}
+          title={expanded ? "Shrink (Esc)" : "Expand"}
+        >
+          {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+        </Button>
+      </Box>
 
       <HStack mt={2} gap={3} wrap="wrap">
         <Text fontSize="2xs" color="fg.muted">

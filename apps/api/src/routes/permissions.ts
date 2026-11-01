@@ -301,6 +301,10 @@ export default async function permissionRoutes(app: FastifyInstance) {
       ...(b.tier !== undefined ? { tier: b.tier == null ? null : String(b.tier) } : {}),
       ...(b.lat !== undefined ? { lat: coord(b.lat) } : {}),
       ...(b.lng !== undefined ? { lng: coord(b.lng) } : {}),
+      ...(b.instructions !== undefined
+        ? { instructions: b.instructions == null ? null : String(b.instructions) }
+        : {}),
+      ...(b.color !== undefined ? { color: b.color == null ? null : String(b.color) } : {}),
     });
   });
 

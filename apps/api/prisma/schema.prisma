@@ -4633,6 +4633,34 @@ model Portfolio {
   /// sibling whose id merely starts with the same characters.
   path String
 
+  /// The colour this portfolio is drawn in — a Chakra PALETTE NAME
+  /// ("green", "orange"), never a hex.
+  ///
+  /// A literal would be the same colour in all fourteen themes, which is
+  /// what the theming gate exists to stop; the map already resolves
+  /// `--chakra-colors-<palette>-solid` off the document at render time and
+  /// this rides the same mechanism.
+  ///
+  /// NULL MEANS AUTO, not "no colour". An unset portfolio is still drawn —
+  /// it takes a palette from its position in the tree — because the map
+  /// has to distinguish ten zones whether or not anybody has been round to
+  /// choose ten colours. Setting one pins it against later reshuffling.
+  color String?
+
+  /// What belongs in here, in the operator's own words.
+  ///
+  /// A filing rule, not a description: "homes north of Estes with a gate
+  /// code", "anything Pete covers on a Thursday". The tier says what KIND
+  /// of level this is; this says which properties go in THIS one, which is
+  /// the question somebody actually has while looking at the Add list.
+  ///
+  /// Free text and optional. Nothing validates against it and nothing
+  /// enforces it — a property can be filed anywhere regardless. It exists
+  /// because the rule otherwise lives in one person's head, and a
+  /// portfolio whose contents only one person can predict stops being a
+  /// shared structure the moment they are on holiday.
+  instructions String?
+
   /// Where this node sits AMONG ITS SIBLINGS, and nothing more.
   ///
   /// Display only. It is not in any path, no query filters on it, and no
