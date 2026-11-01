@@ -20,6 +20,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PORTFOLIO_PALETTES, paletteFor } from "@/src/lib/portfolioColors";
 import {
   Badge,
   Box,
@@ -28,6 +29,7 @@ import {
   HStack,
   Icon,
   Input,
+  Textarea,
   Portal,
   Select,
   Spinner,
@@ -56,6 +58,11 @@ type Portfolio = {
   path: string;
   lat: number | null;
   lng: number | null;
+  /** What belongs in here, in the operator's words. Free text, enforced
+   *  by nothing — guidance at the moment of filing, not a rule. */
+  instructions: string | null;
+  /** Chakra palette name, or null for auto — see lib/portfolioColors. */
+  color: string | null;
   retiredAt: string | null;
   depth: number;
   _count: { properties: number; occurrences: number; assignments: number };
@@ -961,6 +968,8 @@ function AreaDetail({
   // through typing "-79." has a value that is not a number yet, and parsing
   // on every keystroke would either reject it or silently rewrite what they
   // typed. Parsed once, on save.
+  const [instructions, setInstructions] = useState(portfolio.instructions ?? "");
+  const [color, setColor] = useState(portfolio.color ?? "");
   const [lat, setLat] = useState(portfolio.lat == null ? "" : String(portfolio.lat));
   const [lng, setLng] = useState(portfolio.lng == null ? "" : String(portfolio.lng));
   const [userId, setUserId] = useState<string | null>(null);
@@ -1009,6 +1018,8 @@ function AreaDetail({
 
   const dirty =
     name !== portfolio.name ||
+    instructions !== (portfolio.instructions ?? "") ||
+    color !== (portfolio.color ?? "") ||
     (!isSoleRoot && tier !== (portfolio.tier ?? "")) ||
     (!isSoleRoot &&
       (lat !== (portfolio.lat == null ? "" : String(portfolio.lat)) ||
@@ -1039,6 +1050,15 @@ function AreaDetail({
         // it — sending `tier: null` here would silently clear a value nobody
         // on this screen could see, which is a different act from the
         // operator clearing it.
+        // SENT ON THE ROOT TOO, unlike tier and coordinates. Those are
+        // withheld because the root is not a place and the controls are
+        // not drawn; a filing rule is a sentence about what goes where,
+        // which the container can have as much as a zone can.
+        instructions: instructions.trim() || null,
+        // "" is the Auto chip — it clears the stored palette and hands the
+        // choice back to position, which is a real selection and not an
+        // absent key.
+        color: color || null,
         ...(isSoleRoot ? {} : { tier: tier.trim() || null }),
         // Sent whenever the fields are SHOWN, so clearing a box clears the
         // stored point — an absent key means "unchanged" to the server,
@@ -1163,6 +1183,92 @@ function AreaDetail({
               ) : (
                 <Input size="sm" value={tier} placeholder="Tier (optional)" disabled />
               ))}
+
+            {/* THE COLOUR, because the map and the list identify a
+                portfolio by it. Swatches rather than a Select: the thing
+                being chosen IS the appearance, so showing the name of a
+                colour instead of the colour is a needless translation.
+
+                AUTO IS A REAL CHOICE and sits first. Most portfolios will
+                never be given one, and they still have to be drawn — the
+                map must tell ten zones apart before anybody has picked ten
+                colours. Choosing pins it; leaving it auto means a new
+                sibling can shuffle it. */}
+            {mayManage && (
+              <Box>
+                <Text fontSize="2xs" color="fg.muted" mb={1}>
+                  Colour on the map and list
+                </Text>
+                <HStack gap={1} wrap="wrap">
+                  <Box
+                    as="button"
+                    onClick={() => setColor("")}
+                    aria-label="Automatic colour"
+                    aria-pressed={color === ""}
+                    title="Auto — taken from its position"
+                    px={2}
+                    h="22px"
+                    rounded="full"
+                    fontSize="2xs"
+                    borderWidth={color === "" ? "2px" : "1px"}
+                    borderColor={color === "" ? "fg" : "border"}
+                    color="fg.muted"
+                  >
+                    Auto
+                  </Box>
+                  {PORTFOLIO_PALETTES.map((pal) => (
+                    <Box
+                      key={pal}
+                      as="button"
+                      onClick={() => setColor(pal)}
+                      aria-label={pal}
+                      aria-pressed={color === pal}
+                      title={pal}
+                      w="22px"
+                      h="22px"
+                      rounded="full"
+                      bg={`${pal}.solid`}
+                      borderWidth={color === pal ? "3px" : "1px"}
+                      borderColor={color === pal ? "fg" : "border"}
+                    />
+                  ))}
+                </HStack>
+              </Box>
+            )}
+
+            {/* WHAT BELONGS IN HERE. The tier says what KIND of level this
+                is — the vocabulary explains "Zone" once, for every zone.
+                This says which properties go in THIS one, which is the
+                question somebody actually has, and it is shown again on the
+                Add panel where they are answering it.
+
+                Rendered as nothing at all when it is empty and the reader
+                cannot edit: an empty box labelled "What belongs here" tells
+                a read-only viewer that a rule might exist and they cannot
+                see it. */}
+            {mayManage ? (
+              <Box>
+                <Text fontSize="2xs" color="fg.muted" mb={1}>
+                  What belongs here (optional)
+                </Text>
+                <Textarea
+                  size="sm"
+                  rows={2}
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  placeholder="e.g. Homes north of Estes with a gate code"
+                  aria-label="What belongs in this portfolio"
+                  data-testid="portfolio-instructions"
+                />
+              </Box>
+            ) : instructions ? (
+              <Box>
+                <Text fontSize="2xs" color="fg.muted" mb={0.5}>
+                  What belongs here
+                </Text>
+                <Text fontSize="xs">{instructions}</Text>
+              </Box>
+            ) : null}
             {/* WHERE THIS TERRITORY IS, for the weather forecast.
                 Optional: blank means the forecast falls back to the business
                 address, which is what it did before portfolios existed.
@@ -1255,9 +1361,10 @@ function AreaDetail({
             // Deepest first, so a property in both a route and its district
             // is filed under the route — the most specific true answer.
             .sort((a, b) => b.path.length - a.path.length)
-            .map((x) => ({ id: x.id, name: x.name }))}
+            .map((x) => ({ id: x.id, name: x.name, color: x.color }))}
           mayManage={mayManage}
           isSoleRoot={isSoleRoot}
+          instructions={portfolio.instructions}
           onChanged={onChanged}
         />
       )}
@@ -1502,15 +1609,23 @@ function AreaProperties({
   descendants,
   mayManage,
   isSoleRoot,
+  instructions,
   onChanged,
 }: {
   portfolioId: string;
   portfolioName: string;
-  /** Everything beneath this node, deepest first. */
-  descendants: Array<{ id: string; name: string }>;
+  /** Everything beneath this node, deepest first — which is the order
+   *  that makes "the most specific portfolio it is in" the first match,
+   *  for both the grouped list and the map's colour bands. */
+  descendants: Array<{ id: string; name: string; color: string | null }>;
   /** `portfolios.manage` — the capability PUT /properties/:id/portfolios is
    *  guarded on. Read-only without it; the list is still worth seeing. */
   mayManage: boolean;
+  /** What belongs in this portfolio, in the operator's words. Shown on the
+   *  Add panel, which is the one moment somebody is deciding whether a
+   *  property belongs here — a rule kept only on the edit form is read by
+   *  whoever wrote it and nobody else. */
+  instructions: string | null;
   /** True for the one node that is the whole tree. It alone also lists
    *  the properties in NO portfolio, because they belong to no subtree and
    *  would otherwise be reachable from nowhere on this tab. */
@@ -1686,16 +1801,34 @@ function AreaProperties({
     direct.sort(byClient);
     for (const g of byDescendant.values()) g.rows.sort(byClient);
     unfiled.sort(byClient);
+    // Palette by POSITION IN `descendants`, the identical input and order
+    // the map's bands use — so a zone is the same colour in both or the
+    // colour means nothing.
+    const paletteOfId = (id: string) => {
+      const i = descendants.findIndex((d) => d.id === id);
+      if (i === -1) return null;
+      return paletteFor(descendants[i], i);
+    };
     return [
-      { id: portfolioId, heading: `In ${portfolioName}`, rows: direct },
+      {
+        id: portfolioId,
+        heading: `In ${portfolioName}`,
+        rows: direct,
+        palette: paletteFor({ color: "purple" }, 0),
+      },
       ...[...byDescendant.entries()]
-        .map(([id, g]) => ({ id, heading: `In ${g.name}`, rows: g.rows }))
+        .map(([id, g]) => ({
+          id,
+          heading: `In ${g.name}`,
+          rows: g.rows,
+          palette: paletteOfId(id),
+        }))
         .sort((a, b) => a.heading.localeCompare(b.heading)),
       // LAST, because it is the pile to deal with rather than part of the
       // structure. Its id matches no portfolio, so the Remove button —
       // gated on `g.id === portfolioId` — correctly never appears: there
       // is nothing to detach these from.
-      { id: "__unfiled__", heading: "In no portfolio", rows: unfiled },
+      { id: "__unfiled__", heading: "In no portfolio", rows: unfiled, palette: null },
     ].filter((g) => g.rows.length > 0);
   }, [rows, portfolioId, portfolioName, descendants]);
 
@@ -1733,7 +1866,7 @@ function AreaProperties({
                           const client = x.client?.displayName ?? "(no client)";
                           const street = x.street1 ?? "";
                           const name = x.displayName ?? "";
-                          const city = x.city ?? "";
+                          const city = [x.city, x.postalCode].filter(Boolean).join(", ");
                           return {
                             id: x.id,
                             client,
@@ -1785,7 +1918,11 @@ function AreaProperties({
       </Card.Header>
       <Card.Body py="2" px="3">
         {view === "map" ? (
-          <PortfolioPropertyMap portfolioId={portfolioId} />
+          <PortfolioPropertyMap
+            portfolioId={portfolioId}
+            portfolioName={portfolioName}
+            bands={descendants}
+          />
         ) : failed ? (
           <Text fontSize="xs" color="red.fg">Couldn&rsquo;t load properties.</Text>
         ) : rows === null ? (
@@ -1799,6 +1936,21 @@ function AreaProperties({
           <VStack align="stretch" gap={1}>
             {adding && (
               <Box mb={2} p={2} borderWidth="1px" borderColor="border.emphasis" rounded="md" bg="bg.subtle">
+                {/* THE FILING RULE, AT THE MOMENT OF FILING. */}
+                {instructions && (
+                  <Box
+                    mb={2}
+                    px={2}
+                    py={1.5}
+                    rounded="sm"
+                    bg="purple.subtle"
+                    borderLeftWidth="3px"
+                    borderLeftColor="purple.solid"
+                  >
+                    <Text fontSize="2xs" color="fg.muted">What belongs here</Text>
+                    <Text fontSize="xs">{instructions}</Text>
+                  </Box>
+                )}
                 {candidates === null ? (
                   <HStack gap={2}><Spinner size="xs" /><Text fontSize="xs" color="fg.muted">Loading…</Text></HStack>
                 ) : candidates.length === 0 ? (
@@ -1873,7 +2025,11 @@ function AreaProperties({
                             <Text fontSize="sm" truncate>{c.client}</Text>
                             <HStack gap={1.5} wrap="wrap">
                               <Text fontSize="2xs" color="fg.muted" truncate>
-                                {[c.street, c.name, c.city].filter(Boolean).join(" · ")}
+                                {/* Same order as the list this adds to —
+                                    a picker that identifies a property
+                                    differently from the rows it joins is
+                                    its own small trap. */}
+                                {[c.name, c.street, c.city].filter(Boolean).join(" · ")}
                               </Text>
                               {c.inPortfolios.map((n) => (
                                 <Badge key={n} size="sm" variant="subtle" colorPalette="purple">
@@ -1894,18 +2050,33 @@ function AreaProperties({
                 {/* The heading is only worth drawing when there is more
                     than one group — with everything in this portfolio it
                     would label the obvious. */}
+                {/* THE SAME COLOUR AS THE MAP. The legend above the map
+                    and the headings in this list name the same portfolios,
+                    so they have to agree — a green chip on the map and a
+                    plain heading here would leave the reader matching
+                    names instead of glancing. "In no portfolio" takes no
+                    colour on purpose: it is the absence of a band, not a
+                    band of its own. */}
                 {(groups ?? []).length > 1 && (
-                  <Text
-                    fontSize="2xs"
-                    textTransform="uppercase"
-                    letterSpacing="wide"
-                    color="fg.muted"
+                  <HStack
+                    gap={1.5}
                     mt={g.id === portfolioId ? 0 : 2}
                     mb={0.5}
+                    align="center"
                   >
-                    {g.heading}
-                    <Text as="span" color="fg.subtle"> · {g.rows.length}</Text>
-                  </Text>
+                    {g.palette && (
+                      <Box w="8px" h="8px" rounded="full" bg={`${g.palette}.solid`} flexShrink={0} />
+                    )}
+                    <Text
+                      fontSize="2xs"
+                      textTransform="uppercase"
+                      letterSpacing="wide"
+                      color={g.id === "__unfiled__" ? "orange.fg" : "fg.muted"}
+                    >
+                      {g.heading}
+                      <Text as="span" color="fg.subtle"> · {g.rows.length}</Text>
+                    </Text>
+                  </HStack>
                 )}
                 <VStack align="stretch" gap={1}>
             {g.rows.map((r) => (
@@ -1937,18 +2108,23 @@ function AreaProperties({
                   <Text fontSize="sm" color="blue.fg" truncate _hover={{ textDecoration: "underline" }}>
                     {r.client?.displayName ?? r.displayName}
                   </Text>
-                  {/* THE ZIP RIDES WITH THE CITY, not as its own
-                      dot-separated field: "Chapel Hill 27516" is one
-                      answer to one question, and splitting it reads as
-                      two. It earns its width here because the city does
-                      not separate these rows — seventy-five of ninety
-                      properties are in Chapel Hill, across three zips,
-                      and the zip is what says which part of town. */}
+                  {/* WIDEST TO NARROWEST: which building, then where it
+                      is, then what town. The street used to lead, which
+                      put the most specific fact first and read as an
+                      address interrupted by a name.
+
+                      THE ZIP RIDES WITH THE CITY, comma-joined: "Chapel
+                      Hill, 27516" is one answer to one question, and a
+                      third `·` would read as a third field. It earns its
+                      width because the city does not separate these rows
+                      — seventy-five of ninety properties are in Chapel
+                      Hill across three zips, so the zip is the part that
+                      says which end of town. */}
                   <Text fontSize="2xs" color="fg.muted" truncate>
                     {[
-                      r.street1,
                       r.displayName,
-                      [r.city, r.postalCode].filter(Boolean).join(" "),
+                      r.street1,
+                      [r.city, r.postalCode].filter(Boolean).join(", "),
                     ]
                       .filter(Boolean)
                       .join(" · ")}

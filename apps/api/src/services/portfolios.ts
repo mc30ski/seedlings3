@@ -129,7 +129,7 @@ export const portfolios = {
         orderBy: [{ path: "asc" }],
         select: {
           id: true, name: true, tier: true, parentId: true, path: true, lat: true, lng: true,
-          sortOrder: true,
+          sortOrder: true, instructions: true, color: true,
           retiredAt: true,
           // Assignments are PEOPLE, not territory, and are not narrowed:
           // who looks after a portfolio is the point of the tab.
@@ -385,7 +385,14 @@ export const portfolios = {
   async rename(
     actorUserId: string,
     portfolioId: string,
-    input: { name?: string; tier?: string | null; lat?: number | null; lng?: number | null },
+    input: {
+      name?: string;
+      tier?: string | null;
+      lat?: number | null;
+      lng?: number | null;
+      instructions?: string | null;
+      color?: string | null;
+    },
   ) {
     // COORDINATES COME AS A PAIR OR NOT AT ALL. Half a point is not a
     // location — a lat with no lng would read as "configured" to the weather
@@ -411,7 +418,7 @@ export const portfolios = {
     return prisma.$transaction(async (tx) => {
       const before = await tx.portfolio.findUnique({
         where: { id: portfolioId },
-        select: { id: true, name: true, tier: true, lat: true, lng: true },
+        select: { id: true, name: true, tier: true, lat: true, lng: true, instructions: true, color: true },
       });
       if (!before) throw new ServiceError("NOT_FOUND", "Portfolio not found.", 404);
       const portfolio = await tx.portfolio.update({
@@ -420,13 +427,27 @@ export const portfolios = {
           ...(input.name !== undefined ? { name: input.name.trim() } : {}),
           ...(input.tier !== undefined ? { tier: input.tier?.trim() || null } : {}),
           ...(touchingPoint ? { lat: input.lat ?? null, lng: input.lng ?? null } : {}),
+          // An emptied box CLEARS the rule rather than leaving the old one
+          // in place — same convention as the coordinates above, and the
+          // alternative is a filing rule nobody can delete.
+          ...(input.instructions !== undefined
+            ? { instructions: input.instructions?.trim() || null }
+            : {}),
+          // Null is AUTO, not "no colour" — see the schema note.
+          ...(input.color !== undefined ? { color: input.color?.trim() || null } : {}),
         },
-        select: { id: true, name: true, tier: true, lat: true, lng: true },
+        select: { id: true, name: true, tier: true, lat: true, lng: true, instructions: true, color: true },
       });
       await writeAudit(tx, AUDIT.PORTFOLIO.UPDATED, actorUserId, {
         portfolioId,
-        before: { name: before.name, tier: before.tier, lat: before.lat, lng: before.lng },
-        after: { name: portfolio.name, tier: portfolio.tier, lat: portfolio.lat, lng: portfolio.lng },
+        before: {
+          name: before.name, tier: before.tier, lat: before.lat, lng: before.lng,
+          instructions: before.instructions, color: before.color,
+        },
+        after: {
+          name: portfolio.name, tier: portfolio.tier, lat: portfolio.lat, lng: portfolio.lng,
+          instructions: portfolio.instructions, color: portfolio.color,
+        },
       });
       return portfolio;
     });
