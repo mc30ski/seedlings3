@@ -65,12 +65,16 @@ export default function PortfolioPropertyMap({
   portfolioId,
   portfolioName,
   bands,
+  status,
 }: {
   portfolioId: string;
   portfolioName: string;
   /** The portfolios beneath this one, deepest first. Empty for a leaf, and
    *  then the map is a single colour — there is nothing to tell apart. */
   bands: MapBand[];
+  /** "ALL" (the default) pins archived properties too. Owned by the panel
+   *  so one toggle moves the list and the map together. */
+  status: "ACTIVE" | "ALL";
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -91,6 +95,9 @@ export default function PortfolioPropertyMap({
   // Stops the batch loop when the component goes away mid-flight — each
   // batch is seconds long, so this is a real window, not a formality.
   const liveRef = useRef(true);
+  /** The points the current view was fitted to, so a resize can re-fit to
+   *  them instead of leaving a full-page map zoomed for a 420px strip. */
+  const frameRef = useRef<Array<[number, number]>>([]);
 
   useEffect(() => {
     liveRef.current = true;
@@ -105,14 +112,16 @@ export default function PortfolioPropertyMap({
     loopFor.current = null;
     (async () => {
       try {
-        const res = await apiGet<PointsResponse>(`/api/properties/points?portfolioId=${encodeURIComponent(portfolioId)}`);
+        const res = await apiGet<PointsResponse>(`/api/properties/points?portfolioId=${encodeURIComponent(portfolioId)}&status=${status}`);
         if (!cancelled) setData(res);
       } catch {
         if (!cancelled) setFailed(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [portfolioId]);
+    // `status` too: switching archived off must re-read, or the map keeps
+    // pins the list beside it has already dropped.
+  }, [portfolioId, status]);
 
   // One fill loop per portfolio, ever. A ref rather than an effect dependency:
   // the loop writes `data` on every batch, so any dep derived from `data`
@@ -134,7 +143,7 @@ export default function PortfolioPropertyMap({
         while (liveRef.current) {
           const res = await apiPost<{ resolved: Array<{ id: string; lat: number; lng: number }>; remaining: number }>(
             "/api/properties/points/resolve",
-            { portfolioId, limit: 5 },
+            { portfolioId, limit: 5, status },
           );
           // NOT GATED ON AN EFFECT-SCOPED `cancelled` FLAG. It was, and
           // the batch's results were being thrown away: `setResolving(true)`
@@ -181,7 +190,7 @@ export default function PortfolioPropertyMap({
     // it folds in, and depending on `resolving` would re-run it the moment
     // it sets its own flag. The ref above is what keeps it to one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portfolioId, !!data]);
+  }, [portfolioId, status, !!data]);
 
   /**
    * Which band each point belongs to, and how many are in each.
@@ -313,6 +322,7 @@ export default function PortfolioPropertyMap({
         ...placed.map((p) => [p.lat!, p.lng!] as [number, number]),
         ...(c ? [[c.lat, c.lng] as [number, number]] : []),
       ];
+      frameRef.current = framePoints;
       if (framePoints.length > 0) {
         const bounds = L.latLngBounds(framePoints);
         mapRef.current.fitBounds(bounds, { padding: [28, 28], maxZoom: 15 });
@@ -327,15 +337,45 @@ export default function PortfolioPropertyMap({
     // both change what should be on screen and neither changes `data`.
   }, [data, hidden, bandOf, paletteOf]);
 
-  // Leaflet measures its container ONCE. Growing the box to full page
-  // without telling it leaves the tiles rendered at the old size, which
-  // looks like a half-loaded map rather than a resized one.
+  /**
+   * TELL LEAFLET THE BOX CHANGED SIZE — observed, never timed.
+   *
+   * Leaflet caches the container size and only fetches tiles for the
+   * viewport it believes in. Grow the box to full page without saying so
+   * and you get the markers (re-projected from coordinates) on a blank
+   * background (no tiles requested for the new area) — which is exactly
+   * what going full-page looked like.
+   *
+   * This WAS a 60ms setTimeout after the `expanded` flip, which is a guess
+   * at when the browser finishes laying out, and the guess is the bug: the
+   * callback can land before the box has its new height, Leaflet re-reads
+   * the OLD size, and nothing ever corrects it. A ResizeObserver fires on
+   * the actual size change, however long that takes and whatever caused it
+   * — expanding, a window resize, a phone rotating.
+   *
+   * Re-fitting is part of it. Without it a full-page map keeps the zoom
+   * chosen for a 420px strip, so the pins sit in a tiny clump in the
+   * middle of all that new space.
+   */
   useEffect(() => {
-    const t = setTimeout(() => {
-      try { mapRef.current?.invalidateSize(); } catch { /* not mounted */ }
-    }, 60);
-    return () => clearTimeout(t);
-  }, [expanded]);
+    const host = hostRef.current;
+    if (!host || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const map = mapRef.current;
+      const L = leafletRef.current;
+      if (!map || !L) return;
+      try {
+        map.invalidateSize();
+        if (frameRef.current.length > 0) {
+          map.fitBounds(L.latLngBounds(frameRef.current), { padding: [28, 28], maxZoom: 15 });
+        }
+      } catch {
+        // Mid-teardown. The next draw sets it right.
+      }
+    });
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, []);
 
   // Escape leaves full-page. A map covering the window with its own close
   // button somewhere in the corner is a trap on a laptop.
@@ -375,12 +415,14 @@ export default function PortfolioPropertyMap({
       {...(expanded
         ? {
             position: "fixed" as const,
-            inset: 0,
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
             zIndex: 1400,
             bg: "bg.panel",
             p: 3,
-            display: "flex",
-            flexDirection: "column" as const,
+            overflow: "auto" as const,
           }
         : {})}
     >
@@ -456,11 +498,36 @@ export default function PortfolioPropertyMap({
         </HStack>
       )}
 
-      <Box position="relative" flex={expanded ? "1" : undefined} minH={0}>
+      {/* AN EXPLICIT HEIGHT, MEASURED FROM THE VIEWPORT.
+          This was a flex child at `flex: 1` with the map absolutely
+          positioned inside it, and the map came out TWO PIXELS TALL —
+          measured, not guessed. Percentage and flex heights both resolve
+          against a parent chain that has to have committed to a height
+          first, and one link in that chain had not, so the whole thing
+          collapsed to its content.
+          `100vh` minus the chrome is arithmetic the browser can always
+          do. Less elegant, no ambiguity. The chrome is the 12px padding
+          top and bottom, the legend row and the footer line. */}
+      <Box position="relative">
         <Box
           ref={hostRef}
-          h={expanded ? "full" : "420px"}
+          h={expanded ? "calc(100vh - 118px)" : "420px"}
           w="full"
+          /**
+           * TILES MUST NOT BE CONSTRAINED BY THE IMAGE RESET.
+           *
+           * A tile is a 256px <img> inside a chain of zero-width absolute
+           * panes, so `max-width: 100%` resolves it to ZERO — present in
+           * the DOM, `leaflet-tile-loaded`, fully opaque, and nought
+           * pixels wide. That is what "the map expands and shows nothing"
+           * actually was: measured at width 0, height 256.
+           *
+           * Leaflet ships `.leaflet-container img { max-width: none }` for
+           * exactly this reason and it was losing here, so the rule is
+           * asserted where it cannot be outranked — scoped to this host,
+           * so no other image in the app is affected.
+           */
+          css={{ "& img": { maxWidth: "none", maxHeight: "none" } }}
           rounded="md"
           borderWidth="1px"
           borderColor="border"

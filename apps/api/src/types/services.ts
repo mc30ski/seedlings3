@@ -584,6 +584,11 @@ export type PropertyMapScope = {
   portfolioWhere?: Record<string, unknown>;
   portfolioSubtreePath?: string | "none";
   assignedToUserId?: string;
+  /** Absent or "ALL" INCLUDES ARCHIVED, which is the default everywhere
+   *  here: an archived property still sits in a portfolio and still counts
+   *  toward its rollup, so hiding it by default would make the map
+   *  disagree with the number above it. The viewer opts out. */
+  status?: "ACTIVE" | "ARCHIVED" | "ALL";
 };
 
 export type ServicesProperties = {

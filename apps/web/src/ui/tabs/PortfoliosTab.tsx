@@ -1640,6 +1640,22 @@ function AreaProperties({
   // geographically wants the map every time; somebody reconciling a list
   // wants the list. Persisted so neither has to re-pick on every portfolio.
   const [view, setView] = usePersistedState<"list" | "map">("areasTab_propView", "list");
+  /**
+   * ARCHIVED PROPERTIES ARE IN BY DEFAULT, and the toggle is an opt-out.
+   *
+   * An archived property is still in the portfolio and still counts toward
+   * the number on the tree row above, so hiding it by default would make
+   * the panel disagree with its own heading for no stated reason. It is
+   * also exactly what somebody auditing a territory wants to see.
+   *
+   * One flag for BOTH views, because they answer the same question in two
+   * shapes — a list and a map that disagree about which properties exist
+   * is worse than either being wrong on its own.
+   */
+  const [withArchived, setWithArchived] = usePersistedState<boolean>(
+    "areasTab_propArchived",
+    true,
+  );
   // `displayName` ALONE DOES NOT IDENTIFY A PROPERTY. Ninety of the
   // ninety-three in production are called "Main House", so the list read as
   // one name repeated down the page with a city beside it. The client and
@@ -1733,10 +1749,13 @@ function AreaProperties({
         // Strip a property's last portfolio and it simply vanished.
         // Fetched alongside rather than merged server-side so the ordinary
         // portfolio costs exactly the one request it always did.
+        const st = withArchived ? "ALL" : "ACTIVE";
         const [res, none] = await Promise.all([
-          apiGet<any>(`/api/properties?portfolioId=${encodeURIComponent(portfolioId)}&limit=500`),
+          apiGet<any>(
+            `/api/properties?portfolioId=${encodeURIComponent(portfolioId)}&status=${st}&limit=500`,
+          ),
           isSoleRoot
-            ? apiGet<any>("/api/properties?portfolioId=none&limit=500")
+            ? apiGet<any>(`/api/properties?portfolioId=none&status=${st}&limit=500`)
             : Promise.resolve([]),
         ]);
         if (!cancelled) setRows([...unwrap(res), ...unwrap(none)]);
@@ -1747,7 +1766,7 @@ function AreaProperties({
       }
     })();
     return () => { cancelled = true; };
-  }, [portfolioId, reloadKey, isSoleRoot]);
+  }, [portfolioId, reloadKey, isSoleRoot, withArchived]);
 
   /**
    * GROUPED BY WHERE EACH PROPERTY ACTUALLY SITS.
@@ -1841,6 +1860,25 @@ function AreaProperties({
             {rows ? <Text as="span" color="fg.muted" fontWeight="normal"> · {rows.length}</Text> : null}
           </Text>
           <HStack gap={1}>
+            {/* THE ARCHIVED OPT-OUT, beside List/Map because it governs
+                both. Labelled by what it DOES rather than by its state —
+                "Hide archived" says what the click will cause, which is
+                what a button has to say; a chip reading "Archived" leaves
+                you guessing whether that is the current filter or the
+                thing you are about to do. */}
+            <Button
+              size="xs"
+              variant={withArchived ? "outline" : "solid"}
+              colorPalette={withArchived ? "gray" : "orange"}
+              onClick={() => setWithArchived((v) => !v)}
+              title={
+                withArchived
+                  ? "Archived properties are shown — click to hide them"
+                  : "Archived properties are hidden — click to show them"
+              }
+            >
+              {withArchived ? "Hide archived" : "Archived hidden"}
+            </Button>
             {mayManage && view === "list" && (
               <Button
                 size="xs"
@@ -1922,6 +1960,7 @@ function AreaProperties({
             portfolioId={portfolioId}
             portfolioName={portfolioName}
             bands={descendants}
+            status={withArchived ? "ALL" : "ACTIVE"}
           />
         ) : failed ? (
           <Text fontSize="xs" color="red.fg">Couldn&rsquo;t load properties.</Text>

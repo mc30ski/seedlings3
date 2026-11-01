@@ -689,7 +689,7 @@ export default async function customerRoutes(app: FastifyInstance) {
   // with nothing repeated. That is also why no cron and no backfill script
   // are needed: the data fills in as the feature is used.
   app.get("/properties/points", req_clientsView, async (req: any) => {
-    const { portfolioId } = (req.query || {}) as { portfolioId?: string };
+    const { portfolioId, status } = (req.query || {}) as { portfolioId?: string; status?: string };
 
     let portfolioSubtreePath: string | "none" | undefined;
     if (portfolioId === "none") portfolioSubtreePath = "none";
@@ -706,6 +706,10 @@ export default async function customerRoutes(app: FastifyInstance) {
         ignoreLens: !!portfolioSubtreePath,
       }),
       portfolioSubtreePath,
+      // Absent means ALL, so archived properties are pinned unless the
+      // viewer switches them off — the same default as the list beside it,
+      // because both sit behind one toggle.
+      status: status as any,
       assignedToUserId: await assignedScopeFor(req),
       portfolioId: portfolioId && portfolioId !== "none" ? String(portfolioId) : undefined,
     });
@@ -719,7 +723,7 @@ export default async function customerRoutes(app: FastifyInstance) {
    * calls this repeatedly and watches `remaining` go to zero.
    */
   app.post("/properties/points/resolve", req_clientsView, async (req: any) => {
-    const b = (req.body || {}) as { portfolioId?: string; limit?: number };
+    const b = (req.body || {}) as { portfolioId?: string; limit?: number; status?: string };
 
     let portfolioSubtreePath: string | "none" | undefined;
     if (b.portfolioId === "none") portfolioSubtreePath = "none";
@@ -736,6 +740,9 @@ export default async function customerRoutes(app: FastifyInstance) {
         ignoreLens: !!portfolioSubtreePath,
       }),
       portfolioSubtreePath,
+      // Geocode only what is on screen: with archived hidden there is no
+      // reason to spend three seconds an address placing them.
+      status: b.status as any,
       assignedToUserId: await assignedScopeFor(req),
       limit: Math.min(Math.max(Number(b.limit) || 5, 1), 10),
     });
