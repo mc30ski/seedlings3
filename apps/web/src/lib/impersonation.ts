@@ -331,60 +331,13 @@ export async function setAreaLens(portfolioId: string | null, name?: string | nu
  *  the open tab, the same way it does for a perspective change. */
 export const AREA_LENS_CHANGED_EVENT = "seedlings3:portfolio-lens-changed";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MONEY BASIS — which question a portfolio-filtered money figure answers.
-//
-//   "today"    — everything these properties have ever earned. The default,
-//                because it is what every other tab means by the same
-//                filter: tag a property into a zone and its history comes
-//                with it.
-//   "happened" — only what was earned while the property was in this
-//                portfolio. Never moves when you reorganise.
-//
-// Nothing is written either way; both read data that already exists. See
-// apps/api/src/lib/moneyBasis.ts and docs/features/portfolio-money-basis.md.
-//
-// PER VIEWER, not per business — a filter, not a setting, so it lives here
-// beside the lens rather than in Settings.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type MoneyBasis = "happened" | "today";
-const MONEY_BASIS_STORAGE_KEY = "seedlings_moneyBasis";
-
-export function getMoneyBasis(): MoneyBasis {
-  if (typeof window === "undefined") return "today";
-  try {
-    return localStorage.getItem(MONEY_BASIS_STORAGE_KEY) === "happened" ? "happened" : "today";
-  } catch {
-    return "today";
-  }
-}
-
-/**
- * Change the basis, then throw away every cached answer.
- *
- * Same purge-and-refetch as `setAreaLens`, and for the same reason: every
- * money figure on screen was fetched under the OUTGOING basis, so leaving
- * them up would show two bases at once with one label. That is the exact
- * failure this feature exists to prevent.
- */
-export async function setMoneyBasis(basis: MoneyBasis): Promise<void> {
-  if (typeof window === "undefined") return;
-  try {
-    // Written either way rather than cleared for the default, so "chose
-    // today" and "never chose" look the same to every reader — there is
-    // no third state to get wrong.
-    localStorage.setItem(MONEY_BASIS_STORAGE_KEY, basis);
-  } catch {
-    /* keep going — the header is read from storage on the next request */
-  }
-  await purgeCaches();
-  try {
-    window.dispatchEvent(new Event(AREA_LENS_CHANGED_EVENT));
-  } catch {
-    /* no listener is survivable */
-  }
-}
+// THE MONEY BASIS LIVED HERE and is gone. An `X-Money-Basis` header let a
+// viewer choose between grouping money by where work is organised NOW and
+// where it sat when it completed. The second had no referent once a
+// property had changed zone more than once — the total matched no
+// arrangement that was ever real — so there is one answer now and nothing
+// to choose. The per-visit rows are still written; see
+// apps/api/src/lib/occurrencePortfolio.ts for why.
 
 /** Drop cached API responses. They were fetched under the OUTGOING lens,
  *  so every one of them may be an answer the caller is no longer entitled

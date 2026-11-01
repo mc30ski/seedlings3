@@ -335,17 +335,67 @@ describe("[G12, G14, G17, G22, G26] portfolio invariants", () => {
     ).not.toMatch(/^\s*frozenAt\s+DateTime/m);
   });
 
-  it.skipIf(!hasAreas())("G14 — nothing reparents a portfolio", () => {
-    const svc = apiFiles().map(read).join("\n");
+  it.skipIf(!hasAreas())("G14 — only the move service reparents, and it repaths the subtree", () => {
+    /**
+     * WHAT THIS USED TO SAY. "Nothing reparents a portfolio" — the
+     * operation was refused outright, because moving a node rewrites the
+     * materialized path of everything beneath it.
+     *
+     * The rewrite is still true. The conclusion is not, for two reasons
+     * that both changed: nothing persists a path (the joins key on id,
+     * grants resolve per request, the lens carries an id), and the money
+     * view whose whole promise was that a past total could not move was
+     * removed. So the rule is no longer "never" — it is "in ONE place,
+     * and that place must finish the job".
+     *
+     * THE FAILURE THIS NOW GUARDS is a partial rewrite. A node whose path
+     * no longer matches its parent's prefix does not error: it silently
+     * matches no portfolio-scoped query, and every view of it goes empty
+     * with no indication why. So a `parentId` write anywhere other than
+     * `move()` is the bug, because nowhere else repaths descendants.
+     */
+    const svc = read(path.join(API, "services", "portfolios.ts"));
+    expect(svc, "portfolios service must exist to own this rule").not.toBe("");
+
+    // Writes to `parentId` live in exactly two places: `create` (a new
+    // node has no descendants to repath) and `move`.
+    const writers = apiFiles()
+      .filter((f) => !/services[/\\]portfolios\.ts$/.test(f))
+      .filter((f) => /portfolio\.update\([\s\S]*?data:\s*\{[^}]*parentId/.test(read(f)))
+      .map((f) => path.relative(path.join(API, ".."), f));
     expect(
-      svc,
-      "Portfolios are copy-and-retired, never moved — moving one restates its " +
-        "parent's history.",
-      // `parentId: true` inside a `select` is a field selection, not a move.
-      // The original pattern was `portfolio.update([^)]*parentId`, and `[^)]*`
-      // happily spanned the whole call into a `select` block — so a perfectly
-      // safe rename that merely READ parentId back tripped it.
-    ).not.toMatch(/portfolio\.update\([\s\S]*?data:\s*\{[^}]*parentId/);
+      writers,
+      "Reparenting belongs in portfolios.move(), which is the only thing " +
+        "that repaths the subtree. A parentId write elsewhere leaves " +
+        "descendants on a path that matches nothing — no error, every " +
+        "scoped view of them simply empty.",
+    ).toEqual([]);
+
+    // AND THE ONE PLACE STILL DOES THE WORK. Pointing the gate at a
+    // chokepoint is worth nothing while the chokepoint has stopped
+    // checking.
+    const move = svc.slice(svc.indexOf("async move("), svc.indexOf("async reorder("));
+    expect(move, "move() not found").not.toBe("");
+    expect(
+      move,
+      "move() must repath every descendant, not only the node — the path " +
+        "is what every portfolio-scoped query matches on.",
+    ).toMatch(/path:\s*\{\s*startsWith:\s*node\.path\s*\}/);
+    expect(
+      move,
+      "move() must refuse a move into the node's own subtree, which would " +
+        "detach the branch from the tree.",
+    ).toMatch(/CYCLE/);
+    expect(
+      move,
+      "move() must refuse to create a second root: portfolio scoping is a " +
+        "path PREFIX test and two trees cannot be expressed as one prefix.",
+    ).toMatch(/ROOT_CANNOT_MOVE/);
+    expect(
+      move,
+      "move() must record who gains and loses sight of the subtree — " +
+        "grants resolve per request, so nothing else writes that down.",
+    ).toMatch(/visibilityGained/);
   });
 
   it.skipIf(!hasAreas())("G17 — there is no informational 'home portfolio' to mistake for a grant", () => {

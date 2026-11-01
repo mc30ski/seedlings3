@@ -1,157 +1,85 @@
 ---
 name: project_portfolio_money_basis
-description: "The portfolio filter means two things for money — BUILT 2026-10-31, dev only, NOT deployed. Default 'as organized now'; toggle in the lens panel; purple strip goes loud/quiet per tab; filtered tabs carry a marker. Spec: docs/features/portfolio-money-basis.md."
+description: "The money basis was BUILT 2026-10-31 and REMOVED 2026-11-01. Money is grouped by current membership, always. 'As it happened' has no referent once a property moves twice — do not rebuild it. The per-visit frozen rows ARE still written."
 metadata:
   node_type: memory
   type: project
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-10-31T21:12:38.544Z
+  modified: 2026-11-01T00:00:00.000Z
 ---
 
-**BUILT 2026-10-31. Dev only — NOT deployed, nothing committed.** Canonical
-spec: [`docs/features/portfolio-money-basis.md`](../../../dev/seedlings3/docs/features/portfolio-money-basis.md).
-Builds on [[project_portfolios_design]].
+**BUILT 2026-10-31, DEPLOYED, then REMOVED 2026-11-01** — four days.
+Recorded so nobody rebuilds it. Canonical spec now:
+[`docs/features/portfolios.md`](../../../dev/seedlings3/docs/features/portfolios.md).
+See [[project_portfolios_design]].
 
-## The problem it solves
+## What it was
 
-The portfolio filter answered two different questions and said neither.
-Properties/Clients/Jobs filter on membership **as it is now**; Payments and
-Statistics filtered on membership **as it was when the visit completed**.
-Tag 35 properties into a zone and the property list says 35 while the money
-says $50 — both true, different questions, one panel.
+An `X-Money-Basis: happened | today` header let each viewer choose what a
+portfolio-filtered money figure meant:
 
-Only money is timestamped, which is why only money has a second answer.
+- **today** — all payments for the properties currently in this portfolio
+- **happened** — counted where the visit was when it completed, read from
+  its own frozen `JobOccurrencePortfolio` rows
 
-## What shipped
+It replaced a 527-row backfill, which was the right call at the time: the
+same screen from a query instead of rewriting history.
 
-**Two bases, chosen per viewer.** Nothing is rewritten either way; both
-read data that already exists, so switching is a reading choice.
+## Why it was removed
 
-- **"Work as organized now"** (DEFAULT) — all payments for the properties
-  currently in this portfolio, whenever earned.
-  `Payment → occurrence → job → property → PropertyPortfolio`
-- **"Work as it happened"** — counted where the visit was when it
-  completed. `Payment → occurrence → JobOccurrencePortfolio`
+The operator's argument, and it is better than the one I was defending:
+**"as it happened" has no referent.** A property in Zone A in March, B in
+May and C in August produces an annual Zone A total made of whichever
+visits happened to complete while it was in A — a smear across every
+arrangement that ever existed, matching no org chart that was ever real.
 
-**Transport:** `X-Money-Basis: happened | today` beside the lens header,
-defaulting to `today` when absent or unrecognised. Parsed in `rbac.ts` onto
-`req.moneyBasis` — deliberately **not** on `Principal`, so `can()` can
-never see it. A basis selects rows; it grants nothing.
+"As organized now" and "as of a snapshot" are each ONE coherent
+arrangement applied consistently. "As it happened" is the only one that
+cannot name the arrangement it used.
 
-**Helpers:** `occurrencePortfolioWhere` and `occurrencePaymentPortfolioWhere`
-in `lib/portfolioScope.ts`. Six endpoints: `/payments`, `/payments/pending`,
-`/payment-requests/outstanding`, `/statistics`, `/operations`,
-`/dashboard-summary/aggregate`. All six are rooted on JobOccurrence.
+**And the data settled it harder than the argument.** Every visit
+completed before the tree was built points at the root, so on real
+production data "as it happened" reported the entire history to the root
+and nothing to any zone. Not merely muddy — empty.
 
-**Proven on real rows**, not reasoned: a principal confined to one zone saw
-12 payments / $1706 under both bases; after moving one property out,
-"happened" stayed $1706 and "today" dropped to $1018.
+## What replaced it
 
-## This REPLACED a backfill, and that is the point
+Nothing. One grouping, always current. The strip still says *"money as
+organized now"* on money tabs, because with nothing to switch people stop
+thinking about it and are then surprised when re-tagging moves last
+month's total.
 
-A `backfillRootOnlyHistory` was designed, built, tested and **deleted** the
-same week. It would have moved 527 completed visits off the root onto their
-new zones so the zones showed history. The basis gets the identical screen
-by changing a query instead of 527 rows — reversible, auditless, nothing
-rewritten. **Do not rebuild it.**
+Snapshots were the planned home for historical grouping and were
+**deliberately punted** the same day — not worth it at this scale, add
+later if it matters.
 
-## Where the controls are
+## THE ROWS ARE STILL WRITTEN, AND THAT IS LOAD-BEARING
 
-- **Toggle** — the lens dropdown, under a divider, heading "MONEY SHOWS".
-  Two rows: *Work as organized now* / *Work as it happened*. Greyed with an
-  explanation when no lens is set, because unlensed both bases agree.
-  Changing it purges cached responses, same as changing the lens.
-- **Always-visible label** — the purple strip appends "· money **as
-  organized now**" on money tabs, and the INSIGHTS note carries the same
-  clause where that card exists. The guarantee lives in the strip because
-  **the Payments tab has no INSIGHTS card** — a label that is sometimes
-  absent is the failure this feature exists to prevent.
+`lib/occurrencePortfolio.ts` still freezes a visit's portfolios at
+completion even though **nothing reads them for grouping any more**. A
+future session will find a table nobody selects from and reasonably want
+to delete it. Don't.
 
-## The strip now tells the truth per tab (same build)
+Current membership can always be re-derived; past attribution cannot.
+Stopping the capture is the irreversible half, and it silently forfeits
+the whole period it is off with no way to backfill. The file says this at
+the top. Deleting it is a product decision, not a cleanup.
 
-It renders ONCE above the tab row, so it speaks for whatever is below. It
-used to say "showing Durham only" on all 21 tabs including the 11 it does
-not touch — the whole company's Ledger read as one portfolio's.
+## Also removed with it
 
-- **Loud** (filled purple, 6px bar, strong text) when the open tab is
-  actually narrowed.
-- **Quiet** (transparent, thin outline, muted) otherwise, reading
-  "— this tab shows the whole business".
-- Same box, same height either way, so the row never reflows.
-- `leadsOnly` stays quiet: that person holds everything company-wide and is
-  merely recorded as leading a portfolio. Nothing is hidden from them.
-- **Filtered tabs carry a purple Layers glyph** in the tab row while a
-  filter is in force — `InnerTab.portfolioFiltered`, a TRAILING marker, never
-  a replacement for the tab's own icon. The strip speaks for the tab you are
-  on; the glyph answers "which others are affected" before you click.
+The toggle in the lens panel ("MONEY SHOWS"), `lib/moneyBasis.ts`, the
+basis parameter on `occurrencePortfolioWhere` /
+`occurrencePaymentPortfolioWhere`, the paired unit tests, and the
+`getMoneyBasis` / `setMoneyBasis` helpers in the web.
 
-## WHICH TABS THE FILTER TOUCHES — measured, in code
+## What is still true from that work
 
-One list, `apps/web/src/lib/portfolioFilteredTabs.ts`, read by both the
-strip and the tab row. **Measured from the API's call sites**, because ten
-route files import `portfolioWhere` and never call it — reading imports
-gives the wrong answer.
+The two INSIGHTS fixes shipped with it and stand: **processor fees** read
+`processorFeeAmount` (Venmo/Stripe) rather than `platformFeeAmount` (the
+contractor percentage), and **expenses** come from `BusinessExpense`, not
+`invoiceCharges` — the Ledger is the only deduction. Both tiles are
+capability-gated and return `null` rather than a quietly-wrong zero.
 
-**Filtered (10):** jobs · services · clients · properties · payments ·
-collections · statistics · home · tasks · displays
-**Of those, money (5):** payments · collections · statistics · home · tasks
-**NOT filtered:** Ledger · Reconcile · Forecast · Users · Crews · Equipment
-· Supplies · Vehicles · Documents · Policies · Settings
-
-Ledger and Reconcile are `books.view`, which is global-only by design. The
-popover had claimed the Ledger WAS narrowed and omitted Payments and
-Statistics — wrong in both directions; corrected.
-
-**G50** guards the list: the strip must be told the open tab and act on it,
-`index.tsx` must pass it, every claimed tab must name the endpoint that
-makes it true, `MONEY_TABS ⊆ FILTERED_TABS`, and ledger/reconcile/forecast
-may never appear. Six negative controls, all re-run after the list moved
-out of the notice into the shared lib.
-
-## Decisions, settled with the operator
-
-1. Default **"as organized now"** — matches every other tab.
-2. **Per viewer**, not per business. A filter, not a setting.
-3. **Same default for a portfolio-scoped user.** One default, one meaning.
-4. **Keep storing both.** From the frozen rows the current-membership view
-   is always derivable; the reverse is impossible.
-5. **Forecast stays unfiltered** and now says so.
-
-## Two INSIGHTS money bugs, found and fixed the same day
-
-Spotted by the operator on PRODUCTION: "Expenses $0, Processor fees $0 —
-this absolutely cannot be correct." It was not. Both tiles on
-`GET /operations` read the wrong column.
-
-**Processor fees** summed `payment.platformFeeAmount` — the percentage
-charged to CONTRACTORS — under the label for the Venmo/Stripe cut, which
-is `processorFeeAmount`. With no contractor splits in the window it
-honestly reported $0 of the wrong thing while $11.63 of real Venmo fees
-went unshown. Both are material all-time ($329.25 and $321.57), so both
-now have their own tile under their own name.
-
-**Expenses** summed `invoiceCharges` — materials billed TO THE CLIENT,
-which is revenue-side and never a deduction — and subtracted it to make
-Net. The real $145.24 of fuel and meals sat in `BusinessExpense`, unread.
-Per [[reference_expenses_charges_supplies]] the Ledger is the only
-deduction. Now two tiles — **Job charges** and **Ledger expenses** — and
-Net comes off the ledger.
-
-Production's last 14 days go from `Expenses $0 · Net $885 · Processor $0`
-to `Job charges $0 · Ledger $145.24 · Net $739.76 · Processor $11.63`.
-
-**The ledger is capability-gated.** `/operations` is `reports.business`;
-the ledger is `books.view`, and Portfolio Lead holds the first and not the
-second. So `totalLedgerExpenses` and `netRevenue` are **null** for them and
-the UI hides both tiles — a Net that silently deducts nothing would be a
-different number wearing the same label.
-
-Every other tile on that card was checked against production and
-reconciles. It was two wrong field references, not an untrustworthy card.
-
-## Open
-
-- Nothing is deployed.
-- **Full Playwright HAS now been run** — see
-  [[project_e2e_full_run_2026_10_31]]. None of the 24 failures came from
-  this work, proven by stashing; 20 of them were fixed the same day.
+The per-tab loud/quiet strip and the filtered-tab markers also stand;
+the canonical list of which tabs the filter touches is still
+`apps/web/src/lib/portfolioFilteredTabs.ts`, guarded by G50.

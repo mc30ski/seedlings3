@@ -299,7 +299,7 @@ function flatten(nodes: Node[]): Node[] {
   // basis that shipped on 2026-10-31 the default view is "as organized
   // now", which reads the property's CURRENT portfolio — so each zone
   // shows its full history immediately, without a single historical row
-  // being rewritten. See docs/features/portfolio-money-basis.md.
+  // being rewritten. See docs/features/portfolios.md.
   console.log(
     "\nHISTORY\n  Completed visits are not touched. With the money basis defaulting to\n" +
       "  \"as organized now\", each portfolio still shows its full revenue history —\n" +

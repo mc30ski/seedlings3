@@ -36,10 +36,8 @@ import {
   getAreaLens,
   setAreaLens,
   getAreaLensName,
-  getMoneyBasis,
   AREA_LENS_CHANGED_EVENT,
   type AreaLensOption,
-  type MoneyBasis,
 } from "@/src/lib/impersonation";
 
 export default function PortfolioScopeNotice({
@@ -72,7 +70,6 @@ export default function PortfolioScopeNotice({
   const [lensName, setLensName] = useState<string | null>(null);
   const [lensTrail, setLensTrail] = useState<string[] | null>(null);
   const [showDetail, setShowDetail] = useState(false);
-  const [moneyBasis, setMoneyBasis] = useState<MoneyBasis>("today");
 
   // Seed the lens from a single portfolio grant, once per browser. Mounted
   // app-wide, so it runs wherever somebody lands first.
@@ -85,7 +82,6 @@ export default function PortfolioScopeNotice({
       setLensName(getAreaLensName());
       // Same event, because the basis changes through the same panel and
       // a strip showing one of them stale is worse than showing neither.
-      setMoneyBasis(getMoneyBasis());
     };
     read();
     window.addEventListener(AREA_LENS_CHANGED_EVENT, read);
@@ -235,12 +231,19 @@ export default function PortfolioScopeNotice({
           `align="start"` because the glyph belongs beside the FIRST line,
           not floating against the middle of a wrapped block. */}
       <HStack gap={2} align="start">
+        {/* CENTRED ON THE FIRST LINE, by giving the glyph a box exactly one
+            line tall and centring inside it. A hand-tuned `mt` was doing
+            this by eye and sat a couple of pixels low; this is the same
+            arithmetic the browser is already doing for the text, so the
+            two agree at any font size and stay agreeing when the text
+            wraps to three lines. 15px = 12px text × the `short` line
+            height. */}
         <Box
           flexShrink={0}
           color={loud ? "purple.fg" : "fg.muted"}
-          lineHeight="0"
-          // Sits on the cap height of the first line rather than its box.
-          mt="3px"
+          h="15px"
+          display="flex"
+          alignItems="center"
         >
           <Layers size={13} />
         </Box>
@@ -338,15 +341,16 @@ export default function PortfolioScopeNotice({
               {" — this tab shows the whole business"}
             </Text>
           )}
-          {/* AND WHICH MONEY, on the tabs that show any. The portfolio
-              filter means one thing for a property count and two things
-              for a revenue figure, because only money is timestamped. */}
+          {/* AND WHICH MONEY, on the tabs that show any.
+              The clause used to name which of two bases was in force.
+              There is one now, so this states the rule rather than a
+              choice — still worth saying, because with nothing to switch
+              people stop thinking about it and are then surprised when
+              re-tagging a property moves last month's total. */}
           {tabShowsMoney(activeTab) && (
             <Text as="span">
               {" · money "}
-              <Text as="span" fontWeight="bold">
-                {moneyBasis === "today" ? "as organized now" : "as it happened"}
-              </Text>
+              <Text as="span" fontWeight="bold">as organized now</Text>
             </Text>
           )}
         </Text>

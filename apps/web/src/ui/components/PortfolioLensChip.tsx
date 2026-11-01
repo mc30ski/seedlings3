@@ -27,18 +27,14 @@ import { apiGet } from "@/src/lib/api";
 import {
   getAreaLens,
   setAreaLens,
-  getMoneyBasis,
-  setMoneyBasis,
   AREA_LENS_CHANGED_EVENT,
   type AreaLensOption,
-  type MoneyBasis,
 } from "@/src/lib/impersonation";
 
 export default function PortfolioLensChip() {
   const [open, setOpen] = useState(false);
   const [portfolios, setAreas] = useState<AreaLensOption[]>([]);
   const [active, setActive] = useState<string | null>(null);
-  const [basis, setBasis] = useState<MoneyBasis>("today");
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -55,7 +51,6 @@ export default function PortfolioLensChip() {
 
   useEffect(() => {
     setActive(getAreaLens());
-    setBasis(getMoneyBasis());
     let cancelled = false;
     (async () => {
       try {
@@ -81,7 +76,7 @@ export default function PortfolioLensChip() {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
     }
-    function handleChanged() { setActive(getAreaLens()); setBasis(getMoneyBasis()); }
+    function handleChanged() { setActive(getAreaLens()); }
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("keydown", handleKey);
     window.addEventListener(AREA_LENS_CHANGED_EVENT, handleChanged);
@@ -238,59 +233,11 @@ export default function PortfolioLensChip() {
             />
           ))}
 
-          {/* WHAT THE MONEY SHOWS, in the same panel as the portfolio.
-              The basis is a property OF the lens — it decides what the
-              narrowing means for money — so it belongs with it and not
-              duplicated onto three money tabs, where the three copies can
-              disagree.
-
-              Everything else the filter touches is a "what is in here now"
-              question with one answer. Only money has a second one,
-              because only money is timestamped: tag 35 properties into a
-              zone and the property count says 35 immediately while the
-              revenue says $50, since that work was earned before the zone
-              existed. Both are true. This is which one you are reading. */}
-          <Box borderTopWidth="1px" borderColor="border" mt={1} pt={1}>
-            <Box px={3} py={1.5}>
-              <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
-                Money shows
-              </Text>
-            </Box>
-            {lensOn ? (
-              <>
-                <LensRow
-                  label="Work as organized now"
-                  hint="All payments included regardless of past portfolio membership"
-                  wrapHint
-                  active={basis === "today"}
-                  onClick={() => { setOpen(false); setBasis("today"); void setMoneyBasis("today"); }}
-                  testId="money-basis-today"
-                />
-                <LensRow
-                  label="Work as it happened"
-                  // NOT "past payments": an OPEN visit's payment is included
-                  // here too, counted where its property sits right now,
-                  // because an unfinished visit's portfolio stays in sync
-                  // until it completes. Only completion freezes it.
-                  hint="Payments counted where the visit was when it completed"
-                  wrapHint
-                  active={basis === "happened"}
-                  onClick={() => { setOpen(false); setBasis("happened"); void setMoneyBasis("happened"); }}
-                  testId="money-basis-happened"
-                />
-              </>
-            ) : (
-              /* NO LENS, NO CHOICE TO MAKE. Unnarrowed, both bases return
-                 the same total, and an active-looking control that cannot
-                 change the number is how people learn to distrust the ones
-                 that can — the same reasoning that hides the chip itself
-                 when there is only one portfolio to pick. */
-              <Text px={3} pb={2} fontSize="xs" color="fg.muted" lineHeight="short">
-                Pick a portfolio above to choose whether its money means everything
-                those properties have earned, or only what they earned while in it.
-              </Text>
-            )}
-          </Box>
+          {/* THE "MONEY SHOWS" SECTION WAS HERE, and is gone with the
+              basis it switched. Money is grouped by where work is
+              organised NOW, always — the alternative described a total
+              that matched no arrangement that was ever real. One answer,
+              so nothing to choose and nothing to label. */}
         </Box>
       )}
     </Box>

@@ -33,6 +33,37 @@ import type { Prisma } from "@prisma/client";
  * shape everywhere, which is what `portfolioWhere` depends on.
  */
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * THIS FILE IS NOW WRITE-ONLY, AND THAT IS DELIBERATE.
+ *
+ * Nothing reads `JobOccurrencePortfolio` to group money any more. The
+ * "as it happened" basis did, and it was removed: once a property has
+ * changed zone twice, a total built from per-visit attribution is a smear
+ * across every arrangement that ever existed and matches no org chart
+ * that was ever real. Money is grouped by where things are organised NOW.
+ *
+ * SO WHY KEEP WRITING IT. Because the two directions are not symmetric.
+ * Current membership can always be re-derived — it is sitting in
+ * `PropertyPortfolio` and it is true by definition. Past attribution
+ * cannot be reconstructed from anything once the property is re-tagged;
+ * these rows are the only place it exists. Stop writing them and the
+ * option to answer a historical question later is gone for the whole
+ * period the writes were off, with no way to backfill.
+ *
+ * History was DEFERRED, not cancelled — snapshots were discussed and
+ * postponed as not worth it at this scale. That decision is reversible
+ * only while the capture keeps running, and the capture costs a bounded
+ * write on a membership change.
+ *
+ * So: a reader will look at this and find a table nobody selects from.
+ * That normally means dead code and normally it should go. Not here. If
+ * you are about to delete it, you are deciding that this business will
+ * never want to know where its money used to be counted — which is a
+ * product decision, not a cleanup.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+
 /** The portfolios a property currently belongs to. */
 export async function portfolioIdsForProperty(
   tx: Prisma.TransactionClient,

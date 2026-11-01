@@ -262,6 +262,30 @@ export default async function permissionRoutes(app: FastifyInstance) {
     }),
   );
 
+  // WHAT STOPS IT BEING DELETED, so the button can say why instead of
+  // being clickable and refused. `portfolios.view`: it is a read, and the
+  // tree it describes is already visible to this holder.
+  app.get("/portfolios/:id/delete-blockers", portfoliosView, async (req: any) =>
+    services.portfolios.deleteBlockers(String(req.params.id)),
+  );
+
+  // DELETE, PERMANENTLY. Retired and empty only — see the service for why
+  // "empty" means four things and why the visit count is the one that
+  // keeps a node alive for good.
+  app.delete("/portfolios/:id", portfoliosManage, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.portfolios.remove(uid, String(req.params.id));
+  });
+
+  // REPARENT. Guarded as management, audited with the access delta, and
+  // refused for a cycle, the root, or anything retired — see the service.
+  app.post("/portfolios/:id/move", portfoliosManage, async (req: any) => {
+    const uid = await currentUserId(req);
+    const parentId = String((req.body ?? {}).parentId ?? "");
+    if (!parentId) throw new ServiceError("PARENT_REQUIRED", "Choose a parent to move it under.", 400);
+    return services.portfolios.move(uid, String(req.params.id), parentId);
+  });
+
   // SIBLING ORDER — display only, and guarded as management because it
   // changes what everyone else sees. It cannot change a path, a parent or
   // a membership, so nothing it does is visible to any scoped query.

@@ -104,7 +104,7 @@ export default async function reportRoutes(app: FastifyInstance) {
     // real week. `portfolioScope` below tells the UI to say so. Never let this
     // ship as an unlabelled per-person earnings figure — it is exactly the
     // number that gets screenshotted into a pay conversation.
-    const statsArea = occurrencePortfolioWhere(req.principal, "reports.view", req.moneyBasis);
+    const statsArea = occurrencePortfolioWhere(req.principal, "reports.view");
     // Typed explicitly: inline, the object was contextually typed by
     // `findMany` and the status strings narrowed to the enum. Passing it
     // through `withPortfolio` first loses that, and the error surfaces as a
@@ -454,7 +454,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           },
           ...(cutoff ? [occurrenceWorkDateCutoff(cutoff)] : []),
         ],
-      }, occurrencePortfolioWhere(req.principal, "reports.business", req.moneyBasis)),
+      }, occurrencePortfolioWhere(req.principal, "reports.business")),
       include: {
         assignees: { select: { userId: true, role: true } },
         payment: paymentIncludeWithCutoff(cutoff, { include: { splits: true } }),
@@ -494,7 +494,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           },
           ...(cutoff ? [occurrenceWorkDateCutoff(cutoff)] : []),
         ],
-      }, occurrencePortfolioWhere(req.principal, "reports.business", req.moneyBasis)),
+      }, occurrencePortfolioWhere(req.principal, "reports.business")),
       select: {
         status: true, workflow: true, isTentative: true, isClientConfirmed: true,
         isEstimate: true, jobId: true, price: true, proposalAmount: true,
@@ -1832,7 +1832,7 @@ export default async function reportRoutes(app: FastifyInstance) {
     // The business-wide rollup is a DIFFERENT surface: `/operations`, on
     // `reports.business`, whose copy says "across the company" and which
     // stays global on purpose.
-    const portfolioFilter = occurrencePortfolioWhere(req.principal, "reports.view", req.moneyBasis);
+    const portfolioFilter = occurrencePortfolioWhere(req.principal, "reports.view");
     const subsetSet = new Set(subsetIds);
 
     // Business Start Date filter — resolved once for the entire aggregate.

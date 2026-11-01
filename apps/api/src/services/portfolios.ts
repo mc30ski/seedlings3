@@ -307,6 +307,246 @@ export const portfolios = {
   },
 
   /**
+   * What stops this portfolio being deleted, if anything.
+   *
+   * Returned to the UI so the button can be disabled WITH THE REASON
+   * rather than clickable and refused. Four conditions, and the second is
+   * the one that surprises people: a node can hold no properties today
+   * and still be permanently undeletable because completed visits from
+   * when it did still point at it.
+   *
+   * All four are `onDelete: Restrict` in the schema, so the database
+   * refuses regardless — this exists to say WHY before you click, not to
+   * be the safety net. The net is already there.
+   */
+  async deleteBlockers(portfolioId: string) {
+    const [properties, occurrences, assignments, children] = await Promise.all([
+      prisma.propertyPortfolio.count({ where: { portfolioId } }),
+      prisma.jobOccurrencePortfolio.count({ where: { portfolioId } }),
+      prisma.portfolioAssignment.count({ where: { portfolioId } }),
+      prisma.portfolio.count({ where: { parentId: portfolioId } }),
+    ]);
+    return { properties, occurrences, assignments, children };
+  },
+
+  /**
+   * DELETE A RETIRED PORTFOLIO, PERMANENTLY.
+   *
+   * The only irreversible operation in this model. A move moves back, a
+   * retire unretires, a re-tag re-tags — this does not, and with history
+   * snapshots deliberately not built there is nothing to restore from.
+   *
+   * RETIRED FIRST, ALWAYS. Retirement is the speed bump: it takes the
+   * portfolio out of every picker while leaving it in reporting, so
+   * anything still depending on it has a chance to surface before the row
+   * goes. Deleting straight from active would skip that.
+   *
+   * EMPTY MEANS FOUR THINGS, checked here and enforced again by the
+   * schema's four `Restrict` foreign keys. The occurrence count is the
+   * one that keeps a node alive forever: once real work has been
+   * attributed to a portfolio, that attribution is history and history
+   * has to resolve through it. In practice this draws the line exactly
+   * where it should — you can delete a mistake, never a record.
+   *
+   * SNAPSHOT FIRST, because there is nothing else. The audit carries the
+   * node's name, tier, path and parent, so the trail can at least say
+   * what was removed and from where.
+   */
+  async remove(actorUserId: string, portfolioId: string) {
+    return prisma.$transaction(async (tx) => {
+      const node = await tx.portfolio.findUnique({
+        where: { id: portfolioId },
+        select: {
+          id: true, name: true, tier: true, path: true, parentId: true,
+          retiredAt: true, instructions: true, color: true,
+        },
+      });
+      if (!node) throw new ServiceError("NOT_FOUND", "Portfolio not found.", 404);
+      if (node.parentId === null) {
+        throw new ServiceError("ROOT_CANNOT_BE_DELETED", "This is the whole territory, not a portfolio to delete.", 400);
+      }
+      if (!node.retiredAt) {
+        throw new ServiceError(
+          "NOT_RETIRED",
+          `"${node.name}" is still in use. Retire it first — that takes it out of every picker and gives anything still pointing at it a chance to surface.`,
+          400,
+        );
+      }
+
+      const [properties, occurrences, assignments, children] = await Promise.all([
+        tx.propertyPortfolio.count({ where: { portfolioId } }),
+        tx.jobOccurrencePortfolio.count({ where: { portfolioId } }),
+        tx.portfolioAssignment.count({ where: { portfolioId } }),
+        tx.portfolio.count({ where: { parentId: portfolioId } }),
+      ]);
+      const blockers = [
+        properties && `${properties} ${properties === 1 ? "property" : "properties"}`,
+        occurrences && `${occurrences} ${occurrences === 1 ? "visit" : "visits"}`,
+        assignments && `${assignments} ${assignments === 1 ? "lead" : "leads"}`,
+        children && `${children} ${children === 1 ? "portfolio" : "portfolios"} inside it`,
+      ].filter(Boolean);
+      if (blockers.length > 0) {
+        throw new ServiceError(
+          "NOT_EMPTY",
+          `"${node.name}" still has ${blockers.join(", ")}. Move or detach them first — a portfolio that history points at cannot be removed.`,
+          400,
+        );
+      }
+
+      // SNAPSHOT BEFORE THE ROW GOES. Written first so a failure leaves a
+      // record of the attempt rather than a deletion with no trail.
+      await writeAudit(tx, AUDIT.PORTFOLIO.DELETED, actorUserId, {
+        portfolioId,
+        name: node.name,
+        tier: node.tier,
+        path: node.path,
+        parentId: node.parentId,
+        instructions: node.instructions,
+        color: node.color,
+        why: "Retired and empty — no properties, visits, leads or children.",
+      });
+      await tx.portfolio.delete({ where: { id: portfolioId } });
+      return { ok: true, deleted: true, name: node.name };
+    });
+  },
+
+  /**
+   * MOVE A PORTFOLIO TO A DIFFERENT PARENT.
+   *
+   * This was refused outright for most of the build (G14), on the grounds
+   * that moving a node rewrites the materialized path of everything
+   * beneath it and so restates what every historical query returns. The
+   * first half is true and the second is not any more:
+   *
+   *   · NOTHING STORES A PATH. Both join tables key on `portfolioId`, a
+   *     grant resolves its reach from the live row on every request, and
+   *     the lens header carries an id. So a move needs this transaction
+   *     and no backfill — the next request is already consistent.
+   *   · MONEY IS GROUPED BY CURRENT MEMBERSHIP, since the "as it
+   *     happened" basis was removed. There is no longer a view whose
+   *     whole promise was that a past total could not move.
+   *
+   * What a move DOES change, and the caller is told before confirming:
+   * every rollup above the moved node, and — because grants resolve
+   * per-request — who can see the subtree. A lead on the old parent
+   * loses it; a lead on the new parent gains it. That is recorded here
+   * because nothing else records it.
+   *
+   * REFUSED, in order:
+   *   · into its own subtree — that detaches the branch from the tree and
+   *     leaves a ring nothing can reach
+   *   · to the top — a second root is inexpressible, because portfolio
+   *     scoping is a path PREFIX test and "both trees" is not a prefix
+   *   · a retired node, or into one — retirement means finished
+   */
+  async move(actorUserId: string, portfolioId: string, newParentId: string) {
+    return prisma.$transaction(async (tx) => {
+      const node = await tx.portfolio.findUnique({
+        where: { id: portfolioId },
+        select: { id: true, name: true, path: true, parentId: true, retiredAt: true },
+      });
+      if (!node) throw new ServiceError("NOT_FOUND", "Portfolio not found.", 404);
+      if (node.parentId === null) {
+        throw new ServiceError(
+          "ROOT_CANNOT_MOVE",
+          "This is the whole territory — there is nowhere above it to move to.",
+          400,
+        );
+      }
+      if (node.retiredAt) {
+        throw new ServiceError("PORTFOLIO_RETIRED", "That portfolio is retired. Bring it back first.", 400);
+      }
+
+      const parent = await tx.portfolio.findUnique({
+        where: { id: newParentId },
+        select: { id: true, name: true, path: true, retiredAt: true },
+      });
+      if (!parent) throw new ServiceError("NOT_FOUND", "That parent does not exist.", 404);
+      if (parent.retiredAt) {
+        throw new ServiceError("PARENT_RETIRED", `"${parent.name}" is retired, so nothing can be moved into it.`, 400);
+      }
+      if (parent.id === node.parentId) {
+        return { ok: true, moved: false, reason: "Already there." };
+      }
+      // A NODE CANNOT GO INSIDE ITSELF. The prefix test catches the node
+      // itself too, since a path is a prefix of itself.
+      if (parent.path.startsWith(node.path)) {
+        throw new ServiceError(
+          "CYCLE",
+          `"${parent.name}" is inside "${node.name}", so moving it there would detach the branch from the tree.`,
+          400,
+        );
+      }
+
+      // WHO LOSES AND GAINS SIGHT OF IT. Read BEFORE the paths change,
+      // because both answers are prefix tests against the old position.
+      const assignments = await tx.portfolioAssignment.findMany({
+        where: { suspendedAt: null },
+        select: { portfolio: { select: { path: true, name: true } }, user: { select: { id: true, displayName: true } } },
+      });
+      const covered = (p: string) => assignments.filter((a) => p.startsWith(a.portfolio.path));
+      const before = covered(node.path).map((a) => a.user.displayName ?? a.user.id);
+      const newPath = `${parent.path}${node.id}/`;
+      const after = covered(newPath).map((a) => a.user.displayName ?? a.user.id);
+      const lost = before.filter((x) => !after.includes(x));
+      const gained = after.filter((x) => !before.includes(x));
+
+      // THE SUBTREE, REPATHED IN ONE TRANSACTION. Every descendant's path
+      // begins with the node's old path, so the rewrite is a prefix swap.
+      // Done in SQL rather than row by row: a partial rewrite leaves nodes
+      // matching no prefix, which does not error — it quietly empties
+      // every portfolio-scoped view of them.
+      const descendants = await tx.portfolio.findMany({
+        where: { path: { startsWith: node.path } },
+        select: { id: true, path: true },
+      });
+      for (const d of descendants) {
+        // audit-allow: one of two writes making up ONE move, which the
+        // writeAudit below records in full — both paths, the new parent,
+        // how many descendants were repathed, and who gains and loses
+        // sight of the subtree. An entry per descendant would be noise
+        // and would still not say what moved.
+        await tx.portfolio.update({
+          where: { id: d.id },
+          data: { path: `${newPath}${d.path.slice(node.path.length)}` },
+        });
+      }
+      // The node's own parent pointer, last — the paths above are what
+      // every query reads, and this is what rebuilds them next time.
+      // audit-allow: as above — the same move, recorded once below.
+      await tx.portfolio.update({
+        where: { id: portfolioId },
+        data: { parentId: parent.id },
+      });
+
+      await writeAudit(tx, AUDIT.PORTFOLIO.UPDATED, actorUserId, {
+        action: "moved_to_new_parent",
+        portfolioId,
+        name: node.name,
+        fromParentId: node.parentId,
+        toParentId: parent.id,
+        toParentName: parent.name,
+        fromPath: node.path,
+        toPath: newPath,
+        descendantsRepathed: descendants.length - 1,
+        // The access delta, because grants resolve per request and this
+        // is the only place the change is written down.
+        visibilityLost: lost,
+        visibilityGained: gained,
+        why: "Rollups above this node change. No membership or history was rewritten.",
+      });
+      return {
+        ok: true,
+        moved: true,
+        toParentName: parent.name,
+        descendantsRepathed: descendants.length - 1,
+        visibilityLost: lost,
+        visibilityGained: gained,
+      };
+    });
+  },
+
+  /**
    * Move a portfolio UP or DOWN AMONG ITS SIBLINGS.
    *
    * NOT REPARENTING, and the distinction is the whole safety argument.

@@ -13,7 +13,7 @@
 > same commit that added one (`d3c277a4`, 2026-10-27) and was wrong from the
 > day it landed.
 
-646 distinct method+path pairs, 0 unmapped, 64 entitlements.
+649 distinct method+path pairs, 0 unmapped, 64 entitlements.
 
 Nine duplicated read routes were DELETED outright rather than renamed: an `admin`-prefixed and a `super`-prefixed path for `/documents` (and the same for `/timeline`) ran the same handler twice, differing only in `restrictedVisible` — and gated on the SAME entitlement, so the URL prefix was the only thing separating them. That let the CLIENT pick its own privilege level by choosing a URL. A path is not a check. Each pair is now one route on a neutral path (`/documents`, `/timeline`) that decides how much to return from a capability.
 
@@ -565,22 +565,25 @@ reschedule visits". Gated as **G18**.
 | `GET` | `/users` |
 | `GET` | `/workers` |
 
-## portfolios.manage  (8)
+## portfolios.manage  (10)
 | | |
 |---|---|
 | `DELETE` | `/portfolio-assignments/:x` |
+| `DELETE` | `/portfolios/:x` |
 | `PATCH` | `/portfolios/:x` |
 | `POST` | `/portfolio-assignments` |
+| `POST` | `/portfolios/:x/move` |
 | `POST` | `/portfolios/:x/reorder` |
 | `POST` | `/portfolios/:x/retire` |
 | `POST` | `/portfolios/:x/unretire` |
 | `POST` | `/portfolios` |
 | `PUT` | `/properties/:x/portfolios` |
 
-## portfolios.view  (2)
+## portfolios.view  (3)
 | | |
 |---|---|
 | `GET` | `/portfolio-assignments` |
+| `GET` | `/portfolios/:x/delete-blockers` |
 | `GET` | `/portfolios` |
 
 ## pricing.manage  (3)
