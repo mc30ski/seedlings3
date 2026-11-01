@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { AUDIT } from "../lib/auditActions";
 import { resyncPortfoliosForProperty } from "../lib/occurrencePortfolio";
+import { orderPortfolioTree } from "../lib/portfolioOrder";
 import { writeAudit } from "../lib/auditLogger";
 import { ServiceError } from "../lib/errors";
 import { can, flattenRole, isEntitlement, type Entitlement, type Principal } from "@repo/permissions";
@@ -120,11 +121,15 @@ export const portfolios = {
                WHERE o."id" = op."occurrenceId"
                  AND (${pathsOr(params.occurrencePaths, 'v."path"')}))`;
 
-    const [rows, propOwn, propTotals, occOwn, occTotals] = await Promise.all([
+    const [rows, propOwn, propTotals, occOwn, occTotals, untagged] = await Promise.all([
       prisma.portfolio.findMany({
+        // Re-sequenced below. `path` is the stable fallback, not the
+        // answer: it orders siblings by the cuid they were given at
+        // creation, which is to say arbitrarily.
         orderBy: [{ path: "asc" }],
         select: {
           id: true, name: true, tier: true, parentId: true, path: true, lat: true, lng: true,
+          sortOrder: true,
           retiredAt: true,
           // Assignments are PEOPLE, not territory, and are not narrowed:
           // who looks after a portfolio is the point of the tab.
@@ -162,14 +167,47 @@ export const portfolios = {
           LEFT JOIN "JobOccurrencePortfolio" op
                  ON op."portfolioId" = d."id" AND ${occVisible}
          GROUP BY p."id"`,
+      /**
+       * PROPERTIES IN NO PORTFOLIO AT ALL.
+       *
+       * Not reachable by any subtree query, because membership is rows and
+       * these have none — so the root, whose subtree is every node, still
+       * did not count them. A node labelled "All properties" that omits
+       * some properties is wrong in its own name, and the symptom is the
+       * bad kind: strip a property's last portfolio and it disappears from
+       * the tree with nowhere to look for it.
+       *
+       * ZERO FOR A PORTFOLIO-LIMITED CALLER, and that is not a shortcut.
+       * An untagged property sits in no territory, so it is outside every
+       * grant; counting it for somebody confined to one district would
+       * show them a property they cannot otherwise see. Only a reader with
+       * no territorial restriction has any claim on it.
+       */
+      params?.propertyPaths == null
+        ? prisma.property.count({ where: { portfolios: { none: {} } } })
+        : Promise.resolve(0),
     ]);
     const n = (rowsIn: Array<{ id: string; n: bigint }>) =>
       new Map(rowsIn.map((r) => [r.id, Number(r.n)]));
+    // DEPTH-FIRST, BY SIBLING ORDER. The client renders this flat array as
+    // indented rows and never rebuilds the tree, so the array's order is
+    // the order on screen.
+    const ordered = orderPortfolioTree(rows);
+    /**
+     * The sole root is the CONTAINER, not a territory — the same test the
+     * tab uses to suppress its own-count and the assign path uses to
+     * refuse putting anybody in charge of it. Untagged properties are
+     * counted there and nowhere else: with several roots there is no one
+     * container to attribute them to, so they stay uncounted rather than
+     * being added to an arbitrary one.
+     */
+    const roots = rows.filter((r) => r.parentId === null);
+    const soleRootId = roots.length === 1 ? roots[0].id : null;
     const propOwnBy = n(propOwn);
     const props = n(propTotals);
     const occOwnBy = n(occOwn);
     const occs = n(occTotals);
-    return rows.map((r) => ({
+    return ordered.map((r) => ({
       ...r,
       _count: {
         ...r._count,
@@ -181,8 +219,12 @@ export const portfolios = {
       depth: r.path.split("/").filter(Boolean).length - 1,
       /** This portfolio AND everything beneath it, each thing counted once. */
       rollup: {
-        properties: props.get(r.id) ?? 0,
+        properties: (props.get(r.id) ?? 0) + (r.id === soleRootId ? untagged : 0),
         occurrences: occs.get(r.id) ?? 0,
+        /** Of those, how many are in NO portfolio. Only ever non-zero on
+         *  the sole root, so the tab can show the gap rather than leave
+         *  it to be noticed. */
+        untagged: r.id === soleRootId ? untagged : 0,
       },
     }));
   },
@@ -261,6 +303,75 @@ export const portfolios = {
         portfolioId: portfolio.id, name: portfolio.name, path: portfolio.path, parentId: portfolio.parentId,
       });
       return portfolio;
+    });
+  },
+
+  /**
+   * Move a portfolio UP or DOWN AMONG ITS SIBLINGS.
+   *
+   * NOT REPARENTING, and the distinction is the whole safety argument.
+   * `parentId` is never touched, no path is rewritten, and no descendant
+   * is read — so every portfolio-scoped query returns exactly what it
+   * returned before, and no history is restated. See the note at the top
+   * of this file for why the other kind of move is refused (G14).
+   *
+   * NORMALISE, THEN SWAP. Every sibling is renumbered 0..n-1 in its
+   * current display order before the swap. Without that, a tree whose
+   * nodes all sit at the default 0 would swap one zero for another and
+   * the button would appear broken — which is exactly the state every row
+   * is in until the first reorder.
+   *
+   * The ROOT HAS NO SIBLINGS to move among, and nothing stops a tree from
+   * having several roots in principle, so this is left to the generic
+   * "already at the end" answer rather than a special case.
+   */
+  async reorder(actorUserId: string, portfolioId: string, direction: "up" | "down") {
+    return prisma.$transaction(async (tx) => {
+      const node = await tx.portfolio.findUnique({
+        where: { id: portfolioId },
+        select: { id: true, name: true, parentId: true },
+      });
+      if (!node) throw new ServiceError("NOT_FOUND", "Portfolio not found.", 404);
+
+      // The siblings, in the order they are currently shown. Retired ones
+      // are INCLUDED: they still occupy a position in the list, and
+      // skipping them would make two visible neighbours swap past a third
+      // node the operator cannot see — a move that does not match what
+      // they clicked.
+      const siblings = await tx.portfolio.findMany({
+        where: { parentId: node.parentId },
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }, { id: "asc" }],
+        select: { id: true, name: true, sortOrder: true },
+      });
+
+      const at = siblings.findIndex((x) => x.id === portfolioId);
+      const to = at + (direction === "up" ? -1 : 1);
+      if (at === -1 || to < 0 || to >= siblings.length) {
+        return { ok: true, moved: false, reason: "Already at the end of its level." };
+      }
+
+      const next = siblings.slice();
+      [next[at], next[to]] = [next[to], next[at]];
+
+      // Renumber the whole level. Cheap — a level is a handful of rows —
+      // and it leaves the column in a state where the next move is a
+      // plain swap rather than another normalise.
+      for (let i = 0; i < next.length; i++) {
+        if (next[i].sortOrder === i) continue;
+        await tx.portfolio.update({ where: { id: next[i].id }, data: { sortOrder: i } });
+      }
+
+      await writeAudit(tx, AUDIT.PORTFOLIO.UPDATED, actorUserId, {
+        action: "sibling_order_changed",
+        portfolioId,
+        name: node.name,
+        direction,
+        from: at,
+        to,
+        order: next.map((x) => x.name),
+        why: "Display order among siblings. No path, parent or membership changed.",
+      });
+      return { ok: true, moved: true, swappedWith: siblings[to].name };
     });
   },
 

@@ -4867,6 +4867,7 @@ async function seedDatabase() {
     node: PortfolioNode,
     parentId: string,
     parentPath: string,
+    sortOrder: number,
   ): Promise<string> {
     const existing = await prisma.portfolio.findFirst({
       where: { name: node.name, parentId },
@@ -4884,7 +4885,18 @@ async function seedDatabase() {
       // whose ANCESTOR was rebuilt would otherwise keep a path pointing at
       // the old chain, and a stale path is invisible — every query still
       // runs, just against a prefix nothing matches.
-      data: { path: `${parentPath}${row.id}/`, tier: node.tier, lat: node.lat ?? null, lng: node.lng ?? null },
+      // `sortOrder` FROM THE FIXTURE'S OWN ORDER, rewritten every run like
+      // the path. The tree above is written in the order it is meant to
+      // read; without this every sibling sits at the default 0 and the
+      // list falls back to alphabetical, so a freshly seeded dev would
+      // show a different tree from the one declared a few lines up.
+      data: {
+        path: `${parentPath}${row.id}/`,
+        tier: node.tier,
+        lat: node.lat ?? null,
+        lng: node.lng ?? null,
+        sortOrder,
+      },
     });
     return row.id;
   }
@@ -4897,8 +4909,8 @@ async function seedDatabase() {
   const cityOwner = new Map<string, string>();
 
   async function seedBranch(nodes: PortfolioNode[], parentId: string, parentPath: string) {
-    for (const node of nodes) {
-      const id = await seedArea(node, parentId, parentPath);
+    for (const [i, node] of nodes.entries()) {
+      const id = await seedArea(node, parentId, parentPath, i);
       portfolioIds[node.name] = id;
       fixtureIds.add(id);
       for (const city of node.cities ?? []) cityOwner.set(city, id);
