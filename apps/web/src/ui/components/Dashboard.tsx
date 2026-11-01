@@ -26,7 +26,7 @@ import {
   Badge, Box, HStack, IconButton, Select, Spinner, Text, VStack, createListCollection,
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, LayoutDashboard, RefreshCw } from "lucide-react";
-import { getAreaLensName, getMoneyBasis, AREA_LENS_CHANGED_EVENT, type MoneyBasis } from "@/src/lib/impersonation";
+import { getAreaLensName, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
 import type { LucideIcon } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import {
@@ -203,9 +203,8 @@ export function Dashboard({
   // WHICH QUESTION THE MONEY ON THIS CARD IS ANSWERING. Same effect, same
   // event, because the two change together and a note showing one of them
   // stale is worse than a note showing neither.
-  const [moneyBasis, setMoneyBasisState] = useState<MoneyBasis>("today");
   useEffect(() => {
-    const read = () => { setLensName(getAreaLensName()); setMoneyBasisState(getMoneyBasis()); };
+    const read = () => { setLensName(getAreaLensName()); };
     read();
     window.addEventListener(AREA_LENS_CHANGED_EVENT, read);
     return () => window.removeEventListener(AREA_LENS_CHANGED_EVENT, read);
@@ -789,14 +788,8 @@ export function Dashboard({
                       {scopeLabel && (
                         <Text as="span">
                           {" Money shown "}
-                          <Text as="span" fontWeight="semibold">
-                            {moneyBasis === "today"
-                              ? "as organized now"
-                              : "as it happened"}
-                          </Text>
-                          {moneyBasis === "today"
-                            ? " — everything these properties have ever earned."
-                            : " — only what was earned while tagged here."}
+                          <Text as="span" fontWeight="semibold">as organized now</Text>
+                          {" — everything these properties have ever earned."}
                         </Text>
                       )}
                     </Text>

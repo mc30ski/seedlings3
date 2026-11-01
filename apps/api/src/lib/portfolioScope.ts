@@ -61,7 +61,6 @@ import {
   type Entitlement,
   type Principal,
 } from "@repo/permissions";
-import type { MoneyBasis } from "./moneyBasis";
 
 /** An empty `where` fragment: the query is unchanged. */
 const NO_FILTER = {} as const;
@@ -209,75 +208,69 @@ export function portfolioWhere(
 }
 
 /**
- * The portfolio fragment for a query rooted on a **JobOccurrence**, under
- * the caller's chosen money basis.
+ * The portfolio fragment for a query rooted on a **JobOccurrence**.
  *
  * Every portfolio-scoped money surface is rooted on an occurrence — either
  * directly (statistics, operations, outstanding requests) or one relation
  * away (a Payment, through `occurrence`). So one helper covers all of them.
  *
- *   happened → the occurrence's OWN membership, frozen when it completed.
- *   today    → its property's CURRENT membership, however recently set.
+ * MONEY IS GROUPED BY WHERE THINGS ARE ORGANISED **NOW**, always: a visit
+ * counts toward whatever its property belongs to today, however recently
+ * that changed.
  *
- * The two differ by one join, and that join is the entire feature: a
- * completed visit's own rows never change, while its property's do. See
- * lib/moneyBasis.ts for which question each answers and why "today" is the
- * default.
+ * THERE WAS A SECOND ANSWER AND IT WAS REMOVED. An `X-Money-Basis` header
+ * chose between this and "as it happened" — each visit counted where it
+ * sat at the moment it completed, read from its own frozen rows. It was
+ * deleted because it had no referent: a property that moves zone twice in
+ * a year produces a total that is a smear across every arrangement that
+ * ever existed and matches no org chart that was ever real. On this
+ * business's data it was worse than muddy — every visit completed before
+ * the tree existed points at the root, so it reported the entire history
+ * to the root and nothing to any zone.
  *
- * SAFETY IS UNCHANGED. `paths` comes from the same `visiblePortfolioPaths`
- * either way — grants widen, the lens narrows, the two intersect. The
- * basis decides which ROWS match a path, never which paths are usable, so
- * no basis can reach a portfolio the caller does not already hold. The
- * impossible-condition branch stays impossible in both.
+ * THE FROZEN ROWS ARE STILL WRITTEN, deliberately, and `lib/
+ * occurrencePortfolio.ts` says why: current membership can always be
+ * re-derived, past attribution cannot, so the capture is the half that
+ * must not stop.
  */
 export function occurrencePortfolioWhere(
   principal: Principal | undefined,
   capability: Entitlement,
-  basis: MoneyBasis,
 ): Record<string, unknown> {
   const own = portfolioWhere(principal, capability);
 
-  // Global authority: unchanged query, both bases.
+  // Global authority: unchanged query.
   if (Object.keys(own).length === 0) return NO_FILTER;
 
-  // HOLDS IT NOWHERE — the impossible condition — is left EXACTLY as the
-  // one-basis code emitted it, deliberately.
-  //
-  // `{ portfolios: { none: {} } }` on the occurrence is "has no portfolio
-  // at all". Rewritten through the join it becomes "whose PROPERTY has no
-  // portfolio at all", which in production matches three real untagged
-  // properties. That would be a new way for rows to reach somebody who
-  // holds the capability nowhere — a basis must never widen anything, and
-  // this is the one place it could. The guard should have refused the
-  // request long before here either way.
+  // HOLDS IT NOWHERE — the impossible condition — is emitted as-is,
+  // deliberately. `{ portfolios: { none: {} } }` on the occurrence means
+  // "has no portfolio at all". Rewritten through the join below it would
+  // become "whose PROPERTY has no portfolio at all", which matches real
+  // untagged properties — a new way for rows to reach somebody who holds
+  // the capability nowhere.
   const paths = visiblePortfolioPaths(principal, capability);
   if (paths !== null && paths.length === 0) return own;
 
-  if (basis === "happened") return own;
-  // "today": the same test, one join further out — the property's current
-  // membership instead of the visit's frozen one.
+  // The property's CURRENT membership — one join further out than the
+  // visit's own frozen rows.
   return { job: { property: own } };
 }
 
 /**
  * Same, for a **Payment** — one relation above the occurrence.
  *
- * THE RELATION IS WRITTEN OUT, not passed in. `portfolioWhereVia` takes it
- * as a string and carries an `untyped-fragment-allow:` for the privilege,
- * because it serves models that reach a portfolio by several different
- * paths. This one does not: every money surface is either the occurrence
- * itself or a Payment, and `Payment.occurrence` is the only relation it
- * will ever nest under. A parameter here would buy nothing and cost the
- * compiler's check — which is the exact shape that let
+ * THE RELATION IS WRITTEN OUT, not passed in: every money surface is
+ * either the occurrence itself or a Payment, and `Payment.occurrence` is
+ * the only relation this will ever nest under. A parameter would buy
+ * nothing and cost the compiler's check — the exact shape that let
  * `areaWhereOn(…, "defaultPortfolio")` survive the deletion of the field
  * it named and 500 every job list.
  */
 export function occurrencePaymentPortfolioWhere(
   principal: Principal | undefined,
   capability: Entitlement,
-  basis: MoneyBasis,
 ): Record<string, unknown> {
-  const inner = occurrencePortfolioWhere(principal, capability, basis);
+  const inner = occurrencePortfolioWhere(principal, capability);
   if (Object.keys(inner).length === 0) return NO_FILTER;
   return { occurrence: inner };
 }

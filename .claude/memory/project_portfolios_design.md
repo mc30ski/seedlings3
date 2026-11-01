@@ -1,11 +1,11 @@
 ---
 name: project_portfolios_design
-description: "Area → Portfolio: COMPLETE 2026-10-28; DEV FIXTURE RESHAPED to production's 5-level shape 2026-10-29, which exposed a real lens-picker bug. Applied to DEV only, nothing committed."
+description: "Area → Portfolio. Tree + membership shipped and IN PRODUCTION. 2026-11-01: nodes can be REPARENTED (G14 rewritten, not deleted), retired+empty ones DELETED, money has ONE grouping. Canonical spec: docs/features/portfolios.md."
 metadata:
   node_type: memory
   type: project
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-10-29T00:00:00.000Z
+  modified: 2026-11-01T00:00:00.000Z
 ---
 
 Agreed and **BUILT on 2026-10-28** — schema, migrations, API, gates and the
@@ -301,3 +301,89 @@ Two bad records skip any ZIP rule: `132 Marshall?` (postal `55555`) and
 
 The user runs anything that writes to production — see
 [[feedback_never_write_production_db]].
+
+---
+
+# 2026-11-01 — THE MODEL CHANGED. Read this before the older notes above.
+
+Canonical spec is now
+[`docs/features/portfolios.md`](../../../dev/seedlings3/docs/features/portfolios.md),
+which supersedes anything below it that disagrees.
+
+## Portfolios can be REPARENTED now
+
+`POST /portfolios/:id/move`. The old rule ("portfolios are never moved,
+copy-and-retire instead") is gone, because the two things it rested on
+both changed: **nothing persists a path** — the joins key on id, grants
+resolve per request, the lens carries an id — and the money view whose
+whole promise was that a past total could not move was removed.
+
+The move repaths the subtree in one transaction and refuses a cycle, the
+root, and anything retired. **G14 was REWRITTEN, not deleted**: it now
+asserts that only `move()` writes `parentId` and that `move()` still
+repaths descendants, refuses cycles and the root, and records the
+visibility delta. The failure it guards is a PARTIAL repath — a node whose
+path matches no prefix does not error, it silently empties every scoped
+view of itself.
+
+**A move changes who can see the subtree**, because grants resolve
+per-request. The audit records who gained and lost it; the UI says so in
+the success message. Nothing else writes that down.
+
+## Retired + empty portfolios can be DELETED
+
+`DELETE /portfolios/:id`. Permanent, and the only irreversible operation
+in this model. Requires retired first, then empty — and **empty means four
+things**: no properties, **no completed visits**, no leads, no children.
+All four are `Restrict` FKs so the database refuses anyway;
+`GET /portfolios/:id/delete-blockers` exists so the button is disabled
+WITH THE REASON instead of clickable and refused.
+
+The visit count is the one that keeps a node alive forever. **You can
+delete a mistake, never a record.** In production that made exactly two
+nodes deletable (`OLD - Carrboro`, `OLD - Chatham`) and everything else
+blocked.
+
+## Money has ONE grouping
+
+Always current membership. See [[project_portfolio_money_basis]] for why
+the alternative was removed and why its rows are still written.
+
+## Snapshots and history were PUNTED, deliberately
+
+Designed in detail — structure log, named snapshots, replay-as-read,
+auto-snapshot on move — then dropped on 2026-11-01 as not worth it at this
+scale. The consequence: no way to see how money was grouped in the past,
+and no record of what a move changed beyond its audit entry. Reversible
+only while `JobOccurrencePortfolio` keeps being written.
+
+## Smaller things that shipped the same day
+
+- **Sibling order** (`sortOrder`) — display only, depth-first from the
+  server so every picker agrees. Arrows on each tree row.
+- **`instructions`** — "what belongs here", shown at the moment of filing.
+- **`color`** — a Chakra palette NAME, never hex. Null = auto by position.
+  Drives map pins, the map legend and list headings from one assignment.
+- **The map** got a toggleable colour legend and a full-page expand. Two
+  real bugs there were found only by driving it: the container resolved to
+  2px, and tiles were zero-width from `max-width: 100%` against a
+  zero-width absolute parent.
+- **Counts were leaking and lying.** `portfolios.list()` counted every row
+  in the database — a portfolio-limited lead saw the whole company's
+  volume, and the tree disagreed with the panel under it whenever a lens
+  was set.
+- **Unfiled properties are visible.** The root counts them and lists them
+  under their own heading; a property stripped of its last portfolio used
+  to vanish from the tab entirely.
+- **Archived properties are IN by default** in the panel, with a Hide
+  toggle governing list and map together.
+- **The scope strip no longer renders** for somebody who holds everything
+  company-wide and merely leads a portfolio — it was a permanent row
+  saying nothing was happening.
+
+## Production state
+
+Tree built and cleaned. Three migrations (`sortOrder`, `instructions`,
+`color`) are committed AND applied to production. This session's work adds
+no schema change — the move uses existing columns and delete removes a row
+— so it deploys without a migration.

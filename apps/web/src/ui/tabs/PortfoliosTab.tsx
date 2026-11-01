@@ -975,8 +975,92 @@ function AreaDetail({
   const [userId, setUserId] = useState<string | null>(null);
   const [roleId, setRoleId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<
-    { kind: "retire" | "unretire" } | { kind: "revoke"; id: string; who: string; role: string } | null
+    | { kind: "retire" | "unretire" | "delete" }
+    | { kind: "revoke"; id: string; who: string; role: string }
+    | null
   >(null);
+
+  /**
+   * WHERE IT COULD GO.
+   *
+   * Everything except: itself, anything INSIDE it (which would detach the
+   * branch from the tree — the server refuses it too, this is so the
+   * option is never offered), its current parent, and anything retired.
+   * The root IS offered: a node can legitimately move up to sit directly
+   * under the container.
+   */
+  const moveTargets = useMemo(
+    () =>
+      allPortfolios
+        .filter(
+          (a) =>
+            !a.retiredAt &&
+            a.id !== portfolio.id &&
+            a.id !== portfolio.parentId &&
+            !a.path.startsWith(portfolio.path),
+        )
+        .map((a) => ({ label: `${"— ".repeat(a.depth)}${a.name}`, value: a.id })),
+    [allPortfolios, portfolio.id, portfolio.parentId, portfolio.path],
+  );
+  const moveCollection = useMemo(
+    () => createListCollection({ items: moveTargets }),
+    [moveTargets],
+  );
+
+  /**
+   * WHAT STOPS THIS BEING DELETED, fetched when a retired portfolio is open.
+   *
+   * The button is DISABLED WITH THE REASON rather than clickable and
+   * refused. The server refuses either way and the schema refuses under
+   * that, so this is not the safety net — it is the difference between a
+   * control that explains itself and one that looks broken.
+   *
+   * Only for retired nodes: an active one cannot be deleted at all, and
+   * asking the question would be a request per selection for an answer
+   * nobody can act on.
+   */
+  /**
+   * THE MOVE PICKER. A Select rather than drag-and-drop: this tab is used
+   * on a phone, where a drag handle inside a scrolling tree is a fight,
+   * and a move is a once-a-quarter act rather than a gesture.
+   *
+   * Empty string means "no change selected", which is distinct from the
+   * current parent — picking the parent it already has is a no-op the
+   * server answers with `moved: false` rather than an error.
+   */
+  const [moveTo, setMoveTo] = useState("");
+  const [moving, setMoving] = useState(false);
+
+  const [blockers, setBlockers] = useState<
+    { properties: number; occurrences: number; assignments: number; children: number } | null
+  >(null);
+  useEffect(() => {
+    if (!portfolio.retiredAt) { setBlockers(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiGet<any>(`/api/portfolios/${portfolio.id}/delete-blockers`);
+        if (!cancelled) setBlockers(r);
+      } catch {
+        // Unknown is NOT treated as deletable — `blockers === null` keeps
+        // the button disabled, so a failed read can never widen anything.
+        if (!cancelled) setBlockers(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [portfolio.id, portfolio.retiredAt]);
+
+  /** The reasons, in words, or [] when nothing is in the way. */
+  const blockedBy = useMemo(() => {
+    if (!blockers) return null;
+    const n = (c: number, one: string, many: string) => (c ? `${c} ${c === 1 ? one : many}` : null);
+    return [
+      n(blockers.properties, "property", "properties"),
+      n(blockers.occurrences, "visit", "visits"),
+      n(blockers.assignments, "lead", "leads"),
+      n(blockers.children, "portfolio inside it", "portfolios inside it"),
+    ].filter(Boolean) as string[];
+  }, [blockers]);
 
   /**
    * WHAT IS STILL IN HERE, said before you retire it.
@@ -1184,6 +1268,98 @@ function AreaDetail({
                 <Input size="sm" value={tier} placeholder="Tier (optional)" disabled />
               ))}
 
+            {/* MOVE IT SOMEWHERE ELSE IN THE TREE.
+                Reparenting was refused outright until now, because moving
+                a node rewrites the path of everything beneath it. It is
+                allowed because nothing STORES a path — the joins key on
+                id, grants resolve per request — and because the money
+                view whose promise was that a past total could not move
+                has been removed.
+
+                What it changes is said before you confirm: rollups above
+                this node, and who can see the subtree. Not offered on the
+                root, which has nowhere above it. */}
+            {mayManage && !isSoleRoot && moveTargets.length > 0 && (
+              <Box>
+                <Text fontSize="2xs" color="fg.muted" mb={1}>
+                  Move under
+                </Text>
+                <HStack gap={2} align="start">
+                  <Select.Root
+                    size="sm"
+                    collection={moveCollection}
+                    value={moveTo ? [moveTo] : []}
+                    onValueChange={(e: any) => setMoveTo(e.value?.[0] ?? "")}
+                    flex="1"
+                    minW={0}
+                  >
+                    <Select.HiddenSelect />
+                    <Select.Control>
+                      <Select.Trigger>
+                        <Select.ValueText placeholder="Choose a new parent…" />
+                      </Select.Trigger>
+                      <Select.IndicatorGroup><Select.Indicator /></Select.IndicatorGroup>
+                    </Select.Control>
+                    <Select.Positioner>
+                      <Select.Content maxH="18rem" overflowY="auto">
+                        {moveCollection.items.map((it) => (
+                          <Select.Item key={it.value} item={it}>
+                            <Select.ItemText>{it.label}</Select.ItemText>
+                            <Select.ItemIndicator />
+                          </Select.Item>
+                        ))}
+                      </Select.Content>
+                    </Select.Positioner>
+                  </Select.Root>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!moveTo || moving}
+                    loading={moving}
+                    onClick={async () => {
+                      if (!moveTo) return;
+                      setMoving(true);
+                      try {
+                        const r = await apiPost<any>(`/api/portfolios/${portfolio.id}/move`, {
+                          parentId: moveTo,
+                        });
+                        // THE ACCESS DELTA, SAID OUT LOUD. Grants resolve
+                        // per request, so this changes who can see the
+                        // subtree with nothing else to announce it.
+                        const bits = [
+                          r?.descendantsRepathed
+                            ? `${r.descendantsRepathed} portfolio${r.descendantsRepathed === 1 ? "" : "s"} beneath it moved too`
+                            : null,
+                          r?.visibilityGained?.length ? `now visible to ${r.visibilityGained.join(", ")}` : null,
+                          r?.visibilityLost?.length ? `no longer visible to ${r.visibilityLost.join(", ")}` : null,
+                        ].filter(Boolean);
+                        publishInlineMessage({
+                          type: "SUCCESS",
+                          text: `${portfolio.name} moved under ${r?.toParentName ?? "its new parent"}.` +
+                            (bits.length ? ` ${bits.join(" · ")}.` : ""),
+                        });
+                        setMoveTo("");
+                        await onChanged();
+                      } catch (err) {
+                        publishInlineMessage({
+                          type: "ERROR",
+                          text: getErrorMessage("Couldn't move the portfolio.", err),
+                        });
+                      } finally {
+                        setMoving(false);
+                      }
+                    }}
+                  >
+                    Move
+                  </Button>
+                </HStack>
+                <Text fontSize="2xs" color="fg.muted" mt={1}>
+                  Everything inside it moves too. Totals above it change; no
+                  property, visit or history is rewritten.
+                </Text>
+              </Box>
+            )}
+
             {/* THE COLOUR, because the map and the list identify a
                 portfolio by it. Swatches rather than a Select: the thing
                 being chosen IS the appearance, so showing the name of a
@@ -1339,6 +1515,36 @@ function AreaDetail({
                     onClick={() => setConfirm({ kind: portfolio.retiredAt ? "unretire" : "retire" })}
                   >
                     {portfolio.retiredAt ? "Un-retire" : "Retire"}
+                  </Button>
+                )}
+
+                {/* DELETE, ONLY ONCE RETIRED, and only when nothing points
+                    at it. Retirement is the speed bump — it takes the
+                    portfolio out of every picker while leaving it in
+                    reporting, so anything still depending on it surfaces
+                    before the row goes.
+
+                    DISABLED WITH THE REASON, never clickable-and-refused:
+                    a button that always fails teaches people the feature
+                    is broken rather than that the node is in use. The
+                    visit count is the one that keeps a node alive for
+                    good, and the tooltip says so. */}
+                {!isSoleRoot && portfolio.retiredAt && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    colorPalette="red"
+                    disabled={blockedBy === null || blockedBy.length > 0}
+                    onClick={() => setConfirm({ kind: "delete" })}
+                    title={
+                      blockedBy === null
+                        ? "Checking what still points at this portfolio…"
+                        : blockedBy.length > 0
+                          ? `Still has ${blockedBy.join(", ")}. Anything history points at cannot be removed.`
+                          : "Nothing points at this portfolio — it can be deleted"
+                    }
+                  >
+                    {blockedBy && blockedBy.length > 0 ? `In use · ${blockedBy[0]}` : "Delete"}
                   </Button>
                 )}
               </HStack>
@@ -1559,19 +1765,39 @@ function AreaDetail({
             ? "Remove this assignment?"
             : confirm?.kind === "retire"
               ? `Retire ${portfolio.name}?`
-              : `Un-retire ${portfolio.name}?`
+              : confirm?.kind === "delete"
+                ? `Permanently delete ${portfolio.name}?`
+                : `Un-retire ${portfolio.name}?`
         }
         message={
           confirm?.kind === "revoke"
             ? `${confirm.who} stops holding ${confirm.role} in ${portfolio.name}. If they hold it company-wide as well, nothing changes for them.`
             : confirm?.kind === "retire"
               ? retireMessage
-              : `Bring ${portfolio.name} back. It can be assigned to and picked again.`
+              : confirm?.kind === "delete"
+                ? `"${portfolio.name}" is retired and nothing points at it — no properties, visits, leads or portfolios inside it. Deleting removes the row itself.`
+                : `Bring ${portfolio.name} back. It can be assigned to and picked again.`
         }
         confirmLabel={
-          confirm?.kind === "revoke" ? "Remove" : confirm?.kind === "retire" ? "Retire" : "Un-retire"
+          confirm?.kind === "revoke"
+            ? "Remove"
+            : confirm?.kind === "retire"
+              ? "Retire"
+              : confirm?.kind === "delete"
+                ? "Delete permanently"
+                : "Un-retire"
         }
-        warning={confirm?.kind === "retire" ? retireWarning : undefined}
+        warning={
+          confirm?.kind === "retire"
+            ? retireWarning
+            : confirm?.kind === "delete"
+              ? // THE EXTRA WARNING. This is the only irreversible thing
+                // here — a move moves back, a retire un-retires, a re-tag
+                // re-tags. There is no history snapshot to restore from,
+                // by decision, so the dialog has to carry the weight.
+                `This cannot be undone. There is no way to bring "${portfolio.name}" back — un-retiring only works while the portfolio still exists. If you may want it again, leave it retired: a retired portfolio is hidden from every picker and costs nothing.`
+              : undefined
+        }
         confirmColorPalette={confirm?.kind === "unretire" ? "green" : "red"}
         onConfirm={async () => {
           const c = confirm;
@@ -1579,7 +1805,10 @@ function AreaDetail({
           if (!c) return;
           try {
             if (c.kind === "revoke") await apiDelete(`/api/portfolio-assignments/${c.id}`);
-            else await apiPost(`/api/portfolios/${portfolio.id}/${c.kind}`);
+            else if (c.kind === "delete") {
+              await apiDelete(`/api/portfolios/${portfolio.id}`);
+              publishInlineMessage({ type: "SUCCESS", text: `${portfolio.name} deleted.` });
+            } else await apiPost(`/api/portfolios/${portfolio.id}/${c.kind}`);
             await onChanged();
           } catch (err) {
             publishInlineMessage({ type: "ERROR", text: getErrorMessage("That didn't work.", err) });

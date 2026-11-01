@@ -459,6 +459,7 @@ export const AUDIT = {
     CREATED: [AuditScope.PORTFOLIO, AuditVerb.CREATED] as const,
     UPDATED: [AuditScope.PORTFOLIO, AuditVerb.UPDATED] as const,
     RETIRED: [AuditScope.PORTFOLIO, AuditVerb.RETIRED] as const,
+    DELETED: [AuditScope.PORTFOLIO, AuditVerb.DELETED] as const,
     UNRETIRED: [AuditScope.PORTFOLIO, AuditVerb.UNRETIRED] as const,
   },
 

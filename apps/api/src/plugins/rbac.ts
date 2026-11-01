@@ -3,7 +3,6 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { services } from "../services";
 import { PERSPECTIVE_HEADER, resolvePerspective } from "../lib/impersonation";
 import { AREA_LENS_HEADER, parseAreaLensHeader, resolveAreaLensPath } from "../lib/portfolioLens";
-import { MONEY_BASIS_HEADER, parseMoneyBasis } from "../lib/moneyBasis";
 import type { Principal } from "@repo/permissions";
 import { isEntitlement, type Entitlement, type RoleGrant } from "@repo/permissions";
 import "@fastify/sensible";
@@ -110,13 +109,11 @@ export default fp(async (app: FastifyInstance) => {
     // Attach for downstream usage.
     (req as any).user = me;
     (req as any).principal = principal;
-    // WHICH QUESTION A PORTFOLIO-FILTERED MONEY FIGURE ANSWERS.
-    //
-    // On the request, NOT on the principal, and that separation is the
-    // point: `can()` reads the principal, and the basis must never be
-    // able to influence an authorisation decision. It selects rows; it
-    // grants nothing. Unrecognised and absent both mean "today".
-    (req as any).moneyBasis = parseMoneyBasis(req.headers[MONEY_BASIS_HEADER]);
+    // THERE IS NO MONEY BASIS ANY MORE. An `X-Money-Basis` header chose
+    // between grouping money by where work is organised NOW and where it
+    // sat when it completed. The second had no referent once a property
+    // had moved more than once, so it was removed and "now" is the only
+    // answer. See lib/portfolioScope.ts.
     // AND FOR THE AUDIT TRAIL, ambiently. `writeAudit` has 369 call sites
     // and none of them can reasonably be asked to carry this; the fact
     // belongs to the request. See lib/requestContext.ts — it is a label
