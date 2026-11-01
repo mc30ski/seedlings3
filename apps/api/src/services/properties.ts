@@ -34,6 +34,10 @@ function mapScopeWhere(params: {
   portfolioWhere?: Record<string, unknown>;
   portfolioSubtreePath?: string | "none";
   assignedToUserId?: string;
+  /** Absent or "ALL" includes archived, matching `list()`. The map and the
+   *  list sit behind one toggle, so they have to default the same way or
+   *  the count on one would not match the pins on the other. */
+  status?: "ACTIVE" | "ARCHIVED" | "ALL";
 }): Prisma.PropertyWhereInput {
   const chosen: Prisma.PropertyWhereInput | null =
     params.portfolioSubtreePath === "none"
@@ -44,10 +48,13 @@ function mapScopeWhere(params: {
   const assigned: Prisma.PropertyWhereInput | null = params.assignedToUserId
     ? { jobs: { some: { occurrences: { some: { assignees: { some: { userId: params.assignedToUserId } } } } } } }
     : null;
+  const byStatus: Prisma.PropertyWhereInput | null =
+    params.status && params.status !== "ALL" ? { status: params.status } : null;
   return {
     AND: [
       (params.portfolioWhere ?? {}) as Prisma.PropertyWhereInput,
       ...(chosen ? [chosen] : []),
+      ...(byStatus ? [byStatus] : []),
       ...(assigned ? [assigned] : []),
     ],
   };
@@ -124,6 +131,7 @@ export const properties: ServicesProperties = {
   async resolveMapPoints(params: {
     portfolioWhere?: Record<string, unknown>;
     portfolioSubtreePath?: string | "none";
+    status?: "ACTIVE" | "ARCHIVED" | "ALL";
     assignedToUserId?: string;
     limit: number;
   }) {
