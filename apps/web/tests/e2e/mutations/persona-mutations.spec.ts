@@ -163,6 +163,20 @@ persona("owner", () => {
       "the perspective checkbox did not take the click",
     ).toBeChecked({ timeout: 10_000 });
 
+    // AND THEN SAVE IT, which this test used to skip.
+    //
+    // It ticked the box and polled the database, which only works if the
+    // editor autosaves. It does not, deliberately: a save names the role
+    // and lists what moves, behind a confirm dialog, because one that
+    // applied on click once rewrote the WRONG role's entire grant — the
+    // baseline role picked up sixteen capabilities including the company
+    // P&L, silently. So the test was asserting the absence of a safety
+    // feature, and reporting a working product as broken.
+    await page.getByRole("button", { name: "Save", exact: true }).first().click();
+    await page.waitForTimeout(800);
+    const confirmSave = page.getByRole("button", { name: /^(Save|Save changes|Confirm)$/ }).last();
+    if (await confirmSave.isVisible().catch(() => false)) await confirmSave.click();
+
     // The flag landed.
     await expect
       .poll(async () => {
@@ -288,14 +302,45 @@ persona("trainee", () => {
   });
 });
 
-// ── unpaid — holds nothing ──────────────────────────────────────────────
-persona("unpaid", () => {
+// ── newhire — approved, and granted nothing ─────────────────────────────
+//
+// THIS TEST USED TO POINT AT `unpaid`, AND THAT PERSONA MOVED.
+//
+// `unpaid` was once the stand-in for "holds nothing", by accident. The
+// fixture now grants it Trainee on purpose — an UNPAID helper is somebody
+// who may look but is never paid, and with no role at all the one account
+// named for that pay class could not be put on a visit to exercise it. So
+// it legitimately gets a shell, and this spec was reporting correct
+// behaviour as a bug.
+//
+// `newhire` is the grant-less state ON PURPOSE: approved, EMPLOYEE, no
+// roles — the gap between being admitted and being given something to do.
+// See the seed's roster comments.
+persona("newhire", () => {
   test("gets the no-access page and no shell", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
+    // MATCHED ON THE COPY THAT IS ACTUALLY THERE. The regex said
+    // "nothing has been shared"; the page says "no access has been
+    // assigned yet". The wording changed and the spec did not, so this
+    // read as a missing page when the page was right in front of it.
     await expect(
-      page.getByText(/account is active, but nothing has been shared/i),
+      page.getByText(/account is active, but no access has been assigned/i),
     ).toBeVisible({ timeout: 20_000 });
+  });
+});
+
+// ── unpaid — may look, is never paid ────────────────────────────────────
+persona("unpaid", () => {
+  test("holds Trainee, so it gets a shell rather than the no-access page", async ({ page }) => {
+    // The positive half of the move above: asserting the shell IS there
+    // keeps the two personas from quietly collapsing back into one.
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("portfolio-lens-chip")).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.getByText(/account is active, but no access has been assigned/i),
+    ).toHaveCount(0);
   });
 });
 

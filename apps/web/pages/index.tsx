@@ -85,7 +85,8 @@ import DisplaysTab from "@/src/ui/tabs/DisplaysTab";
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
-import { setPerspective, CAPABILITIES_CHANGED_EVENT, PERSPECTIVE_CHANGED_EVENT, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
+import { setPerspective, getAreaLens, CAPABILITIES_CHANGED_EVENT, PERSPECTIVE_CHANGED_EVENT, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
+import { portfolioIsNarrowing, tabIsFiltered } from "@/src/lib/portfolioFilteredTabs";
 import RolesTab from "@/src/ui/tabs/RolesTab";
 import PortfoliosTab from "@/src/ui/tabs/PortfoliosTab";
 
@@ -1148,6 +1149,31 @@ export default function HomePage() {
   // renders from those same entitlements. Both read the
   // PERSPECTIVE-NARROWED set, so taking a perspective narrows the tab
   // list AND the contents of every tab still in it.
+  /**
+   * IS THE PORTFOLIO FILTER NARROWING ANYTHING RIGHT NOW?
+   *
+   * Drives the marker on each affected tab. Read through the same helper
+   * the purple strip uses, so the two can never disagree about whether a
+   * filter is in force — a marked tab under an unmarked strip, or the
+   * reverse, would make both untrustworthy.
+   *
+   * Read in an effect rather than during render: the lens lives in
+   * localStorage, which does not exist on the server, so reading it inline
+   * would hydrate the wrong answer.
+   */
+  const [lensOnNow, setLensOnNow] = useState(false);
+  useEffect(() => {
+    const read = () => setLensOnNow(!!getAreaLens());
+    read();
+    window.addEventListener(AREA_LENS_CHANGED_EVENT, read);
+    return () => window.removeEventListener(AREA_LENS_CHANGED_EVENT, read);
+  }, []);
+  const portfolioNarrowing = portfolioIsNarrowing({
+    lensSet: lensOnNow,
+    grantCount: ((me as any)?.portfolioScope?.trails ?? []).length,
+    narrows: (me as any)?.portfolioScope?.narrows,
+  });
+
   const staffTabs = withCapabilityVisibility([
         {
           // ── Work ──
@@ -1892,7 +1918,14 @@ export default function HomePage() {
           )}
         </>
       ),
-      innerTabs: staffTabs,
+      // MARK THE TABS THE PORTFOLIO FILTER NARROWS, and only while one is
+      // actually in force. The purple strip above can only ever speak for
+      // the tab you are already on; this answers "which of these are
+      // affected?" before you click, and leaves the row unmarked in the
+      // ordinary unfiltered case.
+      innerTabs: portfolioNarrowing
+        ? staffTabs.map((t) => (tabIsFiltered(t.value) ? { ...t, portfolioFiltered: true } : t))
+        : staffTabs,
     },
   ];
 
@@ -2862,12 +2895,24 @@ export default function HomePage() {
   // Unclaimed count for admin header badge
   const [unclaimedCount, setUnclaimedCount] = useState(0);
   const loadUnclaimed = useCallback(async () => {
-    // `/api/operations` needs `reports.view`. It was gated on the
-    // schedule-manage flag instead — which is
-    // `schedule.manage` — this badge 403'd on EVERY page load for anyone
-    // who runs the schedule without reading the business rollup. A
-    // coordinator is exactly that person.
-    if (!scopeCan("reports.view")) { setUnclaimedCount(0); markAlertLoaded("unclaimed"); return; }
+    // `/api/operations` needs `reports.business` — `requires("reports.business")`
+    // in routes/reports.ts, and the row in permissions-ROUTE-MAP.md sits
+    // under that heading.
+    //
+    // THIS SAID `reports.view`, AND IT WAS WRONG TWICE OVER.
+    //
+    // It was first gated on a schedule flag, which 403'd for anyone who
+    // runs the schedule without reading the business rollup. The fix
+    // moved it to `reports.view` — the right shape, the wrong capability —
+    // so it went on 403ing for everybody holding `reports.view` and not
+    // `reports.business`. Measured 2026-10-31 by persona-sweep: the
+    // scheduler took it on EIGHT tabs and the bookkeeper on two, because
+    // this badge loads on every page.
+    //
+    // The rule it kept breaking: a UI gate names the capability of the
+    // endpoint it is about to call, taken from the route map — not a
+    // neighbouring capability that reads plausibly.
+    if (!scopeCan("reports.business")) { setUnclaimedCount(0); markAlertLoaded("unclaimed"); return; }
     try {
       const d = computeDatesFromPreset("overdueAndNext3");
       const qs = new URLSearchParams();
@@ -4856,7 +4901,13 @@ body:      ${meError.responseBody.split("\n").slice(0, 6).join("\n           ")}
             switching tabs changed the content height and slid the strip in
             and out of view at the bottom. */}
         {mounted && isSignedIn && hasAnyRole && topTab !== "client" && (
-          <PortfolioScopeNotice portfolioScope={(me as any)?.portfolioScope ?? null} />
+          <PortfolioScopeNotice
+            portfolioScope={(me as any)?.portfolioScope ?? null}
+            // WHICH TAB IS UNDERNEATH. The strip renders once, above the
+            // tab row, so without this it speaks for tabs the portfolio
+            // filter never touches — see FILTERED_TABS in the notice.
+            activeTab={staffInnerTab}
+          />
         )}
         <BreadcrumbNav
             contentGeneration={contentGeneration}

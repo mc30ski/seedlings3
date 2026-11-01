@@ -21,7 +21,7 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, paymentSplitCutoffWhere, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { portfolioWhere, portfolioWhereVia } from "../lib/portfolioScope";
+import { portfolioWhere, portfolioWhereVia, occurrencePortfolioWhere, occurrencePaymentPortfolioWhere } from "../lib/portfolioScope";
 import { WORKER_TYPES, classify, isFeeable, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { currentUserId, enrichSyncTasks, nextRecurrenceDate, occInEditableState } from "./_shared";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
@@ -89,7 +89,7 @@ export default async function moneyRoutes(app: FastifyInstance) {
     const cutoff = await resolveCutoff(req);
     // A Payment reaches its portfolio through the occurrence it settles. Empty for
     // anyone holding money.view globally, so their query does not change.
-    const portfolioWhere = portfolioWhereVia(req.principal, "money.view", "occurrence");
+    const portfolioWhere = occurrencePaymentPortfolioWhere(req.principal, "money.view", req.moneyBasis);
     return services.payments.listAllPayments({ from, to, userId, method, cutoff, portfolioWhere });
   });
   app.patch("/invoice-charges/:id/ledger-link", req_materialsCharge, async (req: any) => {
@@ -221,7 +221,7 @@ export default async function moneyRoutes(app: FastifyInstance) {
     const cutoff = await resolveCutoff(req);
     return services.payments.listPendingApprovals(
       cutoff,
-      portfolioWhereVia(req.principal, "money.view", "occurrence"),
+      occurrencePaymentPortfolioWhere(req.principal, "money.view", req.moneyBasis),
     );
   });
   // Outstanding payment requests — sent to a client, not yet paid back.
@@ -231,7 +231,7 @@ export default async function moneyRoutes(app: FastifyInstance) {
     // the fragment is top-level rather than nested through a relation.
     return services.paymentRequests.listOutstanding({
       cutoff,
-      portfolioWhere: portfolioWhere(req.principal, "money.view"),
+      portfolioWhere: occurrencePortfolioWhere(req.principal, "money.view", req.moneyBasis),
     });
   });
   app.post("/payments/:id/approve", req_moneyApprove, async (req: any) => {

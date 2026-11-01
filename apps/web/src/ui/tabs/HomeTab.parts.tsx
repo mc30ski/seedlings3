@@ -23,6 +23,7 @@ import {
   Activity, AlertTriangle, Briefcase, Building2, Calendar, CheckCircle2,
   ChevronsUpDown, Clock, DollarSign, FileText, Hammer, Percent, RefreshCw,
   Star, TrendingDown, TrendingUp, Truck, Users, Wrench, XCircle,
+  Receipt,
 } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { bizAddDays, bizToday, fmtDateKey, type EtDateKey } from "@/src/lib/dates";
@@ -63,9 +64,16 @@ type OperationsResponse = {
   };
   financial: {
     totalRevenue: number;
-    totalExpenses: number;
-    netRevenue: number;
+    /** Materials billed TO the client — revenue-side, not a cost. */
+    totalJobCharges: number;
+    /** The Ledger, the only real deduction. NULL without `books.view`. */
+    totalLedgerExpenses: number | null;
+    /** revenue − ledger. NULL when the ledger is not visible. */
+    netRevenue: number | null;
+    /** The % charged to contractors. */
     totalPlatformFees: number;
+    /** What Venmo/Stripe keep. */
+    totalProcessorFees: number;
     totalBusinessMargin: number;
     totalTopUps: number;
     totalOwnerEarnings: number;
@@ -181,8 +189,12 @@ export function OperationsPanel({
             {" · "}
             <Box as="span" fontWeight="bold">{fmtUSD(data.financial.totalRevenue)}</Box> rev
             {" · "}
-            <Box as="span" fontWeight="bold">{fmtUSD(data.financial.netRevenue)}</Box> net
-            {" · "}
+            {data.financial.netRevenue !== null && (
+              <>
+                <Box as="span" fontWeight="bold">{fmtUSD(data.financial.netRevenue)}</Box> net
+                {" · "}
+              </>
+            )}
             <Box as="span" fontWeight="bold">{fmtInt(data.jobs.completed)}</Box> done
           </>
         ) : null}
@@ -229,19 +241,41 @@ export function OperationsPanel({
                 color="green"
                 icon={DollarSign}
               />
+              {/* TWO BOOKS, TWO TILES. One of these is what the CLIENT
+                  pays you for materials and the other is what the business
+                  actually spent; they are not the same number and only the
+                  second is a deduction. This card used to show the first
+                  under the word "Expenses" and subtract it to make Net. */}
               <MiniStatCard
-                label="Expenses"
-                value={fmtUSD(data.financial.totalExpenses)}
-                color="orange"
-                icon={TrendingDown}
+                label="Job charges"
+                value={fmtUSD(data.financial.totalJobCharges)}
+                hint="materials billed to clients"
+                color="blue"
+                icon={Receipt}
               />
-              <MiniStatCard
-                label="Net"
-                value={fmtUSD(data.financial.netRevenue)}
-                hint="revenue − expenses"
-                color={data.financial.netRevenue < 0 ? "red" : "green"}
-                icon={data.financial.netRevenue < 0 ? TrendingDown : TrendingUp}
-              />
+              {/* LEDGER AND NET ARE BOTH `books.view`. Null means the
+                  viewer is not entitled to the ledger — Portfolio Lead
+                  holds reports.business and not books.view — and a Net
+                  that quietly deducted nothing for them would be a
+                  different number wearing the same label. */}
+              {data.financial.totalLedgerExpenses !== null && (
+                <MiniStatCard
+                  label="Ledger expenses"
+                  value={fmtUSD(data.financial.totalLedgerExpenses)}
+                  hint="fuel, meals, supplies — the deduction"
+                  color="orange"
+                  icon={TrendingDown}
+                />
+              )}
+              {data.financial.netRevenue !== null && (
+                <MiniStatCard
+                  label="Net"
+                  value={fmtUSD(data.financial.netRevenue)}
+                  hint="revenue − ledger expenses"
+                  color={data.financial.netRevenue < 0 ? "red" : "green"}
+                  icon={data.financial.netRevenue < 0 ? TrendingDown : TrendingUp}
+                />
+              )}
               <MiniStatCard
                 label="Business margin"
                 value={fmtUSD(data.financial.totalBusinessMargin)}
@@ -264,7 +298,18 @@ export function OperationsPanel({
               />
               <MiniStatCard
                 label="Processor fees"
+                value={fmtUSD(data.financial.totalProcessorFees)}
+                color="gray"
+                icon={Percent}
+              />
+              {/* AND THE OTHER FEE. This tile used to be the only one and
+                  it read `platformFeeAmount` under the name "Processor
+                  fees" — the contractor cut labelled as the Venmo cut.
+                  Both are real: all-time $329.25 and $321.57. */}
+              <MiniStatCard
+                label="Platform fees"
                 value={fmtUSD(data.financial.totalPlatformFees)}
+                hint="charged to contractors"
                 color="gray"
                 icon={Percent}
               />

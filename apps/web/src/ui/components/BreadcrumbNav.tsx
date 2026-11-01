@@ -2,12 +2,25 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Badge, Box, HStack, Icon, Text } from "@chakra-ui/react";
-import { ArrowUpRight, ChevronDown } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Layers } from "lucide-react";
 
 export type InnerTab = {
   value: string;
   label: string;
   icon?: React.ElementType;
+  /**
+   * Mark this tab as one the PORTFOLIO FILTER narrows.
+   *
+   * A trailing glyph after the label, never a replacement for `icon` —
+   * the tab's own icon says what the tab IS and this says what is being
+   * done to it, so one cannot stand in for the other.
+   *
+   * Set only while a filter is actually in force, so the row is unmarked
+   * in the ordinary case. Its job is to answer "which of these tabs are
+   * affected?" BEFORE you click, which the strip above cannot do: the
+   * strip only ever speaks for the tab you are already on.
+   */
+  portfolioFiltered?: boolean;
   visible?: boolean | (() => boolean);
   content?: React.ReactNode;
   category?: string; // group tabs into categories
@@ -179,6 +192,8 @@ export default function BreadcrumbNav({
       icon?: React.ElementType;
       highlight?: boolean;
       chip?: boolean;
+      /** Narrowed by the portfolio filter — see InnerTab.portfolioFiltered. */
+      portfolioFiltered?: boolean;
       /** Group tag for ordering + divider insertion. Items are shown
        *  in the order: bucket="core" (default), then a horizontal
        *  divider row, then bucket="next". */
@@ -282,6 +297,15 @@ export default function BreadcrumbNav({
               >
                 {t.icon && <Icon as={t.icon} boxSize={3.5} />}
                 <Text>{t.label}</Text>
+                {t.portfolioFiltered && (
+                  <Icon
+                    as={Layers}
+                    boxSize={3}
+                    color="purple.fg"
+                    flexShrink={0}
+                    aria-label="Narrowed by the portfolio filter"
+                  />
+                )}
               </HStack>
             ) : t.chip ? (
               <HStack
@@ -302,6 +326,15 @@ export default function BreadcrumbNav({
                 >
                   {t.label}
                 </Text>
+                {t.portfolioFiltered && (
+                  <Icon
+                    as={Layers}
+                    boxSize={3}
+                    color="purple.fg"
+                    flexShrink={0}
+                    aria-label="Narrowed by the portfolio filter"
+                  />
+                )}
               </HStack>
             ) : (
               <>
@@ -313,6 +346,15 @@ export default function BreadcrumbNav({
                 >
                   {t.label}
                 </Text>
+                {t.portfolioFiltered && (
+                  <Icon
+                    as={Layers}
+                    boxSize={3}
+                    color="purple.fg"
+                    flexShrink={0}
+                    aria-label="Narrowed by the portfolio filter"
+                  />
+                )}
               </>
             )}
             {/* Cross-role jump badges — render only when this inner tab
@@ -479,6 +521,7 @@ export default function BreadcrumbNav({
                       icon: t.icon,
                       chip: t.chip,
                       bucket: t.bucket,
+                      portfolioFiltered: t.portfolioFiltered,
                       crossRoleTargets: hideOuterTab ? [] : computeCrossRoleTargets(t.value),
                     })),
                     innerValue,
@@ -515,6 +558,7 @@ export default function BreadcrumbNav({
                 icon: t.icon,
                 chip: t.chip,
                 bucket: t.bucket,
+                portfolioFiltered: t.portfolioFiltered,
                 crossRoleTargets: hideOuterTab ? [] : computeCrossRoleTargets(t.value),
               })),
               innerValue,

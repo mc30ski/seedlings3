@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openHeaderDrawer } from "../helpers/nav";
 
 // The header chip's dropdown is anchored to the RIGHT edge of a control that
 // sits near the right edge of the screen, so any width it gains pushes it off
@@ -18,7 +19,8 @@ for (const width of [320, 390, 430]) {
     });
     await page.goto("/");
     await page.waitForLoadState("networkidle").catch(() => {});
-    await page.getByTestId("theme-chip").waitFor({ state: "visible", timeout: 45_000 });
+    // The chip is behind the header drawer, which defaults closed.
+    await openHeaderDrawer(page);
     await page.getByTestId("theme-chip").click();
     const panel = page.getByTestId("theme-chip-option-original");
     await panel.waitFor({ state: "visible" });

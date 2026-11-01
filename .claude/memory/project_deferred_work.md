@@ -210,3 +210,37 @@ Workdays and mileage are the other surface and are global. Both get called
 **If a district lead's workday queue should ever be genuinely theirs**, that
 is the point to derive territory from the day's occurrences — a migration
 plus an answer to the two-districts question. Not before.
+
+---
+
+## A pre-cutoff record cannot be deleted through the UI — DEFERRED 2026-10-31
+
+**The defect:** `jobs.deleteJob` refuses while the job has occurrences, and
+counts them with a raw `prisma.jobOccurrence.count({ where: { jobId } })` —
+no Business Start Date filter. Every VIEW applies that filter. So for a job
+whose visits all predate the cutoff, the app says *"Delete all job
+occurrences before deleting the job"* about visits it will not show at any
+date range. Unresolvable through the interface.
+
+Hit for real on `105 Hampton Ct`: 2 visits dated 31 Mar and 10 Apr against
+a 2026-05-11 cutoff. Resolved by deleting through a script instead.
+
+**The user's decision: leave it.** Pre-cutoff records are the exception,
+and changing the guard is a policy change deserving its own pass.
+
+**Two possible fixes when it is picked up:**
+- Count only occurrences the caller can see — but then you can delete a job
+  whose history you cannot see, which is worse.
+- Keep counting all of them and SAY SO: *"2 occurrences, both hidden by the
+  Business Start Date filter. Turn on Reveal pre-cutoff to see them."*
+  **Preferred** — the guard's message is only actionable if the things it
+  names are reachable.
+
+The same shape applies to any guard that counts rows a filter hides.
+
+**Also noted:** `GET /jobs/archived` has no search, and **nothing in the web
+app calls it** — ServicesTab loads `/api/jobs?status=ALL` and filters in the
+browser, so archived services are already searchable. A `q` param was added
+to it on 2026-10-31 and then **reverted the same day**: it was built on a
+wrong diagnosis (the real cause was the cutoff, above) and solved nothing
+anyone had. If that endpoint ever gets a consumer, it will want search.

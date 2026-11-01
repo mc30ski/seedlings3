@@ -210,3 +210,30 @@ export async function waitForSplashGone(page: Page) {
     )
     .toBe(true);
 }
+
+/**
+ * Open the header's "extra controls" drawer, where the theme chip lives.
+ *
+ * `headerDrawerOpen` is a persisted preference that DEFAULTS TO FALSE, and
+ * `ThemeChip` only renders while it is true — deliberately, because as an
+ * item in the control strip the chip cost 20px that every other control
+ * had to give up on every screen, to reach something most people touch
+ * once.
+ *
+ * So a spec that goes looking for `theme-chip` finds nothing until the
+ * drawer is open. Eighteen of the twenty-four failures in the 2026-10-31
+ * full run were this, across three spec files: each one waited out its
+ * timeout on a control that was never going to appear.
+ *
+ * Idempotent — returns immediately if the drawer is already open, so it is
+ * safe to call at the top of every test regardless of what the storage
+ * state happens to carry.
+ */
+export async function openHeaderDrawer(page: any): Promise<void> {
+  const chip = page.getByTestId("theme-chip");
+  if (await chip.isVisible().catch(() => false)) return;
+  const toggle = page.getByTestId("header-drawer-toggle");
+  await toggle.waitFor({ state: "visible", timeout: 30_000 });
+  await toggle.click();
+  await chip.waitFor({ state: "visible", timeout: 30_000 });
+}

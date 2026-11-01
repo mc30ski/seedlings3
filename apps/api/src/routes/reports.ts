@@ -20,7 +20,7 @@ import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCa
 import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, paymentSplitCutoffWhere, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
-import { portfolioWhere, portfolioWhereVia, withPortfolio } from "../lib/portfolioScope";
+import { portfolioWhere, portfolioWhereVia, occurrencePortfolioWhere, withPortfolio } from "../lib/portfolioScope";
 import { WORKER_TYPES, classify, isFeeable, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
 import { cached } from "../lib/cache";
@@ -104,7 +104,7 @@ export default async function reportRoutes(app: FastifyInstance) {
     // real week. `portfolioScope` below tells the UI to say so. Never let this
     // ship as an unlabelled per-person earnings figure — it is exactly the
     // number that gets screenshotted into a pay conversation.
-    const statsArea = portfolioWhere(req.principal, "reports.view");
+    const statsArea = occurrencePortfolioWhere(req.principal, "reports.view", req.moneyBasis);
     // Typed explicitly: inline, the object was contextually typed by
     // `findMany` and the status strings narrowed to the enum. Passing it
     // through `withPortfolio` first loses that, and the error surfaces as a
@@ -454,7 +454,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           },
           ...(cutoff ? [occurrenceWorkDateCutoff(cutoff)] : []),
         ],
-      }, portfolioWhere(req.principal, "reports.business")),
+      }, occurrencePortfolioWhere(req.principal, "reports.business", req.moneyBasis)),
       include: {
         assignees: { select: { userId: true, role: true } },
         payment: paymentIncludeWithCutoff(cutoff, { include: { splits: true } }),
@@ -494,7 +494,7 @@ export default async function reportRoutes(app: FastifyInstance) {
           },
           ...(cutoff ? [occurrenceWorkDateCutoff(cutoff)] : []),
         ],
-      }, portfolioWhere(req.principal, "reports.business")),
+      }, occurrencePortfolioWhere(req.principal, "reports.business", req.moneyBasis)),
       select: {
         status: true, workflow: true, isTentative: true, isClientConfirmed: true,
         isEstimate: true, jobId: true, price: true, proposalAmount: true,
@@ -584,9 +584,56 @@ export default async function reportRoutes(app: FastifyInstance) {
     // Financial summary
     const paidOccs = occurrences.filter((o) => o.payment);
     const totalRevenue = paidOccs.reduce((s, o) => s + (o.payment?.amountPaid ?? 0), 0);
-    const totalExpenses = occurrences.reduce((s, o) => s + o.invoiceCharges.reduce((es, e) => es + e.cost, 0), 0);
-    const netRevenue = totalRevenue - totalExpenses;
+    // ── TWO BOOKS, AND THIS CARD NOW SHOWS BOTH ──────────────────────
+    //
+    // `invoiceCharges` is what the CLIENT is billed for materials. It is
+    // revenue-side and is NOT a deduction — see
+    // docs/features/job-materials.md. It was labelled "Expenses" here and
+    // subtracted to make Net, which meant the card's Net was
+    // "revenue minus client-billed materials" while reporting $0 of the
+    // real costs. Production had $145.24 of fuel and meals in the same
+    // fortnight and the card said Expenses $0.
+    //
+    // So: job charges keep their own figure under their own name, and the
+    // LEDGER — the only thing that is actually a deduction — is what Net
+    // comes off.
+    const totalJobCharges = occurrences.reduce((s, o) => s + o.invoiceCharges.reduce((es, e) => es + e.cost, 0), 0);
+
+    // THE LEDGER IS `books.view`, AND THIS ROUTE IS `reports.business`.
+    //
+    // Those are different capabilities and one does not imply the other:
+    // Portfolio Lead holds `reports.business` and not `books.view`. So the
+    // ledger total is fetched only for somebody entitled to it, and is
+    // NULL otherwise — along with Net, which cannot be stated honestly
+    // without it. A tile that silently means something different
+    // depending on who is looking is worse than an absent one.
+    const maySeeBooks = callerCan(req, "books.view");
+    const totalLedgerExpenses = maySeeBooks
+      ? (
+          await prisma.businessExpense.aggregate({
+            _sum: { cost: true },
+            where: {
+              date: { gte: dateFrom, lte: dateTo },
+              // Pre-cutoff spend is hidden from every money view; the
+              // ledger is no exception.
+              ...(cutoff ? { date: { gte: cutoff > dateFrom ? cutoff : dateFrom, lte: dateTo } } : {}),
+            },
+          })
+        )._sum.cost ?? 0
+      : null;
+    const netRevenue = totalLedgerExpenses === null ? null : totalRevenue - totalLedgerExpenses;
+
+    // TWO FEE COLUMNS, TWO DIFFERENT THINGS, and the card showed one under
+    // the other's name:
+    //   platformFeeAmount  — the % charged to CONTRACTORS
+    //   processorFeeAmount — what Venmo/Stripe keep, snapshotted from
+    //                        PAYMENT_METHODS at payment time
+    // The tile said "Processor fees" and read the first. With no
+    // contractor splits in the window it correctly reported $0 of the
+    // wrong thing, while $11.63 of real Venmo fees went unshown. Both are
+    // material — all-time, $329.25 and $321.57 — so both are reported.
     const totalPlatformFees = paidOccs.reduce((s, o) => s + (o.payment?.platformFeeAmount ?? 0), 0);
+    const totalProcessorFees = paidOccs.reduce((s, o) => s + (o.payment?.processorFeeAmount ?? 0), 0);
     const totalBusinessMargin = paidOccs.reduce((s, o) => s + (o.payment?.businessMarginAmount ?? 0), 0);
     // W-2 make-whole spend (top-ups) + LLC owner draws on the business's
     // cut. Both are sourced from PaymentSplit rows already loaded above
@@ -1077,9 +1124,17 @@ export default async function reportRoutes(app: FastifyInstance) {
       },
       financial: {
         totalRevenue,
-        totalExpenses,
+        /** Materials billed TO the client. Revenue-side, never a deduction. */
+        totalJobCharges,
+        /** The Ledger — the only real deduction. NULL without `books.view`. */
+        totalLedgerExpenses,
+        /** revenue − ledger. NULL when the ledger is not visible, because
+         *  a Net that quietly deducts nothing is worse than no Net. */
         netRevenue,
+        /** The % charged to contractors. */
         totalPlatformFees,
+        /** What Venmo/Stripe keep. */
+        totalProcessorFees,
         totalBusinessMargin,
         totalTopUps,
         totalOwnerEarnings,
@@ -1777,7 +1832,7 @@ export default async function reportRoutes(app: FastifyInstance) {
     // The business-wide rollup is a DIFFERENT surface: `/operations`, on
     // `reports.business`, whose copy says "across the company" and which
     // stays global on purpose.
-    const portfolioFilter = portfolioWhere(req.principal, "reports.view");
+    const portfolioFilter = occurrencePortfolioWhere(req.principal, "reports.view", req.moneyBasis);
     const subsetSet = new Set(subsetIds);
 
     // Business Start Date filter — resolved once for the entire aggregate.

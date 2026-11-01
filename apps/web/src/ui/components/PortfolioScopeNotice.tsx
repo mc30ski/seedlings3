@@ -30,18 +30,27 @@ import { useEffect, useState } from "react";
 import { Box, HStack, Text } from "@chakra-ui/react";
 import { Info, Layers, X } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
+import { tabIsFiltered, tabShowsMoney } from "@/src/lib/portfolioFilteredTabs";
 import {
   applyDefaultAreaLens,
   getAreaLens,
   setAreaLens,
   getAreaLensName,
+  getMoneyBasis,
   AREA_LENS_CHANGED_EVENT,
   type AreaLensOption,
+  type MoneyBasis,
 } from "@/src/lib/impersonation";
 
 export default function PortfolioScopeNotice({
   portfolioScope,
+  activeTab,
 }: {
+  /** The tab open underneath this strip, so it can say whether that tab is
+   *  actually filtered. Undefined is treated as "filtered" — the strip
+   *  keeps its existing wording rather than claiming something it was not
+   *  told. */
+  activeTab?: string | null;
   /** From `/api/me`. Null when this person's access is not confined. Each
    *  trail is the chain from the top of the tree down to the granted portfolio,
    *  root excluded — ["Chapel Hill", "Carrboro"]. */
@@ -63,6 +72,7 @@ export default function PortfolioScopeNotice({
   const [lensName, setLensName] = useState<string | null>(null);
   const [lensTrail, setLensTrail] = useState<string[] | null>(null);
   const [showDetail, setShowDetail] = useState(false);
+  const [moneyBasis, setMoneyBasis] = useState<MoneyBasis>("today");
 
   // Seed the lens from a single portfolio grant, once per browser. Mounted
   // app-wide, so it runs wherever somebody lands first.
@@ -73,6 +83,9 @@ export default function PortfolioScopeNotice({
     const read = () => {
       setLensId(getAreaLens());
       setLensName(getAreaLensName());
+      // Same event, because the basis changes through the same panel and
+      // a strip showing one of them stale is worse than showing neither.
+      setMoneyBasis(getMoneyBasis());
     };
     read();
     window.addEventListener(AREA_LENS_CHANGED_EVENT, read);
@@ -137,6 +150,29 @@ export default function PortfolioScopeNotice({
   const partial = !lensSet && !leadsOnly && portfolioScope?.mixed;
   const coveredBy = portfolioScope?.coveredBy ?? [];
 
+  /**
+   * LOUD WHEN THE TAB YOU ARE ON IS ACTUALLY NARROWED, quiet otherwise.
+   *
+   * The strip is on every screen of every session, so "it is showing"
+   * cannot be the whole signal — a reader stops seeing a thing that never
+   * changes. What has to be legible at a glance is the only question that
+   * matters: are the numbers in front of me missing anything?
+   *
+   * BOTH STATES ARE EXPLICIT, differing in WEIGHT rather than presence.
+   * Marking only the narrowed case would make the other one a thing you
+   * notice by its absence, which nobody does, and which is ambiguous with
+   * the strip simply not having rendered.
+   *
+   * Same box, same height, same position either way — the rule the lens
+   * chip already follows, so turning it on never reflows the row.
+   *
+   * `leadsOnly` stays quiet on purpose: that person holds everything
+   * company-wide and is merely recorded as leading a portfolio. Nothing is
+   * hidden from them, so a loud strip would be a false alarm they learn to
+   * ignore — and then miss on the day it is true.
+   */
+  const loud = tabIsFiltered(activeTab) && !leadsOnly;
+
   return (
     <Box
       mb={1}
@@ -149,10 +185,10 @@ export default function PortfolioScopeNotice({
       // already this app's colour for "what you are looking at is not the
       // default view" (BusinessStartRevealBanner), so the strip joins that
       // family rather than reading as a warning, which orange did.
-      bg="purple.faint"
+      bg={loud ? "purple.subtle" : "transparent"}
       borderWidth="1px"
-      borderColor="purple.emphasized"
-      borderLeftWidth="4px"
+      borderColor={loud ? "purple.solid" : "purple.muted"}
+      borderLeftWidth={loud ? "6px" : "4px"}
       rounded="md"
       data-testid="portfolio-scope-notice"
       // THE NUANCE LIVES IN THE TOOLTIP, not the line. `mixed` means this
@@ -171,10 +207,17 @@ export default function PortfolioScopeNotice({
           costs a line, not a paragraph. It ran to three lines on a phone
           before it was cut to this. */}
       <HStack gap={2} align="center">
-        <Box flexShrink={0} color="purple.fg" lineHeight="0">
+        <Box flexShrink={0} color={loud ? "purple.fg" : "fg.muted"} lineHeight="0">
           <Layers size={13} />
         </Box>
-        <Text fontSize="xs" color="purple.fg" truncate flex="1" minW={0}>
+        <Text
+          fontSize="xs"
+          color={loud ? "purple.fg" : "fg.muted"}
+          fontWeight={loud ? "medium" : "normal"}
+          truncate
+          flex="1"
+          minW={0}
+        >
           {/* NAME THE THING. "Showing Chapel Hill only" left the reader to
               infer what kind of thing Chapel Hill was and why it was
               filtering them — the word "portfolio" is the whole context
@@ -187,13 +230,18 @@ export default function PortfolioScopeNotice({
               portfolios who picks one of them from the chip. They are
               still District Lead in Durham; choosing to look at one of
               your own portfolios does not stop the role applying. */}
+          {/* "showing" IS ALSO A CLAIM, and it is false on a tab the filter
+              does not touch. Dropped there, so the line opens by naming
+              the portfolio and then says what it does — rather than
+              asserting a narrowing in its first two words and withdrawing
+              it in its last ten. */}
           {leadsOnly
             ? "You lead "
             : partial
               ? "Parts of your view are limited to "
               : roleNames.length > 0
-                ? "Your portfolio: showing "
-                : "Portfolio filter: showing "}
+                ? tabIsFiltered(activeTab) ? "Your portfolio: showing " : "Your portfolio: "
+                : tabIsFiltered(activeTab) ? "Portfolio filter: showing " : "Portfolio filter: "}
           {trails.map((trail, ti) => (
             <Text as="span" key={trail.join("/")}>
               {ti > 0 && ", "}
@@ -222,7 +270,7 @@ export default function PortfolioScopeNotice({
               The qualification used to live only in the tooltip, which is
               to say nowhere: the visible line said "showing Durham only"
               over a list of the whole company. */}
-          {leadsOnly || partial ? "" : " only"}
+          {leadsOnly || partial || !tabIsFiltered(activeTab) ? "" : " only"}
           {/* AND THE ROLE, whenever one is scoped here. Somebody who holds
               everything company-wide has no role to name — they are using
               their own powers and merely looking at a slice, so saying
@@ -242,6 +290,34 @@ export default function PortfolioScopeNotice({
             <Text as="span">
               {" — your view is not limited"}
               {coveredBy.length > 0 && `, you hold these powers everywhere through ${coveredBy.join(" / ")}`}
+            </Text>
+          )}
+          {/* AND WHETHER THE TAB UNDERNEATH IS FILTERED AT ALL.
+              The strip sits above the tab row and speaks for whatever is
+              below it, but only some tabs are portfolio-filtered. On the
+              rest this line was simply untrue, and untrue in the direction
+              that matters: the whole company's Ledger read as one
+              portfolio's. Said inline rather than in the popover, because
+              the popover is a thing you open and this is a thing you need
+              before you read the number. */}
+          {!tabIsFiltered(activeTab) && (
+            <Text as="span" fontWeight="medium">
+              {/* SHORT ENOUGH TO SURVIVE THE TRUNCATE. The strip is one
+                  line by design, and the long version clipped at
+                  "...shows the whole busi…" behind a four-link trail —
+                  losing the only words that mattered. */}
+              {" — this tab shows the whole business"}
+            </Text>
+          )}
+          {/* AND WHICH MONEY, on the tabs that show any. The portfolio
+              filter means one thing for a property count and two things
+              for a revenue figure, because only money is timestamped. */}
+          {tabShowsMoney(activeTab) && (
+            <Text as="span">
+              {" · money "}
+              <Text as="span" fontWeight="bold">
+                {moneyBasis === "today" ? "as organized now" : "as it happened"}
+              </Text>
             </Text>
           )}
         </Text>
@@ -303,17 +379,28 @@ export default function PortfolioScopeNotice({
               rounded="md"
               shadow="md"
             >
+              {/* RE-MEASURED 2026-10-29 against the call sites in apps/api.
+                  This said the LEDGER was narrowed. It is not, and never
+                  has been: the Ledger and Reconcile are gated on
+                  `books.view`, which is global-only by design, so a
+                  portfolio filter leaves them showing the whole company.
+                  It also omitted Payments and Statistics, which ARE
+                  filtered. Both halves of the list were wrong in the
+                  worst possible direction — it named the one money
+                  surface that does not narrow and left out the two that
+                  do. */}
               <Text fontSize="xs" fontWeight="semibold" mb={1}>Narrowed to this portfolio</Text>
               <Text fontSize="xs" color="fg.muted" mb={2}>
-                Jobs and visits · Services · Clients · Properties · the Ledger ·
-                and every Insights total that comes from them (revenue, completed,
-                scheduled, unclaimed, team).
+                Jobs and visits · Services · Clients · Properties · Payments ·
+                Statistics · the Home dashboard — and every Insights total that
+                comes from them (revenue, completed, scheduled, unclaimed, team).
               </Text>
               <Text fontSize="xs" fontWeight="semibold" mb={1}>Still company-wide</Text>
               <Text fontSize="xs" color="fg.muted">
-                Equipment · Supplies · Vehicles · Crews · Users · Documents.
-                These are shared across the business, so their counts are the
-                whole company&rsquo;s even while this filter is on.
+                The Ledger · Reconcile · Forecast · Equipment · Supplies ·
+                Vehicles · Crews · Users · Documents. These are either shared
+                across the business or deliberately whole-business reports, so
+                their figures are the company&rsquo;s even while this filter is on.
               </Text>
             </Box>
           )}

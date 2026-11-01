@@ -27,14 +27,18 @@ import { apiGet } from "@/src/lib/api";
 import {
   getAreaLens,
   setAreaLens,
+  getMoneyBasis,
+  setMoneyBasis,
   AREA_LENS_CHANGED_EVENT,
   type AreaLensOption,
+  type MoneyBasis,
 } from "@/src/lib/impersonation";
 
 export default function PortfolioLensChip() {
   const [open, setOpen] = useState(false);
   const [portfolios, setAreas] = useState<AreaLensOption[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const [basis, setBasis] = useState<MoneyBasis>("today");
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -51,6 +55,7 @@ export default function PortfolioLensChip() {
 
   useEffect(() => {
     setActive(getAreaLens());
+    setBasis(getMoneyBasis());
     let cancelled = false;
     (async () => {
       try {
@@ -76,7 +81,7 @@ export default function PortfolioLensChip() {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
     }
-    function handleChanged() { setActive(getAreaLens()); }
+    function handleChanged() { setActive(getAreaLens()); setBasis(getMoneyBasis()); }
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("keydown", handleKey);
     window.addEventListener(AREA_LENS_CHANGED_EVENT, handleChanged);
@@ -212,6 +217,60 @@ export default function PortfolioLensChip() {
               testId={`portfolio-lens-option-${a.id}`}
             />
           ))}
+
+          {/* WHAT THE MONEY SHOWS, in the same panel as the portfolio.
+              The basis is a property OF the lens — it decides what the
+              narrowing means for money — so it belongs with it and not
+              duplicated onto three money tabs, where the three copies can
+              disagree.
+
+              Everything else the filter touches is a "what is in here now"
+              question with one answer. Only money has a second one,
+              because only money is timestamped: tag 35 properties into a
+              zone and the property count says 35 immediately while the
+              revenue says $50, since that work was earned before the zone
+              existed. Both are true. This is which one you are reading. */}
+          <Box borderTopWidth="1px" borderColor="border" mt={1} pt={1}>
+            <Box px={3} py={1.5}>
+              <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
+                Money shows
+              </Text>
+            </Box>
+            {lensOn ? (
+              <>
+                <LensRow
+                  label="Work as organized now"
+                  hint="All payments included regardless of past portfolio membership"
+                  wrapHint
+                  active={basis === "today"}
+                  onClick={() => { setOpen(false); setBasis("today"); void setMoneyBasis("today"); }}
+                  testId="money-basis-today"
+                />
+                <LensRow
+                  label="Work as it happened"
+                  // NOT "past payments": an OPEN visit's payment is included
+                  // here too, counted where its property sits right now,
+                  // because an unfinished visit's portfolio stays in sync
+                  // until it completes. Only completion freezes it.
+                  hint="Payments counted where the visit was when it completed"
+                  wrapHint
+                  active={basis === "happened"}
+                  onClick={() => { setOpen(false); setBasis("happened"); void setMoneyBasis("happened"); }}
+                  testId="money-basis-happened"
+                />
+              </>
+            ) : (
+              /* NO LENS, NO CHOICE TO MAKE. Unnarrowed, both bases return
+                 the same total, and an active-looking control that cannot
+                 change the number is how people learn to distrust the ones
+                 that can — the same reasoning that hides the chip itself
+                 when there is only one portfolio to pick. */
+              <Text px={3} pb={2} fontSize="xs" color="fg.muted" lineHeight="short">
+                Pick a portfolio above to choose whether its money means everything
+                those properties have earned, or only what they earned while in it.
+              </Text>
+            )}
+          </Box>
         </Box>
       )}
     </Box>
@@ -236,7 +295,7 @@ function indentOf(a: AreaLensOption, all: readonly AreaLensOption[]): number {
 }
 
 function LensRow({
-  label, hint, indent = 0, active, onClick, testId,
+  label, hint, indent = 0, active, onClick, testId, wrapHint = false,
 }: {
   label: string;
   hint?: string;
@@ -244,6 +303,14 @@ function LensRow({
   active: boolean;
   onClick: () => void;
   testId: string;
+  /** Let the hint run to two lines instead of clipping.
+   *
+   *  Off for the portfolio rows, whose hint is a one-word tier and where a
+   *  wrap would just make the list taller. On for the money-basis rows,
+   *  whose hint is the only place the difference between the two is
+   *  stated — about forty characters fit in this panel, and half a
+   *  sentence is worse than none. */
+  wrapHint?: boolean;
 }) {
   return (
     <HStack
@@ -279,7 +346,7 @@ function LensRow({
           {label}
         </Text>
         {hint && (
-          <Text fontSize="2xs" color="fg.muted" truncate>
+          <Text fontSize="2xs" color="fg.muted" lineHeight="short" truncate={!wrapHint}>
             {hint}
           </Text>
         )}

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openHeaderDrawer } from "../helpers/nav";
 
 // The header chip and the Profile picker are two views of ONE setting.
 // Changing either must move the other and must persist across a reload —
@@ -23,6 +24,9 @@ test("header chip and Profile picker stay in step, and the choice persists", asy
   await page.goto("/");
   await page.waitForLoadState("networkidle").catch(() => {});
   await page.getByTestId("theme-option-original").waitFor({ state: "visible", timeout: 45_000 });
+  // The theme chip lives in the header's extra-controls drawer, which is
+  // closed by default — see openHeaderDrawer.
+  await openHeaderDrawer(page);
 
   const state = () => page.evaluate(() => ({
     attr: document.documentElement.getAttribute("data-theme"),
