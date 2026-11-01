@@ -51,7 +51,7 @@ split (JobsTab ~11k LOC).
 - [DEFERRED WORK — read when starting related work](project_deferred_work.md) — postponed items w/ context and rough size.
 - [Never commit, push, or deploy — the user does all of it](feedback_never_push_without_permission.md) — HARD RULE, `git commit` included. No exceptions, no urgency override.
 - [Production IS reachable — its URL is COMMENTED OUT in `apps/api/.env`](reference_prod_db_url_is_commented_in_env.md) — `ep-noisy-feather` = prod, `ep-jolly-wildflower` = dev. Grep without a `^` anchor; I've twice wrongly said prod was unreachable.
-- [Never write to the production database](feedback_never_write_production_db.md) — reads fine; every write is the user's. Validate prod config against `git show HEAD`, not the working tree.
+- [Never write to the production database](feedback_never_write_production_db.md) — reads fine; every write needs explicit per-operation permission AND a confirm before running. **The four authorised writes of 2026-10-31/11-01 are NOT a precedent** — the operator reinstated the read-only default afterwards. Validate prod config against `git show HEAD`, not the working tree.
 - [Prisma migrations required — never db push](feedback_prisma_migrations.md) — schema changes go through `migrate dev`.
 - [Migrate must bypass the Neon pooler](reference_migrate_needs_direct_url.md) — `directUrl`/`DIRECT_URL` added 2026-10-23. Set BOTH vars when overriding `DATABASE_URL`, or you migrate dev while the output says production.
 - [Apply migrations to dev immediately](feedback_apply_migration_to_dev_immediately.md) — never let code land while dev DB is on the old schema.

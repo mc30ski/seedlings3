@@ -77,6 +77,26 @@ const NO_FILTER = {} as const;
 export function visiblePortfolioPaths(
   principal: Principal | undefined,
   capability: Entitlement,
+  opts?: {
+    /**
+     * Drop the viewer's CHOSEN lens and scope to their grants alone.
+     *
+     * For a request that already names the portfolio it wants. Asking for
+     * one portfolio explicitly IS the caller's narrowing for that request,
+     * and intersecting it with an ambient lens they set days ago on a
+     * different tab produced the bug this exists to stop: the Portfolios
+     * tab listed Carrboro with a count of 0 while Carrboro held four
+     * properties, because the lens happened to be pointed elsewhere.
+     *
+     * SAFE BY CONSTRUCTION, and the reason is worth stating. A lens can
+     * only ever SUBTRACT — `applyLens` intersects it with the grants and
+     * can never reach outside them. So removing it cannot widen anything
+     * past what the caller already holds; the grant walk below is
+     * untouched. This is not a permission switch and must never be given
+     * one: it drops the viewer's own preference and nothing else.
+     */
+    ignoreLens?: boolean;
+  },
 ): string[] | null {
   // Invariant 2: no principal means no narrowing. A route that should not
   // have answered at all is the guard's problem, not the filter's.
@@ -90,6 +110,10 @@ export function visiblePortfolioPaths(
   // guard will already have refused; returning [] keeps it refused if not.
   if (principal.workerType === null) return [];
 
+  // Resolved AFTER the system branch, which has no lens to read. Null here
+  // means "no narrowing beyond the grants" — see `ignoreLens` above.
+  const lens = opts?.ignoreLens ? null : principal.lensPath;
+
   // Invariant 3, and it has to be checked HERE rather than inferred from
   // can(). can() is asked without a portfolioPath below, so it answers "yes, held
   // somewhere" for a field capability held only inside one portfolio — and the
@@ -97,7 +121,7 @@ export function visiblePortfolioPaths(
   // never be narrowed. A worker assigned to Raleigh would stop seeing the
   // Durham visit they are still allowed to claim.
   if (NEVER_AREA_SCOPED.has(capability)) {
-    return applyLens(can(principal, capability) ? null : [], principal.lensPath);
+    return applyLens(can(principal, capability) ? null : [], lens);
   }
 
   if (!can(principal, capability)) return [];
@@ -108,13 +132,13 @@ export function visiblePortfolioPaths(
   const global = principal.roles.some(
     (r) => !r.portfolioPath && r.entitlements.includes(capability),
   );
-  if (global) return applyLens(null, principal.lensPath);
+  if (global) return applyLens(null, lens);
 
   return applyLens(
     principal.roles
       .filter((r) => r.portfolioPath && r.entitlements.includes(capability))
       .map((r) => r.portfolioPath!),
-    principal.lensPath,
+    lens,
   );
 }
 
@@ -168,8 +192,9 @@ function applyLens(granted: string[] | null, lensPath: string | null | undefined
 export function portfolioWhere(
   principal: Principal | undefined,
   capability: Entitlement,
+  opts?: { ignoreLens?: boolean },
 ): Record<string, unknown> {
-  const paths = visiblePortfolioPaths(principal, capability);
+  const paths = visiblePortfolioPaths(principal, capability, opts);
   if (paths === null) return NO_FILTER;
   if (paths.length === 0) {
     // Holds it nowhere. An impossible condition rather than a silent

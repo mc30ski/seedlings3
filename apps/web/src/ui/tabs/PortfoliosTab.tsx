@@ -142,6 +142,7 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
   const [showRetired, setShowRetired] = useState(false);
   const [view, setView] = useState<"tree" | "leads">("tree");
 
+
   /**
    * "Chapel Hill → Carrboro", not "Carrboro".
    *

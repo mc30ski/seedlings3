@@ -699,7 +699,12 @@ export default async function customerRoutes(app: FastifyInstance) {
     }
 
     return services.properties.mapPoints({
-      portfolioWhere: portfolioWhere(req.principal, "clients.view"),
+      // Same rule as the list above: an explicitly named portfolio beats
+      // the ambient lens, so the map in the Portfolios panel agrees with
+      // the list beside it.
+      portfolioWhere: portfolioWhere(req.principal, "clients.view", {
+        ignoreLens: !!portfolioSubtreePath,
+      }),
       portfolioSubtreePath,
       assignedToUserId: await assignedScopeFor(req),
       portfolioId: portfolioId && portfolioId !== "none" ? String(portfolioId) : undefined,
@@ -724,7 +729,12 @@ export default async function customerRoutes(app: FastifyInstance) {
     }
 
     return services.properties.resolveMapPoints({
-      portfolioWhere: portfolioWhere(req.principal, "clients.view"),
+      // Same rule as the list above: an explicitly named portfolio beats
+      // the ambient lens, so the map in the Portfolios panel agrees with
+      // the list beside it.
+      portfolioWhere: portfolioWhere(req.principal, "clients.view", {
+        ignoreLens: !!portfolioSubtreePath,
+      }),
       portfolioSubtreePath,
       assignedToUserId: await assignedScopeFor(req),
       limit: Math.min(Math.max(Number(b.limit) || 5, 1), 10),
@@ -763,6 +773,13 @@ export default async function customerRoutes(app: FastifyInstance) {
       });
       portfolioSubtreePath = picked?.path ?? "\u0000no-such-portfolio";
     }
+    // AN EXPLICIT PORTFOLIO BEATS THE AMBIENT LENS.
+    //
+    // Naming a portfolio IS this request's narrowing. Intersecting it with
+    // a lens the viewer set days ago on another tab is how the Portfolios
+    // tab came to show "Carrboro · 4" above a panel reading "Nothing in
+    // Carrboro yet". Grants are untouched, and a lens can only ever
+    // subtract, so dropping it cannot return a row the caller may not see.
     const props = await services.properties.list({
       q,
       clientId,
@@ -770,7 +787,9 @@ export default async function customerRoutes(app: FastifyInstance) {
       kind: (kind as any) ?? "ALL",
       limit: limit ? Number(limit) : undefined,
       // Territory is resolved HERE because only the route has the principal.
-      portfolioWhere: portfolioWhere(req.principal, "clients.view"),
+      portfolioWhere: portfolioWhere(req.principal, "clients.view", {
+        ignoreLens: !!portfolioSubtreePath,
+      }),
       portfolioSubtreePath,
       assignedToUserId: await assignedScopeFor(req),
     });

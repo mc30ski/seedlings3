@@ -206,8 +206,22 @@ export default function PropertyDialog({
         ? [{ label: "Decide from this client's other properties", value: "INHERIT" }]
         : []),
       ...areaOptions.map((a) => ({
-        // The chain, so two routes called "North" are distinguishable.
-        label: a.trail?.length ? a.trail.join(" → ") : a.name,
+        // THE NAME, NOT THE WHOLE CHAIN.
+        //
+        // This was `a.trail.join(" → ")`, which read fine on a two-level
+        // tree — "Durham", "Chapel Hill". The real tree is five levels, so
+        // every option became
+        // "North Carolina → Triangle → Chapel Hill → Chapel Hill West"
+        // and the TRIGGER truncated all of them to the identical prefix
+        // "North Carolina → Triangle → Chapel Hill →…". Picking a
+        // different portfolio changed nothing on screen, which reads as a
+        // broken control — the save was working the whole time.
+        //
+        // The chain still earns its place where it disambiguates (two
+        // routes called "North"), so it survives as the PARENT line under
+        // the name rather than in front of it.
+        label: a.name,
+        parent: a.trail?.length ? a.trail.slice(0, -1).join(" → ") : "",
         value: a.id,
       })),
     ],
@@ -758,7 +772,18 @@ export default function PropertyDialog({
                         <Select.Content>
                           {areaItems.map((it) => (
                             <Select.Item key={it.value} item={it.value}>
-                              <Select.ItemText>{it.label}</Select.ItemText>
+                              {/* Name on top, where it carries; the chain
+                                  beneath it in muted text, where it
+                                  disambiguates without drowning the name. */}
+                              <VStack align="start" gap={0}>
+                                <Select.ItemText>{it.label}</Select.ItemText>
+                                {"parent" in it && it.parent ? (
+                                  <Text fontSize="2xs" color="fg.muted" lineHeight="short">
+                                    {it.parent}
+                                  </Text>
+                                ) : null}
+                              </VStack>
+                              <Select.ItemIndicator />
                             </Select.Item>
                           ))}
                         </Select.Content>
@@ -768,7 +793,7 @@ export default function PropertyDialog({
                       {mode === "UPDATE" && !mayRetag
                         ? "Only somebody who manages portfolios can change this."
                         : mode === "UPDATE"
-                          ? "Pick any number. Scheduled visits follow; finished work keeps what it counted toward. Clear them all to leave it in none."
+                          ? "Tick any number; tick a selected one again to take it off. Scheduled visits follow; finished work keeps what it counted toward. Clear them all to leave it in none."
                           : "Decides whose rollups this property appears in."}
                     </Text>
                     {/* WHAT THE DEFAULT IS ABOUT TO DO. Only while the
