@@ -148,7 +148,29 @@ export default function PortfolioScopeNotice({
   const narrows = portfolioScope?.narrows !== false;
   const leadsOnly = !lensSet && grantTrails.length > 0 && !narrows;
   const partial = !lensSet && !leadsOnly && portfolioScope?.mixed;
-  const coveredBy = portfolioScope?.coveredBy ?? [];
+
+  /**
+   * NOTHING IS FILTERED — SO SAY NOTHING.
+   *
+   * `leadsOnly` is somebody who holds every capability company-wide and is
+   * ALSO recorded as leading a portfolio. Their view is not narrowed, no
+   * lens is set, and no number on any screen is missing anything. This
+   * used to render anyway, quietly, on the argument that both states
+   * should be explicit so neither is noticed by its absence.
+   *
+   * That argument is sound for "the tab you are on is not filtered WHILE a
+   * filter is in force" — the reader genuinely needs telling which side of
+   * that line they are on. It does not survive "no filter is in force at
+   * all": then the strip is a permanent row, on every screen of every
+   * session, whose entire content is that nothing is happening. A banner
+   * that is always there and never means anything is exactly the one
+   * people stop reading, which costs the day it does mean something.
+   *
+   * Being recorded as a lead is still visible where it is a fact somebody
+   * is looking for — the Portfolios tab's "Who leads what", and the lens
+   * chip, which offers the portfolio precisely because they lead it.
+   */
+  if (leadsOnly) return null;
 
   /**
    * LOUD WHEN THE TAB YOU ARE ON IS ACTUALLY NARROWED, quiet otherwise.
@@ -166,12 +188,10 @@ export default function PortfolioScopeNotice({
    * Same box, same height, same position either way — the rule the lens
    * chip already follows, so turning it on never reflows the row.
    *
-   * `leadsOnly` stays quiet on purpose: that person holds everything
-   * company-wide and is merely recorded as leading a portfolio. Nothing is
-   * hidden from them, so a loud strip would be a false alarm they learn to
-   * ignore — and then miss on the day it is true.
+   * `leadsOnly` is not a case here any more: it returns above, because a
+   * strip that says nothing is filtered is a strip saying nothing.
    */
-  const loud = tabIsFiltered(activeTab) && !leadsOnly;
+  const loud = tabIsFiltered(activeTab);
 
   return (
     <Box
@@ -202,21 +222,35 @@ export default function PortfolioScopeNotice({
           : `Lists and totals leave out other portfolios.`
       }
     >
-      {/* ONE ROW, ALWAYS. This is a standing condition — somebody limited
-          to one territory sees it on every screen of every session — so it
-          costs a line, not a paragraph. It ran to three lines on a phone
-          before it was cut to this. */}
-      <HStack gap={2} align="center">
-        <Box flexShrink={0} color={loud ? "purple.fg" : "fg.muted"} lineHeight="0">
+      {/* IT WRAPS, AND THAT IS A REVERSAL.
+          This was `truncate`, kept to one row because the banner is a
+          standing condition somebody sees on every screen of every
+          session and it ran to three lines on a phone. But the sentence
+          names the portfolio and the role, and an ellipsis cuts words out
+          of the middle of a statement about what somebody can see —
+          "…everywhere through Su…" is not shorter, it is unfinished.
+          A clipped name costs the answer; two lines cost a few pixels.
+          Same call as the tree rows, which wrap for the same reason.
+
+          `align="start"` because the glyph belongs beside the FIRST line,
+          not floating against the middle of a wrapped block. */}
+      <HStack gap={2} align="start">
+        <Box
+          flexShrink={0}
+          color={loud ? "purple.fg" : "fg.muted"}
+          lineHeight="0"
+          // Sits on the cap height of the first line rather than its box.
+          mt="3px"
+        >
           <Layers size={13} />
         </Box>
         <Text
           fontSize="xs"
           color={loud ? "purple.fg" : "fg.muted"}
           fontWeight={loud ? "medium" : "normal"}
-          truncate
           flex="1"
           minW={0}
+          lineHeight="short"
         >
           {/* NAME THE THING. "Showing Chapel Hill only" left the reader to
               infer what kind of thing Chapel Hill was and why it was
@@ -235,10 +269,8 @@ export default function PortfolioScopeNotice({
               the portfolio and then says what it does — rather than
               asserting a narrowing in its first two words and withdrawing
               it in its last ten. */}
-          {leadsOnly
-            ? "You lead "
-            : partial
-              ? "Parts of your view are limited to "
+          {partial
+            ? "Parts of your view are limited to "
               : roleNames.length > 0
                 ? tabIsFiltered(activeTab) ? "Your portfolio: showing " : "Your portfolio: "
                 : tabIsFiltered(activeTab) ? "Portfolio filter: showing " : "Portfolio filter: "}
@@ -270,7 +302,7 @@ export default function PortfolioScopeNotice({
               The qualification used to live only in the tooltip, which is
               to say nowhere: the visible line said "showing Durham only"
               over a list of the whole company. */}
-          {leadsOnly || partial || !tabIsFiltered(activeTab) ? "" : " only"}
+          {partial || !tabIsFiltered(activeTab) ? "" : " only"}
           {/* AND THE ROLE, whenever one is scoped here. Somebody who holds
               everything company-wide has no role to name — they are using
               their own powers and merely looking at a slice, so saying
@@ -283,15 +315,12 @@ export default function PortfolioScopeNotice({
               <Text as="span" fontWeight="bold">{roleNames.join(" / ")}</Text>
             </Text>
           )}
-          {/* AND SAY WHY NOTHING IS FILTERED, when nothing is. Without this
-              the line reads as a restriction the reader cannot find, and
-              they go looking for missing rows that are all present. */}
-          {leadsOnly && (
-            <Text as="span">
-              {" — your view is not limited"}
-              {coveredBy.length > 0 && `, you hold these powers everywhere through ${coveredBy.join(" / ")}`}
-            </Text>
-          )}
+          {/* THE "your view is not limited" CLAUSE WAS HERE, and is gone
+              with the state it described. It existed so a strip that
+              announced a portfolio could immediately withdraw the
+              implication — which was the right patch for a strip that
+              should not have been rendering. The strip returns null for
+              that case now, so there is nothing left to withdraw. */}
           {/* AND WHETHER THE TAB UNDERNEATH IS FILTERED AT ALL.
               The strip sits above the tab row and speaks for whatever is
               below it, but only some tabs are portfolio-filtered. On the
