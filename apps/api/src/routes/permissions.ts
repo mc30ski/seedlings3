@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { makeGuards } from "../lib/routeGuards";
 import { services } from "../services";
 import { visiblePortfolioPaths } from "../lib/portfolioScope";
+import { ServiceError } from "../lib/errors";
 
 import {
   ENTITLEMENT_GROUPS,
@@ -260,6 +261,18 @@ export default async function permissionRoutes(app: FastifyInstance) {
       occurrencePaths: visiblePortfolioPaths(req.principal, "schedule.view", { ignoreLens: true }),
     }),
   );
+
+  // SIBLING ORDER — display only, and guarded as management because it
+  // changes what everyone else sees. It cannot change a path, a parent or
+  // a membership, so nothing it does is visible to any scoped query.
+  app.post("/portfolios/:id/reorder", portfoliosManage, async (req: any) => {
+    const uid = await currentUserId(req);
+    const dir = String((req.body ?? {}).direction ?? "");
+    if (dir !== "up" && dir !== "down") {
+      throw new ServiceError("BAD_DIRECTION", "Direction must be \"up\" or \"down\".", 400);
+    }
+    return services.portfolios.reorder(uid, String(req.params.id), dir);
+  });
 
   app.post("/portfolios", portfoliosManage, async (req: any) => {
     const uid = await currentUserId(req);

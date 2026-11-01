@@ -6,6 +6,7 @@ import { PERSPECTIVE_HEADER } from "../lib/impersonation";
 import { resolveCutoff } from "../lib/businessStartCutoff";
 import { resolveParcel, parcelImageUrl, redactParcelForWorker } from "../services/parcels";
 import { callerCan } from "../lib/callerCan";
+import { orderPortfolioTree } from "../lib/portfolioOrder";
 
 function readBearer(req: any): string | null {
   const h = req.headers?.authorization ?? "";
@@ -156,11 +157,15 @@ export default async function meRoutes(app: FastifyInstance) {
   // a district you hold nothing in.
   app.get("/me/portfolios", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
     const principal = req.principal;
-    const all = await prisma.portfolio.findMany({
+    const allUnordered = await prisma.portfolio.findMany({
       where: { retiredAt: null },
+      // Re-sequenced below into the operator's chosen sibling order, the
+      // same order the Portfolios tab shows. `path` only orders siblings
+      // by the cuid they were created with.
       orderBy: [{ path: "asc" }],
-      select: { id: true, name: true, tier: true, path: true, parentId: true },
+      select: { id: true, name: true, tier: true, path: true, parentId: true, sortOrder: true },
     });
+    const all = orderPortfolioTree(allUnordered);
 
     // Global in ANY role means the whole tree; otherwise the union of the
     // subtrees they are granted. This deliberately asks "do they hold

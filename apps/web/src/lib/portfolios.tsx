@@ -8,7 +8,7 @@
  * shown, instead of showing whichever one the API happened to put first.
  */
 import { Badge } from "@chakra-ui/react";
-import { MapPin } from "lucide-react";
+import { Layers } from "lucide-react";
 
 type Membership = { portfolio?: { id?: string | null; name?: string | null } | null };
 
@@ -38,9 +38,14 @@ export function portfolioNames(x: unknown): string[] {
  * INFORMATION: such a property is invisible to every portfolio-scoped
  * reader and counts toward no rollup.
  *
- * The pin is kept for a geographic read at a glance, even though a
- * portfolio need not be a place — a route still has somewhere it runs, and
- * the alternative was a second icon decision on six cards.
+ * LAYERS, NOT A PIN. It was a map pin, on the argument that a portfolio is
+ * usually somewhere and a pin reads geographically at a glance. Two things
+ * made that wrong. `Layers` is now the portfolio glyph everywhere else —
+ * the lens chip in the header, the marker on a filtered tab — so the pin
+ * was the one place the same concept wore a different icon. And a pin
+ * asserts a PLACE, which a Route or a Book is not: those cut across the
+ * location tree on purpose, and a property in Mike's Book was being
+ * badged as though the Book were a location.
  */
 export function PortfolioBadges({ of }: { of: unknown }) {
   const names = portfolioNames(of);
@@ -58,7 +63,7 @@ export function PortfolioBadges({ of }: { of: unknown }) {
           alignItems="center"
           gap="1"
         >
-          <MapPin size={10} />
+          <Layers size={10} />
           {name}
         </Badge>
       ))}

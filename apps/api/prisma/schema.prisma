@@ -4633,6 +4633,21 @@ model Portfolio {
   /// sibling whose id merely starts with the same characters.
   path String
 
+  /// Where this node sits AMONG ITS SIBLINGS, and nothing more.
+  ///
+  /// Display only. It is not in any path, no query filters on it, and no
+  /// history resolves through it — which is exactly what separates it from
+  /// reparenting (G14). Moving a node between parents rewrites the
+  /// materialized path of everything beneath it and restates what every
+  /// portfolio-scoped query returns; moving one UP PAST ITS SIBLING
+  /// changes a list's order and not one other fact.
+  ///
+  /// Sorted ascending, ties broken by name, applied depth-first so the flat
+  /// list the API returns is already in render order. Siblings only: a
+  /// child can never sort above its own parent, because the tree walk
+  /// places it.
+  sortOrder Int @default(0)
+
   /// Where this territory IS, for the weather forecast.
   ///
   /// Optional, and deliberately NOT derived from the properties in it.

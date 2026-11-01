@@ -2,12 +2,18 @@
 
 **Derived from the route guards. Reviewed 2026-10-13 — every group eyeballed.**
 
-> There is no committed generator script: this file is maintained by hand and
-> **G5 fails the build whenever it and the guards disagree**, which is what
-> keeps it honest. Two ad-hoc "reconcile" scripts destroyed it in the past by
-> rewriting rows they did not understand — edit it by hand, let G5 check you.
+> Regenerate with `npm run routemap` (`apps/api/scripts/build-route-map.ts`),
+> and **G5 fails the build whenever this file and the guards disagree**, which
+> is what keeps it honest. `npm run routemap:check` asserts it is current
+> without writing.
+>
+> Use THAT script and no other. Two ad-hoc "reconcile" scripts destroyed this
+> file in the past by rewriting rows they did not understand, which is why
+> this note used to say there was no generator at all — it was written in the
+> same commit that added one (`d3c277a4`, 2026-10-27) and was wrong from the
+> day it landed.
 
-644 distinct method+path pairs, 0 unmapped, 63 entitlements.
+646 distinct method+path pairs, 0 unmapped, 64 entitlements.
 
 Nine duplicated read routes were DELETED outright rather than renamed: an `admin`-prefixed and a `super`-prefixed path for `/documents` (and the same for `/timeline`) ran the same handler twice, differing only in `restrictedVisible` — and gated on the SAME entitlement, so the URL prefix was the only thing separating them. That let the CLIENT pick its own privilege level by choosing a URL. A path is not a check. Each pair is now one route on a neutral path (`/documents`, `/timeline`) that decides how much to return from a capability.
 
@@ -52,23 +58,6 @@ reschedule visits". Gated as **G18**.
 
 > **`expenses.charge` has NO enforcing route today.** Stored, displayed,
 > checked nowhere. Step 2 must add the check to business-expense creation.
-
-## portfolios.manage  (7)
-| | |
-|---|---|
-| `DELETE` | `/portfolio-assignments/:x` |
-| `PATCH` | `/portfolios/:x` |
-| `PUT` | `/properties/:x/portfolios` |
-| `POST` | `/portfolio-assignments` |
-| `POST` | `/portfolios/:x/retire` |
-| `POST` | `/portfolios/:x/unretire` |
-| `POST` | `/portfolios` |
-
-## portfolios.view  (2)
-| | |
-|---|---|
-| `GET` | `/portfolio-assignments` |
-| `GET` | `/portfolios` |
 
 ## audit.view  (4)
 | | |
@@ -169,8 +158,8 @@ reschedule visits". Gated as **G18**.
 | `GET` | `/properties/:x/archive-preview` |
 | `GET` | `/properties/:x/unarchive-preview` |
 | `GET` | `/properties/:x` |
-| `GET` | `/properties` |
 | `GET` | `/properties/points` |
+| `GET` | `/properties` |
 | `POST` | `/properties/points/resolve` |
 
 ## clients.view-as  (1)
@@ -576,6 +565,24 @@ reschedule visits". Gated as **G18**.
 | `GET` | `/users` |
 | `GET` | `/workers` |
 
+## portfolios.manage  (8)
+| | |
+|---|---|
+| `DELETE` | `/portfolio-assignments/:x` |
+| `PATCH` | `/portfolios/:x` |
+| `POST` | `/portfolio-assignments` |
+| `POST` | `/portfolios/:x/reorder` |
+| `POST` | `/portfolios/:x/retire` |
+| `POST` | `/portfolios/:x/unretire` |
+| `POST` | `/portfolios` |
+| `PUT` | `/properties/:x/portfolios` |
+
+## portfolios.view  (2)
+| | |
+|---|---|
+| `GET` | `/portfolio-assignments` |
+| `GET` | `/portfolios` |
+
 ## pricing.manage  (3)
 | | |
 |---|---|
@@ -810,7 +817,7 @@ reschedule visits". Gated as **G18**.
 | `POST` | `/occurrences/:x/complete` |
 | `POST` | `/occurrences/:x/start` |
 
-## OWNERSHIP  (103)
+## OWNERSHIP  (104)
 | | |
 |---|---|
 | `DELETE` | `/calendar-feeds/:x` |
@@ -842,6 +849,7 @@ reschedule visits". Gated as **G18**.
 | `GET` | `/me/policies/count` |
 | `GET` | `/me/policies/download` |
 | `GET` | `/me/policies` |
+| `GET` | `/me/portfolios` |
 | `GET` | `/me/properties/:x/parcel/image` |
 | `GET` | `/me/properties/:x/parcel` |
 | `GET` | `/me/push-subscriptions` |

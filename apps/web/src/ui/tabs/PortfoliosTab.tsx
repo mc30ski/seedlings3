@@ -61,7 +61,7 @@ type Portfolio = {
   _count: { properties: number; occurrences: number; assignments: number };
   /** This portfolio AND everything beneath it, each thing counted once.
    *  Computed by the server — see below for why it cannot be derived here. */
-  rollup: { properties: number; occurrences: number };
+  rollup: { properties: number; occurrences: number; untagged?: number };
 };
 
 type Assignment = {
@@ -139,6 +139,14 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
   /** Set once the reader taps a portfolio, so the detail knows to scroll into
    *  view on a phone — an automatic selection must not. */
   const pickedRef = useRef(false);
+  /**
+   * Which row is mid-reorder, so its buttons can be disabled.
+   *
+   * A second click before the reload lands would act on the order the
+   * screen is still showing, not the one the server now holds — two taps
+   * on ↑ would swap the same pair back.
+   */
+  const [reordering, setReordering] = useState<string | null>(null);
   const [showRetired, setShowRetired] = useState(false);
   const [view, setView] = useState<"tree" | "leads">("tree");
 
@@ -261,6 +269,47 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
   const selected = useMemo(
     () => portfolios.find((a) => a.id === selectedId) ?? null,
     [portfolios, selectedId],
+  );
+
+  /**
+   * Which rows sit at the ends of their level, so the arrows can be
+   * disabled there.
+   *
+   * Computed over the WHOLE list rather than the visible one. The server
+   * counts retired siblings when it reorders — hiding one must not make
+   * two visible neighbours appear adjacent and then swap past it — so the
+   * button's enabled state has to be asked of the same list.
+   */
+  const siblingEdge = useMemo(() => {
+    const seen = new Map<string | null, string[]>();
+    for (const a of portfolios) {
+      const k = a.parentId ?? null;
+      const slot = seen.get(k);
+      if (slot) slot.push(a.id);
+      else seen.set(k, [a.id]);
+    }
+    const out: Record<string, { first: boolean; last: boolean }> = {};
+    for (const ids of seen.values()) {
+      ids.forEach((id, i) => {
+        out[id] = { first: i === 0, last: i === ids.length - 1 };
+      });
+    }
+    return out;
+  }, [portfolios]);
+
+  /** Move a portfolio past its neighbour. Siblings only — the server
+   *  refuses anything else, and there is no control for anything else. */
+  const reorder = useCallback(
+    async (id: string, direction: "up" | "down") => {
+      setReordering(id);
+      try {
+        await apiPost(`/api/portfolios/${encodeURIComponent(id)}/reorder`, { direction });
+        await load();
+      } finally {
+        setReordering(null);
+      }
+    },
+    [load],
   );
 
   return (
@@ -571,9 +620,63 @@ export default function PortfoliosTab({ scope }: { scope: Scope }) {
                         {!isRootRow(a) && total !== own && (
                           <Text as="span" color="fg.subtle"> · {own} own</Text>
                         )}
+                        {/* THE GAP, NAMED. A property in no portfolio is
+                            reachable from nowhere in this tree — it is in
+                            no subtree, because membership is rows and it
+                            has none. Counting it under the container is
+                            half the fix; saying how many is the half that
+                            tells you to go and look. */}
+                        {isRootRow(a) && !!a.rollup?.untagged && (
+                          <Text as="span" color="orange.fg"> · {a.rollup.untagged} unfiled</Text>
+                        )}
                       </Text>
                     </HStack>
                   </Box>
+
+                  {/* REORDER, outside the row's own button — a button inside
+                      a button is invalid markup and swallows the inner
+                      click, the same reason the twisty sits outside it.
+                      Hidden entirely without `portfolios.manage`: a control
+                      that is always disabled is a worse answer than no
+                      control. */}
+                  {scope.can("portfolios.manage") && !isRootRow(a) && (
+                    <VStack gap={0} justify="center" pr={1} flexShrink={0}>
+                      {([
+                        ["up", "↑", siblingEdge[a.id]?.first],
+                        ["down", "↓", siblingEdge[a.id]?.last],
+                      ] as Array<["up" | "down", string, boolean | undefined]>).map(
+                        ([dir, glyph, atEnd]) => (
+                          <Box
+                            key={dir}
+                            as="button"
+                            aria-label={`Move ${a.name} ${dir}`}
+                            title={atEnd ? "Already at the end of its level" : `Move ${dir}`}
+                            // `aria-disabled`, not `disabled`: this is a
+                            // Box rendered as a button and Chakra's polymorphic
+                            // props do not carry the HTML attribute. The guard
+                            // is in the handler, which is where it has to be
+                            // anyway — `disabled` alone would not stop the
+                            // in-flight double click.
+                            aria-disabled={!!atEnd || reordering === a.id}
+                            onClick={(e: any) => {
+                              e.stopPropagation();
+                              if (atEnd || reordering === a.id) return;
+                              void reorder(a.id, dir);
+                            }}
+                            px="1"
+                            lineHeight="1"
+                            fontSize="11px"
+                            color={atEnd ? "fg.subtle" : "fg.muted"}
+                            opacity={atEnd ? 0.35 : 1}
+                            cursor={atEnd ? "default" : "pointer"}
+                            _hover={atEnd ? undefined : { color: "fg" }}
+                          >
+                            {glyph}
+                          </Box>
+                        ),
+                      )}
+                    </VStack>
+                  )}
                 </HStack>
               </Box>
               );
@@ -1154,6 +1257,7 @@ function AreaDetail({
             .sort((a, b) => b.path.length - a.path.length)
             .map((x) => ({ id: x.id, name: x.name }))}
           mayManage={mayManage}
+          isSoleRoot={isSoleRoot}
           onChanged={onChanged}
         />
       )}
@@ -1397,6 +1501,7 @@ function AreaProperties({
   portfolioName,
   descendants,
   mayManage,
+  isSoleRoot,
   onChanged,
 }: {
   portfolioId: string;
@@ -1406,6 +1511,10 @@ function AreaProperties({
   /** `portfolios.manage` — the capability PUT /properties/:id/portfolios is
    *  guarded on. Read-only without it; the list is still worth seeing. */
   mayManage: boolean;
+  /** True for the one node that is the whole tree. It alone also lists
+   *  the properties in NO portfolio, because they belong to no subtree and
+   *  would otherwise be reachable from nowhere on this tab. */
+  isSoleRoot: boolean;
   /** Reload the tree, so the counts beside every ancestor follow a change. */
   onChanged: () => void | Promise<void>;
 }) {
@@ -1426,6 +1535,7 @@ function AreaProperties({
     displayName: string;
     street1: string | null;
     city: string | null;
+    postalCode: string | null;
     client?: { id: string; displayName: string | null } | null;
     /** Every portfolio it is in — needed because the write is "these are
      *  the ones", so removing one means sending back the rest. */
@@ -1498,9 +1608,23 @@ function AreaProperties({
     setFailed(false);
     (async () => {
       try {
-        const res = await apiGet<any>(`/api/properties?portfolioId=${encodeURIComponent(portfolioId)}&limit=500`);
-        const list = Array.isArray(res) ? res : (res?.items ?? res?.properties ?? []);
-        if (!cancelled) setRows(list);
+        const unwrap = (res: any) =>
+          Array.isArray(res) ? res : (res?.items ?? res?.properties ?? []);
+        // THE CONTAINER ALSO LISTS WHAT IS FILED NOWHERE.
+        //
+        // `portfolioId=none` is the one question the tree cannot answer
+        // about itself: those properties are in no subtree, so no node
+        // lists them and they were reachable from nowhere on this tab.
+        // Strip a property's last portfolio and it simply vanished.
+        // Fetched alongside rather than merged server-side so the ordinary
+        // portfolio costs exactly the one request it always did.
+        const [res, none] = await Promise.all([
+          apiGet<any>(`/api/properties?portfolioId=${encodeURIComponent(portfolioId)}&limit=500`),
+          isSoleRoot
+            ? apiGet<any>("/api/properties?portfolioId=none&limit=500")
+            : Promise.resolve([]),
+        ]);
+        if (!cancelled) setRows([...unwrap(res), ...unwrap(none)]);
       } catch {
         // A failed list must not take the portfolio editor down with it — the
         // tree above is still usable and the counts are still true.
@@ -1508,7 +1632,7 @@ function AreaProperties({
       }
     })();
     return () => { cancelled = true; };
-  }, [portfolioId, reloadKey]);
+  }, [portfolioId, reloadKey, isSoleRoot]);
 
   /**
    * GROUPED BY WHERE EACH PROPERTY ACTUALLY SITS.
@@ -1529,8 +1653,17 @@ function AreaProperties({
     if (!rows) return null;
     const direct: typeof rows = [];
     const byDescendant = new Map<string, { name: string; rows: typeof rows }>();
+    const unfiled: typeof rows = [];
     for (const r of rows) {
       const ids = new Set((r.portfolios ?? []).map((m) => m.portfolio.id));
+      // IN NOTHING AT ALL — its own group, never mixed into the container's
+      // own rows. These arrive only on the root, and filing them under
+      // "In All properties" would say they are somewhere when the whole
+      // point is that they are not.
+      if (ids.size === 0) {
+        unfiled.push(r);
+        continue;
+      }
       if (ids.has(portfolioId)) {
         direct.push(r);
         continue;
@@ -1552,11 +1685,17 @@ function AreaProperties({
       (a.street1 ?? "").localeCompare(b.street1 ?? "");
     direct.sort(byClient);
     for (const g of byDescendant.values()) g.rows.sort(byClient);
+    unfiled.sort(byClient);
     return [
       { id: portfolioId, heading: `In ${portfolioName}`, rows: direct },
       ...[...byDescendant.entries()]
         .map(([id, g]) => ({ id, heading: `In ${g.name}`, rows: g.rows }))
         .sort((a, b) => a.heading.localeCompare(b.heading)),
+      // LAST, because it is the pile to deal with rather than part of the
+      // structure. Its id matches no portfolio, so the Remove button —
+      // gated on `g.id === portfolioId` — correctly never appears: there
+      // is nothing to detach these from.
+      { id: "__unfiled__", heading: "In no portfolio", rows: unfiled },
     ].filter((g) => g.rows.length > 0);
   }, [rows, portfolioId, portfolioName, descendants]);
 
@@ -1798,8 +1937,21 @@ function AreaProperties({
                   <Text fontSize="sm" color="blue.fg" truncate _hover={{ textDecoration: "underline" }}>
                     {r.client?.displayName ?? r.displayName}
                   </Text>
+                  {/* THE ZIP RIDES WITH THE CITY, not as its own
+                      dot-separated field: "Chapel Hill 27516" is one
+                      answer to one question, and splitting it reads as
+                      two. It earns its width here because the city does
+                      not separate these rows — seventy-five of ninety
+                      properties are in Chapel Hill, across three zips,
+                      and the zip is what says which part of town. */}
                   <Text fontSize="2xs" color="fg.muted" truncate>
-                    {[r.street1, r.displayName, r.city].filter(Boolean).join(" · ")}
+                    {[
+                      r.street1,
+                      r.displayName,
+                      [r.city, r.postalCode].filter(Boolean).join(" "),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </Text>
                 </Box>
                 <HStack gap={2} flexShrink={0}>
