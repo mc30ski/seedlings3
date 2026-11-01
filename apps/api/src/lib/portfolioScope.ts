@@ -236,8 +236,11 @@ export function portfolioWhere(
 export function occurrencePortfolioWhere(
   principal: Principal | undefined,
   capability: Entitlement,
+  /** See `visiblePortfolioPaths`. Used by the portfolio COMPARISON, where
+   *  a lens narrowing to one territory would leave one row to compare. */
+  opts?: { ignoreLens?: boolean },
 ): Record<string, unknown> {
-  const own = portfolioWhere(principal, capability);
+  const own = portfolioWhere(principal, capability, opts);
 
   // Global authority: unchanged query.
   if (Object.keys(own).length === 0) return NO_FILTER;
@@ -248,7 +251,7 @@ export function occurrencePortfolioWhere(
   // become "whose PROPERTY has no portfolio at all", which matches real
   // untagged properties — a new way for rows to reach somebody who holds
   // the capability nowhere.
-  const paths = visiblePortfolioPaths(principal, capability);
+  const paths = visiblePortfolioPaths(principal, capability, opts);
   if (paths !== null && paths.length === 0) return own;
 
   // The property's CURRENT membership — one join further out than the
@@ -269,8 +272,9 @@ export function occurrencePortfolioWhere(
 export function occurrencePaymentPortfolioWhere(
   principal: Principal | undefined,
   capability: Entitlement,
+  opts?: { ignoreLens?: boolean },
 ): Record<string, unknown> {
-  const inner = occurrencePortfolioWhere(principal, capability);
+  const inner = occurrencePortfolioWhere(principal, capability, opts);
   if (Object.keys(inner).length === 0) return NO_FILTER;
   return { occurrence: inner };
 }

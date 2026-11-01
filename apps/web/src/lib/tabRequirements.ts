@@ -89,6 +89,12 @@ export const TAB_REQUIREMENTS = {
   // cannot disagree. The numbers narrow by portfolio for a portfolio-limited holder,
   // and the page says so when they do.
   statistics: ["reports.view"],
+  // Insights → Performance — portfolios compared against each other.
+  // `reports.view`, the same capability Statistics holds and the same one
+  // `GET /statistics` is guarded on, because this reads the same kind of
+  // figure about a different subject. NOT `portfolios.view`: being allowed
+  // to see the territory tree says nothing about seeing its revenue.
+  performance: ["reports.view"],
 
   // ── Time ────────────────────────────────────────────────────────────
   // NOT `time.approve`, though the first version listed it.
