@@ -412,7 +412,24 @@ export default function PortfolioScopeNotice({
             _hover={{ bg: "purple.subtle" }}
           >
             <Info size={12} />
-            <Text fontSize="2xs" fontWeight="medium" whiteSpace="nowrap">
+            {/* THE LABEL IS DESKTOP-ONLY, and the reason is measured: at
+                390px the text column was getting 178 pixels — 46% of the
+                screen — because this pill reserves its width on EVERY
+                line, not just the one it sits on. Three lines of sentence
+                each stopping two-thirds of the way across, with the rest
+                blank.
+
+                An unlabelled glyph is normally the wrong answer here (a
+                bare "i" is a thing you have to already know), which is why
+                it keeps the words wherever there is room. On a phone the
+                words cost more than they explain: `aria-label` and `title`
+                carry the meaning for anyone who needs it. */}
+            <Text
+              display={{ base: "none", sm: "block" }}
+              fontSize="2xs"
+              fontWeight="medium"
+              whiteSpace="nowrap"
+            >
               What&rsquo;s filtered?
             </Text>
           </HStack>

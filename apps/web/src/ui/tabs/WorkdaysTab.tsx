@@ -14,9 +14,9 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Car, ChevronLeft, ChevronRight, AlertTriangle, Edit3, RotateCcw } from "lucide-react";
+import { Car, ChevronLeft, ChevronRight, AlertTriangle, Edit3, RotateCcw, Trash2 } from "lucide-react";
 import StatusChip from "@/src/ui/components/StatusChip";
-import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import TabExplainer, { Em, ExplainerText } from "@/src/ui/components/TabExplainer";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -1165,6 +1165,30 @@ function ReviewDialog({
     }
   }
 
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+  /**
+   * DELETE A ROW THAT SHOULD NEVER HAVE EXISTED.
+   *
+   * Not a correction — Save edits is for that. This is the mis-tap: Start
+   * then Stop, leaving a one-minute workday the worker's own Cancel
+   * refuses to touch because Cancel only covers a still-running row. The
+   * only ways out were to approve work that did not happen or to leave it
+   * in Pending for ever.
+   */
+  async function remove() {
+    setSaving(true);
+    try {
+      await apiDelete(`/api/workdays/${row.id}`);
+      publishInlineMessage({ type: "SUCCESS", text: "Workday deleted." });
+      onAfter();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete failed.", err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const isApproved = row.uiState === "APPROVED";
 
   return (
@@ -1282,17 +1306,40 @@ function ReviewDialog({
                     left-aligned away from the primary Cancel / Save /
                     Approve buttons. Only shown when the row is already
                     approved. */}
-                {isApproved ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    colorPalette="red"
-                    onClick={() => void unapprove()}
-                    disabled={saving}
-                  >
-                    <RotateCcw size={12} /> <Text ml={1}>Unapprove</Text>
-                  </Button>
-                ) : <Box />}
+                <HStack gap={1}>
+                  {isApproved && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      colorPalette="red"
+                      onClick={() => void unapprove()}
+                      disabled={saving}
+                    >
+                      <RotateCcw size={12} /> <Text ml={1}>Unapprove</Text>
+                    </Button>
+                  )}
+                  {/* DELETE SITS WITH UNAPPROVE, away from Cancel / Save /
+                      Approve — it undoes the row's existence rather than
+                      moving it forward.
+
+                      HIDDEN WHILE APPROVED, matching what the server
+                      refuses: an approved workday has a review somebody
+                      signed off, and deleting in one click would erase
+                      that decision along with the times. Unapprove is the
+                      deliberate first step. */}
+                  {!isApproved && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      colorPalette="red"
+                      onClick={() => setDeleteConfirmOpen(true)}
+                      disabled={saving}
+                      title="Remove this workday entirely — for a start/stop that was a mistake"
+                    >
+                      <Trash2 size={12} /> <Text ml={1}>Delete</Text>
+                    </Button>
+                  )}
+                </HStack>
                 <HStack gap={2}>
                   <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
                   {dirty && (
@@ -1333,6 +1380,19 @@ function ReviewDialog({
         void approve();
       }}
       onCancel={() => setSameDayConfirmOpen(false)}
+    />
+    <ConfirmDialog
+      open={deleteConfirmOpen}
+      title="Delete this workday?"
+      message={`${workerLabel(row.user)}'s workday on ${row.workdayDate} — ${fmtDuration(liveActive)} recorded — is removed completely. Use this for a start/stop that was a mistake; to fix the times instead, close this and use Save edits.`}
+      warning="This cannot be undone. The deleted row is recorded in the audit log, but nothing in the app will bring it back."
+      confirmLabel="Delete workday"
+      confirmColorPalette="red"
+      onConfirm={() => {
+        setDeleteConfirmOpen(false);
+        void remove();
+      }}
+      onCancel={() => setDeleteConfirmOpen(false)}
     />
     </>
   );

@@ -1484,12 +1484,31 @@ Respond ONLY with valid JSON in this exact format:
   // variance — see evaluateHoursApproval).
   app.get("/occurrences/unapproved-hours-count", req_timeApprove, async (req: any) => {
     // Same filter as GET /occurrences/unapproved-hours, for the same reason:
-    // the badge and the queue it opens have to be the same number.
+    // the badge and the queue it opens have to be the same number. THAT
+    // INCLUDES THE CUTOFF — a badge counting nine rows the queue then
+    // hides is worse than either alone.
+    // THE BUSINESS START DATE APPLIES HERE TOO, and its absence was a real
+    // bug: this queue showed nine visits completed in March and April,
+    // months before the business cutoff of 2026-05-11.
+    //
+    // HOW THEY GOT HERE. A 2026-10-31 backfill set `completedAt` on
+    // twenty production occurrences that were missing it. The visits were
+    // genuinely complete, so the write was right — but `completedAt` is
+    // what this queue keys on, and the rows went from invisible to
+    // pending in one step. The queue had no cutoff to stop them, while
+    // every comparable occurrence query (Statistics, Operations, the Jobs
+    // list) has one.
+    //
+    // Pattern C, the occurrence's own work date, which is the same anchor
+    // the other occurrence queries use — approving hours is about when
+    // the work happened, not when a payment row was written.
+    const cutoff = await resolveCutoff(req);
     const count = await prisma.jobOccurrence.count({
       where: withPortfolio<Prisma.JobOccurrenceWhereInput>({
         completedAt: { not: null },
         hoursApprovedAt: null,
         workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
+        ...occurrenceWorkDateCutoff(cutoff),
       }, portfolioWhere(req.principal, "time.approve")),
     });
     return { count };
@@ -1502,6 +1521,7 @@ Respond ONLY with valid JSON in this exact format:
   // start/pause math without pulling the heavier per-occurrence
   // include set the JobsTab uses.
   app.get("/occurrences/unapproved-hours", req_timeApprove, async (req: any) => {
+    const cutoff = await resolveCutoff(req);
     const rows = await prisma.jobOccurrence.findMany({
       // Approving hours is territorial: a district lead reviews their own
       // district's visits, not the whole company's.
@@ -1513,6 +1533,9 @@ Respond ONLY with valid JSON in this exact format:
         completedAt: { not: null },
         hoursApprovedAt: null,
         workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
+        // See the note on the count endpoint above — same predicate, and
+        // the cutoff is part of it.
+        ...occurrenceWorkDateCutoff(cutoff),
       }, portfolioWhere(req.principal, "time.approve")),
       orderBy: { completedAt: "asc" },
       select: {
