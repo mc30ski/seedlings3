@@ -787,9 +787,12 @@ export function Dashboard({
                           and quote different numbers, each correctly. */}
                       {scopeLabel && (
                         <Text as="span">
-                          {" Money shown "}
-                          <Text as="span" fontWeight="semibold">as organized now</Text>
-                          {" — everything these properties have ever earned."}
+                          {/* THE RULE, NOT A MODE NAME. This read "Money
+                              shown as organized now", which named one of
+                              two bases back when there were two. With one
+                              grouping, naming it implies the other still
+                              exists. Say what the number includes. */}
+                          {" Money shown is everything these properties have ever earned, including before they were filed here."}
                         </Text>
                       )}
                     </Text>

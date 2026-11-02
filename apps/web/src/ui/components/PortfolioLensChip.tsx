@@ -290,13 +290,17 @@ function LensRow({
       aria-checked={active}
       data-testid={testId}
       w="full"
-      // Indent is on the PADDING here rather than a margin, unlike the
-      // Portfolios tab: these rows have a full-width hover and selected state,
-      // and a margin would leave an unhighlighted gutter down the left of
-      // every nested row.
-      // 20px a level, the same step the Portfolios tab's tree uses — the two
-      // are the same hierarchy and should read as the same shape.
-      pl={`${12 + indent * 20}px`}
+      // INDENT IS DRAWN, NOT PADDED. It was `pl: 12 + indent * 20`, which
+      // put a fourth-level zone 92px into a 300px panel — a third of the
+      // width spent on empty space, with nothing in it to say which
+      // parent a row belonged to. The guides below do the indenting and
+      // show the structure at the same time, at 14px a level instead of
+      // 20.
+      //
+      // Padding stays constant and small; the hover and selected states
+      // remain full-width, which is why this was padding rather than a
+      // margin in the first place.
+      pl={3}
       pr={3}
       py={2}
       gap={2}
@@ -306,6 +310,22 @@ function LensRow({
       _hover={{ bg: active ? "blue.subtle" : "gray.faint" }}
       onClick={onClick}
     >
+      {/* THE SPINE. One vertical rule per ancestor level, stretched to the
+          full row height with the row's own vertical padding cancelled —
+          so consecutive rows at the same depth join into a continuous
+          line and you can see at a glance which parent a zone hangs off.
+
+          Deliberately a plain spine rather than the full ├─ / └─ tree:
+          those need to know whether each ancestor has a later sibling,
+          which this list does not carry, and a wrong elbow reads as a
+          wrong hierarchy. A continuous rule is honest about less. */}
+      {indent > 0 && (
+        <HStack gap={0} alignSelf="stretch" flexShrink={0} my={-2} aria-hidden>
+          {Array.from({ length: indent }).map((_, i) => (
+            <Box key={i} w="14px" h="full" borderLeftWidth="1px" borderColor="border" />
+          ))}
+        </HStack>
+      )}
       <Box flex="1" minW={0}>
         <Text
           fontSize="sm"

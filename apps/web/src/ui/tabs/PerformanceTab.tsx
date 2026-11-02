@@ -196,7 +196,7 @@ export default function PerformanceTab({ scope }: { scope: Scope }) {
                 <Text as="span" color="fg.muted" fontWeight="normal"> · {rows.length}</Text>
               </Text>
               <Text fontSize="2xs" color="fg.muted">
-                {money(totals.revenue)} · {totals.visits} visits · money as organized now
+                {money(totals.revenue)} · {totals.visits} visits
               </Text>
             </HStack>
           </Card.Header>
@@ -278,7 +278,9 @@ export default function PerformanceTab({ scope }: { scope: Scope }) {
               <Text fontSize="2xs" color="fg.muted">
                 Properties counts those that produced a visit in this period, not
                 everything filed here. A property in two portfolios counts in both
-                rows, so the column adds up to more than the business total.
+                rows, so the column adds up to more than the business total. Each row
+                covers everything its current properties earned, so re-filing one
+                moves its past earnings to the new row.
               </Text>
             </HStack>
           </Card.Body>

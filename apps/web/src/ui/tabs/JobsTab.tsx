@@ -1377,7 +1377,7 @@ export default function JobsTab({
   // days) + unapprovedHoursActive flag. Window is generous so holders of `schedule.manage` can
   // catch late-arriving outliers; the flag-based filter is what actually
   // narrows the view.
-  const applyUnapprovedHours = useCallback(() => {
+  const applyUnapprovedHours = useCallback(async () => {
     setQ("");
     setHighlightOccId(null);
     setFilterJobId(null);
@@ -1392,10 +1392,33 @@ export default function JobsTab({
     setOverdueActive(false);
     setActivitiesOverdueActive(false);
     const to = bizToday();
-    const from = bizAddDays(to, -90);
+    setUnapprovedHoursActive(true);
+    // THE WINDOW REACHES THE OLDEST ROW THE BADGE COUNTED.
+    //
+    // This was a flat 90 days, and the badge that sends you here counts
+    // without a date bound — so a visit completed outside the window was
+    // counted and then not shown. "2 job hours to review" opening a list
+    // of one, with nothing saying a row had been dropped.
+    //
+    // The count endpoint now reports `oldestCompletedAt`, so the window
+    // is derived from the same query that produced the number instead of
+    // being guessed at. 90 days stays as the fallback for a failed fetch
+    // or an empty queue — a sensible default, just not a promise.
+    let from = bizAddDays(to, -90);
+    try {
+      const r = await apiGet<{ count: number; oldestCompletedAt: string | null }>(
+        "/api/occurrences/unapproved-hours-count",
+      );
+      if (r?.oldestCompletedAt) {
+        const oldest = bizDateKey(r.oldestCompletedAt);
+        if (oldest && oldest < from) from = oldest;
+      }
+    } catch {
+      // Keep the default window — a failed count must not leave the tab
+      // with no date filter at all, which would load the whole history.
+    }
     setDateFrom(from);
     setDateTo(to);
-    setUnapprovedHoursActive(true);
     void load(true, { from, to });
   }, []);
 
@@ -1405,10 +1428,10 @@ export default function JobsTab({
       const flag = localStorage.getItem("seedlings_jobs_showUnapprovedHours");
       if (flag) {
         localStorage.removeItem("seedlings_jobs_showUnapprovedHours");
-        applyUnapprovedHours();
+        void applyUnapprovedHours();
       }
     } catch {}
-    const onShow = () => applyUnapprovedHours();
+    const onShow = () => { void applyUnapprovedHours(); };
     window.addEventListener("staffJobs:showUnapprovedHours", onShow);
     return () => window.removeEventListener("staffJobs:showUnapprovedHours", onShow);
   }, [canManageSchedule, applyUnapprovedHours]);

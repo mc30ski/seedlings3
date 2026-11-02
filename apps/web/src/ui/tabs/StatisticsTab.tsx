@@ -416,7 +416,7 @@ export default function StatisticsTab({ myId, scope }: Props = {}) {
                   {lensName}
                 </Text>
                 <Text fontSize="2xs" color="fg.muted">
-                  over the selected range · money as organized now
+                  over the selected range
                 </Text>
               </HStack>
               <HStack gap={5} wrap="wrap">
@@ -443,7 +443,8 @@ export default function StatisticsTab({ myId, scope }: Props = {}) {
               <Text fontSize="2xs" color="fg.muted" mt={2}>
                 Properties worked counts those that produced a visit in this range, not
                 everything filed here. Revenue is cash collected, the same figure the
-                Money tabs total.
+                Money tabs total, and covers everything this portfolio&rsquo;s current
+                properties earned — including before they were filed here.
               </Text>
             </Box>
           )}

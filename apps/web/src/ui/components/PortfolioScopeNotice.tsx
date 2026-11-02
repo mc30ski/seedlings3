@@ -30,7 +30,7 @@ import { useEffect, useState } from "react";
 import { Box, HStack, Text } from "@chakra-ui/react";
 import { Info, Layers, X } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
-import { tabIsFiltered, tabShowsMoney } from "@/src/lib/portfolioFilteredTabs";
+import { tabIsFiltered } from "@/src/lib/portfolioFilteredTabs";
 import {
   applyDefaultAreaLens,
   getAreaLens,
@@ -359,18 +359,19 @@ export default function PortfolioScopeNotice({
               {" — this tab shows the whole business"}
             </Text>
           )}
-          {/* AND WHICH MONEY, on the tabs that show any.
-              The clause used to name which of two bases was in force.
-              There is one now, so this states the rule rather than a
-              choice — still worth saying, because with nothing to switch
-              people stop thinking about it and are then surprised when
-              re-tagging a property moves last month's total. */}
-          {tabShowsMoney(activeTab) && (
-            <Text as="span">
-              {" · money "}
-              <Text as="span" fontWeight="bold">as organized now</Text>
-            </Text>
-          )}
+          {/* THE "· money as organized now" CLAUSE WAS HERE, and is gone.
+              It survived the removal of the money basis on the argument
+              that the rule is still worth stating. It is — but not here.
+              Naming one mode implies another exists, so a permanent
+              "as organized now" on a strip with nothing to switch reads
+              as a setting somebody chose and invites the question "as
+              organized WHEN else?", for which there is no longer an
+              answer. It also cost width on every money tab of a banner
+              that is three lines on a phone.
+              The rule it was protecting — re-tagging a property moves
+              last month's totals — is a thing you need when reading a
+              number, not when reading chrome. It lives in the popover
+              below, which exists for exactly that. */}
         </Text>
 
         {/* WHAT IS AND IS NOT FILTERED, on demand.
@@ -462,6 +463,17 @@ export default function PortfolioScopeNotice({
                 Jobs and visits · Services · Clients · Properties · Payments ·
                 Statistics · the Home dashboard — and every Insights total that
                 comes from them (revenue, completed, scheduled, unclaimed, team).
+              </Text>
+              {/* HOW THE MONEY IS GROUPED, said once and in the place
+                  somebody comes to find out. There is only one grouping,
+                  so this is a rule rather than a setting — but it is a
+                  rule with a consequence people are caught by: re-file a
+                  property and last month's totals move with it. */}
+              <Text fontSize="xs" fontWeight="semibold" mb={1}>How money is counted</Text>
+              <Text fontSize="xs" color="fg.muted" mb={2}>
+                By where a property sits <strong>now</strong> — so a portfolio shows
+                everything its current properties have ever earned, and re-filing one
+                moves its past earnings too.
               </Text>
               <Text fontSize="xs" fontWeight="semibold" mb={1}>Still company-wide</Text>
               <Text fontSize="xs" color="fg.muted">

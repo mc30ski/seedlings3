@@ -1503,15 +1503,34 @@ Respond ONLY with valid JSON in this exact format:
     // the other occurrence queries use — approving hours is about when
     // the work happened, not when a payment row was written.
     const cutoff = await resolveCutoff(req);
-    const count = await prisma.jobOccurrence.count({
-      where: withPortfolio<Prisma.JobOccurrenceWhereInput>({
-        completedAt: { not: null },
-        hoursApprovedAt: null,
-        workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
-        ...occurrenceWorkDateCutoff(cutoff),
-      }, portfolioWhere(req.principal, "time.approve")),
-    });
-    return { count };
+    const where = withPortfolio<Prisma.JobOccurrenceWhereInput>({
+      completedAt: { not: null },
+      hoursApprovedAt: null,
+      workflow: { in: [OccurrenceWorkflow.STANDARD, OccurrenceWorkflow.ONE_OFF] },
+      ...occurrenceWorkDateCutoff(cutoff),
+    }, portfolioWhere(req.principal, "time.approve"));
+    const [count, oldest] = await Promise.all([
+      prisma.jobOccurrence.count({ where }),
+      prisma.jobOccurrence.findFirst({
+        where,
+        orderBy: { completedAt: "asc" },
+        select: { completedAt: true },
+      }),
+    ]);
+    // HOW FAR BACK THE CALLER MUST LOOK TO SEE ALL OF THEM.
+    //
+    // The badge said 2 and the queue it opened showed 1. Clicking it
+    // sends you to the Jobs tab, which pins itself to the last 90 days —
+    // so a visit completed in June was counted and then not displayed,
+    // with nothing on screen to say a row had been left out.
+    //
+    // Fixing it by bounding the COUNT to 90 days would have made the
+    // numbers agree by hiding work that still needs approving, which is
+    // the wrong direction: this queue exists so nothing is forgotten.
+    // So the endpoint that produces the number also says how far back it
+    // reaches, and the caller widens its window to match. The two cannot
+    // disagree without this value being wrong.
+    return { count, oldestCompletedAt: oldest?.completedAt ?? null };
   });
   // Listing companion to the count endpoint above — same predicate,
   // returns the rows the Tasks page's inline UnapprovedHoursSection
