@@ -13,7 +13,7 @@
 > same commit that added one (`d3c277a4`, 2026-10-27) and was wrong from the
 > day it landed.
 
-650 distinct method+path pairs, 0 unmapped, 64 entitlements.
+651 distinct method+path pairs, 0 unmapped, 64 entitlements.
 
 Nine duplicated read routes were DELETED outright rather than renamed: an `admin`-prefixed and a `super`-prefixed path for `/documents` (and the same for `/timeline`) ran the same handler twice, differing only in `restrictedVisible` — and gated on the SAME entitlement, so the URL prefix was the only thing separating them. That let the CLIENT pick its own privilege level by choosing a URL. A path is not a check. Each pair is now one route on a neutral path (`/documents`, `/timeline`) that decides how much to return from a capability.
 
@@ -764,9 +764,10 @@ reschedule visits". Gated as **G18**.
 | `GET` | `/occurrences/unapproved-hours` |
 | `POST` | `/occurrences/:x/approve-hours` |
 
-## time.manage  (11)
+## time.manage  (12)
 | | |
 |---|---|
+| `DELETE` | `/workdays/:x` |
 | `PATCH` | `/mileage/:x` |
 | `PATCH` | `/workdays/:x` |
 | `POST` | `/mileage/:x/approve` |

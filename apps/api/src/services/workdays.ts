@@ -1317,6 +1317,64 @@ export async function unapproveWorkday(
 }
 
 /**
+ * DELETE A WORKDAY OUTRIGHT — the manager-side counterpart to the
+ * worker's `cancelWorkday`.
+ *
+ * WHY THIS HAD TO EXIST. `cancelWorkday` refuses once `endedAt` is set,
+ * on the reasoning that a finished day is a real record and the worker
+ * has Edit times for corrections. That is right for a correction and
+ * wrong for a row that should never have existed: tap Start, tap Stop,
+ * and you have a one-minute workday that can be edited or approved but
+ * never removed. It sits in Pending approval for ever, keeping the badge
+ * lit, and the only ways out are to approve work that did not happen or
+ * to leave it there. There was no third option; this is it.
+ *
+ * APPROVED ROWS ARE REFUSED. Unapprove first, deliberately — the same
+ * shape as retiring a portfolio before deleting it. An approved workday
+ * has been through a review someone signed off, and deleting it in one
+ * click would erase that decision along with the row.
+ *
+ * THE DELETED ROW IS SNAPSHOTTED into the audit, exactly as
+ * `cancelWorkday` does, so a delete that was itself a mistake can be
+ * reconstructed by hand. This is a hard delete: there is no archive flag
+ * on a workday and inventing one for this would leave a second kind of
+ * "not really here" for every reader of the table to handle.
+ */
+export async function deleteWorkday(
+  workdayId: string,
+  audit: AuditContext,
+): Promise<{ deleted: true; workerId: string; workdayDate: string }> {
+  const row = await loadWorkdayForReview(workdayId);
+  if (row.approvedAt) {
+    throw new ServiceError(
+      "INVALID_STATE",
+      "This workday is approved. Unapprove it first — deleting an approved row would erase the review as well as the times.",
+      409,
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // AUDIT BEFORE THE DELETE, so a failure leaves a record of the
+    // attempt rather than a vanished row with no trail.
+    await writeAudit(tx, AUDIT.WORKDAY.DELETED, audit.actorId, {
+      workdayId: row.id,
+      workerId: row.userId,
+      workdayDate: row.workdayDate,
+      action: "super-delete",
+      deletedRow: {
+        startedAt: row.startedAt.toISOString(),
+        endedAt: row.endedAt ? row.endedAt.toISOString() : null,
+        pausedAt: row.pausedAt ? row.pausedAt.toISOString() : null,
+        totalPausedMs: row.totalPausedMs,
+      },
+      ...impersonationDetail(audit, row.userId),
+    });
+    await tx.workerWorkday.delete({ where: { id: row.id } });
+  });
+  return { deleted: true, workerId: row.userId, workdayDate: row.workdayDate };
+}
+
+/**
  * Backfill a workday for a worker who forgot to start one. Used by the
  * Workdays tab's "Didn't work" section: when the operator
  * notices a worker missed their clock-in, they can retroactively

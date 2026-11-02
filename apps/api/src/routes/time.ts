@@ -151,6 +151,14 @@ export default async function timeRoutes(app: FastifyInstance) {
       workdayAudit(req),
     );
   });
+  // DELETE A WORKDAY that should never have existed — a mis-tap that was
+  // started AND stopped, which the worker's own cancel refuses because it
+  // only covers a still-running row. Refuses while approved: unapprove
+  // first, so deleting cannot also erase a review somebody signed off.
+  // The deleted row is snapshotted into the audit.
+  app.delete("/workdays/:id", req_timeManage, async (req: any) => {
+    return workdaySvc.deleteWorkday(String(req.params.id), workdayAudit(req));
+  });
   app.post("/workdays/:id/unapprove", req_timeManage, async (req: any) => {
     return workdaySvc.unapproveWorkday(
       String(req.params.id),
