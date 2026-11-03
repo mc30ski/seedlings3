@@ -156,6 +156,7 @@ import {
 import type { Scope } from "@/src/lib/scope";
 import { isW2, isFeeable } from "@repo/money";
 import { PortfolioBadges, PortfolioNameLine, portfolioNames } from "@/src/lib/portfolios";
+import TimingBand from "@/src/ui/components/TimingBand";
 
 // `localDate` removed — use `bizDateKey` directly (single canonical
 // helper from @/src/lib/dates). See docs/DATE_HANDLING.md.
@@ -790,6 +791,10 @@ export default function JobsTab({
   // Pinned note dialog
   const [pinnedNoteDialogOpen, setPinnedNoteDialogOpen] = useState(false);
   const [pinnedNoteOcc, setPinnedNoteOcc] = useState<any>(null);
+  /** The colour of the card the instructions dialog was opened FROM. The
+   *  dialog shows the same timing band the card shows, so it has to wear
+   *  the same hue; the card is the only place that knows it. */
+  const [pinnedNotePalette, setPinnedNotePalette] = useState<string>("gray");
 
   // Light estimate & convert dialogs
   const [lightEstDialogOpen, setLightEstDialogOpen] = useState(false);
@@ -5596,13 +5601,14 @@ export default function JobsTab({
                                 this list). Strip presets so this panel only
                                 shows the custom notes the user actually
                                 added on top. */}
-                            {(occ.instructions ?? []).filter((i) => !i.isPreset).length > 0 && (
+                            {/* Timing excluded — it has the band. */}
+                            {(occ.instructions ?? []).filter((i: any) => !i.isPreset && i.kind !== "TIMING").length > 0 && (
                               <Box mt={1}>
                                 <Text fontSize="2xs" fontWeight="semibold" color={`${ghostColor}.fg`} textTransform="uppercase" mb={0.5}>
                                   Notes
                                 </Text>
                                 <VStack align="stretch" gap={0.5}>
-                                  {(occ.instructions ?? []).filter((i) => !i.isPreset).map((inst) => (
+                                  {(occ.instructions ?? []).filter((i: any) => !i.isPreset && i.kind !== "TIMING").map((inst) => (
                                     <Text key={inst.id} fontSize="xs" color={`${ghostColor}.fg`} whiteSpace="pre-wrap">
                                       • {inst.text}
                                     </Text>
@@ -5697,6 +5703,24 @@ export default function JobsTab({
               : `${cardColorBase}.emphasized`;
             const isInProgress = occ.status === "IN_PROGRESS";
             const cardBorderWidth = isHighPriority ? "2px" : (isInProgress || isPaused) ? "2px" : "1px";
+
+            // THE TIMING BAND READS THE CARD'S OWN HUE — the same
+            // `cardColorBase` the fill and the border above are built from,
+            // never a parallel chain of its own. The first version re-derived
+            // the hue from a hand-rolled set of booleans, and the two
+            // disagreed immediately: a completed job resolves to "gray" here
+            // and to NO fill at all above, but fell through that other chain
+            // to its fallback, so a colourless card wore a teal band. One
+            // source or they drift again. A card with no hue of its own takes
+            // gray — the card's own shade, a step darker, which is the whole
+            // idea.
+            const timingPalette = isHighPriority ? "purple"
+              : cardColorBase === "announce" ? "purple"
+              : cardColorBase === "followup" || cardColorBase === "followup-closed" ? "red"
+              : cardColorBase === "event" || cardColorBase === "event-closed" ? "yellow"
+              : cardColorBase === "paused" ? "orange"
+              : cardColorBase && cardColorBase !== "gray" ? cardColorBase
+              : "gray";
 
             // Comment badge color: darker shade of card bg
             const commentBadgeBg = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.muted"
@@ -5830,9 +5854,13 @@ export default function JobsTab({
   // this occurrence because that is where the client asked for it — standing
   // in the yellow alarm band it would read as something the crew must do now,
   // which is exactly backwards. Split out and rendered quietly below.
-  const allInstructions = ((occ as any).instructions ?? []) as {
-    id: string; text: string; scope: string; sortOrder?: number; deliveredAt?: string | null;
-  }[];
+  // TIMING IS EXCLUDED HERE, because it has the band at the top of the
+  // card. Without the filter a timing constraint rendered twice on one
+  // card — once in the band and once as a pill in this list — which reads
+  // as two separate requirements that happen to say the same thing.
+  const allInstructions = (((occ as any).instructions ?? []) as {
+    id: string; text: string; scope: string; kind?: string; sortOrder?: number; deliveredAt?: string | null;
+  }[]).filter((i) => i.kind !== "TIMING");
   // URGENT FIRST. A one-off is the line nobody has seen before; a standing
   // order was already true last visit. Reading order should match attention
   // order, so the pulsing rows lead and the familiar ones follow — otherwise
@@ -6439,6 +6467,19 @@ export default function JobsTab({
                   toggleCard();
                 } : undefined}
               >
+                {/* WHAT MUST BE KNOWN BEFORE SETTING OFF.
+                    Above the density branch, so one insertion serves ultra,
+                    semi and expanded — and so it cannot be added to two of
+                    the three and quietly missed on the one somebody uses.
+
+                    The palette is `timingPalette`, derived beside the card's
+                    own fill from the same `cardColorBase` — see the comment
+                    there, and see TimingBand for why every fixed colour
+                    collided with something already on screen. */}
+                <TimingBand
+                  entries={((occ as any).instructions ?? []).filter((i: any) => i.kind === "TIMING")}
+                  palette={timingPalette}
+                />
                 {/* Loading overlay */}
                 {busyOccId === occ.id && (
                   <Box position="absolute" inset="0" bg={{ base: "whiteAlpha.700", _dark: "blackAlpha.700" }} zIndex="1" display="flex" alignItems="center" justifyContent="center" borderRadius="inherit">
@@ -6570,7 +6611,12 @@ export default function JobsTab({
                           // the instruction nobody has seen before. Standing
                           // orders were true last visit too — worth an icon,
                           // not worth a heartbeat.
-                          const all = ((occ as any).instructions ?? []) as { scope?: string }[];
+                          // Timing excluded for the same reason as the list
+                          // above: it is already banded across the top, and
+                          // counting it here would make the badge claim an
+                          // instruction the body does not show.
+                          const all = (((occ as any).instructions ?? []) as { scope?: string; kind?: string }[])
+                            .filter((i) => i.kind !== "TIMING");
                           const active = all.filter((i) => i.scope !== "NEXT_VISIT_ONLY");
                           if (active.length === 0) return null;
                           const oneOffs = active.filter((i) => i.scope === "THIS_VISIT").length;
@@ -9890,6 +9936,7 @@ export default function JobsTab({
                           title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
                             setPinnedNoteOcc(occ);
+                            setPinnedNotePalette(timingPalette);
                             setPinnedNoteDialogOpen(true);
                           }}
                           variant="outline"
@@ -10534,6 +10581,7 @@ export default function JobsTab({
           occurrenceId={pinnedNoteOcc.id}
           currentInstructions={(pinnedNoteOcc as any).instructions ?? []}
           isRepeating={pinnedNoteOcc.workflow === "STANDARD" || (!pinnedNoteOcc.workflow && !pinnedNoteOcc.isOneOff && !pinnedNoteOcc.isEstimate)}
+          palette={pinnedNotePalette}
           onSaved={(instructions) => {
             setItems((prev) => prev.map((o) => o.id === pinnedNoteOcc.id ? { ...o, instructions } as any : o));
           }}

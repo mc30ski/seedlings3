@@ -2781,3 +2781,142 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
     }
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// G52 — THE ONE-TIMING-PER-SCOPE INDEX MUST SURVIVE.
+//
+// A timing constraint is a kind of OccurrenceInstruction, and a visit may
+// carry at most one per scope: one standing, one for this visit. The card
+// joins them into a single band, so a third would overflow the row the
+// 50-character cap exists to fit, and two of the same scope would leave
+// the card choosing which to believe.
+//
+// The service checks first and refuses with TIMING_SCOPE_TAKEN so the UI
+// can ask before replacing. The DATABASE is what makes it true under two
+// concurrent edits, via a PARTIAL unique index:
+//
+//   UNIQUE (occurrenceId, scope) WHERE kind = 'TIMING'
+//
+// PRISMA CANNOT DECLARE THAT. There is no syntax for a WHERE on an index,
+// so it is invisible to schema.prisma and `prisma migrate dev` will
+// generate a DROP for it unless somebody notices. This gate is the
+// noticing. Same shape as the client-grant triggers (G45).
+// ───────────────────────────────────────────────────────────────────────────
+describe("G52 — timing constraints stay one-per-scope", () => {
+  const MIGRATION = "20261102120000_instruction_kind_timing";
+
+  it("the migration that installs the partial unique index is still present", () => {
+    const sql = path.join(API, "..", "prisma", "migrations", MIGRATION, "migration.sql");
+    expect(existsSync(sql), `${MIGRATION} is missing — the index it installs is the only thing stopping two timing constraints of the same scope on one visit.`).toBe(true);
+    const body = readFileSync(sql, "utf8");
+    expect(body, "the partial unique index is gone from the migration").toMatch(
+      /CREATE UNIQUE INDEX[\s\S]*?"OccurrenceInstruction"[\s\S]*?WHERE\s+"kind"\s*=\s*'TIMING'/,
+    );
+  });
+
+  it("no later migration drops it", () => {
+    const dir = path.join(API, "..", "prisma", "migrations");
+    const offenders = readdirSync(dir)
+      .filter((d: string) => d > MIGRATION && existsSync(path.join(dir, d, "migration.sql")))
+      .filter((d: string) =>
+        /DROP\s+INDEX[^;]*OccurrenceInstruction_one_timing_per_scope/i.test(
+          readFileSync(path.join(dir, d, "migration.sql"), "utf8"),
+        ),
+      );
+    expect(
+      offenders,
+      "a later migration drops the one-timing-per-scope index. Prisma generates that DROP by itself, because the index is a partial one it cannot see in schema.prisma — it is almost certainly not what anybody meant.",
+    ).toEqual([]);
+  });
+
+  it("the service refuses a clash rather than overwriting", () => {
+    const routes = read(path.join(API, "routes", "occurrences.ts"));
+    // `read` returns "" for a missing path, so prove the file was found
+    // before trusting anything this test says about its contents.
+    expect(routes, "occurrences.ts not found — this gate is reading nothing").not.toBe("");
+    expect(
+      routes,
+      "the instruction route must refuse a second timing of the same scope with TIMING_SCOPE_TAKEN, so the UI can name what is about to be lost before replacing it.",
+    ).toMatch(/TIMING_SCOPE_TAKEN/);
+    expect(
+      routes,
+      "replacing must be opt-in — a clash is only overwritten when the caller has sent replaceExisting, which it does after asking.",
+    ).toMatch(/replaceExisting/);
+  });
+
+  // THE BAND'S COLOUR IS THE CARD'S COLOUR — one derivation, not two.
+  //
+  // The band sits on top of the card and borrows its hue, so the two are
+  // the same decision. Shipped as two: the fill reads `cardColorBase`, the
+  // band re-derived from its own chain of booleans, and they disagreed on
+  // the very first card looked at — a completed visit has NO fill, and the
+  // band's chain fell through to a fallback, so a colourless card wore a
+  // teal stripe. Nothing typechecks that two expressions mean the same
+  // thing; this does.
+  it("the job card derives the band's palette from the card's own colour", () => {
+    const jobsTab = readFileSync(
+      path.join(API, "..", "..", "web", "src", "ui", "tabs", "JobsTab.tsx"),
+      "utf8",
+    );
+    expect(jobsTab, "JobsTab.tsx not found — this gate is reading nothing").not.toBe("");
+    const decl = /const timingPalette\s*=([\s\S]*?);\n/.exec(jobsTab);
+    expect(
+      decl,
+      "JobsTab must name the band's palette `timingPalette` and derive it in one place, beside the card's own fill.",
+    ).not.toBeNull();
+    expect(
+      decl![1],
+      "`timingPalette` must be built from `cardColorBase` — the same value the card's bg and border are built from.",
+    ).toMatch(/cardColorBase/);
+    // Every state below is ALREADY folded into cardColorBase. Reading one
+    // again here is the second derivation, whatever it then decides.
+    for (const b of ["isFollowup", "isEvent", "isTask", "isReminder", "isAnnouncement", "isInProgress", "isPaused", "isTentative", "isClosed", "isUnassigned", "isAssignedToMe", "isAssignedToOthers"]) {
+      expect(
+        decl![1].includes(b),
+        `timingPalette reads \`${b}\` directly. cardColorBase already accounts for it; asking twice is how the band and the card come to disagree.`,
+      ).toBe(false);
+    }
+    expect(
+      decl![1].trimEnd().endsWith('"gray"'),
+      "the last branch of timingPalette must be \"gray\" — a card with no hue of its own has no colour to borrow, and the fallback is where the first version went wrong: it reached for a hue the card did not have.",
+    ).toBe(true);
+    const usage = /<TimingBand[\s\S]*?\/>/.exec(jobsTab);
+    expect(usage, "the job card no longer renders a TimingBand").not.toBeNull();
+    expect(
+      usage![0],
+      "pass `timingPalette` to TimingBand; an expression written inline at the callsite is the second derivation this gate exists to prevent.",
+    ).toMatch(/palette=\{timingPalette\}/);
+  });
+
+  // THE EDITOR WEARS THE SAME COLOUR AS THE THING IT EDITS.
+  //
+  // The instructions dialog shows the timing rows as the same band the card
+  // shows, so a fixed hue there puts the editor and the card side by side in
+  // different colours. It shipped hardcoded teal and did exactly that.
+  it("the instructions dialog takes the card's palette rather than fixing one", () => {
+    const WEB = path.join(API, "..", "..", "web", "src", "ui");
+    const dlg = readFileSync(path.join(WEB, "dialogs", "PinnedNoteDialog.tsx"), "utf8");
+    expect(dlg, "PinnedNoteDialog.tsx not found — this gate is reading nothing").not.toBe("");
+    // The timing rows: from the TIMING filter down to the close of that list.
+    const rows = /kind === "TIMING"\)\.map\(([\s\S]*?)\)\)\}/.exec(dlg);
+    expect(rows, "the dialog no longer renders a list of timing rows").not.toBeNull();
+    const fixed = rows![1].match(/"(?:red|orange|yellow|green|teal|blue|purple|pink|gray)\.(?:emphasized|solid|fg|subtle|muted|faint)"/g);
+    expect(
+      fixed,
+      `the dialog's timing rows name a colour outright (${fixed?.join(", ")}). They must take it from the \`palette\` prop, which is the card's own — otherwise the band in the dialog and the band on the card behind it are different colours.`,
+    ).toBeNull();
+    expect(
+      dlg,
+      "PinnedNoteDialog must accept a `palette` prop, defaulted for callers that have no card colour to pass.",
+    ).toMatch(/palette = "gray"/);
+    const jobsTab = readFileSync(path.join(WEB, "tabs", "JobsTab.tsx"), "utf8");
+    expect(
+      jobsTab,
+      "JobsTab opens the dialog from a coloured card, so it must hand that card's palette down with `palette={pinnedNotePalette}`, captured from `timingPalette` when the dialog opens.",
+    ).toMatch(/palette=\{pinnedNotePalette\}/);
+    expect(
+      jobsTab,
+      "`pinnedNotePalette` must be set from the card's own `timingPalette` at the moment the dialog opens.",
+    ).toMatch(/setPinnedNotePalette\(timingPalette\)/);
+  });
+});

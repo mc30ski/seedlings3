@@ -2940,6 +2940,19 @@ model OccurrenceAddon {
 /// is finished, and the next one does not exist yet — a job is not scheduled
 /// again until its payment clears — so there was nowhere to put the request
 /// except an operator's memory.
+/// What KIND of thing an instruction is, which decides where it is read.
+///
+/// The split is WHEN you need it, not what it says. A NOTE is read on
+/// site — gate codes, bag the clippings, watch for the dog. TIMING is
+/// read BEFORE SETTING OFF: "before 11", "not 1–3, baby napping". A crew
+/// that discovers a timing constraint on arrival has already wasted the
+/// drive, which is why it is banded across the top of the card at every
+/// density instead of sitting in the notes.
+enum InstructionKind {
+  NOTE
+  TIMING
+}
+
 enum InstructionScope {
   /// Applies to this visit only. What `repeats: false` meant.
   THIS_VISIT
@@ -2958,6 +2971,9 @@ model OccurrenceInstruction {
   occurrence   JobOccurrence    @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
   text         String
   isPreset     Boolean          @default(false)
+  /// NOTE unless stated. Defaulted so every existing row keeps its
+  /// meaning and no backfill is needed.
+  kind         InstructionKind  @default(NOTE)
   scope        InstructionScope @default(EVERY_VISIT)
   sortOrder    Int              @default(0)
   createdAt    DateTime         @default(now())
@@ -2974,6 +2990,22 @@ model OccurrenceInstruction {
   /// The lookup the carry-forward runs on every new visit: undelivered
   /// next-visit instructions across a job's occurrences.
   @@index([scope, deliveredAt])
+
+  /// THERE IS ALSO A PARTIAL UNIQUE INDEX THAT PRISMA CANNOT DECLARE:
+  ///
+  ///   OccurrenceInstruction_one_timing_per_scope
+  ///   UNIQUE (occurrenceId, scope) WHERE kind = 'TIMING'
+  ///
+  /// installed by migration 20261102120000. It enforces one timing
+  /// constraint per scope per visit — a job carries one standing timing
+  /// and one for this visit, and a second of the same scope is a
+  /// replacement the UI asks about first. A unique index is what stops
+  /// two concurrent edits both landing and leaving the card to pick.
+  ///
+  /// Prisma has no syntax for a WHERE on an index, so it is invisible to
+  /// the schema and `migrate dev` WILL GENERATE A DROP FOR IT if you let
+  /// it. Same hazard as the client-grant triggers. G52 fails the build if
+  /// the migration or the index goes missing.
 }
 
 // ── Client-initiated change requests on a scheduled occurrence ──────────────

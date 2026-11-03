@@ -129,7 +129,19 @@ describe("theming build gate", () => {
     const hits: string[] = [];
     for (const f of uiFiles()) {
       const src = stripComments(readFileSync(f, "utf8"));
-      for (const m of src.matchAll(/color=\{?[^}\n]*?"([a-z]+)\.solid"/g)) {
+      // `(?!olor=)` STOPS THE MATCH BLEEDING INTO THE NEXT ATTRIBUTE.
+      //
+      // Without it this scanned from `color=` to the end of the line, so
+      // `color="green.fg" borderColor="green.solid"` was reported as a
+      // solid used as ink — the exact pairing the rule WANTS (a readable
+      // foreground over a solid rule). The violation was then only
+      // avoided by putting the two props on separate lines, which a
+      // reformat would silently undo.
+      //
+      // The lazy body still crosses a ternary, so
+      // `color={x ? "a.solid" : "b.fg"}` is still caught; it just cannot
+      // cross another `…olor=` attribute to get there.
+      for (const m of src.matchAll(/color=\{?(?:(?!olor=)[^}\n])*?"([a-z]+)\.solid"/g)) {
         hits.push(`${f.replace(WEB, "apps/web")}: ${m[0].slice(0, 60)}`);
       }
     }
