@@ -904,7 +904,7 @@ export const jobs: ServicesJobs = {
               orderBy: { createdAt: "asc" as const },
             },
             instructions: {
-              select: { id: true, text: true, isPreset: true, scope: true, sortOrder: true, deliveredAt: true, deliveredToOccurrenceId: true },
+              select: { id: true, text: true, isPreset: true, kind: true, scope: true, sortOrder: true, deliveredAt: true, deliveredToOccurrenceId: true },
               orderBy: { sortOrder: "asc" as const },
             },
             propertyPhotos: {
@@ -2531,7 +2531,7 @@ export const jobs: ServicesJobs = {
           orderBy: { createdAt: "asc" as const },
         },
         instructions: {
-          select: { id: true, text: true, isPreset: true, scope: true, sortOrder: true, deliveredAt: true, deliveredToOccurrenceId: true },
+          select: { id: true, text: true, isPreset: true, kind: true, scope: true, sortOrder: true, deliveredAt: true, deliveredToOccurrenceId: true },
           orderBy: { sortOrder: "asc" as const },
         },
         linkedOccurrence: {
@@ -3015,7 +3015,7 @@ export const jobs: ServicesJobs = {
           orderBy: { createdAt: "asc" as const },
         },
         instructions: {
-          select: { id: true, text: true, isPreset: true, scope: true, sortOrder: true, deliveredAt: true, deliveredToOccurrenceId: true },
+          select: { id: true, text: true, isPreset: true, kind: true, scope: true, sortOrder: true, deliveredAt: true, deliveredToOccurrenceId: true },
           orderBy: { sortOrder: "asc" as const },
         },
         linkedOccurrence: {

@@ -14,7 +14,17 @@ import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { enforceAssigneeInvariants } from "../lib/claimerInvariant";
 import { callerCan, callerCanFn } from "../lib/callerCan";
-import { InstructionScope, JobKind, JobOccurrenceStatus, JobStatus, OccurrenceWorkflow, Prisma } from "@prisma/client";
+import { InstructionKind, InstructionScope, JobKind, JobOccurrenceStatus, JobStatus, OccurrenceWorkflow, Prisma } from "@prisma/client";
+
+/**
+ * The longest a timing constraint may be.
+ *
+ * It is rendered as a band on the ULTRA job row, which on a phone has no
+ * spare width — the property name is already truncating there. The cap is
+ * what makes the band possible without cutting words out of a sentence
+ * about when a crew may arrive. "Not 1–3pm (baby napping)" is 24.
+ */
+const TIMING_TEXT_MAX = 50;
 import { normalizePhone } from "../lib/phone";
 import { generateLedgerId } from "../lib/ledgerId";
 import { loadCategoryLabels, loadExpenseCategories } from "../services/expenseCategories";
@@ -3880,8 +3890,16 @@ Respond ONLY with valid JSON in this exact format:
   app.post("/occurrences/:id/instructions", req_scheduleContribute, async (req: any) => {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
-    const body0 = (req.body || {}) as { text: string; isPreset?: boolean; scope?: string; repeats?: boolean };
+    const body0 = (req.body || {}) as {
+      text: string; isPreset?: boolean; scope?: string; repeats?: boolean;
+      kind?: string;
+      /** Set by the UI after it has ASKED. Without it a clash is refused so
+       *  the operator is told what they are about to overwrite. */
+      replaceExisting?: boolean;
+    };
     const { text, isPreset } = body0;
+    const kind: InstructionKind =
+      body0.kind === "TIMING" ? InstructionKind.TIMING : InstructionKind.NOTE;
     // `repeats` is still accepted so an older client keeps working: true was
     // EVERY_VISIT, false was THIS_VISIT. `scope` wins when both arrive.
     const scope: InstructionScope =
@@ -3891,6 +3909,15 @@ Respond ONLY with valid JSON in this exact format:
           ? InstructionScope.THIS_VISIT
           : InstructionScope.EVERY_VISIT;
     if (!text?.trim()) throw app.httpErrors.badRequest("text is required");
+    // CAPPED, AND ONLY FOR TIMING. A timing constraint is rendered on the
+    // ULTRA row of a phone, where there is no room to truncate without
+    // losing the words that matter. The cap is what makes a band possible
+    // there at all; an on-site note has the body of the card to run into.
+    if (kind === InstructionKind.TIMING && text.trim().length > TIMING_TEXT_MAX) {
+      throw app.httpErrors.badRequest(
+        `A timing constraint must be ${TIMING_TEXT_MAX} characters or fewer — it has to fit on a phone's job row.`,
+      );
+    }
     // Permission: claimer or admin
     const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, include: { assignees: true } });
     if (!occ) throw app.httpErrors.notFound("Occurrence not found");
@@ -3899,19 +3926,51 @@ Respond ONLY with valid JSON in this exact format:
     const canManageSchedule = callerCan(req, "schedule.manage");
     if (!isClaimer && !canManageSchedule) throw app.httpErrors.forbidden("Only the claimer or someone with schedule authority can manage instructions");
     const count = await prisma.occurrenceInstruction.count({ where: { occurrenceId } });
+
+    // ONE TIMING PER SCOPE. A visit carries one standing constraint and
+    // one for this visit; a second of the same scope is a replacement,
+    // never an addition — two bands would double the card's height at
+    // every density, and joining three into one would overflow the row
+    // the cap above exists to fit.
+    //
+    // REFUSED RATHER THAN SILENTLY REPLACED. The operator is told what
+    // they are about to lose and sends `replaceExisting` once they have
+    // answered. The database also carries a partial unique index, so two
+    // concurrent edits cannot both land whatever this code does.
+    const clash =
+      kind === InstructionKind.TIMING
+        ? await prisma.occurrenceInstruction.findFirst({
+            where: { occurrenceId, kind: InstructionKind.TIMING, scope },
+            select: { id: true, text: true, scope: true },
+          })
+        : null;
+    if (clash && !body0.replaceExisting) {
+      throw app.httpErrors.conflict(
+        JSON.stringify({ code: "TIMING_SCOPE_TAKEN", existing: clash }),
+      );
+    }
+
     return prisma.$transaction(async (tx) => {
+      if (clash) {
+        // audit-allow: half of ONE replacement, recorded in full by the
+        // writeAudit below — which carries what was removed as well as
+        // what replaced it.
+        await tx.occurrenceInstruction.delete({ where: { id: clash.id } });
+      }
       const instruction = await tx.occurrenceInstruction.create({
-        data: { occurrenceId, text: text.trim(), isPreset: !!isPreset, scope, sortOrder: count },
+        data: { occurrenceId, text: text.trim(), isPreset: !!isPreset, kind, scope, sortOrder: count },
       });
       // Records a new work instruction added to this occurrence.
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
         occurrenceId,
         jobId: occ.jobId ?? null,
         instructionId: instruction.id,
-        action: "instruction_added",
+        action: clash ? "timing_replaced" : "instruction_added",
         text: instruction.text,
         isPreset: instruction.isPreset,
+        kind: instruction.kind,
         scope: instruction.scope,
+        ...(clash ? { replacedText: clash.text, replacedInstructionId: clash.id } : {}),
       });
       return instruction;
     });
