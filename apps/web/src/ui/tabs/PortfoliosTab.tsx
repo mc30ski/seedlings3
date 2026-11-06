@@ -1363,23 +1363,23 @@ function AreaDetail({
             {/* THE COLOUR, because the map and the list identify a
                 portfolio by it. Swatches rather than a Select: the thing
                 being chosen IS the appearance, so showing the name of a
-                colour instead of the colour is a needless translation.
+                color instead of the color is a needless translation.
 
                 AUTO IS A REAL CHOICE and sits first. Most portfolios will
                 never be given one, and they still have to be drawn — the
                 map must tell ten zones apart before anybody has picked ten
-                colours. Choosing pins it; leaving it auto means a new
+                colors. Choosing pins it; leaving it auto means a new
                 sibling can shuffle it. */}
             {mayManage && (
               <Box>
                 <Text fontSize="2xs" color="fg.muted" mb={1}>
-                  Colour on the map and list
+                  Color on the map and list
                 </Text>
                 <HStack gap={1} wrap="wrap">
                   <Box
                     as="button"
                     onClick={() => setColor("")}
-                    aria-label="Automatic colour"
+                    aria-label="Automatic color"
                     aria-pressed={color === ""}
                     title="Auto — taken from its position"
                     px={2}
@@ -1488,7 +1488,7 @@ function AreaDetail({
               <Text fontSize="xs" color={halfAPoint ? "red.fg" : "fg.muted"}>
                 {halfAPoint
                   ? "Give both a latitude and a longitude, or clear both."
-                  : "The centre of this portfolio — its weather is forecast from here, and the map below marks it. Leave blank to use the business address."}
+                  : "The center of this portfolio — its weather is forecast from here, and the map below marks it. Leave blank to use the business address."}
               </Text>
             )}
             <Text fontSize="xs" color="fg.muted">
@@ -2323,7 +2323,7 @@ function AreaProperties({
                     so they have to agree — a green chip on the map and a
                     plain heading here would leave the reader matching
                     names instead of glancing. "In no portfolio" takes no
-                    colour on purpose: it is the absence of a band, not a
+                    color on purpose: it is the absence of a band, not a
                     band of its own. */}
                 {(groups ?? []).length > 1 && (
                   <HStack

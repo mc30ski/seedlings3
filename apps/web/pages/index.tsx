@@ -35,6 +35,8 @@ import SuppliesTab from "@/src/ui/tabs/SuppliesTab";
 import DocumentsTab from "@/src/ui/tabs/DocumentsTab";
 import TimelineTab from "@/src/ui/tabs/TimelineTab";
 import WeatherBar, { WeatherIcon, type WeatherBarMode } from "@/src/ui/components/WeatherBar";
+import WhatsNewBar from "@/src/ui/components/WhatsNewBar";
+import WhatsNewHeaderButton from "@/src/ui/components/WhatsNewHeaderButton";
 import WorkdayStrip from "@/src/ui/components/WorkdayStrip";
 import MileageStrip from "@/src/ui/components/MileageStrip";
 import InventoryTab from "@/src/ui/tabs/InventoryTab";
@@ -4694,9 +4696,20 @@ export default function HomePage() {
             {/* The label goes INTO each control, not beside it — a caption
                 that is not part of the button is the one place a click does
                 nothing, and it is the bigger target of the two. */}
-            <ThemeChip label="Appearance" />
+            {/* Shortcut to the What's new list on Profile. Gated the same
+                way the bar is: not for a client contact, and not while
+                viewing as one — the staff app's release notes are not
+                theirs, and the count would be the operator's anyway.
+                FIRST IN THE ROW: it is the only one of the three that ever
+                has something waiting, and a control carrying an unread dot
+                belongs where the eye lands rather than behind two that
+                never change. */}
+            {topTab !== "client" && !me?.isClientContact && !clientViewAs && (
+              <WhatsNewHeaderButton can={scopeCan as (c: string) => boolean} label="Updates" />
+            )}
+            <ThemeChip label="Themes" />
             {scopeCan("schedule.view") && topTab !== "client" && (
-              <DayBoardButton userId={me?.id ?? null} label="Today’s board" />
+              <DayBoardButton userId={me?.id ?? null} label="Board" />
             )}
           </Box>
         )}
@@ -4779,6 +4792,17 @@ export default function HomePage() {
           mode={weatherMode}
           onModeChange={setWeatherMode}
         />
+      )}
+      {/* WHAT'S NEW — one shipped change, once, to the people who can use it.
+          Under the header rather than inside a tab, because the change
+          being announced is rarely on the tab somebody happens to land on.
+          Gated on `mounted` for the same reason WeatherBar is: it reads
+          nothing from localStorage, but it renders only after a fetch, and
+          mounting it server-side would emit a different tree.
+          Hidden for a client contact (the staff app's release notes are not
+          theirs) and while viewing as a client — see the component. */}
+      {mounted && !!me?.isApproved && !me?.isClientContact && (
+        <WhatsNewBar can={scopeCan as (c: string) => boolean} disabled={clientViewAs} />
       )}
       {/* Error banner when /api/me failed or timed out. Signed-in
           user with no profile = something is broken upstream (Neon

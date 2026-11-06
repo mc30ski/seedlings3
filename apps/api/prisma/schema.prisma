@@ -451,9 +451,10 @@ model User {
 
   timelineEventsCreated TimelineEvent[] @relation("TimelineEventCreator")
 
-  bannersCreated   BannerNotification[] @relation("BannerCreator")
-  bannerRecipients BannerRecipient[]
-  bannerDismissals BannerDismissal[]
+  bannersCreated           BannerNotification[]      @relation("BannerCreator")
+  bannerRecipients         BannerRecipient[]
+  bannerDismissals         BannerDismissal[]
+  featureAnnouncementsSeen FeatureAnnouncementSeen[]
 
   // Workday tracking — per-worker daily clock-in/out for payroll. See
   // WorkerWorkday model. `workdaysApproved` is the back-relation for the
@@ -2986,11 +2987,6 @@ model OccurrenceInstruction {
   deliveredAt             DateTime?
   deliveredToOccurrenceId String?
 
-  @@index([occurrenceId])
-  /// The lookup the carry-forward runs on every new visit: undelivered
-  /// next-visit instructions across a job's occurrences.
-  @@index([scope, deliveredAt])
-
   /// THERE IS ALSO A PARTIAL UNIQUE INDEX THAT PRISMA CANNOT DECLARE:
   ///
   ///   OccurrenceInstruction_one_timing_per_scope
@@ -3006,6 +3002,11 @@ model OccurrenceInstruction {
   /// the schema and `migrate dev` WILL GENERATE A DROP FOR IT if you let
   /// it. Same hazard as the client-grant triggers. G52 fails the build if
   /// the migration or the index goes missing.
+
+  @@index([occurrenceId])
+  /// The lookup the carry-forward runs on every new visit: undelivered
+  /// next-visit instructions across a job's occurrences.
+  @@index([scope, deliveredAt])
 }
 
 // ── Client-initiated change requests on a scheduled occurrence ──────────────
@@ -3540,6 +3541,39 @@ model BannerDismissal {
 
   @@unique([bannerId, userId])
   @@index([userId])
+}
+
+/// WHO HAS BEEN TOLD ABOUT A SHIPPED CHANGE.
+///
+/// A row is written the first time a person answers the "what's new" bar —
+/// by opening the feature or by skipping it — and its existence is what
+/// stops the bar coming back. One row per person per announcement, ever.
+///
+/// THE ANNOUNCEMENTS THEMSELVES ARE NOT HERE. They live in the web app's
+/// code (`src/lib/whatsNew.ts`) because a release note ships WITH the
+/// release: it is written in the same change that adds the feature, goes out
+/// when that change deploys, and would otherwise be a thing somebody has to
+/// remember to type into an admin screen afterwards — which is the step that
+/// never happens. `BannerNotification` is the opposite case on purpose: an
+/// operator writing to named people, authored in the app.
+///
+/// `announcementId` is therefore a free-text key from that file, not a
+/// foreign key, and it must never be reused for a different change: it is
+/// the only thing recording that this person has already been told.
+model FeatureAnnouncementSeen {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The key from the web app's announcement registry, e.g. "day-map".
+  announcementId String
+  /// "shown" if they asked to be taken to it, "skipped" if they dismissed
+  /// it. Kept because the two mean different things when deciding whether a
+  /// feature landed or went unnoticed.
+  action         String
+  seenAt         DateTime @default(now())
+
+  @@unique([userId, announcementId])
+  @@index([announcementId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

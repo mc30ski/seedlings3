@@ -7,6 +7,7 @@ import { resolveCutoff } from "../lib/businessStartCutoff";
 import { resolveParcel, parcelImageUrl, redactParcelForWorker } from "../services/parcels";
 import { callerCan } from "../lib/callerCan";
 import { orderPortfolioTree } from "../lib/portfolioOrder";
+import { currentUserId } from "./_shared";
 
 function readBearer(req: any): string | null {
   const h = req.headers?.authorization ?? "";
@@ -113,6 +114,46 @@ export default async function meRoutes(app: FastifyInstance) {
       // to decide whether to show "—" for hidden money fields.
       cutoff: cutoff ? cutoff.toISOString() : null,
     };
+  });
+
+  // ── WHAT'S NEW ───────────────────────────────────────────────────────────
+  //
+  // Two routes, both about the CALLER and nothing else: which shipped
+  // changes they have already been told about, and the answer when they
+  // reply to the bar. The announcements themselves are not served — they
+  // ship inside the web bundle with the release they describe (see
+  // services/featureAnnouncements.ts for why).
+  //
+  // view-as-allow: this is the state of the SESSION DOING THE LOOKING. A
+  // person inspecting somebody else's screen must not be shown that
+  // person's unread release notes, and must certainly not mark them read on
+  // their behalf — the account would then never hear about the feature. The
+  // same reasoning as the area lens and the push subscriptions above.
+  app.get("/me/feature-announcements", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
+    return { seen: await services.featureAnnouncements.seenIdsFor(await currentUserId(req)) };
+  });
+
+  // view-as-allow: see the GET above — the acknowledgement belongs to the
+  // person clicking, never to whoever they are looking at.
+  app.post("/me/feature-announcements/:id", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
+    const { action } = (req.body || {}) as { action?: string };
+    return services.featureAnnouncements.markSeen(
+      await currentUserId(req),
+      String(req.params.id),
+      String(action ?? "skipped"),
+    );
+  });
+
+  // view-as-allow: as above — asking to be shown a change again is the
+  // caller's own business, and doing it on somebody else's behalf would
+  // re-announce a feature to an account that already dealt with it.
+  app.delete("/me/feature-announcements", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
+    return services.featureAnnouncements.forget(await currentUserId(req));
+  });
+
+  // view-as-allow: see above.
+  app.delete("/me/feature-announcements/:id", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
+    return services.featureAnnouncements.forget(await currentUserId(req), String(req.params.id));
   });
 
   // The portfolios this caller may point their LENS at.

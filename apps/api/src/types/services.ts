@@ -589,6 +589,12 @@ export type PropertyMapScope = {
    *  toward its rollup, so hiding it by default would make the map
    *  disagree with the number above it. The viewer opts out. */
   status?: "ACTIVE" | "ARCHIVED" | "ALL";
+  /** Pin only these properties. The Jobs tab's day map asks this way: it
+   *  already has the day's visits on screen and wants those addresses
+   *  rather than a territory. ANDed with everything above, so it can only
+   *  ever subtract — an id the caller may not see simply does not come
+   *  back. An EMPTY array means none, not all. */
+  propertyIds?: string[];
 };
 
 export type ServicesProperties = {
@@ -1451,6 +1457,7 @@ export type Services = {
   companyDocuments: typeof import("../services/companyDocuments").companyDocuments;
   timelineEvents: typeof import("../services/timelineEvents").timelineEvents;
   banners: typeof import("../services/banners").banners;
+  featureAnnouncements: typeof import("../services/featureAnnouncements").featureAnnouncements;
   paymentRequests: typeof import("../services/paymentRequests").paymentRequests;
   policies: typeof import("../services/policies").policies;
   customRoles: typeof import("../services/customRoles").customRoles;
