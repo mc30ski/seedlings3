@@ -2920,3 +2920,74 @@ describe("G52 — timing constraints stay one-per-scope", () => {
     ).toMatch(/setPinnedNotePalette\(timingPalette\)/);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// G53 — A MAP FILTER MAY ONLY EVER SUBTRACT.
+//
+// Both maps — the portfolio's properties and the Jobs tab's day map — reach
+// `properties.mapPoints`, and both send a filter the CLIENT chose: a portfolio
+// id, or a list of property ids the day map already has on screen. A client
+// choosing what it sees is fine. A client choosing what it is ALLOWED to see
+// is not, and the only thing between the two is that every one of those
+// filters is ANDed with the caller's own `portfolioWhere` rather than
+// replacing it.
+//
+// The day map is what makes this worth a gate. It posts a list of ids, so the
+// obvious "optimisation" — look them up by id, skip the scope clause, it is
+// only the ids they asked for — reads as a performance change and is a
+// straight read of any property in the business by anyone who can guess an
+// id. There is no error, no 403 and nothing in the log: the pins simply
+// appear.
+//
+// So: ONE return, and the caller's scope first in it.
+// ───────────────────────────────────────────────────────────────────────────
+describe("G53 — map scope is ANDed, never replaced", () => {
+  const SRC = path.join(API, "services", "properties.ts");
+
+  /** The body of `mapScopeWhere`, from its signature to the closing brace of
+   *  the function (the first line that is a bare `}` at column 0). */
+  function mapScopeBody(): string {
+    const src = readFileSync(SRC, "utf8");
+    expect(src, "properties.ts not found — this gate is reading nothing").not.toBe("");
+    const start = src.indexOf("function mapScopeWhere");
+    expect(start, "mapScopeWhere is gone from properties.ts. If the map's scoping moved, move this gate with it — do not delete it.").toBeGreaterThan(-1);
+    const end = src.indexOf("\n}\n", start);
+    expect(end, "could not find the end of mapScopeWhere").toBeGreaterThan(start);
+    return src.slice(start, end);
+  }
+
+  it("has exactly one return, so no filter can short-circuit the caller's scope", () => {
+    const body = mapScopeBody();
+    const returns = body.match(/\breturn\b/g) ?? [];
+    expect(
+      returns.length,
+      `mapScopeWhere has ${returns.length} return statements. An early return is how a client-supplied filter comes to stand on its own instead of being ANDed with the caller's territory — which is a read of any property in the business.`,
+    ).toBe(1);
+  });
+
+  it("puts the caller's own scope first in the AND", () => {
+    expect(
+      mapScopeBody(),
+      "the AND that mapScopeWhere returns must begin with `params.portfolioWhere` — the caller's granted territory. Every other clause in it is a view filter the client chose.",
+    ).toMatch(/AND:\s*\[\s*\(params\.portfolioWhere \?\? \{\}\)/);
+  });
+
+  it("applies every client-chosen filter as a member of that same AND", () => {
+    const body = mapScopeBody();
+    // Each filter is computed into a local and then spread in. The spread is
+    // the shape that cannot widen: it adds a clause or adds nothing.
+    for (const name of ["chosen", "byStatus", "assigned", "byId"]) {
+      expect(
+        body,
+        `the \`${name}\` filter must be spread into the returned AND as \`...(${name} ? [${name}] : [])\`. Any other shape — an OR, a replacement, an early return — is a filter that can widen what the caller sees rather than narrow it.`,
+      ).toContain(`...(${name} ? [${name}] : [])`);
+    }
+  });
+
+  it("treats an empty propertyIds list as none, not as all", () => {
+    expect(
+      mapScopeBody(),
+      "`byId` must be built from the PRESENCE of propertyIds (`params.propertyIds ? …`), not from its length. `propertyIds.length ? …` makes an empty list mean \"no filter\", so a day with no properties would pin every address the caller can see.",
+    ).toMatch(/params\.propertyIds\s*\?\s*\{\s*id:\s*\{\s*in:\s*params\.propertyIds\s*\}\s*\}/);
+  });
+});

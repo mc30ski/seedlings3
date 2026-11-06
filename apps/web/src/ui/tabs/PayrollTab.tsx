@@ -630,7 +630,7 @@ export default function PayrollTab({
                   // `books.view` the card is hidden, so pointing at it
                   // would send the reader looking for something absent.
                   ? canSeeEquity
-                    ? "Owner draws and capital contributions are recorded on the Ledger, and summarised above. They are equity, not wages, so they never appear in a payroll run."
+                    ? "Owner draws and capital contributions are recorded on the Ledger, and summarized above. They are equity, not wages, so they never appear in a payroll run."
                     : "Owner draws and capital contributions are recorded on the Ledger. They are equity, not wages, so they never appear in a payroll run."
                   : // Same reasoning as PayrollHomeSection: an unmatched row
                     // is indistinguishable from "nothing imported" at this

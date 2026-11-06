@@ -13,7 +13,7 @@
 > same commit that added one (`d3c277a4`, 2026-10-27) and was wrong from the
 > day it landed.
 
-651 distinct method+path pairs, 0 unmapped, 64 entitlements.
+655 distinct method+path pairs, 0 unmapped, 64 entitlements.
 
 Nine duplicated read routes were DELETED outright rather than renamed: an `admin`-prefixed and a `super`-prefixed path for `/documents` (and the same for `/timeline`) ran the same handler twice, differing only in `restrictedVisible` — and gated on the SAME entitlement, so the URL prefix was the only thing separating them. That let the CLIENT pick its own privilege level by choosing a URL. A path is not a check. Each pair is now one route on a neutral path (`/documents`, `/timeline`) that decides how much to return from a capability.
 
@@ -822,11 +822,13 @@ reschedule visits". Gated as **G18**.
 | `POST` | `/occurrences/:x/complete` |
 | `POST` | `/occurrences/:x/start` |
 
-## OWNERSHIP  (104)
+## OWNERSHIP  (108)
 | | |
 |---|---|
 | `DELETE` | `/calendar-feeds/:x` |
 | `DELETE` | `/followups/:x` |
+| `DELETE` | `/me/feature-announcements/:x` |
+| `DELETE` | `/me/feature-announcements` |
 | `DELETE` | `/me/push-subscriptions/:x` |
 | `DELETE` | `/occurrences/:x/addons/:x` |
 | `DELETE` | `/occurrences/:x/assignees/:x` |
@@ -835,6 +837,7 @@ reschedule visits". Gated as **G18**.
 | `GET` | `/calendar-feeds` |
 | `GET` | `/dashboard-summary` |
 | `GET` | `/me/business-start` |
+| `GET` | `/me/feature-announcements` |
 | `GET` | `/me/groups-as-claimer` |
 | `GET` | `/me/groups` |
 | `GET` | `/me/guides/:x` |
@@ -889,6 +892,7 @@ reschedule visits". Gated as **G18**.
 | `POST` | `/equipment/:x/unlike` |
 | `POST` | `/equipment/:x/unpin` |
 | `POST` | `/followups/:x/complete` |
+| `POST` | `/me/feature-announcements/:x` |
 | `POST` | `/me/mileage/:x/cancel` |
 | `POST` | `/me/mileage/:x/stop` |
 | `POST` | `/me/mileage/start` |

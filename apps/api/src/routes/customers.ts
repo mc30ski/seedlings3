@@ -688,8 +688,30 @@ export default async function customerRoutes(app: FastifyInstance) {
   // property, ever — close the page halfway and the rest resolve next time
   // with nothing repeated. That is also why no cron and no backfill script
   // are needed: the data fills in as the feature is used.
+  /**
+   * `propertyIds` off the wire, as a bounded list.
+   *
+   * The day map sends the ids it already has on screen. A VIEW FILTER and
+   * never a permission — the service ANDs it with the caller's own scope,
+   * so an id they may not see subtracts rather than grants.
+   *
+   * ABSENT AND EMPTY ARE DIFFERENT. Absent means "don't filter by id";
+   * empty means "none of them", which is what a day with no properties
+   * must get. Collapsing the two would answer an empty day with every pin
+   * in the book.
+   *
+   * The cap is the day map's worst case with room to spare; past it the
+   * caller wanted a territory, and there is a portfolio filter for that.
+   */
+  const MAX_MAP_IDS = 400;
+  function propertyIdsFrom(v: unknown): string[] | undefined {
+    if (v == null) return undefined;
+    const raw = Array.isArray(v) ? v : String(v).split(",");
+    return raw.map((x) => String(x).trim()).filter(Boolean).slice(0, MAX_MAP_IDS);
+  }
+
   app.get("/properties/points", req_clientsView, async (req: any) => {
-    const { portfolioId, status } = (req.query || {}) as { portfolioId?: string; status?: string };
+    const { portfolioId, status, propertyIds } = (req.query || {}) as { portfolioId?: string; status?: string; propertyIds?: string };
 
     let portfolioSubtreePath: string | "none" | undefined;
     if (portfolioId === "none") portfolioSubtreePath = "none";
@@ -712,6 +734,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       status: status as any,
       assignedToUserId: await assignedScopeFor(req),
       portfolioId: portfolioId && portfolioId !== "none" ? String(portfolioId) : undefined,
+      propertyIds: propertyIdsFrom(propertyIds),
     });
   });
 
@@ -723,7 +746,7 @@ export default async function customerRoutes(app: FastifyInstance) {
    * calls this repeatedly and watches `remaining` go to zero.
    */
   app.post("/properties/points/resolve", req_clientsView, async (req: any) => {
-    const b = (req.body || {}) as { portfolioId?: string; limit?: number; status?: string };
+    const b = (req.body || {}) as { portfolioId?: string; limit?: number; status?: string; propertyIds?: string[] | string };
 
     let portfolioSubtreePath: string | "none" | undefined;
     if (b.portfolioId === "none") portfolioSubtreePath = "none";
@@ -744,6 +767,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       // reason to spend three seconds an address placing them.
       status: b.status as any,
       assignedToUserId: await assignedScopeFor(req),
+      propertyIds: propertyIdsFrom(b.propertyIds),
       limit: Math.min(Math.max(Number(b.limit) || 5, 1), 10),
     });
   });

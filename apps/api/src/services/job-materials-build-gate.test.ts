@@ -5489,7 +5489,7 @@ describe("[build-gate] every Money tab explains itself", () => {
     expect(S, "a reader who cannot change a value must be told to raise it")
       .toMatch(/worth raising rather than working around/);
     expect(S, "and the settings branch must warn that changes are immediate")
-      .toMatch(/changes\s*behaviour/i);
+      .toMatch(/changes\s*behavior/i);
     // A rate change must NOT be described as re-rating past work — payouts
     // are snapshotted at pricing and at approval.
     // Asserted on a phrase that no inline <Em> splits — "does <Em>not</Em>

@@ -141,6 +141,7 @@ import EventDialog from "@/src/ui/dialogs/EventDialog";
 import FollowupDialog from "@/src/ui/dialogs/FollowupDialog";
 import AnnouncementDialog from "@/src/ui/dialogs/AnnouncementDialog";
 import PinnedNoteDialog from "@/src/ui/dialogs/PinnedNoteDialog";
+import DayJobMap, { type DayStop } from "@/src/ui/components/DayJobMap";
 import {
   DEFAULT_TIMELINE_CATEGORIES,
   categoryLabel as timelineCategoryLabel,
@@ -194,6 +195,49 @@ const GHOST_EXPIRING_SOON_DAYS = 3;
 const GHOST_EXPIRING_PRESET: DatePreset = "overdueAndNext3";
 
 const GHOST_CARD_BG = "#7c8698";
+
+/**
+ * A day's rows, split into what the map can pin and what it cannot.
+ *
+ * WHAT CANNOT BE PINNED, and why each is left off rather than quietly
+ * dropped:
+ *   • foreign rows (activity feed entries, document expirations) — not
+ *     visits, and not at an address;
+ *   • ghost cards — a visit that has not been scheduled yet, so pinning it
+ *     would put work on a day it is not actually on;
+ *   • announcements, reminders and standalone tasks — no property at all.
+ *
+ * The count comes back with the stops so the map can say "3 rows have no
+ * address" rather than showing eight pins under a header reading twelve.
+ *
+ * `role !== "observer"` is the same test the cards use for unclaimed: an
+ * observer is somebody watching the visit, not somebody doing it, so a visit
+ * with only observers on it has still not been picked up.
+ */
+function dayStopsFrom(items: any[]): { stops: DayStop[]; unmappable: number } {
+  const stops: DayStop[] = [];
+  let unmappable = 0;
+  for (const occ of items) {
+    const propertyId = occ?.job?.property?.id;
+    const pinnable =
+      !occ?._foreignKind && !occ?._isReminderGhost && !occ?._isPinnedGhost && !!propertyId;
+    if (!pinnable) {
+      unmappable += 1;
+      continue;
+    }
+    stops.push({
+      occurrenceId: occ.id,
+      propertyId,
+      propertyName: occ.job.property.displayName ?? "",
+      clientName: occ.job.property.client?.displayName ?? null,
+      status: String(occ.status ?? ""),
+      assignees: (occ.assignees ?? [])
+        .filter((a: any) => a.role !== "observer")
+        .map((a: any) => a.user?.displayName || a.user?.email || "Someone"),
+    });
+  }
+  return { stops, unmappable };
+}
 /** A ghost that is NOT pulsing is not overdue — it is a visit still comfortably
  *  ahead of its date, or one someone with `schedule.manage` has muted. The stark slate above reads as
  *  an alarm, so a calm ghost gets a lighter ground and dark ink instead of
@@ -448,6 +492,105 @@ export default function JobsTab({
   const [cardDensity, setCardDensity] = usePersistedState<CardDensity>(`${pfx}_density`, "semi");
   const [cardOverrides, setCardOverrides] = useState<Map<string, CardDensity>>(new Map());
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  /**
+   * The days currently showing a MAP instead of their cards.
+   *
+   * PER DAY, not one switch for the feed: mapping today while reading
+   * tomorrow's list is the normal case.
+   *
+   * NOT PERSISTED, and that is the correction of a wrong call. It was written
+   * to localStorage on the reasoning that "I work off the map" is a
+   * preference — but a map is a mode you enter to answer a question about a
+   * particular day ("is the unclaimed one near anybody?"), and once you have
+   * the answer you want the list back. Stored, the answer to yesterday's
+   * question was still on screen this morning, and no amount of reloading
+   * shifted it, because it was not a cache. The tab opens as a feed; the
+   * density, which IS a standing preference about how you like to read,
+   * stays persisted.
+   *
+   * `${pfx}_mapDays` may still sit in somebody's localStorage from the
+   * persisted version. Nothing reads it now, so it simply ages out.
+   */
+  const [mapDays, setMapDays] = useState<string[]>([]);
+  /**
+   * A day's map that disagrees with the tab's density.
+   *
+   * The same bargain a card gets (`cardOverrides`): the tab sets the default,
+   * and any one day can be told to differ — today's map large while the rest
+   * stay small. Cleared by the tab's own density button, exactly as the card
+   * overrides are, so that button is always the way back to one answer.
+   */
+  const [mapDensityOverrides, setMapDensityOverrides] = useState<Map<string, CardDensity>>(new Map());
+  const mapDaySet = useMemo(() => new Set(mapDays), [mapDays]);
+  const toggleMapDay = (key: string) =>
+    setMapDays((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+
+  /**
+   * The day header's FEED ↔ MAP control.
+   *
+   * Null for a day with nothing to pin — an announcements-only day has no
+   * geography to show, and a control that opens an empty map is worse than
+   * no control. The header's grid keeps the date centred either way, so a
+   * day with the control and a day without still line up.
+   */
+  function dayMapToggle(group: { key: string; label: string; items: any[] }) {
+    if (dayStopsFrom(group.items).stops.length === 0) return null;
+    const on = mapDaySet.has(group.key);
+    const chip = (
+      <Badge
+        // A REAL BUTTON. It was a bare Badge with an onClick and an
+        // `aria-pressed`, which is a control only to somebody holding a
+        // mouse: not in the tab order, not announced, and `aria-pressed` on
+        // a non-button means nothing at all.
+        as="button"
+        size="sm"
+        variant={on ? "solid" : "outline"}
+        colorPalette={on ? "blue" : "gray"}
+        // ICON ONLY. The words said nothing the glyph does not, and a label
+        // that changes between "Map" and "List" changes width with it, which
+        // moved the left rule every time the day was flipped. What it does is
+        // in `aria-label` and `title`, so nothing is lost to a screen reader
+        // or to a hover.
+        //
+        // THE GLYPH NAMES THE STATE YOU ARE IN, not the one you would go to.
+        // That is the convention the density button beside it already sets,
+        // and the two must not disagree on the same toolbar. It first named
+        // the DESTINATION while the colour named the state, so map mode drew
+        // a blue LIST icon — glyph saying "list", colour saying "on", and the
+        // obvious reading of the pair being "list is selected", which was
+        // exactly backwards. Now both say the same thing: a blue map pin
+        // means this day IS a map, and that is also what makes a mapped day
+        // visible when scanning past several headers at once.
+        px="1.5"
+        py="1"
+        minW="26px"
+        minH="22px"
+        display="inline-flex"
+        alignItems="center"
+        justifyContent="center"
+        borderRadius="full"
+        cursor="pointer"
+        lineHeight="1"
+        _hover={{ opacity: 0.85 }}
+        aria-pressed={on}
+        aria-label={on ? `${group.label} is showing as a map — switch to the list` : `${group.label} is showing as a list — switch to the map`}
+        title={on ? "Showing the map — click for the list" : "Showing the list — click for the map"}
+        data-testid={`day-map-toggle-${group.key}`}
+        // What "Show me" on the day-map announcement rings. See
+        // src/lib/featureSpotlight.ts — one attribute, nothing else.
+        data-whats-new="day-map"
+        // The whole header row is the collapse toggle.
+        onClick={(e: any) => {
+          e.stopPropagation();
+          toggleMapDay(group.key);
+        }}
+      >
+        {on ? <MapIcon size={13} /> : <List size={13} />}
+      </Badge>
+    );
+    return chip;
+  }
+
   // Per-occurrence collapse state for the estimate "Notes" disclosure on
   // the expanded card. Default is OPEN — an occ is only in this set when
   // the user has explicitly collapsed it. Keeps notes visible without
@@ -3686,6 +3829,7 @@ export default function JobsTab({
               onClick={() => {
                 setCardDensity(next);
                 setCardOverrides(new Map());
+                setMapDensityOverrides(new Map());
               }}
               css={{
                 background: "var(--chakra-colors-gray-subtle)",
@@ -4490,9 +4634,24 @@ export default function JobsTab({
 
           {dayGroups.map((group) => (
             <Box key={group.key} data-group={group.key}>
-              <HStack
+              {/* THE DAY HEADER: a three-column grid, not a flex row.
+                  The date must sit at the dead centre of the header while the
+                  Map control sits at its left edge, and those two wants fight
+                  in a flex row — the control takes width on one side only, so
+                  the centred group is pushed off by half of it.
+                  A hidden twin on the right fixed the centring and left a
+                  dead strip where the rule should have run to the edge: the
+                  header visibly stopped short.
+                  `1fr auto 1fr` settles both. The outer columns are equal by
+                  construction whatever is in them, so the middle column is
+                  centred in the ROW; the control lives inside the left
+                  column with the rule beside it, and the right rule runs the
+                  full width of its own column, out to the edge. */}
+              <Box
+                display="grid"
+                gridTemplateColumns="1fr auto 1fr"
                 gap={3}
-                align="center"
+                alignItems="center"
                 my={2}
                 cursor="pointer"
                 onClick={() => setCollapsedGroups((prev) => {
@@ -4503,7 +4662,10 @@ export default function JobsTab({
                 })}
                 _hover={{ opacity: 0.7 }}
               >
-                <Box flex="1" borderBottomWidth="2px" borderColor="gray.emphasized" />
+                <HStack gap={3} minW={0}>
+                  {dayMapToggle(group)}
+                  <Box flex="1" borderBottomWidth="2px" borderColor="gray.emphasized" />
+                </HStack>
                 <HStack gap={1.5} align="center">
                   {/* Forecast glyph — prefixes the label for any date
                       the forecast covers (today, tomorrow, plus the
@@ -4692,8 +4854,8 @@ export default function JobsTab({
                   })()}
                   <Text fontSize="xs" color="fg.muted">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
                 </HStack>
-                <Box flex="1" borderBottomWidth="2px" borderColor="gray.emphasized" />
-              </HStack>
+                <Box borderBottomWidth="2px" borderColor="gray.emphasized" />
+              </Box>
               {/* Expanded advisory — full width, BELOW the header row. Inside
                   it, this was a flex child and pushed the date sideways. */}
               {(() => {
@@ -4704,7 +4866,36 @@ export default function JobsTab({
                 const open = forDay.some((al) => al.id === openAlertId);
                 return open ? <WeatherAlertDetail alerts={forDay} /> : null;
               })()}
-              {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
+              {/* ── THE DAY'S BODY: the feed, or the map of the same day ──
+                  One or the other, never both. A map stacked on top of a
+                  twelve-card list is a page you can see neither half of on a
+                  phone, which is the screen this tab is designed for. The
+                  stops come from the SAME `group.items` the cards render
+                  from, so the two views cannot disagree about what is on the
+                  day. */}
+              {!collapsedGroups.has(group.key) && mapDaySet.has(group.key) && (() => {
+                const { stops, unmappable } = dayStopsFrom(group.items);
+                // The tab's density, unless THIS day's map has been told to
+                // differ. Not a per-CARD override — those are about one card,
+                // and the map has no cards; the map's own override is keyed
+                // by the day.
+                const mapMode: CardDensity = mapDensityOverrides.get(group.key) ?? cardDensity;
+                return (
+                  <DayJobMap
+                    stops={stops}
+                    unmappableCount={unmappable}
+                    density={mapMode}
+                    onCycleDensity={() =>
+                      setMapDensityOverrides((prev) => {
+                        const nextMap = new Map(prev);
+                        nextMap.set(group.key, nextDensity(mapMode));
+                        return nextMap;
+                      })
+                    }
+                  />
+                );
+              })()}
+              {!collapsedGroups.has(group.key) && !mapDaySet.has(group.key) && <VStack align="stretch" gap={3}>
           {/* ═══════════════════════════════════════════════════════════
               CARD RENDER LOOP — dispatches between:
                 • foreign row (admin activity feed / doc expiration)

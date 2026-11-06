@@ -126,7 +126,11 @@ export default function DayBoardButton({
         display="inline-flex"
         alignItems="center"
         cursor="pointer"
-        color={state === "seen" ? "gray.fg" : "green.fg"}
+        // Resting colour is the header's own ink, the same as every other
+        // control in that strip. It was `gray.fg`, a generic grey unrelated
+        // to the title bar it sits on, so once the board had been opened
+        // this caption no longer matched Appearance next to it.
+        color={state === "seen" ? "chrome.headerFg" : "green.fg"}
         _hover={{ color: "green.fg" }}
         transition="color 0.1s"
         onClick={() => { setRunKey((n) => n + 1); setOpen(true); markSeen(); void loadBoard(); }}

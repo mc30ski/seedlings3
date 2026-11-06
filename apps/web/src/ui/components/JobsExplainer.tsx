@@ -106,7 +106,7 @@ const COLORS: Array<{ name: string; bg: string; border: string; palette: string;
   { name: "Amber", bg: "yellow.muted", border: "yellow.strong", palette: "yellow", means: "Event — team-scoped (pale yellow once completed)" },
   { name: "Gray", bg: "gray.subtle", border: "gray.emphasized", palette: "gray", means: "Assigned to someone else — waiting on their action" },
   { name: "White", bg: "bg.panel", border: "border.emphasis", palette: "gray", means: "Closed or completed, or an estimate that was accepted or rejected — done, moved on" },
-  { name: "Bright purple", bg: "purple.subtle", border: "purple.solid", palette: "purple", means: "High priority. Only a reminder can carry this flag, and it overrides every colour above" },
+  { name: "Bright purple", bg: "purple.subtle", border: "purple.solid", palette: "purple", means: "High priority. Only a reminder can carry this flag, and it overrides every color above" },
 ];
 
 /** The storage key, exported so the out-of-line trigger in the breadcrumb row
@@ -148,7 +148,7 @@ export default function JobsExplainer({
       {/* ── What the feed is, for everyone ── */}
       <ExplainerText>
         Every occurrence you can see on one timeline: service visits, estimates, your own
-        tasks and reminders, and whatever the office has posted for the team. Card colour
+        tasks and reminders, and whatever the office has posted for the team. Card color
         tells you the state at a glance &mdash; the legend is at the bottom.
       </ExplainerText>
 
@@ -263,7 +263,7 @@ export default function JobsExplainer({
       <TypeCard label="Reminder" palette="purple" bg="purple.faint" borderColor="purple.emphasized">
         A personal nudge (&ldquo;pick up supplies&rdquo;) that surfaces in the feed when due, and
         can be dismissed and reopened. Flag one <Em>high priority</Em> and its card outranks
-        every other colour. Reminders cannot be rescheduled — move the reminder itself.
+        every other color. Reminders cannot be rescheduled — move the reminder itself.
       </TypeCard>
 
       <SectionTitle note="Visible to the people added via Manage Team. Anyone who runs the schedule sees them all.">Team</SectionTitle>
@@ -360,7 +360,7 @@ export default function JobsExplainer({
 
       {/* ── Colours ── */}
       <SectionTitle note="The card's fill is its state. Read top to bottom — the first that applies wins.">
-        Card colours
+        Card colors
       </SectionTitle>
 
       <VStack align="stretch" gap={1}>
@@ -416,7 +416,7 @@ export default function JobsExplainer({
         <Text fontSize="xs" fontWeight="semibold" mb={0.5}>Reminder &amp; pinned ghosts</Text>
         <Text fontSize="xs" color="gray.fg">
           A second, dashed copy of a card shown on a future date — where a reminder falls due,
-          or where a pinned job sits in the regular feed. Same colour as the original so it
+          or where a pinned job sits in the regular feed. Same color as the original so it
           reads as the same card, not a new one.
         </Text>
       </Box>

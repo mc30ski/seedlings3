@@ -151,6 +151,46 @@ describe("theming build gate", () => {
       "panel. Use `.fg`.\n" + hits.join("\n")).toEqual([]);
   });
 
+  // A SEMANTIC TOKEN IS A CHAKRA PROP, NOT A CSS VARIABLE.
+  //
+  // `bg.panel`, `fg.muted`, `border.default` work as props — `bg="bg.panel"`
+  // — but Chakra emits no `--chakra-colors-bg-panel`, so hand-writing
+  // `var(--chakra-colors-bg-panel)` names a variable that does not exist.
+  //
+  // IT DOES NOT FALL BACK TO ANYTHING. An undefined `var()` makes the whole
+  // declaration invalid at computed-value time, which resolves to the
+  // property's INITIAL value — `transparent` for a background. So the element
+  // does not keep the colour underneath and does not keep any library
+  // default: it renders with no background at all, which on a dark theme is
+  // invisible text and on a light one is text floating on whatever is behind.
+  //
+  // It has happened twice: the ActivityTab user rows, and the day map's pin
+  // labels. Both times the comment left behind said "this doesn't work"
+  // without anything stopping the next person. The rule is not "never name
+  // them" — `var(--chakra-colors-fg-muted, var(--chakra-colors-gray-fg))` is
+  // fine and is what the codebase does — it is "never name one with nothing
+  // behind it".
+  it("no hand-written var() names a semantic colour token with no fallback", () => {
+    const hits: string[] = [];
+    const files = [...uiFiles(), join(WEB, "src/styles/globals.css")];
+    for (const f of files) {
+      if (!existsSync(f)) continue;
+      const src = stripComments(readFileSync(f, "utf8"));
+      // `)` immediately after the name = no fallback. A comma means one was
+      // supplied, which is the supported way to use these.
+      for (const m of src.matchAll(/var\(--chakra-colors-(?:bg|fg|border)-[a-zA-Z0-9-]+\)/g)) {
+        hits.push(`${f.replace(WEB, "apps/web")}: ${m[0]}`);
+      }
+    }
+    expect(hits,
+      "Chakra emits no CSS variable for a dotted semantic token, and an " +
+      "undefined var() computes to the property's initial value — a " +
+      "background goes transparent rather than falling back. Either use the " +
+      "Chakra prop (`bg=\"bg.panel\"`), or give the var a real fallback: " +
+      "`var(--chakra-colors-fg-muted, var(--chakra-colors-gray-fg))`.\n" +
+      hits.join("\n")).toEqual([]);
+  });
+
   it("no component hardcodes a colour", () => {
     const hits: string[] = [];
     for (const f of uiFiles()) {

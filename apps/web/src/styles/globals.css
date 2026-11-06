@@ -250,6 +250,16 @@ html, body {
    instruction row exactly. The first version swung emphasized <-> muted —
    ADJACENT steps — which read as "slightly changing colour" rather than a
    pulse. The distance travelled is the whole effect. */
+/* ── WHAT'S NEW: THE COACH-MARK ──────────────────────────────────────────
+   The overlay is built in JS and styles itself inline — see
+   featureSpotlight.ts for why: a stylesheet and a script can reach a
+   browser out of step, and when they did, the page rendered with no dark on
+   it at all. Nothing load-bearing is left in here. */
+@keyframes seedlings-spotlight-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.82; }
+}
+
 @keyframes seedlings-pulse-guidance {
   0% {
     background-color: var(--chakra-colors-blue-emphasized);
@@ -408,6 +418,12 @@ html, body {
   [data-guidance-pulse-icon] {
     animation: none !important;
   }
+  /* The spotlight still has to POINT — silencing it must not leave "Show
+     me" doing nothing again, which is the bug it exists to fix. A static
+     outline says the same thing without moving. */
+  [data-whats-new-overlay] .seedlings-spotlight-hint {
+    animation: none !important;
+  }
   [data-guidance-pulse] {
     animation: none !important;
     background-color: var(--chakra-colors-blue-emphasized) !important;
@@ -423,4 +439,43 @@ html, body {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ── THE DAY MAP'S PIN LABELS ─────────────────────────────────────────────
+   At the Expanded density every pin carries a permanent label, so the map
+   can be read without tapping anything. Leaflet builds that element itself,
+   outside React, so it cannot be styled with Chakra props — but it IS inside
+   the document, so the theme's own custom properties reach it. Every colour
+   here is a token for that reason: a literal would be the same colour in all
+   fourteen themes, which is the thing the theming gate exists to stop.
+
+   The arrow is removed rather than themed. It points at a 7px dot it would
+   sit on top of, and a label beside a pin needs no pointer to say which pin
+   it belongs to. */
+.leaflet-tooltip.seedlings-map-label {
+  /* `--chakra-colors-bg-panel` DOES NOT EXIST. `bg.panel` is a Chakra prop
+     that emits no CSS variable, so naming it here is invalid at
+     computed-value time — which does not fall back to Leaflet's own white,
+     it computes to transparent, and the label renders as bare text on the
+     map. (Same trap recorded on ActivityTab.) `bg`, `fg` and `border` are
+     real variables; the ramp tokens behind them are the belt and braces. */
+  background: var(--chakra-colors-bg, var(--chakra-colors-gray-faint));
+  color: var(--chakra-colors-fg, var(--chakra-colors-gray-fg));
+  border: 1px solid var(--chakra-colors-border, var(--chakra-colors-gray-emphasized));
+  border-radius: 6px;
+  box-shadow: none;
+  padding: 2px 6px;
+  font-size: 10px;
+  line-height: 1.25;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0.96;
+}
+.leaflet-tooltip.seedlings-map-label::before {
+  display: none;
+}
+.leaflet-tooltip.seedlings-map-label .seedlings-map-label__sub {
+  display: block;
+  font-weight: 400;
+  color: var(--chakra-colors-fg-muted, var(--chakra-colors-gray-fg));
 }

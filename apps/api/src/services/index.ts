@@ -17,6 +17,7 @@ import { board } from "./board";
 import { companyDocuments } from "./companyDocuments";
 import { timelineEvents } from "./timelineEvents";
 import { banners } from "./banners";
+import { featureAnnouncements } from "./featureAnnouncements";
 import { paymentRequests } from "./paymentRequests";
 import { policies } from "./policies";
 import { customRoles } from "./customRoles";
@@ -44,6 +45,7 @@ export const services: Services = {
   companyDocuments,
   timelineEvents,
   banners,
+  featureAnnouncements,
   paymentRequests,
   policies,
   customRoles,

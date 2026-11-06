@@ -35,6 +35,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import WorkerComplianceSection from "@/src/ui/components/WorkerComplianceSection";
 import { payClassLabel } from "../../lib/paymentMath";
 import { scopeFromMe } from "@/src/lib/roles";
+import WhatsNewPanel from "@/src/ui/components/WhatsNewPanel";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: WorkerType | null };
 
@@ -690,6 +691,11 @@ export default function ProfileTab({ me, onProfileUpdated }: Props) {
               </Card.Root>
             );
           })()}
+
+          {/* WHAT'S NEW — the way back to a change you skipped. On Profile
+              because every account can reach Profile; Settings needs
+              `settings.view`, which a field worker does not hold. */}
+          <WhatsNewPanel can={(c) => scopeFromMe(me).can(c as any)} />
 
           {/* Home base card */}
           <Card.Root variant="outline">

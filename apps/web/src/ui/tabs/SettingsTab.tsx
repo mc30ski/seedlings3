@@ -2786,7 +2786,7 @@ export default function SettingsTab({ me }: TabPropsType) {
         {canManageSettings && (
           <CapabilitySection capability="settings.manage" scope={scope}>
             <ExplainerText>
-              You can change any of them, and a change changes behaviour <Em>everywhere</Em>,
+              You can change any of them, and a change changes behavior <Em>everywhere</Em>,
               usually immediately.
             </ExplainerText>
             <ExplainerText>

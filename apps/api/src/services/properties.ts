@@ -38,6 +38,17 @@ function mapScopeWhere(params: {
    *  list sit behind one toggle, so they have to default the same way or
    *  the count on one would not match the pins on the other. */
   status?: "ACTIVE" | "ARCHIVED" | "ALL";
+  /** Pin only these properties. What the Jobs tab's day map asks for: it
+   *  already has the day's visits on screen and wants those addresses, not
+   *  a territory.
+   *
+   *  A VIEW FILTER, NEVER A PERMISSION. It is ANDed with everything above,
+   *  so naming an id the caller may not see subtracts rather than grants —
+   *  the same rule `portfolioSubtreePath` follows, and the reason a client
+   *  may send ids at all. An EMPTY array means "none", not "all": a day
+   *  with no properties must draw an empty map, and the alternative
+   *  (treating empty as unset) would pin the whole book. */
+  propertyIds?: string[];
 }): Prisma.PropertyWhereInput {
   const chosen: Prisma.PropertyWhereInput | null =
     params.portfolioSubtreePath === "none"
@@ -50,12 +61,15 @@ function mapScopeWhere(params: {
     : null;
   const byStatus: Prisma.PropertyWhereInput | null =
     params.status && params.status !== "ALL" ? { status: params.status } : null;
+  const byId: Prisma.PropertyWhereInput | null =
+    params.propertyIds ? { id: { in: params.propertyIds } } : null;
   return {
     AND: [
       (params.portfolioWhere ?? {}) as Prisma.PropertyWhereInput,
       ...(chosen ? [chosen] : []),
       ...(byStatus ? [byStatus] : []),
       ...(assigned ? [assigned] : []),
+      ...(byId ? [byId] : []),
     ],
   };
 }
@@ -73,6 +87,9 @@ export const properties: ServicesProperties = {
     portfolioWhere?: Record<string, unknown>;
     portfolioSubtreePath?: string | "none";
     assignedToUserId?: string;
+    /** Pin only these properties — the day map's question. See
+     *  `mapScopeWhere`: a view filter, ANDed, can only subtract. */
+    propertyIds?: string[];
     /** The portfolio being looked at, so its own point can be returned with the
      *  pins. That point is not decoration: it is what the portfolio's weather
      *  forecast is anchored on, and seeing it against the properties is
@@ -133,6 +150,7 @@ export const properties: ServicesProperties = {
     portfolioSubtreePath?: string | "none";
     status?: "ACTIVE" | "ARCHIVED" | "ALL";
     assignedToUserId?: string;
+    propertyIds?: string[];
     limit: number;
   }) {
     const where = mapScopeWhere(params);

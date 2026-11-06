@@ -254,7 +254,7 @@ export default function PayrollUploadDialog({
                         borderRadius="md"
                       >
                         <Text fontSize="xs" fontWeight="semibold" color="orange.fg">
-                          This file has columns the importer doesn&apos;t recognise
+                          This file has columns the importer doesn&apos;t recognize
                         </Text>
                         <Text fontSize="2xs" color="orange.fg" mt={0.5}>
                           {[...new Set(result.flatMap((p) => p.unmappedColumns ?? []))].join(", ")}

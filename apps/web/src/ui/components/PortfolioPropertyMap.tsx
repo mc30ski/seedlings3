@@ -2,30 +2,27 @@
 
 // THE PORTFOLIO MAP — a portfolio's properties as pins, on an OpenStreetMap basemap.
 //
-// WHY THE POINTS ARRIVE IN DRIBS. Geocoding is the slow part: the free US
-// Census geocoder takes about three and a half SECONDS per address
-// (measured, not assumed), and production has dozens of properties with no
-// point yet. One request that geocoded them all would take roughly a minute
-// and exceed the serverless budget, returning nothing. So the map opens on
-// whatever is already known and asks for small batches until `remaining`
-// reaches zero, dropping pins in as they land.
-//
-// EVERY POINT IS PERSISTED AS IT IS FOUND, which is why this needs no cron
-// and no backfill script: the cost is paid once per property, ever, and
-// closing the page halfway loses nothing. It is also why the progress
-// counter matters — without it a slowly-filling map looks broken rather
-// than busy.
-//
-// LEAFLET IS LOADED LAZILY, inside an effect. It touches `window` at import
-// time, so a top-level import breaks the server render; and it is only
-// needed by whoever actually opens the map.
+// The Leaflet lifecycle (lazy import, the tile `max-width` reset, the observed
+// resize, the re-fit, teardown) lives in `leafletMap.tsx`, and the two-phase
+// read-then-geocode fetch in `usePropertyPoints`. Both are shared with the day
+// map on the Jobs tab. What stays here is the only thing the two maps do
+// differently: WHAT is drawn and how it is coloured.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, HStack, Progress, Text } from "@chakra-ui/react";
-import { Maximize2, Minimize2 } from "lucide-react";
-import { apiGet, apiPost } from "@/src/lib/api";
 import { portfolioNames } from "@/src/lib/portfolios";
 import { paletteFor, resolvePaletteColor, type PortfolioPalette } from "@/src/lib/portfolioColors";
+import { usePropertyPoints } from "@/src/lib/usePropertyPoints";
+import {
+  MapControls,
+  MapExpandButton,
+  MapHost,
+  escapeMapHtml,
+  expandedOverlayProps,
+  mapToken,
+  useEscapeToCollapse,
+  useLeafletMap,
+} from "@/src/ui/components/leafletMap";
 
 /**
  * One band of the legend: a portfolio whose properties are drawn together
@@ -38,28 +35,6 @@ import { paletteFor, resolvePaletteColor, type PortfolioPalette } from "@/src/li
  * filed.
  */
 export type MapBand = { id: string; name: string; color: string | null };
-
-type Point = {
-  id: string;
-  displayName: string;
-  street1: string | null;
-  city: string | null;
-  lat: number | null;
-  lng: number | null;
-  parcelLookupError: string | null;
-  portfolios: { portfolio: { id: string; name: string } }[];
-  client: { displayName: string | null } | null;
-};
-
-type PointsResponse = {
-  /** The portfolio's own configured point — what its weather is anchored on. */
-  portfolioCentre: { id: string; name: string; lat: number; lng: number } | null;
-  points: Point[];
-  total: number;
-  placed: number;
-  pending: number;
-  unplaceable: number;
-};
 
 export default function PortfolioPropertyMap({
   portfolioId,
@@ -77,120 +52,21 @@ export default function PortfolioPropertyMap({
   status: "ACTIVE" | "ALL";
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<any>(null);
-  const layerRef = useRef<any>(null);
-  const leafletRef = useRef<any>(null);
+  const { ensure, fitTo } = useLeafletMap(hostRef);
 
-  const [data, setData] = useState<PointsResponse | null>(null);
+  const { data, failed, resolving, total, placed, pending, unplaceable } =
+    usePropertyPoints({ portfolioId, status });
+
   /** Full-page. A 420px strip is enough to see that pins exist and not
    *  enough to see where they are relative to each other, which is the
    *  question the map is for. */
   const [expanded, setExpanded] = useState(false);
+  useEscapeToCollapse(expanded, () => setExpanded(false));
+
   /** Bands switched OFF. Stored as the hidden set rather than the shown
    *  one so a band added later (a new zone) starts visible — the opposite
    *  default would silently hide new work. */
   const [hidden, setHidden] = useState<Set<string>>(new Set());
-  const [resolving, setResolving] = useState(false);
-  const [failed, setFailed] = useState(false);
-  // Stops the batch loop when the component goes away mid-flight — each
-  // batch is seconds long, so this is a real window, not a formality.
-  const liveRef = useRef(true);
-  /** The points the current view was fitted to, so a resize can re-fit to
-   *  them instead of leaving a full-page map zoomed for a 420px strip. */
-  const frameRef = useRef<Array<[number, number]>>([]);
-
-  useEffect(() => {
-    liveRef.current = true;
-    return () => { liveRef.current = false; };
-  }, []);
-
-  // 1. The fast read. Always first, so the map appears immediately.
-  useEffect(() => {
-    let cancelled = false;
-    setData(null);
-    setFailed(false);
-    loopFor.current = null;
-    (async () => {
-      try {
-        const res = await apiGet<PointsResponse>(`/api/properties/points?portfolioId=${encodeURIComponent(portfolioId)}&status=${status}`);
-        if (!cancelled) setData(res);
-      } catch {
-        if (!cancelled) setFailed(true);
-      }
-    })();
-    return () => { cancelled = true; };
-    // `status` too: switching archived off must re-read, or the map keeps
-    // pins the list beside it has already dropped.
-  }, [portfolioId, status]);
-
-  // One fill loop per portfolio, ever. A ref rather than an effect dependency:
-  // the loop writes `data` on every batch, so any dep derived from `data`
-  // either re-triggers it or — as happened first — never changes at all.
-  // The original condition was `data?.pending === 0`, which is `false`
-  // both while `data` is null AND once points are pending, so the
-  // dependency never flipped and the loop never started: the map filled to
-  // whatever was already geocoded and quietly stopped.
-  const loopFor = useRef<string | null>(null);
-
-  // 2. The slow fill, in small batches, until nothing is pending.
-  useEffect(() => {
-    if (!data || data.pending === 0) return;
-    if (loopFor.current === portfolioId) return;
-    loopFor.current = portfolioId;
-    (async () => {
-      setResolving(true);
-      try {
-        while (liveRef.current) {
-          const res = await apiPost<{ resolved: Array<{ id: string; lat: number; lng: number }>; remaining: number }>(
-            "/api/properties/points/resolve",
-            { portfolioId, limit: 5, status },
-          );
-          // NOT GATED ON AN EFFECT-SCOPED `cancelled` FLAG. It was, and
-          // the batch's results were being thrown away: `setResolving(true)`
-          // changed this effect's dependencies, React ran the cleanup, the
-          // flag flipped, and the already-fetched points hit `break` before
-          // the fold below. They were persisted on the server and lost in
-          // the browser, so the map sat at its opening count while the
-          // network log showed batches succeeding.
-          //
-          // `liveRef` is the right test: it asks "is the component still
-          // mounted", which is the only reason to discard an answer we
-          // have already paid three seconds an address for.
-          if (!liveRef.current) break;
-          // Fold the new points into what is already drawn rather than
-          // refetching the list — a refetch would redraw every pin and
-          // fight the user's pan/zoom.
-          setData((prev) => {
-            if (!prev) return prev;
-            const byId = new Map(res.resolved.map((r) => [r.id, r]));
-            const points = prev.points.map((p) =>
-              byId.has(p.id) ? { ...p, lat: byId.get(p.id)!.lat, lng: byId.get(p.id)!.lng } : p,
-            );
-            return {
-              ...prev,
-              points,
-              placed: points.filter((p) => p.lat != null).length,
-              pending: res.remaining,
-              unplaceable: points.filter((p) => p.lat == null && !!p.parcelLookupError).length,
-            };
-          });
-          if (res.remaining === 0) break;
-          // Nothing moved and nothing left to try — stop rather than spin.
-          if (res.resolved.length === 0) break;
-        }
-      } catch {
-        // A failed batch stops the fill; the points already found stay on
-        // the map and reopening tries again.
-      } finally {
-        if (liveRef.current) setResolving(false);
-      }
-    })();
-    // `!!data` only: the loop needs to start once, when the first read
-    // lands. Depending on `data` itself would re-run this on every batch
-    // it folds in, and depending on `resolving` would re-run it the moment
-    // it sets its own flag. The ref above is what keeps it to one.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portfolioId, status, !!data]);
 
   /**
    * Which band each point belongs to, and how many are in each.
@@ -225,47 +101,27 @@ export default function PortfolioPropertyMap({
     return m;
   }, [bands]);
 
-  // 3. Draw. Leaflet is imported here, not at module scope.
+  // Draw. Redraws on a legend toggle, because that changes what should be on
+  // screen and does not change `data`.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!hostRef.current || !data) return;
-      const L = leafletRef.current ?? (await import("leaflet")).default;
-      if (cancelled) return;
-      leafletRef.current = L;
+      if (!data) return;
+      const handles = await ensure();
+      if (!handles || cancelled) return;
+      const { L, layer } = handles;
 
-      if (!mapRef.current) {
-        mapRef.current = L.map(hostRef.current, { scrollWheelZoom: false });
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          maxZoom: 19,
-          attribution: "&copy; OpenStreetMap contributors",
-        }).addTo(mapRef.current);
-        layerRef.current = L.layerGroup().addTo(mapRef.current);
-      }
-
-      layerRef.current.clearLayers();
-      // THEME TOKENS, RESOLVED TO VALUES. Leaflet sets `fill` and `stroke`
-      // as SVG ATTRIBUTES, and `var(--…)` does not resolve in an attribute
-      // — only in a CSS property. So the token is read off the document
-      // here and the concrete colour handed over. Hardcoding the hex would
-      // paint the same two colours in all fourteen themes, which is what
-      // the theming gate exists to stop.
-      // NO HEX FALLBACK. A literal here would be the same colour in all
-      // fourteen themes, which is the thing being avoided; if a token is
-      // ever missing, `undefined` lets Leaflet fall back to its own
-      // default rather than freezing one theme's palette into the code.
-      const token = (name: string) =>
-        getComputedStyle(document.documentElement).getPropertyValue(name).trim() || undefined;
-      const noPortfolio = token("--chakra-colors-red-solid");
-      const centre = token("--chakra-colors-blue-solid");
+      layer.clearLayers();
+      const noPortfolio = mapToken("--chakra-colors-red-solid");
+      const centre = mapToken("--chakra-colors-blue-solid");
 
       // Hidden bands are not drawn AND not framed, so switching the big
       // one off actually zooms into what is left rather than leaving the
       // view sitting over the gap it used to fill.
-      const placed = data.points.filter(
+      const shown = data.points.filter(
         (p) => p.lat != null && p.lng != null && !hidden.has(bandOf.get(p.id) ?? ""),
       );
-      for (const p of placed) {
+      for (const p of shown) {
         // A property in NO portfolio is drawn differently on purpose — the
         // map is the best place to notice one, and such a property is
         // invisible to every portfolio-scoped reader and counts toward no
@@ -283,11 +139,11 @@ export default function PortfolioPropertyMap({
           weight: 2,
         })
           .bindPopup(
-            `<strong>${escapeHtml(p.displayName)}</strong><br/>` +
-              `${escapeHtml([p.street1, p.city].filter(Boolean).join(", "))}<br/>` +
-              `<em>${escapeHtml(portfolioNames(p).join(" · ") || "No portfolio")}</em>`,
+            `<strong>${escapeMapHtml(p.displayName)}</strong><br/>` +
+              `${escapeMapHtml([p.street1, p.city].filter(Boolean).join(", "))}<br/>` +
+              `<em>${escapeMapHtml(portfolioNames(p).join(" · ") || "No portfolio")}</em>`,
           )
-          .addTo(layerRef.current);
+          .addTo(layer);
       }
 
       // THE PORTFOLIO'S OWN POINT, drawn differently and said out loud.
@@ -309,95 +165,24 @@ export default function PortfolioPropertyMap({
           dashArray: "4 3",
         })
           .bindPopup(
-            `<strong>${escapeHtml(c.name)} — portfolio centre</strong><br/>` +
+            `<strong>${escapeMapHtml(c.name)} — portfolio center</strong><br/>` +
               `Weather for this portfolio is forecast from here.`,
           )
-          .addTo(layerRef.current);
+          .addTo(layer);
       }
 
       // The centre counts toward the frame, so a point set miles from the
       // work is visible rather than cropped out of the view that would
       // have revealed it.
-      const framePoints: Array<[number, number]> = [
-        ...placed.map((p) => [p.lat!, p.lng!] as [number, number]),
+      fitTo([
+        ...shown.map((p) => [p.lat!, p.lng!] as [number, number]),
         ...(c ? [[c.lat, c.lng] as [number, number]] : []),
-      ];
-      frameRef.current = framePoints;
-      if (framePoints.length > 0) {
-        const bounds = L.latLngBounds(framePoints);
-        mapRef.current.fitBounds(bounds, { padding: [28, 28], maxZoom: 15 });
-      } else {
-        // Nothing placed yet — sit on the state rather than the null island
-        // off the coast of Africa, which is where [0,0] would put you.
-        mapRef.current.setView([35.78, -78.9], 8);
-      }
+      ]);
     })();
     return () => { cancelled = true; };
-    // Redraws on a legend toggle and after the container resizes, because
-    // both change what should be on screen and neither changes `data`.
-  }, [data, hidden, bandOf, paletteOf]);
-
-  /**
-   * TELL LEAFLET THE BOX CHANGED SIZE — observed, never timed.
-   *
-   * Leaflet caches the container size and only fetches tiles for the
-   * viewport it believes in. Grow the box to full page without saying so
-   * and you get the markers (re-projected from coordinates) on a blank
-   * background (no tiles requested for the new area) — which is exactly
-   * what going full-page looked like.
-   *
-   * This WAS a 60ms setTimeout after the `expanded` flip, which is a guess
-   * at when the browser finishes laying out, and the guess is the bug: the
-   * callback can land before the box has its new height, Leaflet re-reads
-   * the OLD size, and nothing ever corrects it. A ResizeObserver fires on
-   * the actual size change, however long that takes and whatever caused it
-   * — expanding, a window resize, a phone rotating.
-   *
-   * Re-fitting is part of it. Without it a full-page map keeps the zoom
-   * chosen for a 420px strip, so the pins sit in a tiny clump in the
-   * middle of all that new space.
-   */
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
-      const map = mapRef.current;
-      const L = leafletRef.current;
-      if (!map || !L) return;
-      try {
-        map.invalidateSize();
-        if (frameRef.current.length > 0) {
-          map.fitBounds(L.latLngBounds(frameRef.current), { padding: [28, 28], maxZoom: 15 });
-        }
-      } catch {
-        // Mid-teardown. The next draw sets it right.
-      }
-    });
-    ro.observe(host);
-    return () => ro.disconnect();
-  }, []);
-
-  // Escape leaves full-page. A map covering the window with its own close
-  // button somewhere in the corner is a trap on a laptop.
-  useEffect(() => {
-    if (!expanded) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [expanded]);
-
-  // Tear the map down with the component, or Leaflet keeps the container.
-  useEffect(() => () => {
-    try { mapRef.current?.remove(); } catch { /* already gone */ }
-    mapRef.current = null;
-  }, []);
+  }, [data, hidden, bandOf, paletteOf, ensure, fitTo]);
 
   if (failed) return <Text fontSize="xs" color="red.fg">Couldn&rsquo;t load the map.</Text>;
-
-  const total = data?.total ?? 0;
-  const placed = data?.placed ?? 0;
-  const pending = data?.pending ?? 0;
-  const unplaceable = data?.unplaceable ?? 0;
 
   /** The legend, catch-all last. Bands with nothing in them are dropped —
    *  a colour key listing zones that contribute no pins is noise. */
@@ -407,25 +192,7 @@ export default function PortfolioPropertyMap({
   ].filter((b) => (counts.get(b.id) ?? 0) > 0);
 
   return (
-    <Box
-      // FULL PAGE IS A FIXED OVERLAY, not a taller box. Growing in place
-      // would leave the map below the tab chrome and the detail panel,
-      // scrolled halfway down a long page — which is the position the
-      // expand is trying to escape.
-      {...(expanded
-        ? {
-            position: "fixed" as const,
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 1400,
-            bg: "bg.panel",
-            p: 3,
-            overflow: "auto" as const,
-          }
-        : {})}
-    >
+    <Box {...expandedOverlayProps(expanded)}>
       {/* THE PROGRESS LINE. Without it a map that fills in over a minute
           reads as broken rather than busy — and the denominator is the
           point: "2/51" says both that it is working and how long it has
@@ -498,56 +265,11 @@ export default function PortfolioPropertyMap({
         </HStack>
       )}
 
-      {/* AN EXPLICIT HEIGHT, MEASURED FROM THE VIEWPORT.
-          This was a flex child at `flex: 1` with the map absolutely
-          positioned inside it, and the map came out TWO PIXELS TALL —
-          measured, not guessed. Percentage and flex heights both resolve
-          against a parent chain that has to have committed to a height
-          first, and one link in that chain had not, so the whole thing
-          collapsed to its content.
-          `100vh` minus the chrome is arithmetic the browser can always
-          do. Less elegant, no ambiguity. The chrome is the 12px padding
-          top and bottom, the legend row and the footer line. */}
       <Box position="relative">
-        <Box
-          ref={hostRef}
-          h={expanded ? "calc(100vh - 118px)" : "420px"}
-          w="full"
-          /**
-           * TILES MUST NOT BE CONSTRAINED BY THE IMAGE RESET.
-           *
-           * A tile is a 256px <img> inside a chain of zero-width absolute
-           * panes, so `max-width: 100%` resolves it to ZERO — present in
-           * the DOM, `leaflet-tile-loaded`, fully opaque, and nought
-           * pixels wide. That is what "the map expands and shows nothing"
-           * actually was: measured at width 0, height 256.
-           *
-           * Leaflet ships `.leaflet-container img { max-width: none }` for
-           * exactly this reason and it was losing here, so the rule is
-           * asserted where it cannot be outranked — scoped to this host,
-           * so no other image in the app is affected.
-           */
-          css={{ "& img": { maxWidth: "none", maxHeight: "none" } }}
-          rounded="md"
-          borderWidth="1px"
-          borderColor="border"
-          overflow="hidden"
-          data-testid="portfolio-map"
-        />
-        <Button
-          size="xs"
-          variant="solid"
-          colorPalette="gray"
-          position="absolute"
-          top={2}
-          right={2}
-          zIndex={500}
-          onClick={() => setExpanded((v) => !v)}
-          aria-label={expanded ? "Shrink the map" : "Expand the map to the whole page"}
-          title={expanded ? "Shrink (Esc)" : "Expand"}
-        >
-          {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-        </Button>
+        <MapHost hostRef={hostRef} expanded={expanded} testId="portfolio-map" />
+        <MapControls>
+          <MapExpandButton expanded={expanded} onToggle={() => setExpanded((v) => !v)} />
+        </MapControls>
       </Box>
 
       <HStack mt={2} gap={3} wrap="wrap">
@@ -562,18 +284,11 @@ export default function PortfolioPropertyMap({
         )}
         {data?.portfolioCentre && (
           <Text fontSize="2xs" color="blue.fg">
-            ◎ portfolio centre — the weather is forecast from here
+            ◎ portfolio center — the weather is forecast from here
           </Text>
         )}
         {resolving && <Text fontSize="2xs" color="purple.fg">Locating…</Text>}
       </HStack>
     </Box>
-  );
-}
-
-/** Popups take an HTML string, so anything from the database is escaped. */
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
   );
 }
