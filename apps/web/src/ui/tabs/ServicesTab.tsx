@@ -113,6 +113,8 @@ export default function ServicesTab({
   me,
   streamReviewOccId = null,
   streamReviewNonce = 0,
+  streamReviewJobId = null,
+  streamReviewPausedOnly = true,
 }: TabPropsType & {
   /** Optional occurrenceId to jump to when the operator clicks the
    *  "Paused repeating to review" alert or a per-row Review button.
@@ -126,6 +128,30 @@ export default function ServicesTab({
    *  render because it keys off the nonce (which is already !== the
    *  initial ref value on mount). */
   streamReviewNonce?: number;
+  /**
+   * The job to open, when the CALLER already knows it.
+   *
+   * WHY THIS EXISTS. Without it the effect below had one way to resolve a
+   * job: look the occurrence up in `/stream-pauses/reminders`, which lists
+   * only HELD occurrences whose check-back is already DUE. That is right for
+   * the alert and the Tasks card, which is all that used to call it — and
+   * wrong for Work → Repeating, whose rows are mostly scheduled, awaiting
+   * payment, or held with a check-back months away. Every one of those
+   * resolved to no job and landed the operator on "No jobs match current
+   * filters", which reads as a broken tab rather than a missed lookup.
+   *
+   * Given a jobId the effect skips the lookup entirely and opens that job.
+   */
+  streamReviewJobId?: string | null;
+  /**
+   * Whether to also narrow the tab to jobs holding a paused occurrence.
+   *
+   * TRUE for the reminders entry point, where the operator came to work
+   * through exactly that set. FALSE for a plain "open this one", where the
+   * filter would hide the very job being opened unless it happened to be
+   * held.
+   */
+  streamReviewPausedOnly?: boolean;
 }) {
   // Content-only panel + host-supplied frame, same contract as the
   // Payments and Clients queue sections.
@@ -251,14 +277,14 @@ export default function ServicesTab({
   const repeatingItems = useMemo(
     () => [
       { label: "Any repeating state", value: "ALL" },
-      { label: "Has a live repeating visit", value: "HAS_ACTIVE" },
+      { label: "Has a live repeating job occurrence", value: "HAS_ACTIVE" },
       // "Every repeating visit paused" is the state the old job-level PAUSED
       // named: the service reads Accepted and nothing is going to happen.
       // Deliberately NOT "has ANY paused visit" — the Paused chip beside this
       // control already answers that, and two controls for one question is
       // how an operator ends up unable to tell which one is in effect.
-      { label: "Every repeating visit paused", value: "ALL_PAUSED" },
-      { label: "No repeating visit", value: "NONE" },
+      { label: "Every repeating job occurrence paused", value: "ALL_PAUSED" },
+      { label: "No repeating job occurrence", value: "NONE" },
     ],
     [],
   );
@@ -562,8 +588,27 @@ export default function ServicesTab({
     if (streamReviewNonce === lastReviewNonceRef.current) return;
     lastReviewNonceRef.current = streamReviewNonce;
     const targetOccId = streamReviewOccId;
+    const targetJobId = streamReviewJobId;
     (async () => {
-      setPausedRepeatingOnly(true);
+      setPausedRepeatingOnly(streamReviewPausedOnly);
+
+      // THE CALLER KNEW THE JOB. No lookup, and therefore no dependency on
+      // the occurrence being held with a due reminder — see the note on
+      // `streamReviewJobId`.
+      if (targetJobId) {
+        setReviewTargetJobIds(new Set([targetJobId]));
+        if (targetOccId) {
+          setHighlightOccId(targetOccId);
+          setFlashOccId(targetOccId);
+        }
+        setExpandedMap((prev) => ({ ...prev, [targetJobId]: true }));
+        // The occurrence may sit well outside the tab's date window — a
+        // held one usually does — so show the job's whole list.
+        setShowAllOccs((prev) => new Set(prev).add(targetJobId));
+        void loadDetail(targetJobId);
+        return;
+      }
+
       try {
         const rows = await apiGet<Array<{ id: string; job: { id: string } | null }>>(
           "/api/stream-pauses/reminders",
@@ -608,7 +653,7 @@ export default function ServicesTab({
         // User still gets the filtered tab, just no auto-expand.
       }
     })();
-  }, [streamReviewNonce, streamReviewOccId]);
+  }, [streamReviewNonce, streamReviewOccId, streamReviewJobId, streamReviewPausedOnly]);
 
   useEffect(() => {
     void load();
@@ -821,7 +866,7 @@ export default function ServicesTab({
       title: "Archive this service?",
       message: `Archive ${serviceLabel(job)}. It stops scheduling, leaves the Services list, and its scheduled visits are removed. Past visits and their payments are kept.`,
       warning:
-        "Archiving is how a service ENDS. To stop it temporarily, pause its repeating visit instead — that keeps the visit in place, records why you stopped, and resumes onto a date you choose. Archiving can be undone from Archived services, but the scheduled visits it removes do not come back.",
+        "Archiving is how a service ENDS. To stop it temporarily, pause its repeating job occurrence instead — that keeps the visit in place, records why you stopped, and resumes onto a date you choose. Archiving can be undone from Archived services, but the scheduled visits it removes do not come back.",
       confirmLabel: "Archive service",
       colorPalette: "red",
       onConfirm: async () => await archiveJob(job.id),
@@ -1081,7 +1126,7 @@ export default function ServicesTab({
             has run its course.
           </ExplainerText>
           <ExplainerText>
-            <Em>Pausing a repeating visit</Em> holds one recurring line (hedging, say) while
+            <Em>Pausing a repeating job occurrence</Em> holds one repeating line (hedging, say) while
             the others under the same service keep running. You pick a reason from the list and
             a date to check back; a note is optional and always available. The visit keeps the
             date it was scheduled for, so it stays where you expect it in the feed, and every
@@ -1224,7 +1269,7 @@ export default function ServicesTab({
           {pausedRepeatingOnly && (
             <Badge size="sm" colorPalette="purple" variant="solid">
               {pauseReasonFilter === ALL_PAUSE_REASONS
-                ? "Has a paused repeating visit"
+                ? "Has a paused repeating job occurrence"
                 : `Paused · ${pauseReasonLabel(pauseReasonFilter, pauseReasons) ?? pauseReasonFilter}`}
             </Badge>
           )}
@@ -1660,7 +1705,7 @@ export default function ServicesTab({
           {pausedRepeatingOnly && (
             <Badge size="sm" colorPalette="purple" variant="solid">
               {pauseReasonFilter === ALL_PAUSE_REASONS
-                ? "Has a paused repeating visit"
+                ? "Has a paused repeating job occurrence"
                 : `Paused · ${pauseReasonLabel(pauseReasonFilter, pauseReasons) ?? pauseReasonFilter}`}
             </Badge>
           )}
@@ -1921,7 +1966,7 @@ export default function ServicesTab({
                       : "Default frequency: not set"}
                   </Text>
                   {/* WHAT IS ACTUALLY SCHEDULED. The service itself is only a
-                      default; its repeating streams are the work. A service
+                      default; its repeating job occurrences are the work. A service
                       with every stream on hold used to read as "paused" via
                       Job.status — that status is gone, so the card states the
                       live and held counts, and names why the held ones are
@@ -2098,7 +2143,7 @@ export default function ServicesTab({
                         scheduled visit and rebuilt the chain on resume — the
                         same thing Archive does, through the same helpers, but
                         sitting on the card where it read as the gentle option.
-                        To hold a service, pause its repeating visit below:
+                        To hold a service, pause its repeating job occurrence below:
                         that keeps the visit, records why, and resumes onto a
                         date you choose. */}
                     {/* UNARCHIVE — the way back. Archiving is how a service
@@ -3223,7 +3268,7 @@ export default function ServicesTab({
                               />
                             )}
                             {/* Pause / resume / edit-pause for this one
-                                recurring stream. Shared with Work→Jobs —
+                                repeating job occurrence. Shared with Work→Jobs —
                                 see StreamPauseControls. Holding a stream
                                 leaves the job service and its other streams
                                 (e.g. mowing while hedging is paused) alone. */}

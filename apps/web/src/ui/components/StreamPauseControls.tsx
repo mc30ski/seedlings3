@@ -17,7 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useMemo, useState } from "react";
-import { Select, createListCollection, Portal } from "@chakra-ui/react";
+import { Box, Select, Text, VStack, createListCollection, Portal } from "@chakra-ui/react";
 // PauseCircle, not Repeat. Services already spends the Repeat glyph on its
 // repeating-STATE filter, and the two sat side by side reading as the same
 // control. PauseCircle is what the paused callout and the paused card
@@ -67,7 +67,7 @@ export function isStreamPaused(occ: { status?: string | null }): boolean {
 
 /** Human label for an occurrence in dialog copy. */
 function occLabel(occ: StreamPauseOcc): string {
-  return (occ.jobType ?? null) || (occ.title ?? null) || "recurring service";
+  return (occ.jobType ?? null) || (occ.title ?? null) || "repeating job occurrence";
 }
 
 /** Default new-start date offered by the resume dialog: today plus one
@@ -156,7 +156,7 @@ export function useStreamPauseControls({
                   reminderAt,
                 });
               },
-              "Repeating service paused.",
+              "Repeating job occurrence paused.",
               "Failed to pause repeating.",
             )
           }
@@ -186,7 +186,7 @@ export function useStreamPauseControls({
                   reminderAt,
                 });
               },
-              "Repeating pause updated.",
+              "Pause updated.",
               "Failed to update repeating pause.",
             )
           }
@@ -208,7 +208,7 @@ export function useStreamPauseControls({
                   newStartAt,
                 });
               },
-              "Repeating service resumed.",
+              "Repeating job occurrence resumed.",
               "Failed to resume repeating.",
             )
           }
@@ -221,6 +221,189 @@ export function useStreamPauseControls({
     openPause: (occ) => setDialog({ mode: "pause", occ }),
     openUpdate: (occ) => setDialog({ mode: "update", occ }),
     openResume: (occ) => setDialog({ mode: "resume", occ }),
+    busy,
+    dialogs,
+  };
+}
+
+/** One row in a selection, as the confirm needs to name it. */
+export type StreamSelectionRow = {
+  occurrenceId: string;
+  /** "Client — Property · Service", built by the caller. */
+  label: string;
+  /** A second line where one helps — the date a resume would land on. */
+  detail?: string | null;
+};
+
+export type StreamPauseSelection = {
+  openPauseMany: (rows: StreamSelectionRow[]) => void;
+  openResumeMany: (rows: StreamSelectionRow[]) => void;
+  busy: boolean;
+  /** Render once, beside the tab's other dialogs. */
+  dialogs: React.ReactNode;
+};
+
+type SelectionOutcome = { occurrenceId: string; ok: boolean; message?: string };
+type SelectionResult = { applied: number; refused: number; outcomes: SelectionOutcome[] };
+
+/**
+ * ACT ON A SELECTION OF STREAMS — the Repeating tab's half of this module.
+ *
+ * It lives beside the single-row controller because the two must agree about
+ * what pausing means: the same mandatory reason, the same reminder horizon,
+ * the same dialog. The ONLY difference is that this one is handed a list.
+ *
+ * It is NOT a cascade, and the distinction is the entire reason this is
+ * allowed to exist. The removed client-level "Pause services" acted on
+ * whatever Jobs happened to exist at that moment, named none of them, and
+ * left a stamp behind so it could undo itself. This acts on rows the operator
+ * ticked and can see, lists them in the confirm, writes nothing but the
+ * ordinary per-occurrence pause, and reports back per row.
+ */
+export function useStreamPauseSelection({
+  onChanged,
+}: {
+  /** The caller's reload. Runs once after the whole selection, not per row. */
+  onChanged: () => void | Promise<void>;
+}): StreamPauseSelection {
+  const [selection, setSelection] = useState<
+    { mode: "pause-many" | "resume-many"; rows: StreamSelectionRow[] } | null
+  >(null);
+  const [busy, setBusy] = useState(false);
+
+  /**
+   * Report what actually happened, row by row.
+   *
+   * A SELECTION THAT REPORTS ONE TOAST IS A SELECTION THAT LIES. Rows move
+   * under the operator while they are choosing — a visit gets started, a
+   * payment clears — and `pauseStream` refuses anything but SCHEDULED. If
+   * twenty-one of twenty-three take and two are refused, "Done" is false and
+   * the two that did not take are invisible until next spring.
+   */
+  function describe(result: SelectionResult, rows: StreamSelectionRow[], verb: string) {
+    const name = new Map(rows.map((r) => [r.occurrenceId, r.label]));
+    const failed = result.outcomes.filter((o) => !o.ok);
+    const total = result.applied + result.refused;
+    if (failed.length === 0) {
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `${verb} ${result.applied} of ${total}.`,
+      });
+      return;
+    }
+    // Name a few, then say how many more. The whole list in a toast is
+    // unreadable; a bare number is not actionable.
+    const shown = failed
+      .slice(0, 3)
+      .map((o) => `${name.get(o.occurrenceId) ?? "a service"} — ${o.message ?? "refused"}`)
+      .join("; ");
+    const more = failed.length > 3 ? ` (and ${failed.length - 3} more)` : "";
+    publishInlineMessage({
+      type: result.applied > 0 ? "WARNING" : "ERROR",
+      text: `${verb} ${result.applied} of ${total}. ${failed.length} not done: ${shown}${more}`,
+    });
+  }
+
+  async function run(
+    rows: StreamSelectionRow[],
+    work: () => Promise<SelectionResult>,
+    verb: string,
+    failureText: string,
+  ) {
+    setBusy(true);
+    try {
+      const result = await work();
+      describe(result, rows, verb);
+      setSelection(null);
+      window.dispatchEvent(new CustomEvent("seedlings:stream-pauses-changed"));
+      await onChanged();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage(failureText, err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** The rows, listed in the confirm. Scrolls rather than growing the
+   *  dialog past the viewport — thirty rows is a normal autumn selection. */
+  const summary = (rows: StreamSelectionRow[]) => (
+    <Box
+      borderWidth="1px"
+      borderColor="border.emphasized"
+      borderRadius="md"
+      maxH="200px"
+      overflowY="auto"
+      px={3}
+      py={2}
+      data-testid="stream-selection-summary"
+    >
+      <VStack align="stretch" gap={1}>
+        {rows.map((r) => (
+          <Box key={r.occurrenceId}>
+            <Text fontSize="xs">{r.label}</Text>
+            {r.detail && (
+              <Text fontSize="2xs" color="fg.muted">{r.detail}</Text>
+            )}
+          </Box>
+        ))}
+      </VStack>
+    </Box>
+  );
+
+  const dialogs = (
+    <>
+      {selection?.mode === "pause-many" && (
+        <StreamPauseDialog
+          open
+          mode="pause-many"
+          selectionCount={selection.rows.length}
+          summaryNode={summary(selection.rows)}
+          busy={busy}
+          onCancel={() => { if (!busy) setSelection(null); }}
+          onConfirm={async ({ reasonCode, reason, reminderAt }) =>
+            run(
+              selection.rows,
+              () =>
+                apiPost<SelectionResult>("/api/repeating-streams/pause", {
+                  occurrenceIds: selection.rows.map((r) => r.occurrenceId),
+                  reasonCode,
+                  reason,
+                  reminderAt,
+                }),
+              "Paused",
+              "Failed to pause the selected services.",
+            )
+          }
+        />
+      )}
+      {selection?.mode === "resume-many" && (
+        <StreamPauseDialog
+          open
+          mode="resume-many"
+          selectionCount={selection.rows.length}
+          summaryNode={summary(selection.rows)}
+          busy={busy}
+          onCancel={() => { if (!busy) setSelection(null); }}
+          onConfirm={async ({ startAt }) =>
+            run(
+              selection.rows,
+              () =>
+                apiPost<SelectionResult>("/api/repeating-streams/resume", {
+                  occurrenceIds: selection.rows.map((r) => r.occurrenceId),
+                  startAt,
+                }),
+              "Resumed",
+              "Failed to resume the selected services.",
+            )
+          }
+        />
+      )}
+    </>
+  );
+
+  return {
+    openPauseMany: (rows) => setSelection({ mode: "pause-many", rows }),
+    openResumeMany: (rows) => setSelection({ mode: "resume-many", rows }),
     busy,
     dialogs,
   };
@@ -258,7 +441,7 @@ export function StreamPauseActions({
         id="occ-stream-pause"
         itemId={occ.id}
         label="Pause repeating"
-        title="Hold this recurring stream — the job service and its other streams keep running"
+        title="Hold this repeating job occurrence — the service and its other repeating job occurrences keep running"
         onClick={async () => { controls.openPause(occ); }}
         variant="outline"
         colorPalette="purple"
@@ -385,7 +568,7 @@ export function StreamPauseFilter({
           px="2"
           title={
             active
-              ? `Showing only paused repeating visits — ${activeLabel}`
+              ? `Showing only paused repeating job occurrences — ${activeLabel}`
               : "Filter by pause state"
           }
           css={{

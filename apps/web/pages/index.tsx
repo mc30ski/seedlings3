@@ -48,6 +48,7 @@ import JobsTab from "@/src/ui/tabs/JobsTab";
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
 import PropertiesTab from "@/src/ui/tabs/PropertiesTab";
 import PaymentsTab from "@/src/ui/tabs/PaymentsTab";
+import RepeatingTab from "@/src/ui/tabs/RepeatingTab";
 import ServicesTab from "@/src/ui/tabs/ServicesTab";
 import ClientFeedTab from "@/src/ui/tabs/ClientFeedTab";
 import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
@@ -98,7 +99,7 @@ import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 import { Me, ClientTabs, StaffTabs, EventTypes } from "@/src/lib/types";
-import { FiActivity, FiAlertCircle, FiArchive, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBox, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiGift, FiGlobe, FiHome, FiLayers, FiLink, FiList, FiMap, FiMapPin, FiMonitor, FiNavigation, FiPackage, FiRefreshCw, FiRotateCcw, FiScissors, FiSearch, FiSettings, FiShield, FiSmile, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
+import { FiActivity, FiAlertCircle, FiArchive, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBox, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiGift, FiGlobe, FiHome, FiLayers, FiLink, FiList, FiMap, FiMapPin, FiMonitor, FiNavigation, FiPackage, FiRefreshCw, FiRepeat, FiRotateCcw, FiScissors, FiSearch, FiSettings, FiShield, FiSmile, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
 import { GrUserSettings } from "react-icons/gr";
 import { AiOutlineIdcard, AiOutlineTeam } from "react-icons/ai";
 import { TfiMoney } from "react-icons/tfi";
@@ -157,7 +158,7 @@ const WORKFLOW_ORIGIN_KEY = "seedlings_workflow_origin";
  * Values must match the `category:` on each tab entry below.
  */
 const TAB_CATEGORY: Record<string, string> = {
-  home: "Work", jobs: "Work", routes: "Work", services: "Work", tasks: "Work",
+  home: "Work", jobs: "Work", routes: "Work", services: "Work", repeating: "Work", tasks: "Work",
   equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
   clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
   payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
@@ -406,6 +407,12 @@ export default function HomePage() {
   // storage) — plain React props flow.
   const [streamReviewOccId, setStreamReviewOccId] = useState<string | null>(null);
   const [streamReviewNonce, setStreamReviewNonce] = useState(0);
+  /** Set only by the plain "open this one" path — see
+   *  `goToServiceOccurrence` and the note on ServicesTab's
+   *  `streamReviewJobId`. Null means "resolve it from the reminders list",
+   *  which is what the alert and the Tasks card want. */
+  const [streamReviewJobId, setStreamReviewJobId] = useState<string | null>(null);
+  const [streamReviewPausedOnly, setStreamReviewPausedOnly] = useState(true);
   const loadPendingWorkdaysRef = useRef<() => Promise<void>>(async () => {});
   // `books.view` (the guard on /ledger-followups/count): open ledger
   // followups (Money → Ledger flags
@@ -1242,6 +1249,31 @@ export default function HomePage() {
              
               streamReviewOccId={streamReviewOccId}
               streamReviewNonce={streamReviewNonce}
+              streamReviewJobId={streamReviewJobId}
+              streamReviewPausedOnly={streamReviewPausedOnly}
+            />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
+          // Repeating — every repeating service in the book, with the hold
+          // and restart actions on it. Sits after Services because it is the
+          // same subject one level down: Services is a card per service,
+          // this is every live repeating visit across every customer.
+          //
+          // Gated on `schedule.view-all` by TAB_REQUIREMENTS, which is one
+          // rung ABOVE Services' `schedule.manage` for the read and below it
+          // for the actions — an oversight reader gets the table with no
+          // buttons. `onOpenService` is the existing Services deep-link, so
+          // the table links out instead of growing an editor of its own.
+          value: "repeating",
+          label: "Repeating",
+          icon: FiRepeat,
+          content: wrapWithInlineMessage(
+            <RepeatingTab
+              scope={scopeBase}
+              onOpenService={(jobId, occurrenceId) => goToServiceOccurrence(jobId, occurrenceId)}
             />
           ),
           category: "Work",
@@ -3922,6 +3954,29 @@ export default function HomePage() {
     // that so we don't stuff a MouseEvent into the occurrenceId state.
     const cleanId = typeof occurrenceId === "string" ? occurrenceId : null;
     setStreamReviewOccId(cleanId);
+    // The reminders entry point resolves the job itself and wants the tab
+    // narrowed to the held set.
+    setStreamReviewJobId(null);
+    setStreamReviewPausedOnly(true);
+    setStreamReviewNonce((n) => n + 1);
+  }, [gotoOperatorSurface]);
+
+  /**
+   * Open ONE job occurrence in Services — the plain "take me to it" link,
+   * used by Work → Repeating.
+   *
+   * Deliberately NOT `goToStreamPauseReminders`. That one looks the
+   * occurrence up in the due-reminders list and switches on the
+   * paused-only filter, which is correct for the alert it was built for and
+   * wrong for a row that is merely scheduled: the lookup misses, the filter
+   * hides the job, and the operator lands on "No jobs match current
+   * filters". Passing the jobId we already have skips both.
+   */
+  const goToServiceOccurrence = useCallback((jobId: string, occurrenceId: string) => {
+    gotoOperatorSurface({ tab: "services", category: "Work" });
+    setStreamReviewOccId(typeof occurrenceId === "string" ? occurrenceId : null);
+    setStreamReviewJobId(typeof jobId === "string" ? jobId : null);
+    setStreamReviewPausedOnly(false);
     setStreamReviewNonce((n) => n + 1);
   }, [gotoOperatorSurface]);
 

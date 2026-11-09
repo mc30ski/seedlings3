@@ -56,6 +56,26 @@ export const TAB_REQUIREMENTS = {
   // A caller with `schedule.manage`-side job DEFINITIONS tab (recurrence, pricing, assignment
   // defaults), distinct from `jobs`, which is the visit list.
   services: ["schedule.manage"],
+  // Work → Repeating — every repeating service in the book, with the pause
+  // and resume actions on it.
+  //
+  // `schedule.view-all` AND NOTHING ELSE, which is the whole-book read
+  // (`GET /repeating-streams`) this tab opens with. Three deliberate
+  // choices in one row:
+  //
+  //  · NOT `schedule.view`. That is the baseline every field worker holds,
+  //    and a list of which customers are on hold across the business is an
+  //    oversight screen, not a field one.
+  //  · NOT `schedule.manage` as an alternative. A custom role may hold the
+  //    write without the oversight read — the live book has one that does —
+  //    and an any-of row would open the tab for them onto a 403 from the
+  //    only endpoint it calls. Same reasoning as the `portfolios` row
+  //    below: a tab names the capability of the endpoint it reads.
+  //  · THE READ IS WIDER THAN THE WRITE on purpose. `schedule.view-all` is
+  //    "you watch the operation without working it"; the actions inside gate
+  //    on `schedule.manage` separately, so an oversight reader gets the
+  //    table and no buttons rather than no tab.
+  repeating: ["schedule.view-all"],
   routes: ["routes.plan"],
 
   // ── Equipment ───────────────────────────────────────────────────────

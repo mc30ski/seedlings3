@@ -117,7 +117,13 @@ describe("US spelling build gate", () => {
       // Caught by mutation: a Britishism planted in a two-line <Text> went
       // straight through. The class still excludes <>{} so a match cannot
       // run past a tag or into an expression.
-      for (const m of src.matchAll(/>([^<>{}]{3,400})</g)) candidates.push(m[1].replace(/\s+/g, " "));
+      // LENGTH CAP RAISED FROM 400. A JSX text node runs from one tag to
+      // the next, and an explainer paragraph between two <Em> tags is
+      // routinely longer than that — so the cap silently excluded exactly
+      // the long-form prose most worth proofreading. Caught by a real miss:
+      // "keeps its normal colour" sat in a 500-character node in
+      // JobsExplainer and this gate reported the file clean.
+      for (const m of src.matchAll(/>([^<>{}]{3,2000})</g)) candidates.push(m[1].replace(/\s+/g, " "));
       for (const text of candidates) {
         if (allowed.has(text.trim())) continue;
         const m = WORD_RE.exec(text);

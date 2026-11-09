@@ -222,14 +222,15 @@ export default function JobsExplainer({
         label="Repeating" palette="blue" variant="subtle" bg="blue.faint" borderColor="blue.emphasized"
         flow="Scheduled → Claim or assign → Start → Complete → Payment approved → next visit created"
       >
-        A recurring visit on a cadence (every 14 days, say). The next visit is created when
+        A repeating job occurrence on a cadence (every 14 days, say). The next visit is created when
         the payment is <Em>approved</Em>, and it is dated from this visit&rsquo;s own date plus
         the cadence — not from the day approval landed, so a late approval does not push the
         schedule. If that date has already passed it snaps forward to today. The job&rsquo;s
         default crew is put on it; failing that, its default assignees; failing both, it is
         left unassigned for someone to claim. No next visit is created if the job service is
-        archived, or if one is already on the books. To stop a repeating visit for a while
-        without ending the service, <Em>pause the repeating visit</Em> — you pick a reason and
+        archived, or if one is already on the books. To stop a repeating job occurrence for a
+        while without ending the service, <Em>pause the repeating job occurrence</Em> — you pick
+        a reason and
         a date to check back, and resuming puts it on a date you choose.
       </TypeCard>
 
@@ -329,7 +330,7 @@ export default function JobsExplainer({
         A card is overdue once its day has passed and it has not reached a finished state.
         Awaiting-payment visits get a grace period: they only count as overdue once the
         client&rsquo;s pay link has expired, since until then the client can still pay.
-        Paused repeating services and announcements are never overdue.
+        Paused repeating job occurrences and announcements are never overdue.
       </Concept>
 
       {/* ── Flags ── */}
@@ -373,9 +374,9 @@ export default function JobsExplainer({
       </VStack>
 
       <ExplainerText>
-        A repeating visit that has been <Em>paused</Em> is a different thing from the
+        A repeating job occurrence that has been <Em>paused</Em> is a different thing from the
         deep-orange paused card above, which is a worker&rsquo;s timer stopped mid-visit. A
-        held repeating visit keeps its normal colour and shows a purple pause circle where the
+        held repeating job occurrence keeps its normal color and shows a purple pause circle where
         action button would be — tap it for the reason, the note, and when to check back. An
         anyone who runs the schedule can pause, resume or edit the reason from either this
             tab or Services; the
@@ -406,8 +407,8 @@ export default function JobsExplainer({
         </Text>
         <Text fontSize="xs" color="gray.200" mt={2}>
           Only repeating, accepted jobs with no future visit already booked get one. One-offs,
-          estimates, cancelled and archived visits, and paused repeating services never do —
-          a paused stream is a deliberate stop, not a gap, and it is already listed in its own
+          estimates, cancelled and archived visits, and paused repeating job occurrences never
+          do — a hold is a deliberate stop, not a gap, and it is already listed in its own
           queue.
         </Text>
       </Box>

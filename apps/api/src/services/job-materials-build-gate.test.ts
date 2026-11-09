@@ -2717,7 +2717,7 @@ describe("[build-gate] Job status buttons confirm before they fire", () => {
     const start = TAB.indexOf("function confirmArchiveJob(");
     const body = TAB.slice(start, TAB.indexOf("async function patchJobStatus", start));
     expect(body, "the dialog must point at pausing the repeating visit")
-      .toMatch(/pause its repeating visit/);
+      .toMatch(/pause its repeating job occurrence/);
     // The button lives in the shared cluster now, not inline in this tab —
     // so the alternative the dialog names is reachable only if the tab
     // actually mounts that cluster.
@@ -2747,12 +2747,22 @@ describe("[build-gate] Job status buttons confirm before they fire", () => {
       .toMatch(/showArchived \|\| jsf === "ARCHIVED"/);
   });
 
-  it("Services and Jobs use the same pause components", () => {
-    // Both tabs list the same occurrences. When each had its own buttons and
-    // its own dialog wiring, the copy, the confirms and the reason filter
+  it("Services, Jobs and Repeating use the same pause components", () => {
+    // All three tabs list the same occurrences. When each had its own buttons
+    // and its own dialog wiring, the copy, the confirms and the reason filter
     // drifted — and an operator had to remember which tab could do what.
+    //
+    // REPEATING IS IN THIS LIST, not in a gate of its own, because it is the
+    // third tab to show these rows and the drift this catches is between
+    // them. Its own gate (repeating-build-gate) covers what is specific to
+    // acting on a selection.
     const JOBS = web("ui/tabs/JobsTab.tsx");
-    for (const [name, src] of [["ServicesTab", TAB], ["JobsTab", JOBS]] as const) {
+    const REPEATING = web("ui/tabs/RepeatingTab.tsx");
+    for (const [name, src] of [
+      ["ServicesTab", TAB],
+      ["JobsTab", JOBS],
+      ["RepeatingTab", REPEATING],
+    ] as const) {
       expect(src, `${name} must mount the shared action cluster`)
         .toMatch(/<StreamPauseActions/);
       expect(src, `${name} must render the shared dialogs`)
@@ -2763,6 +2773,43 @@ describe("[build-gate] Job status buttons confirm before they fire", () => {
       expect(src, `${name} must not wire StreamPauseDialog directly`)
         .not.toMatch(/<StreamPauseDialog/);
     }
+  });
+
+  it("the day heading abbreviates without breaking what reads its label", () => {
+    // The heading shortens its weekday when the row would overflow
+    // ("WED, NOV 11"). Three things about that can break silently.
+    const JOBS = web("ui/tabs/JobsTab.tsx");
+
+    // 1. `label` MUST KEEP THE FULL TEXT. Three places in this same header
+    //    compare it to "Today" / "Tomorrow" to decide whether to draw the
+    //    route chips and the day summaries. Point `label` at the short
+    //    variant and those comparisons stop matching — no error, the
+    //    affordances just disappear.
+    expect(JOBS, "the group's label is the FULL text").toMatch(/label: dl\.full,/);
+    expect(JOBS, "and the abbreviation rides alongside it").toMatch(/labelShort: dl\.short,/);
+    expect(
+      (JOBS.match(/group\.label === "(Today|Tomorrow)"/g) ?? []).length,
+      "the literal comparisons this protects must still exist",
+    ).toBeGreaterThanOrEqual(2);
+
+    // 2. THE ABBREVIATION COMES FROM Intl, not from cutting the string.
+    //    `slice(0, 3)` happens to look right in English and is wrong as
+    //    soon as anything else formats a weekday.
+    const label = JOBS.slice(JOBS.indexOf("function DayHeadingLabel"), JOBS.indexOf("export default function JobsTab"));
+    expect(label, "no hand-rolled truncation in the heading")
+      .not.toMatch(/\.slice\(0,\s*3\)|\.substring\(0,\s*3\)/);
+    expect(JOBS, "the short form comes from the canonical date helper")
+      .toMatch(/fmtDateWeekday\([^)]*short: true/);
+
+    // 3. THE PREDICATE MUST NOT READ ITS OWN ANSWER. Measuring the rendered
+    //    width and shortening on overflow oscillates: shortening removes the
+    //    overflow, so the next measurement lengthens it again. The width it
+    //    compares has to be the FULL-length one, taken from the hidden twin.
+    expect(label, "the needed width is computed at full length")
+      .toMatch(/centre\.offsetWidth - label\.offsetWidth \+ twin\.offsetWidth/);
+    const measureBody = label.slice(label.indexOf("const measure = "), label.indexOf("if (typeof ResizeObserver"));
+    expect(measureBody, "the measurement must not branch on the current state")
+      .not.toMatch(/isShort/);
   });
 
   it("a held repeating visit still has an action row in Work → Jobs", () => {
@@ -3183,7 +3230,7 @@ describe("[build-gate] muting a next-visit warning needs `schedule.manage` and i
     // so, or the quiet option becomes the default one.
     expect(TAB).toMatch(/Mute this warning\?/);
     expect(TAB, "the dialog must point at pausing the service")
-      .toMatch(/Pausing the repeating service/);
+      .toMatch(/Pausing the repeating job occurrence/);
     expect(TAB, "the alternative must be an informational callout, not a warning")
       .toMatch(/bg="blue\.subtle"/);
   });

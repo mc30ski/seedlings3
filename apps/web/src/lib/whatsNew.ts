@@ -74,6 +74,23 @@ export type WhatsNewEntry = {
 
 export const WHATS_NEW: WhatsNewEntry[] = [
   {
+    id: "repeating-tab",
+    headline: "Every repeating job occurrence in one place",
+    body:
+      "Work → Repeating lists every job occurrence that repeats, with what is " +
+      "running and what is held. Tick the ones you want and hold or restart " +
+      "them together — useful when the season ends and most of the book goes " +
+      "on hold at once.",
+    // `schedule.view-all` is what GET /repeating-streams is guarded on, so
+    // this reaches exactly the people the tab opens for — including the
+    // oversight reader who can see the table but not act on it. Announcing
+    // it on `schedule.manage` instead would have hidden a new tab from
+    // somebody who can open it.
+    requires: "schedule.view-all",
+    showMe: { tab: "repeating", category: "Work" },
+    shippedOn: "2026-11-09",
+  },
+  {
     id: "day-map",
     headline: "See a day on a map",
     body:

@@ -54,8 +54,8 @@ async function gotoClientsTab(page: any) {
 }
 
 test.describe("Clients tab — paused filter excludes archived", () => {
-  test("an archived client holding a repeating visit stays out of 'Paused repeating only'; its active peer does not", async ({ page }) => {
-    // Two scratch clients, both holding a repeating visit:
+  test("an archived client holding a repeating job occurrence stays out of 'Paused repeating only'; its active peer does not", async ({ page }) => {
+    // Two scratch clients, both holding a repeating job occurrence:
     //   activeClient  — status ACTIVE   → should appear in filter
     //   archivedClient — status ARCHIVED → should NOT appear in filter
     const ACTIVE_NAME = `E2E ActiveWithPause ${Date.now()}`;
@@ -119,7 +119,7 @@ test.describe("Clients tab — paused filter excludes archived", () => {
 
       // Toggle the "Paused repeating only" filter on.
       const pausedToggle = page.getByRole("button", {
-        name: /(Show|Showing) only clients with a paused repeating service/i,
+        name: /(Show|Showing) only clients with a paused repeating job occurrence/i,
       });
       await expect(pausedToggle).toBeVisible({ timeout: 15_000 });
       await pausedToggle.click();

@@ -1567,7 +1567,7 @@ function PauseReasonsEditor({ value, onChange, onSave, onCancel, saving }: {
   return (
     <VStack align="stretch" gap={3} w="full">
       <Text fontSize="2xs" color="fg.muted">
-        Why a repeating visit is on hold. The operator picks one of these every time they
+        Why a repeating job occurrence is on hold. The operator picks one of these every time they
         pause — it is what makes a paused visit findable again, by reason, months later.
         Order here is the order of the dropdown.
       </Text>

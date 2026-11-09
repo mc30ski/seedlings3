@@ -53,6 +53,7 @@ split (JobsTab ~11k LOC).
 - [Production IS reachable — its URL is COMMENTED OUT in `apps/api/.env`](reference_prod_db_url_is_commented_in_env.md) — `ep-noisy-feather` = prod, `ep-jolly-wildflower` = dev. Grep without a `^` anchor; I've twice wrongly said prod was unreachable.
 - [Never write to the production database](feedback_never_write_production_db.md) — reads fine; every write needs explicit per-operation permission AND a confirm before running. **The four authorised writes of 2026-10-31/11-01 are NOT a precedent** — the operator reinstated the read-only default afterwards. Validate prod config against `git show HEAD`, not the working tree.
 - [Prisma migrations required — never db push](feedback_prisma_migrations.md) — schema changes go through `migrate dev`.
+- [Dev migration history baselined; `migrate dev` now blocked by a shadow-DB replay](project_dev_migration_history_baselined.md) — 223 migrations re-resolved 2026-10-11. **A data migration aborts the shadow replay — hand-write SQL + `migrate deploy`.**
 - [Migrate must bypass the Neon pooler](reference_migrate_needs_direct_url.md) — `directUrl`/`DIRECT_URL` added 2026-10-23. Set BOTH vars when overriding `DATABASE_URL`, or you migrate dev while the output says production.
 - [Apply migrations to dev immediately](feedback_apply_migration_to_dev_immediately.md) — never let code land while dev DB is on the old schema.
 - [No placeholder text in migrations](feedback_no_placeholder_text_in_migrations.md) — a user-facing label written by a migration is permanent; later passes refuse to overwrite it.
@@ -65,6 +66,7 @@ split (JobsTab ~11k LOC).
 - [Theming — 14 themes, test EVERY feature against all](reference_theming.md) — `_dark` misses 4 dark-grounded themes; raw hex/ramp never themes; `solid` is a fill, not an ink.
 - [Header strip sets lineHeight:0](feedback_header_line_height_zero.md) — dropdowns inside it collapse to padding; measure row height, don't eyeball.
 - [Verify exit codes — never pipe a check through `tail`](feedback_verify_exit_codes_not_pipe_tail.md) — `| tail` reports the pager's status; `apps/api` wasn't typechecking at all and it hid 4 shadowed functions.
+- [Mutation-test every gate you write](feedback_mutation_test_every_gate.md) — a gate green on first write has proved nothing; the defect is a scan too narrow to reach its subject. 4 real cases.
 - [Run the build gate after every change](feedback_run_build_gate_after_changes.md) — `cd apps/api && npm run test:build-gate` before reporting done.
 - [Build-gate roster](reference_build_gates_roster.md) — roster drifts; verify with `ls apps/api/src/services/*-build-gate.test.ts`. The script is a FILTER list — a dead entry shrinks the run silently.
 - [Payments build gate](feedback_payments_build_gate.md) — conservation laws, worker classification, tax-export sources. Don't relax without a policy-doc update.
@@ -95,6 +97,8 @@ split (JobsTab ~11k LOC).
 - [Business Start Date filter](feature_business_start_date.md) — hides pre-cutoff money from every view/export. Use `businessStartCutoff.ts` helpers. Prod default OFF.
 - [Equipment rental is income](project_equipment_rental_income.md) — `Checkout.rentalCost` is INCOME. **`EQUIPMENT_BILLING_ENABLED` is currently OFF.**
 - [Per-job equipment billing](feature_per_job_equipment_billing.md) — `Equipment.equivalentJobs` (NULL = flat daily). Don't reconstruct cost from days × rate.
+- [Work → Repeating — whole-book table, selection pause/resume](project_repeating_tab.md) — SHIPPED 2026-11-09; spec `docs/features/repeating.md`. A LENS, not a second pause; don't rebuild client-level bulk. **4 bugs the green suite could not see — read before trusting one.**
+- [Prod role → entitlement matrix](reference_prod_role_entitlement_matrix.md) — **Auditor holds `schedule.view-all` WITHOUT `schedule.manage`** — the read-only tier is real. Coordinator was the reverse until granted 2026-11-09; the dev seed's still is. Re-read before gating a whole-book screen.
 - [Job-service pause REMOVED](project_pause_redesign.md) — it was archive under another name. Holding work = reason-coded pause on the repeating occurrence, with history. Unarchive is the way back.
 - [Crews shipped](project_crews_roadmap.md) — splits written at release time. Two policy quirks — read before touching equipment billing.
 - [Payroll — Gusto CSV, three-tier visibility](reference_payroll.md) — rate columns aren't additive, blank ≠ zero, names never auto-matched.
@@ -118,7 +122,7 @@ split (JobsTab ~11k LOC).
 - [Detached Prisma include bypasses TypeScript](reference_prisma_detached_include.md) — lift an include into a `const` and TS stops key-checking it.
 - [ONE tab per feature, built from entitlements](reference_tab_blend_pattern.md) — `Scope` has one field, `can`. Surface flags and `purpose` are DELETED. Name a flag for its capability, never for a role.
 - [A UI gate must name its own endpoint's capability](feedback_ui_gate_must_match_its_endpoint.md) — two silent 403s found 2026-10-19; `persona-sweep` is the oracle, one refusal at a time.
-- [Tab ordering canonical](reference_tab_ordering.md) — top-tab order + per-role sub-tabs + catMap dispatch. superCatMap bugs cause cross-tab jumps.
+- [Tab ordering canonical](reference_tab_ordering.md) — ONE staff list (the three per-role lists are gone). Adding a tab = 3 edits; only `TAB_REQUIREMENTS` is gated. `TAB_CATEGORY` is missing `statistics`/`performance`.
 - [Tab-blend refactor 2026-08-21](project_tab_refactor_2026_08_21.md) — read before assuming any tab is a stub; files renamed/created/deleted.
 - [Worker Compliance UI](reference_worker_compliance_ui.md) — per-row Sign, batch Sign all, view signed doc on ProfileTab.
 - [AppSplash stable — don't regress](feedback_appsplash_stable_dont_regress.md) — the 2026-08-15 combination works; any change needs a design pass first.

@@ -28,7 +28,7 @@ rename (update gate + helper together).
 | Gate | Memory / doc |
 |---|---|
 | `payments-build-gate.test.ts` | [[feedback-payments-build-gate]], `docs/FINANCIAL_SYSTEM.md` |
-| `date-handling-build-gate.test.ts` | [[date-handling-reference]], `docs/DATE_HANDLING.md` |
+| `date-handling-build-gate.test.ts` | [[reference_date_handling]], `docs/DATE_HANDLING.md` |
 | `view-as-endpoints-build-gate.test.ts` | [[reference-view-as-endpoints]], `docs/VIEW_AS_ENDPOINTS.md` |
 | `policies-build-gate.test.ts` | [[reference-worker-compliance-ui]], `docs/features/compliance.md` |
 
@@ -231,3 +231,24 @@ The gate includes a self-test asserting its own regexes still match the
 silent no-op.
 
 - **theming-build-gate** — the app has 14 themes and four of them are dark-grounded WITHOUT being the Dark theme, so `_dark` misses them. Forbids `{ base, _dark }` raw-ramp pairs, hardcoded hex, `solid` used as a text colour, and a theme id missing from any of the seven maps it must be wired into. Also guards that the eight theme e2e specs still exist. See [[reference-theming]].
+
+## repeating-build-gate (added 2026-11-09)
+
+`apps/api/src/services/repeating-build-gate.test.ts` — 29 tests, for
+Work → Repeating ([[project_repeating_tab]], spec
+`docs/features/repeating.md`).
+
+Mostly asserts what the feature must NOT acquire, because it replaces a
+client-level bulk pause that was deleted for acquiring exactly those things:
+no state recording that a batch happened, no reader of the dead
+`Job.clientBulkPaused*` columns, no write that bypasses the shared
+`pauseStream`. Plus the capability split (`schedule.view-all` reads,
+`schedule.manage` writes, and the tab row names only the first), the scope
+check on the selection path, per-row outcomes, blanks-sort-last, the state
+rank, and two LAYOUT rules that no other check can see — the action column is
+one stretched stack at one size, and the row goes to the shared cluster
+**uncast** (an `as any` there once hid a field-name mismatch that made every
+named pause-reason filter return zero rows).
+
+Mutation-tested: 25 planted violations, 24 caught on the first pass, the
+miss repaired — see [[feedback_mutation_test_every_gate]].
