@@ -88,7 +88,7 @@ export default function RepeatingPausesDueSection({
       {items.map((row) => {
         const clientName = row.job?.property?.client?.displayName ?? "—";
         const propertyName = row.job?.property?.displayName ?? null;
-        const streamLabel = row.jobType ?? row.title ?? "repeating service";
+        const streamLabel = row.jobType ?? row.title ?? "repeating job occurrence";
         return (
           <Box
             key={row.id}

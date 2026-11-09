@@ -300,6 +300,131 @@ type JobsTabProps = Omit<TabPropsType, "purpose"> & {
 //                          ViewAsSelector/Badges)
 //   • JobsTab.workday.tsx — WorkdayBanner + MileageBanner (surfaces
 //                          consumed by MyDashboard).
+/**
+ * The day heading's text, abbreviating its weekday ONLY when the row would
+ * otherwise overflow — "WED, NOV 11" in place of "WEDNESDAY, NOV 11".
+ *
+ * WHY IT OVERFLOWS AT ALL. The heading row is `grid 1fr auto 1fr`: a rule,
+ * the centred group, a rule. The centre is `auto` and this text is `nowrap`,
+ * so on a busy day — weather, a count badge, a holiday chip, sometimes a
+ * severe-weather badge or a route chip — the two rules collapse toward zero
+ * and the centre spills over them. Rare, and it looks broken when it happens.
+ *
+ * WHY THE OBVIOUS VERSION OSCILLATES. "If it overflows, shorten" cannot work:
+ * shortening removes the overflow that caused it, so the next measurement
+ * says to lengthen, and a borderline width flickers for ever.
+ *
+ * SO THE PREDICATE NEVER READS ITS OWN ANSWER. It compares the row's width
+ * against what the centre would need at FULL length:
+ *
+ *     needed = centre.width − renderedLabel.width + fullLabel.width
+ *
+ * Every term is invariant under the swap — shortening shrinks `centre` and
+ * `renderedLabel` by exactly the same amount — so `needed` is a property of
+ * the content, not of the current state. `fullLabel` comes from a hidden twin
+ * that always carries the long text, which is what makes it readable while
+ * the short one is on screen. No hysteresis, no damping, no flicker.
+ *
+ * It is a component rather than a hook because the heading is rendered inside
+ * a `.map()` over the days, where a hook cannot go.
+ */
+function DayHeadingLabel({ full, short }: { full: string; short: string }) {
+  // Typed as the elements Chakra's polymorphic props declare, not as the
+  // `span`s that `as="span"` actually renders. Both extend HTMLElement, which
+  // is all the measuring below touches.
+  const labelRef = useRef<HTMLParagraphElement | null>(null);
+  const twinRef = useRef<HTMLDivElement | null>(null);
+  const [isShort, setIsShort] = useState(false);
+
+  useEffect(() => {
+    const label = labelRef.current;
+    const twin = twinRef.current;
+    if (!label || !twin) return;
+    const centre = label.parentElement;
+    const row = label.closest("[data-day-heading]") as HTMLElement | null;
+    if (!centre || !row) return;
+
+    const measure = () => {
+      const needed = centre.offsetWidth - label.offsetWidth + twin.offsetWidth;
+      // Leave each rule something to draw: a heading whose rules have been
+      // squeezed to nothing already reads as broken, before any collision.
+      const MIN_RULE = 28;
+      const GAPS = 24; // the grid's two 12px gaps
+      setIsShort(needed + MIN_RULE * 2 + GAPS > row.clientWidth);
+    };
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return;
+    // BOTH the row and the centre. The row catches a window resize; the
+    // centre catches content arriving late — the forecast and the severe
+    // weather badge both land after their own fetches, and a heading that
+    // fitted before a chip appeared is exactly the case this exists for.
+    // Observing the centre is safe here precisely because `needed` does not
+    // move when the label swaps; see the note above.
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    ro.observe(centre);
+    return () => ro.disconnect();
+  }, [full, short]);
+
+  return (
+    <Text
+      as="span"
+      ref={labelRef}
+      position="relative"
+      fontSize="sm"
+      fontWeight="bold"
+      color="gray.fg"
+      whiteSpace="nowrap"
+      textTransform="uppercase"
+      letterSpacing="wide"
+      // The full day stays available on hover however it is abbreviated.
+      title={full}
+      data-abbreviated={isShort ? "1" : "0"}
+    >
+      <Box as="span" aria-hidden={isShort || undefined}>
+        {isShort ? short : full}
+      </Box>
+      {/* ABBREVIATING MUST NOT COST A SCREEN READER THE DAY. When the
+          visible text is clipped to "Wed", it is hidden from assistive tech
+          and this carries the real one instead. `aria-label` on the wrapper
+          would have been simpler and is unreliable: it is a plain span with
+          no role, so it is not guaranteed to be honoured as a name. */}
+      {isShort && (
+        <Box
+          as="span"
+          position="absolute"
+          w="1px"
+          h="1px"
+          overflow="hidden"
+          clipPath="inset(50%)"
+          whiteSpace="nowrap"
+        >
+          {full}
+        </Box>
+      )}
+      {/* THE MEASURING TWIN. Absolutely positioned, so it is out of flow and
+          contributes nothing to the label's own width — which is what lets
+          `renderedLabel.width` and `fullLabel.width` be read at the same
+          moment. `visibility: hidden` rather than `display: none`: a
+          display-none element has no width to measure at all. */}
+      <Box
+        as="span"
+        ref={twinRef}
+        aria-hidden
+        position="absolute"
+        left="0"
+        top="0"
+        visibility="hidden"
+        pointerEvents="none"
+        whiteSpace="nowrap"
+      >
+        {full}
+      </Box>
+    </Text>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 export default function JobsTab({
   me,
@@ -1321,7 +1446,7 @@ export default function JobsTab({
               Is the service actually stopping?
             </Text>
             <Text fontSize="xs" lineHeight="1.5">
-              Pausing the repeating service does this too, and says why. A
+              Pausing the repeating job occurrence does this too, and says why. A
               paused service raises no next-visit warnings at all, and resuming
               it schedules the next visit forward from today. Suppressing only
               hides this one warning and leaves the service looking active.
@@ -3433,24 +3558,49 @@ export default function JobsTab({
   }, [weatherAlerts]);
 
   const dayGroups = useMemo(() => {
-    const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
+    const groups: { key: string; label: string; labelShort: string; items: WorkerOccurrence[] }[] = [];
     const todayKey = bizDateKey(new Date());
 
-    const dayLabel = (dateKey: string) => {
+    /**
+     * The day heading, in both lengths.
+     *
+     * TWO VARIANTS, NOT A TRUNCATION. The header shortens the weekday when
+     * the row would otherwise overflow ("WED, NOV 11" for "WEDNESDAY, NOV
+     * 11"), and which one is drawn is decided at render time by measuring.
+     * Both are built here so the abbreviation comes from `Intl` via the
+     * canonical helper rather than a `slice(0, 3)` at the callsite.
+     *
+     * `Today` / `Yesterday` / `Tomorrow` have no shorter form, so `short`
+     * equals `full` for them and the header simply never gains anything by
+     * switching — which is correct: those are already the shortest headings
+     * on the page.
+     */
+    const dayLabel = (dateKey: string): { full: string; short: string } => {
       // dateKey is YYYY-MM-DD in ET. bizDaysBetween does the string math
       // through UTC-noon anchors (DST-immune) — no need for the manual
       // noon-UTC dance below.
       const d = new Date(dateKey + "T12:00:00Z"); // for fmtDateWeekday display
       const diff = bizDaysBetween(todayKey, dateKey as EtDateKey);
-      if (diff === 0) return "Today";
-      if (diff === -1) return "Yesterday";
-      if (diff === 1) return "Tomorrow";
-      const dayName = fmtDateWeekday(d);
-      if (diff >= 2 && diff <= 6) return dayName;
-      if (diff <= -2 && diff >= -6) return `Last ${dayName}`;
+      const both = (t: string) => ({ full: t, short: t });
+      if (diff === 0) return both("Today");
+      if (diff === -1) return both("Yesterday");
+      if (diff === 1) return both("Tomorrow");
+      if (diff >= 2 && diff <= 6) {
+        return { full: fmtDateWeekday(d), short: fmtDateWeekday(d, { short: true }) };
+      }
+      if (diff <= -2 && diff >= -6) {
+        return {
+          full: `Last ${fmtDateWeekday(d)}`,
+          short: `Last ${fmtDateWeekday(d, { short: true })}`,
+        };
+      }
       // String math on the YYYY-MM-DD key avoids any Date-vs-Date
       // year drift across DST / timezone boundaries.
-      return fmtDateWeekday(d, { year: bizYearOf(dateKey as EtDateKey) !== bizYearOf(todayKey) });
+      const year = bizYearOf(dateKey as EtDateKey) !== bizYearOf(todayKey);
+      return {
+        full: fmtDateWeekday(d, { year }),
+        short: fmtDateWeekday(d, { year, short: true }),
+      };
     };
 
     // Separate pinned and reminder-due items into their own groups (self-scoped view only).
@@ -3518,10 +3668,10 @@ export default function JobsTab({
     }
 
     if (pinnedGroup.length > 0) {
-      groups.push({ key: "pinned", label: `Pinned (${pinnedGroup.length})`, items: pinnedGroup });
+      groups.push({ key: "pinned", label: `Pinned (${pinnedGroup.length})`, labelShort: `Pinned (${pinnedGroup.length})`, items: pinnedGroup });
     }
     if (reminderDueGroup.length > 0) {
-      groups.push({ key: "reminders-due", label: `Reminders Due (${reminderDueGroup.length})`, items: reminderDueGroup });
+      groups.push({ key: "reminders-due", label: `Reminders Due (${reminderDueGroup.length})`, labelShort: `Reminders Due (${reminderDueGroup.length})`, items: reminderDueGroup });
     }
 
     // Compute date key for each item, then sort by it to prevent duplicate day groups
@@ -3560,9 +3710,16 @@ export default function JobsTab({
         if (aHigh !== bHigh) return aHigh - bHigh;
         return (a.startAt ?? "").localeCompare(b.startAt ?? "");
       });
+      const dl = key === "no-date" ? { full: "Unscheduled", short: "Unscheduled" } : dayLabel(key);
       groups.push({
         key,
-        label: key === "no-date" ? "Unscheduled" : dayLabel(key),
+        // `label` KEEPS ITS EXACT OLD VALUE. Three places in the header
+        // compare it to "Today" / "Tomorrow" to decide whether to draw the
+        // route chips and the day summaries; swapping in an abbreviation
+        // would make those comparisons quietly stop matching and the
+        // affordances disappear with nothing failing.
+        label: dl.full,
+        labelShort: dl.short,
         items,
       });
     }
@@ -4654,6 +4811,9 @@ export default function JobsTab({
                 alignItems="center"
                 my={2}
                 cursor="pointer"
+                // The measuring anchor for DayHeadingLabel — it walks up to
+                // this row to learn the width it has to fit inside.
+                data-day-heading=""
                 onClick={() => setCollapsedGroups((prev) => {
                   const next = new Set(prev);
                   if (next.has(group.key)) next.delete(group.key);
@@ -4711,9 +4871,9 @@ export default function JobsTab({
                     openId={openAlertId}
                     onToggle={(id) => setOpenAlertId((v) => (v === id ? null : id))}
                   />
-                  <Text fontSize="sm" fontWeight="bold" color="gray.fg" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
-                    {group.label}
-                  </Text>
+                  {/* Abbreviates its weekday only when this row would
+                      otherwise overflow — see DayHeadingLabel. */}
+                  <DayHeadingLabel full={group.label} short={group.labelShort} />
                   <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs" lineHeight="1">
                     {group.items.length}
                   </Badge>
@@ -5968,7 +6128,7 @@ export default function JobsTab({
                     messageNode: (
                       <VStack align="start" gap={2}>
                         <Text fontSize="sm">
-                          This repeating service is currently paused and can't be started.
+                          This repeating job occurrence is currently paused and can't be started.
                         </Text>
                         {(((occ as any).streamPausedAt) || ((occ as any).streamResumeReminderAt)) && (
                           <Text fontSize="sm" color="fg.muted">
@@ -9429,7 +9589,7 @@ export default function JobsTab({
                     non-tentative jobs since the start/complete affordances
                     don't apply until the client has confirmed.
 
-                    STREAM_PAUSED is in the list. A held repeating visit has
+                    STREAM_PAUSED is in the list. A held repeating job occurrence has
                     exactly one thing an operator wants to do to it — resume
                     it, or change why it is held — and without this it had no
                     footer at all, so the purple "Repeating service paused"

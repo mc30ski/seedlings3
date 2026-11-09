@@ -223,6 +223,34 @@ describe("Display formatters reject invalid input cleanly", () => {
     expect(fmtDateWeekday("invalid")).toBe("—");
   });
 
+  it("fmtDateWeekday `short` abbreviates the weekday and nothing else", () => {
+    // 2026-11-11 is a Wednesday — the day that prompted this, because
+    // "WEDNESDAY, NOV 11" is the longest weekday in the Jobs day header and
+    // the one that collided with the chips beside it.
+    const key = "2026-11-11";
+    expect(fmtDateWeekday(key)).toBe("Wednesday, Nov 11");
+    expect(fmtDateWeekday(key, { short: true })).toBe("Wed, Nov 11");
+
+    // The other options still compose. `short` must not quietly drop the
+    // year when both are asked for — the long-ago / far-ahead header needs
+    // both at once, and that combination has no other test.
+    expect(fmtDateWeekday(key, { year: true })).toBe("Wednesday, Nov 11, 2026");
+    expect(fmtDateWeekday(key, { short: true, year: true })).toBe("Wed, Nov 11, 2026");
+
+    // Every weekday shortens — asserted across the week rather than on one
+    // day, because a `slice(0, 3)` would also pass a single-day check while
+    // being wrong for a locale that abbreviates differently.
+    const longs = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const shorts = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    for (let i = 0; i < 7; i++) {
+      const d = `2026-11-${String(8 + i).padStart(2, "0")}`; // 8 Nov 2026 is a Sunday
+      expect(fmtDateWeekday(d).startsWith(longs[i]), `${d} long`).toBe(true);
+      expect(fmtDateWeekday(d, { short: true }).startsWith(shorts[i]), `${d} short`).toBe(true);
+    }
+
+    expect(fmtDateWeekday("invalid", { short: true })).toBe("—");
+  });
+
   it("fmtDateOpts returns '—' for invalid input", () => {
     expect(fmtDateOpts("invalid", { month: "short" })).toBe("—");
   });

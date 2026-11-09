@@ -22,20 +22,22 @@ tab is `seedlings_staffTab`, the category strip is `seedlings_staffCategory`.
 There are no per-shell keys; anything else persisted is migrated to `staff`
 on read.
 
-## The one staff list — 37 tabs, in order
+## The one staff list, in order
 
 Defined as `staffTabs` in `apps/web/pages/index.tsx`. Category order is the
-order these first appear:
+order these first appear. **Counts rot — `TAB_REQUIREMENTS` had 40 keys and
+`TAB_CATEGORY` 37 entries on 2026-11-09, and the two are not the same set.**
+Read both rather than trusting a number here.
 
 | Category | Tabs, in order |
 |---|---|
-| Work | home, jobs, routes, services, tasks |
+| Work | home, jobs, routes, services, **repeating**, tasks |
 | Equipment | equipment, collections, vehicles |
 | Directory | clients, properties, users, groups |
 | Money | payments, payroll, ledger, pricing, supplies, promotions, forecast |
 | Records | reconcile, workdays, compliance, activity, history, timeline, documents, guides, audit |
 | Tools | tools-mowing, tools-mulch |
-| System | profile, notify, roles, areas, vanity, displays, settings |
+| System | profile, notify, roles, portfolios, vanity, displays, settings |
 
 ## Which of them a person sees
 
@@ -70,3 +72,19 @@ Adding a tab means adding it to `staffTabs`, to `TAB_REQUIREMENTS`, and to
 clicking.
 
 Related: [[reference-tab-blend-pattern]], [[reference-capabilities-model]].
+
+## `TAB_CATEGORY` is a SECOND list, and it is not complete (2026-11-09)
+
+`TAB_CATEGORY` in `index.tsx` maps a tab to its category strip for cross-tab
+jumps: `const destCategory = category ?? TAB_CATEGORY[tab]`. A missing entry
+leaves the strip on the PREVIOUS category — the exact failure this file's own
+header describes from the three-list era.
+
+**`statistics` and `performance` (Insights) have no `TAB_CATEGORY` entry.**
+They carry `category: "Insights"` on their tab definitions, so they render
+fine; only a programmatic jump that omits an explicit category is affected.
+Not yet fixed, and nothing asserts the two lists agree — G44 checks
+`TAB_REQUIREMENTS` against the rendered tabs, not `TAB_CATEGORY`.
+
+**Adding a tab means three edits:** the `staffTabs` entry, a `TAB_CATEGORY`
+row, and a `TAB_REQUIREMENTS` row. Only the third is gated.

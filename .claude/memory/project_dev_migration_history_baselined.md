@@ -29,6 +29,16 @@ Also established: the `neondb_owner` role has **CREATEDB = true**, so
 `schema.prisma` has been commented out since the first commit and does not
 need to be set.
 
+**UPDATE — `migrate dev` is blocked again, for a different reason.** The
+bookkeeping above is still fixed, but `migrate dev` builds a SHADOW database
+by replaying every migration from scratch, and
+`20261027090000_starter_roles_to_current_policy` aborts that replay with
+**"No user holds seedlings.super"** — it is a data migration that assumes a
+populated database, and the shadow is empty. So a schema change here means
+**hand-writing the SQL into a migration folder and running
+`migrate deploy`**, not `migrate dev`. [[feedback_prisma_migrations]] still
+holds: a migration file is still required, never `db push`.
+
 **The workflow, restored and unchanged:**
 1. Edit `schema.prisma`
 2. `npm -w apps/api run prisma:migrate:dev` — writes the migration file AND

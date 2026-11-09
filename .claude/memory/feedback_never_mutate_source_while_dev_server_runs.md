@@ -25,6 +25,14 @@ git, tsc or the gate could see it.
 restored file has an *older* mtime than the compiled chunk, so nothing looks
 stale.
 
+**It happened again, 2026-11-09.** A Python mutation harness restored each
+file with `shutil.move(bak, path)` — a rename, the exact operation the note
+below warns about. The source was byte-correct afterwards and the gate was
+green, but the running app served the LAST mutated chunk: four of five
+sortable column headers were missing from the DOM, and the Playwright spec
+reported them as "element(s) not found". Ten minutes went into a bug that did
+not exist. `touch` on the restored files fixed it instantly.
+
 ## Do this instead
 
 - Prefer mutating a **copy** and pointing the gate at it, when the rule reads
@@ -36,5 +44,6 @@ stale.
   affected tab and check for console/page errors before reporting done. A
   clean `git diff` is not evidence the running app is clean.
 
-Related: [[feedback-never-build-while-dev-server-runs]] (same shared-`.next`
+Related: [[feedback_mutation_test_every_gate]] (why the mutation round
+happens at all), [[feedback-never-build-while-dev-server-runs]] (same shared-`.next`
 failure class), [[feedback-never-ship-a-red-spec]].

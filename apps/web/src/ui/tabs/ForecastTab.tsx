@@ -603,7 +603,7 @@ export default function ForecastTab() {
         </ExplainerText>
         <ExplainerText>
           <Em>Costs are spread over the period they cover; income is not.</Em> A premium or
-          licence you pay once a year is charged to this window only for the months of it this
+          license you pay once a year is charged to this window only for the months of it this
           window contains — so a three-month window carries a quarter of an annual policy
           whether you paid it inside that window or six weeks before it. Anything without a
           recurrence set on it stays where it was paid, which is right for fuel, a repair or a

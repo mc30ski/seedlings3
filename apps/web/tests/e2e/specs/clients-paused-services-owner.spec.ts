@@ -10,12 +10,12 @@ import {
  * Regression: the paused-count affordance on Directory → Clients.
  * Verifies:
  *
- *   1. When a client has ≥1 repeating visit on hold, the "Job services"
+ *   1. When a client has ≥1 repeating job occurrence on hold, the "Job services"
  *      button on the client card carries the count.
  *   2. Clicking it hands off to Work → Services with q = client
  *      name and NO pre-applied job-status filter.
  *   3. The "Paused repeating only" toggle narrows the Clients list to
- *      only clients with ≥1 held repeating visit.
+ *      only clients with ≥1 held repeating job occurrence.
  *
  * WHAT THIS USED TO ASSERT, and why it changed: the count came from Jobs
  * in status PAUSED. Job-level pause is gone — it deleted every scheduled
@@ -61,8 +61,8 @@ async function gotoClientsTab(page: any) {
 }
 
 test.describe("Clients tab — paused repeating affordance", () => {
-  test("Client holding a repeating visit shows the count, and clicking through lands on that client's services at every status", async ({ page }) => {
-    // Two scratch clients — one WITH a held repeating visit, one WITHOUT —
+  test("Client holding a repeating job occurrence shows the count, and clicking through lands on that client's services at every status", async ({ page }) => {
+    // Two scratch clients — one WITH a held repeating job occurrence, one WITHOUT —
     // so the filter toggle has something to hide.
     const CLIENT_WITH = `E2E Paused Client ${Date.now()}`;
     const CLIENT_WITHOUT = `E2E Unpaused Client ${Date.now()}`;
@@ -137,7 +137,7 @@ test.describe("Clients tab — paused repeating affordance", () => {
       await expect(jobServicesBtn).toBeVisible({ timeout: 15_000 });
       await expect(
         jobServicesBtn,
-        "the paused count must still be on the button for a client with a held repeating visit",
+        "the paused count must still be on the button for a client with a held repeating job occurrence",
       ).toHaveText(/Job services.*1/);
 
       // The unpaused client gets the same button with NO count — the button
@@ -178,7 +178,7 @@ test.describe("Clients tab — paused repeating affordance", () => {
       // 3. Back to Clients — toggle "Paused only" and the unpaused
       // client should disappear from the list.
       await gotoClientsTab(page);
-      const pausedToggle = page.getByRole("button", { name: /(Show|Showing) only clients with a paused repeating service/i });
+      const pausedToggle = page.getByRole("button", { name: /(Show|Showing) only clients with a paused repeating job occurrence/i });
       await expect(pausedToggle).toBeVisible({ timeout: 15_000 });
       await pausedToggle.click();
       // The paused-services client remains visible; the un-paused one is hidden.

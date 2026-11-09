@@ -616,7 +616,7 @@ export default function ClientsTab({ me, scope }: ClientsTabProps) {
             variant={pausedOnly ? "solid" : "outline"}
             px="2"
             onClick={() => setPausedOnly(!pausedOnly)}
-            title={pausedOnly ? "Showing only clients with a paused repeating service" : "Show only clients with a paused repeating service"}
+            title={pausedOnly ? "Showing only clients with a paused repeating job occurrence" : "Show only clients with a paused repeating job occurrence"}
             css={pausedOnly ? {
               background: "var(--chakra-colors-yellow-subtle)",
               color: "var(--chakra-colors-yellow-fg)",
@@ -905,7 +905,7 @@ export default function ClientsTab({ me, scope }: ClientsTabProps) {
                         title={
                           (c.pausedRepeatingCount ?? 0) > 0
                             ? `Open this client's job services — ${c.pausedRepeatingCount} repeating ${(c.pausedRepeatingCount ?? 0) === 1 ? "service" : "services"} currently paused`
-                            : "Open this client's job services to pause or resume a repeating service"
+                            : "Open this client's job services to pause or resume a repeating job occurrence"
                         }
                       >
                         <Wrench size={12} />

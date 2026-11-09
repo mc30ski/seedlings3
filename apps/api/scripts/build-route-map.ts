@@ -80,7 +80,7 @@ const isEnt = (g: string) => g.includes(".");
 const entNames = [...groups.keys()].filter(isEnt).sort();
 const bucketNames = [OWNERSHIP, CLIENT_PORTAL, PUBLIC, SYSTEM].filter((b) => groups.has(b));
 
-const out: string[] = [...preamble];
+const sections: string[] = [];
 let total = 0;
 for (const name of [...entNames, ...bucketNames]) {
   const rows = [...groups.get(name)!]
@@ -88,10 +88,39 @@ for (const name of [...entNames, ...bucketNames]) {
     .filter((v, i, a) => a.indexOf(v) === i)
     .sort();
   total += rows.length;
-  out.push(`## ${name}  (${rows.length})`, "| | |", "|---|---|", ...rows, "");
+  sections.push(`## ${name}  (${rows.length})`, "| | |", "|---|---|", ...rows, "");
 }
 
-const next = out.join("\n").replace(/\n+$/, "\n");
+/**
+ * THE ONE SENTENCE OF PROSE THIS SCRIPT DOES OWN.
+ *
+ * Everything else above the first group header is human commentary and is
+ * preserved untouched — see WHAT IT PRESERVES above. This line is different
+ * because a GATE READS IT: permissions-docs-build-gate asserts that the
+ * number it states equals the rows present ("the map must state its own
+ * count"). Leaving it to a human meant every route added broke the build
+ * one step later, in a file the author had not edited, with a message about
+ * a count rather than about their route. Both numbers are already in hand
+ * here, so the generator writes them.
+ *
+ * `0 unmapped` is true by construction: every route lands in a group or one
+ * of the four buckets, so there is nothing left over to count.
+ */
+const COUNTS_LINE = /^\d+ distinct method\+path pairs, \d+ unmapped, \d+ entitlements\.$/;
+const preambleWithCounts = preamble.map((l) =>
+  COUNTS_LINE.test(l)
+    ? `${total} distinct method+path pairs, 0 unmapped, ${entNames.length} entitlements.`
+    : l,
+);
+if (!preamble.some((l) => COUNTS_LINE.test(l))) {
+  console.error(
+    "the counts paragraph is missing or has changed shape — a gate asserts it " +
+      "matches the row count, so it cannot be silently skipped",
+  );
+  process.exit(1);
+}
+
+const next = [...preambleWithCounts, ...sections].join("\n").replace(/\n+$/, "\n");
 if (process.argv.includes("--check")) {
   if (next !== existing) {
     console.error("route map is STALE — run: npx tsx scripts/build-route-map.ts");

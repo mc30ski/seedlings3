@@ -185,8 +185,8 @@ export default function CrewsTab({ scope }: CrewsTabProps) {
     <Box w="full" pb={8}>
       <TabExplainer explainerId="seedlings:crewsTab:guideOpen:manage">
         <ExplainerText>
-          Named teams that get assigned to jobs together, so a recurring visit does not have to
-          be staffed one person at a time. Every crew has a <Em>claimer</Em> — the person who
+          Named teams that get assigned to jobs together, so a repeating job occurrence does not
+          have to be staffed one person at a time. Every crew has a <Em>claimer</Em> — the person who
           takes responsibility for the job — and members working alongside them.
         </ExplainerText>
         <ExplainerText>
@@ -1018,8 +1018,8 @@ function WorkerMyCrews() {
     <Box w="full" pb={8}>
       <TabExplainer explainerId="seedlings:crewsTab:guideOpen:member">
         <ExplainerText>
-          Named teams that get assigned to jobs together, so a recurring visit does not have to
-          be staffed one person at a time. Every crew has a <Em>claimer</Em> — the person who
+          Named teams that get assigned to jobs together, so a repeating job occurrence does not
+          have to be staffed one person at a time. Every crew has a <Em>claimer</Em> — the person who
           takes responsibility for the job — and members working alongside them.
         </ExplainerText>
         <ExplainerText>

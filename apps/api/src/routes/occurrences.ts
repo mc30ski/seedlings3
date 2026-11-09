@@ -32,7 +32,7 @@ import { isFixedAsset, loadFixedAssetMinCost } from "../services/exports";
 import { cutoffWhere, expensesIncludeWithCutoff, occurrenceWorkDateCutoff, paymentIncludeWithCutoff, paymentSplitCutoffWhere, resolveCutoff } from "../lib/businessStartCutoff";
 import { makeGuards } from "../lib/routeGuards";
 import { syncOccurrencePortfolios } from "../lib/occurrencePortfolio";
-import { portfolioWhere, portfolioWhereVia, withPortfolio } from "../lib/portfolioScope";
+import { occurrencePortfolioWhere, portfolioWhere, portfolioWhereVia, withPortfolio } from "../lib/portfolioScope";
 import { WORKER_TYPES, classify, isFeeable, isW2, isWorkerType, rateForProjection, type WorkerType } from "@repo/money";
 import { currentUserId, enrichSyncTasks, nextRecurrenceDate, occInEditableState } from "./_shared";
 import { fetchWeatherAlerts } from "../services/weatherAlerts";
@@ -58,6 +58,11 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
   const req_scheduleContribute = requires("schedule.contribute");
   const req_scheduleManage = requires("schedule.manage");
   const req_scheduleView = requires("schedule.view");
+  // "See every visit, not only the ones you are on" — the whole-book read,
+  // which is exactly what the Repeating table is. NOT `schedule.view`: that
+  // is held by every field worker, and a book-wide list of which customers
+  // are on hold is not a field worker's screen.
+  const req_scheduleViewAll = requires("schedule.view-all");
   const req_timeApprove = requires("time.approve");
   const req_workClaim = requires("work.claim");
   const req_workComplete = requires("work.complete");
@@ -686,6 +691,60 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
       );
     },
   );
+  // ── The Repeating tab ───────────────────────────────────────────────────
+  //
+  // One list of every live repeating stream, and the two selection writes
+  // behind it. See services/repeatingStreams.ts for why the writes loop the
+  // per-occurrence path instead of recording that a batch happened.
+  //
+  // THE READ IS WIDER THAN THE WRITE, on purpose. `schedule.view-all` is an
+  // oversight read — the live book has a role holding it without
+  // `schedule.manage` — so the table renders for somebody who cannot touch
+  // it, and the actions gate separately below.
+  app.get("/repeating-streams", req_scheduleViewAll, async (req: any) => {
+    const { listRepeatingStreams } = await import("../services/repeatingStreams");
+    return listRepeatingStreams(
+      occurrencePortfolioWhere(req.principal, "schedule.view-all"),
+    );
+  });
+  // Hold a selection of streams under one reason. Per-row outcomes, because
+  // a green toast over two silent failures is how a selection lies.
+  app.post("/repeating-streams/pause", req_scheduleManage, async (req: any) => {
+    const body = req.body || {};
+    const reasonCode = typeof body.reasonCode === "string" ? body.reasonCode.trim() : "";
+    const reason = typeof body.reason === "string" ? body.reason : null;
+    const reminderAt = body.reminderAt ? parseUserDate(String(body.reminderAt)) : null;
+    if (reminderAt && Number.isNaN(reminderAt.getTime())) {
+      throw app.httpErrors.badRequest("reminderAt is not a valid date.");
+    }
+    const { pauseSelection } = await import("../services/repeatingStreams");
+    return pauseSelection(
+      await currentUserId(req),
+      body.occurrenceIds,
+      { reasonCode, reason, reminderAt },
+      // SCOPED ON THE WRITE'S OWN CAPABILITY, not the read's. A territorial
+      // grant of `schedule.manage` must bound what this can touch even for
+      // somebody whose `schedule.view-all` is wider.
+      occurrencePortfolioWhere(req.principal, "schedule.manage"),
+    );
+  });
+  // Restart a selection. `startAt` omitted means each stream steps forward
+  // on its own cadence — the default, because one shared date drops the
+  // whole book onto one week.
+  app.post("/repeating-streams/resume", req_scheduleManage, async (req: any) => {
+    const body = req.body || {};
+    const startAt = body.startAt ? parseUserDate(String(body.startAt)) : null;
+    if (startAt && Number.isNaN(startAt.getTime())) {
+      throw app.httpErrors.badRequest("startAt is not a valid date.");
+    }
+    const { resumeSelection } = await import("../services/repeatingStreams");
+    return resumeSelection(
+      await currentUserId(req),
+      body.occurrenceIds,
+      { startAt },
+      occurrencePortfolioWhere(req.principal, "schedule.manage"),
+    );
+  });
   // Delete a canceled occurrence permanently
   app.delete(
     "/occurrences/:occurrenceId",

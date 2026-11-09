@@ -140,14 +140,27 @@ export function fmtDateTime(d: string | Date | null | undefined): string {
 }
 
 /** Format a date with weekday in business timezone. Same shape-agnostic
- *  behavior as fmtDate. */
-export function fmtDateWeekday(d: string | Date | null | undefined, opts?: { year?: boolean }): string {
+ *  behavior as fmtDate.
+ *
+ *  `short` abbreviates the WEEKDAY only — "Wed, Nov 11" rather than
+ *  "Wednesday, Nov 11". The month is already short in both, so this is the
+ *  one lever that shortens the string without losing a field.
+ *
+ *  It lives here rather than as a `.slice(0, 3)` at the callsite because a
+ *  weekday is a locale's to abbreviate, not ours: Intl knows that "Thursday"
+ *  shortens to "Thu" and that other locales do not simply take three
+ *  letters. The same reasoning as every other formatter in this file — see
+ *  the note on fmtDateShort about local redefinitions. */
+export function fmtDateWeekday(
+  d: string | Date | null | undefined,
+  opts?: { year?: boolean; short?: boolean },
+): string {
   if (!d) return "—";
   const instant = toDisplayInstant(d);
   if (!instant) return "—";
   return instant.toLocaleDateString("en-US", {
     timeZone: BIZ_TZ,
-    weekday: "long",
+    weekday: opts?.short ? "short" : "long",
     month: "short",
     day: "numeric",
     ...(opts?.year ? { year: "numeric" } : {}),
