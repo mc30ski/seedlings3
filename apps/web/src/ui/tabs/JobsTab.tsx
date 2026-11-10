@@ -11187,7 +11187,15 @@ export default function JobsTab({
                   disabled={!reminderDate}
                   onClick={() => {
                     if (reminderDialogOccId && reminderDate) {
-                      void setReminder(reminderDialogOccId, reminderDate + "T13:00:00Z", reminderNote);
+                      // 9am ET, resolved per date. It was `+ "T13:00:00Z"` — a
+                      // hard-coded UTC hour, which is 9am EDT but 8am EST, so
+                      // every reminder set in summer fired an hour early once
+                      // the clocks went back.
+                      void setReminder(
+                        reminderDialogOccId,
+                        bizInstantFromEtParts(reminderDate as EtDateKey, "09:00"),
+                        reminderNote,
+                      );
                       setReminderDialogOccId(null);
                     }
                   }}

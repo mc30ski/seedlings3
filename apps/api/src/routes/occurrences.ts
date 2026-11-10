@@ -602,7 +602,11 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
         );
       }
       const reason = typeof body.reason === "string" ? body.reason : null;
-      const reminderAt = body.reminderAt ? new Date(body.reminderAt) : null;
+      // Same trap as `newStartAt` below: this is an <input type="date">, so
+      // a bare YYYY-MM-DD, and `new Date` reads it as UTC midnight — the
+      // previous day in ET. The reminder came due a day early, which also
+      // moved the "N to review" count at the boundary.
+      const reminderAt = body.reminderAt ? parseUserDate(String(body.reminderAt)) : null;
       const { pauseStream } = await import("../services/occurrenceStreamPause");
       return pauseStream(
         await currentUserId(req),
@@ -629,7 +633,7 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
         opts.reason = typeof body.reason === "string" ? body.reason : null;
       }
       if ("reminderAt" in body) {
-        opts.reminderAt = body.reminderAt ? new Date(body.reminderAt) : null;
+        opts.reminderAt = body.reminderAt ? parseUserDate(String(body.reminderAt)) : null;
       }
       const { updateStreamPause } = await import("../services/occurrenceStreamPause");
       return updateStreamPause(
@@ -649,7 +653,17 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
       if (!body.newStartAt) {
         throw app.httpErrors.badRequest("newStartAt is required.");
       }
-      const newStartAt = new Date(body.newStartAt);
+      // `parseUserDate`, NOT `new Date`. The dialog sends a bare YYYY-MM-DD
+      // (it is an <input type="date">, pre-filled from `bizAddDays`), and
+      // `new Date("2026-11-24")` is UTC midnight — which is the TWENTY-THIRD
+      // in ET. Every resume from a card put the visit back on the schedule
+      // ONE DAY EARLY, silently, and the operator had no way to see it: the
+      // date they picked and the date the card then showed were a day apart
+      // only if they went back and looked.
+      //
+      // Found by an e2e asserting a 14-day service restarts one cadence on
+      // and getting 13.
+      const newStartAt = parseUserDate(String(body.newStartAt));
       if (Number.isNaN(newStartAt.getTime())) {
         throw app.httpErrors.badRequest("newStartAt is not a valid date.");
       }
@@ -705,44 +719,12 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
     const { listRepeatingStreams } = await import("../services/repeatingStreams");
     return listRepeatingStreams(
       occurrencePortfolioWhere(req.principal, "schedule.view-all"),
-    );
-  });
-  // Hold a selection of streams under one reason. Per-row outcomes, because
-  // a green toast over two silent failures is how a selection lies.
-  app.post("/repeating-streams/pause", req_scheduleManage, async (req: any) => {
-    const body = req.body || {};
-    const reasonCode = typeof body.reasonCode === "string" ? body.reasonCode.trim() : "";
-    const reason = typeof body.reason === "string" ? body.reason : null;
-    const reminderAt = body.reminderAt ? parseUserDate(String(body.reminderAt)) : null;
-    if (reminderAt && Number.isNaN(reminderAt.getTime())) {
-      throw app.httpErrors.badRequest("reminderAt is not a valid date.");
-    }
-    const { pauseSelection } = await import("../services/repeatingStreams");
-    return pauseSelection(
-      await currentUserId(req),
-      body.occurrenceIds,
-      { reasonCode, reason, reminderAt },
-      // SCOPED ON THE WRITE'S OWN CAPABILITY, not the read's. A territorial
-      // grant of `schedule.manage` must bound what this can touch even for
-      // somebody whose `schedule.view-all` is wider.
-      occurrencePortfolioWhere(req.principal, "schedule.manage"),
-    );
-  });
-  // Restart a selection. `startAt` omitted means each stream steps forward
-  // on its own cadence — the default, because one shared date drops the
-  // whole book onto one week.
-  app.post("/repeating-streams/resume", req_scheduleManage, async (req: any) => {
-    const body = req.body || {};
-    const startAt = body.startAt ? parseUserDate(String(body.startAt)) : null;
-    if (startAt && Number.isNaN(startAt.getTime())) {
-      throw app.httpErrors.badRequest("startAt is not a valid date.");
-    }
-    const { resumeSelection } = await import("../services/repeatingStreams");
-    return resumeSelection(
-      await currentUserId(req),
-      body.occurrenceIds,
-      { startAt },
-      occurrencePortfolioWhere(req.principal, "schedule.manage"),
+      // CONTACT DETAILS ARE A SECOND QUESTION. The route is guarded on
+      // `schedule.view-all` — an oversight read over the calendar — and
+      // seeing every visit is not the same trust as holding every
+      // customer's phone number. `callerCan` rather than a fresh lookup, so
+      // it honours the active perspective.
+      callerCan(req, "clients.view"),
     );
   });
   // Delete a canceled occurrence permanently
@@ -1101,7 +1083,7 @@ Respond ONLY with valid JSON in this exact format:
     const data: any = {};
     if (body.title !== undefined) data.title = String(body.title).trim();
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
-    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.startAt !== undefined) data.startAt = parseUserDate(String(body.startAt));
     if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
     return prisma.$transaction(async (tx) => {
       const updated = await tx.jobOccurrence.update({ where: { id }, data });
@@ -1189,7 +1171,7 @@ Respond ONLY with valid JSON in this exact format:
     const data: any = {};
     if (body.title !== undefined) data.title = String(body.title).trim();
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
-    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.startAt !== undefined) data.startAt = parseUserDate(String(body.startAt));
     if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
     return prisma.$transaction(async (tx) => {
       const updated = await tx.jobOccurrence.update({ where: { id }, data });
@@ -3232,7 +3214,7 @@ Respond ONLY with valid JSON in this exact format:
     const data: any = {};
     if (body.title !== undefined) data.title = String(body.title).trim();
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
-    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.startAt !== undefined) data.startAt = parseUserDate(String(body.startAt));
     if (body.linkedOccurrenceId !== undefined) data.linkedOccurrenceId = body.linkedOccurrenceId || null;
     return prisma.$transaction(async (tx) => {
       const updated = await tx.jobOccurrence.update({ where: { id }, data });
@@ -3318,7 +3300,7 @@ Respond ONLY with valid JSON in this exact format:
     const data: any = {};
     if (body.title !== undefined) data.title = String(body.title).trim();
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
-    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.startAt !== undefined) data.startAt = parseUserDate(String(body.startAt));
     if (body.linkedOccurrenceId !== undefined) data.linkedOccurrenceId = body.linkedOccurrenceId || null;
     if (body.isHighPriority !== undefined) data.isHighPriority = !!body.isHighPriority;
     return prisma.$transaction(async (tx) => {
@@ -3384,7 +3366,7 @@ Respond ONLY with valid JSON in this exact format:
     const data: any = {};
     if (body.title !== undefined) data.title = String(body.title).trim();
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
-    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.startAt !== undefined) data.startAt = parseUserDate(String(body.startAt));
     if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
     const priorClientIds = Array.isArray(body.clientIds)
       ? (await prisma.followupClient.findMany({ where: { occurrenceId: id }, select: { clientId: true } })).map((r) => r.clientId)
@@ -3492,7 +3474,7 @@ Respond ONLY with valid JSON in this exact format:
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
     const body = req.body || {};
-    const remindAt = new Date(body.remindAt);
+    const remindAt = parseUserDate(String(body.remindAt));
     if (isNaN(remindAt.getTime())) throw app.httpErrors.badRequest("Invalid remindAt date");
     const note = body.note ? String(body.note) : null;
 
@@ -3516,7 +3498,7 @@ Respond ONLY with valid JSON in this exact format:
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
     const body = req.body || {};
-    const remindAt = new Date(body.remindAt);
+    const remindAt = parseUserDate(String(body.remindAt));
     if (isNaN(remindAt.getTime())) throw app.httpErrors.badRequest("Invalid remindAt date");
 
     await prisma.reminder.updateMany({

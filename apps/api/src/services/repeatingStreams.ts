@@ -31,22 +31,15 @@
 import { JobOccurrenceStatus, Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { withPortfolio } from "../lib/portfolioScope";
-import { etFormatDate } from "../lib/dates";
+import { etDaysBetween, etFormatDate, etToday, type EtDateKey } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import { computeResumeStartAt } from "./jobs";
+import { computeNextOccurrenceStart } from "./payments";
+import { describePaymentWait, type PaymentWait } from "../lib/paymentWait";
 import { ACTIVE_STREAM_STATUSES, listPauseReasons } from "./pauseReasons";
 import { pauseStream, resumeStream } from "./occurrenceStreamPause";
 
-/**
- * The most occurrences one selection may carry.
- *
- * The live book is 57 streams, so this is headroom rather than a limit
- * anybody will meet. It is here because the handler loops, and a loop whose
- * length comes from the request body is a loop the caller sizes.
- */
-export const MAX_SELECTION = 200;
-
-/** Why a row cannot be held right now, in the operator's words.
+/** Why a row's repeating cannot be paused right now, in the operator's words.
  *
  *  `pauseStream` refuses anything but SCHEDULED, and it is right to: an
  *  in-flight or unpaid visit is work that has already happened or is
@@ -64,15 +57,15 @@ function blockedReasonFor(status: JobOccurrenceStatus): string | null {
       // created when the payment is approved — so nothing is running away
       // today. It is not held EITHER, and that is the trap: settle the
       // payment in December and a fresh visit is scheduled mid-winter.
-      return "Awaiting payment — settle or write off the visit first, then hold the new one.";
+      return "Awaiting payment — settle or write off the visit first, then pause the new one.";
     case JobOccurrenceStatus.IN_PROGRESS:
-      return "Someone is on site. Hold it once the visit is finished.";
+      return "Someone is on site. Pause it once the visit is finished.";
     case JobOccurrenceStatus.PAUSED:
       // Two different "paused" across two enums; see the note in
       // pauseReasons.ts. This one is a worker's timer mid-visit.
-      return "A worker has their timer paused mid-visit. Hold it once the visit is finished.";
+      return "A worker has their timer paused mid-visit. Pause the repeating once the visit is finished.";
     default:
-      return "Not in a state that can be held.";
+      return "Not in a state that can be paused.";
   }
 }
 
@@ -138,6 +131,103 @@ export type RepeatingStreamRow = {
   /** Reminder date has arrived or passed — the row is asking for an answer. */
   reminderDue: boolean;
   /**
+   * PENDING_PAYMENT only — when the wait for money began.
+   *
+   * ANCHORED ON `completedAt`, NOT ON THE INVOICE, and the live data is what
+   * settles it. The money clock starts when the work was finished: that is
+   * the moment the visit became a receivable, whether or not anybody got
+   * round to asking for the money. `paymentRequestFirstSentAt` reads like the
+   * truer anchor and is documented on the model as powering an "originally
+   * requested N days ago" display, but it is null for 10 of the 12 pending
+   * rows in dev — a clock hung on it would show nothing at all on most of the
+   * list, and nothing precisely where the operator most needs a number: the
+   * visit nobody ever invoiced. `completedAt` is non-null on every pending
+   * row in both databases, and the schema keeps it that way deliberately
+   * (`updateOccurrence` stamps it on any transition into a completion state,
+   * because a null one hid completed work from the customer's history).
+   *
+   * The later timestamps are kept as fallbacks for a legacy row, in the
+   * order they would have been written.
+   */
+  awaitingPaymentSince: string | null;
+  /** Whole ET days since `awaitingPaymentSince`. 0 = finished today. */
+  awaitingPaymentDays: number | null;
+  /**
+   * WHEN WE LAST ASKED FOR THE MONEY, and how long ago.
+   *
+   * The other half of the pair, and the half Money → Awaiting payment was
+   * already showing. A visit finished 27 days ago and invoiced this morning
+   * is a different problem from one invoiced 27 days ago and ignored, and
+   * the waiting number alone cannot tell them apart — so the two screens
+   * disagreed with each other until both carried both numbers. The rule is
+   * `lib/paymentWait.ts`, shared rather than reimplemented.
+   */
+  paymentRequestedAt: string | null;
+  paymentRequestedDays: number | null;
+  /** The ORIGINAL ask, unchanged by re-sends, plus how many re-sends. */
+  paymentFirstRequestedAt: string | null;
+  paymentFirstRequestedDays: number | null;
+  paymentResendCount: number;
+  /**
+   * Nobody has asked for this money yet — the operator's move, not the
+   * client's. Nine of the twelve pending rows in dev, and Money → Awaiting
+   * payment cannot show them at all because it lists invoices that went out.
+   */
+  paymentNeverRequested: boolean;
+  /**
+   * The ET day this stream's next visit was due, when the stream has stopped
+   * producing them. Null while the stream is still running or held.
+   */
+  nextVisitDueOn: EtDateKey | null;
+  /**
+   * How many days past `nextVisitDueOn` we are — null when not expired.
+   *
+   * WHAT "EXPIRED" MEANS HERE is the app's existing meaning, borrowed whole
+   * from the next-visit ghost: the next visit of this stream came due and was
+   * never created, so the stream has silently stopped. It is a STALL, not a
+   * configuration — no job carries an end date, so there is nothing else the
+   * word could mean.
+   *
+   * It is the other half of the awaiting-payment clock rather than a second
+   * subject. The next visit is only created when the current one closes, so a
+   * payment left sitting past one cadence period IS the stream stopping: 8 of
+   * the 9 expired streams in production are awaiting payment. The pending
+   * number says how long nobody acted; this one says what it has cost.
+   *
+   * Projected with `computeNextOccurrenceStart` and read off its
+   * `rawStartAt` — the same function the renewer uses, and the field its own
+   * doc comment reserves for "is this late, and by how much?", because
+   * `startAt` is a display date that snaps an overdue visit to today and so
+   * can never be late.
+   */
+  expiredDays: number | null;
+  /**
+   * Somebody with `schedule.manage` has already silenced this stall.
+   *
+   * Carried rather than obeyed. Suppressing a next-visit warning is what
+   * buys silence from the header alert and the Today chip, and re-shouting
+   * here would undo a decision the operator deliberately made. But this
+   * screen IS the twice-a-year review of the whole book, and hiding the row
+   * from the one place it is meant to be reviewed is the worse failure. So it
+   * is still shown, and shown quietly.
+   */
+  expirySuppressed: boolean;
+  /**
+   * The customer's primary contact, for messaging them from the row.
+   *
+   * NULL UNLESS THE CALLER HOLDS `clients.view` — "See customers, properties
+   * and contacts", which is the capability that owns contact details
+   * everywhere else. This table opens on `schedule.view-all`, an oversight
+   * READ over the calendar, and the two are genuinely separate: the live
+   * book has a role that can see every visit without being trusted with
+   * every customer's phone number. Omitted server-side rather than hidden in
+   * the UI, because a field the client never receives cannot be read out of
+   * a network tab.
+   */
+  contactName: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  /**
    * Where this stream would restart if resumed, on its OWN rhythm.
    *
    * Computed by `computeResumeStartAt`, the same function the write path
@@ -149,6 +239,28 @@ export type RepeatingStreamRow = {
    */
   suggestedResumeAt: string | null;
 };
+
+/** The one person to message about this stream, or nulls.
+ *
+ *  `nickname` wins because it is what the operator actually calls them, and
+ *  a message that opens with a name they do not use reads as a mail merge. */
+function contactFor(client: unknown): {
+  contactName: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+} {
+  const c = (client as { contacts?: Array<Record<string, string | null>> } | null)?.contacts?.[0];
+  if (!c) return { contactName: null, contactPhone: null, contactEmail: null };
+  const name =
+    c.nickname?.trim() ||
+    [c.firstName, c.lastName].filter(Boolean).join(" ").trim() ||
+    null;
+  return {
+    contactName: name,
+    contactPhone: c.phone?.trim() || null,
+    contactEmail: c.email?.trim() || null,
+  };
+}
 
 /**
  * Every live repeating stream the caller may see.
@@ -166,6 +278,8 @@ export type RepeatingStreamRow = {
  */
 export async function listRepeatingStreams(
   portfolioWhere: Record<string, unknown> = {},
+  /** `clients.view` — see the note on `contactName`. Default closed. */
+  includeContact = false,
 ): Promise<RepeatingStreamRow[]> {
   const rows = await prisma.jobOccurrence.findMany({
     where: withPortfolio<Prisma.JobOccurrenceWhereInput>(
@@ -181,9 +295,24 @@ export async function listRepeatingStreams(
       id: true,
       status: true,
       startAt: true,
+      // For the next-visit projection: `computeNextOccurrenceStart` carries
+      // the visit's own length forward, and honours a one-time date shift
+      // somebody with `money.approve` set on the source occurrence.
+      endAt: true,
+      nextStartOverride: true,
       title: true,
       jobType: true,
       frequencyDays: true,
+      // A one-off is excluded on these two, not on cadence — see the
+      // membership pass below.
+      workflow: true,
+      isOneOff: true,
+      // The money clock, and its legacy fallbacks.
+      completedAt: true,
+      paymentRequestFirstSentAt: true,
+      paymentRequestSentAt: true,
+      paymentRequestResendCount: true,
+      nextVisitWarningSuppressedAt: true,
       streamPausedAt: true,
       streamPauseReason: true,
       streamPauseReasonCode: true,
@@ -196,7 +325,34 @@ export async function listRepeatingStreams(
           property: {
             select: {
               displayName: true,
-              client: { select: { id: true, displayName: true } },
+              client: {
+                select: {
+                  id: true,
+                  displayName: true,
+                  // THE PRIMARY CONTACT, and only when the caller may see
+                  // one. Primary first, then oldest, matching how every
+                  // other surface picks "the person to call".
+                  ...(includeContact
+                    ? {
+                        contacts: {
+                          where: { status: "ACTIVE" as const },
+                          orderBy: [
+                            { isPrimary: "desc" as const },
+                            { createdAt: "asc" as const },
+                          ],
+                          take: 1,
+                          select: {
+                            firstName: true,
+                            lastName: true,
+                            nickname: true,
+                            phone: true,
+                            email: true,
+                          },
+                        },
+                      }
+                    : {}),
+                },
+              },
             },
           },
         },
@@ -214,14 +370,105 @@ export async function listRepeatingStreams(
     code ? reasons.find((r) => r.code === code)?.label ?? code : null;
 
   const now = new Date();
-  const out: RepeatingStreamRow[] = [];
-  for (const o of rows) {
-    const freq = o.frequencyDays ?? o.job?.frequencyDays ?? null;
-    // THE MEMBERSHIP TEST. Not repeating, not this table's business.
-    if (freq === null) continue;
-    if (!o.job) continue;
+  const today = etToday();
 
+  // ── PASS ONE: MEMBERSHIP. ─────────────────────────────────────────────
+  // Separated out because the expiry question below needs to know, for each
+  // stream, whether ANY visit of it is still in the future — which is one
+  // grouped query over the surviving jobs rather than a per-row read.
+  // The job is non-null by construction — the guard below drops the rows
+  // without one — and saying so in the type is what keeps the second pass
+  // free of non-null assertions.
+  type Candidate = Omit<(typeof rows)[number], "job"> & {
+    job: NonNullable<(typeof rows)[number]["job"]>;
+    _freq: number;
+  };
+  const candidates: Candidate[] = [];
+  for (const o of rows) {
+    if (!o.job) continue;
+    const freq = o.frequencyDays ?? o.job.frequencyDays ?? null;
+    // NOT REPEATING, NOT THIS TABLE'S BUSINESS.
+    if (freq === null) continue;
+    // A ONE-OFF IS NOT A STREAM, however its job happens to be configured.
+    //
+    // Cadence alone was the test, and cadence resolves through the job — so a
+    // ONE_OFF occurrence carrying no cadence of its own, on a job that still
+    // carries `frequencyDays: 14` from when it did repeat, resolved to 14 and
+    // was listed as a repeating stream. PRODUCTION HAD FIVE OF THEM on a
+    // screen whose own first paragraph says one-off visits are not listed,
+    // and whose whole premise is that every row has a future to hold.
+    //
+    // This is the identical trap `listNextOccurrenceGhosts` already carries a
+    // comment about: it advertised next visits for one-offs for the same
+    // reason, and excludes every non-STANDARD workflow for the same fix. The
+    // dev database is all STANDARD, which is why nothing here caught it.
+    if (o.workflow !== "STANDARD" || o.isOneOff) continue;
+    candidates.push({ ...o, job: o.job, _freq: freq });
+  }
+
+  // Does this stream have any visit still ahead of it? Asked of ALL of the
+  // job's occurrences, not just the active ones this table lists, so the
+  // answer does not change with the status filter above. CANCELED and
+  // ARCHIVED are excluded because a cancelled future visit is not a visit —
+  // the same two the ghost path treats as ending the series.
+  const latestByJob = new Map<string, Date | null>();
+  const jobIds = [...new Set(candidates.map((o) => o.job.id))];
+  if (jobIds.length > 0) {
+    const maxes = await prisma.jobOccurrence.groupBy({
+      by: ["jobId"],
+      where: {
+        jobId: { in: jobIds },
+        status: { notIn: [JobOccurrenceStatus.CANCELED, JobOccurrenceStatus.ARCHIVED] },
+      },
+      _max: { startAt: true },
+    });
+    for (const m of maxes) if (m.jobId) latestByJob.set(m.jobId, m._max.startAt);
+  }
+
+  // ── PASS TWO: THE ROWS. ───────────────────────────────────────────────
+  const out: RepeatingStreamRow[] = [];
+  for (const o of candidates) {
+    const freq = o._freq;
     const held = o.status === JobOccurrenceStatus.STREAM_PAUSED;
+
+    // BOTH MONEY CLOCKS, from the shared rule. Only for a row that is
+    // actually waiting on money — a scheduled visit has no receivable.
+    const wait: PaymentWait | null =
+      o.status === JobOccurrenceStatus.PENDING_PAYMENT
+        ? describePaymentWait(o, today)
+        : null;
+
+    // HAS THE STREAM STOPPED PRODUCING VISITS?
+    //
+    // Three conditions, and each one is load-bearing:
+    //
+    //   • Not held. A held stream is a DELIBERATE stop with a reason and a
+    //     check-back date attached. Calling that expired would paint the
+    //     operator's own decision as a failure — and it is the one thing this
+    //     whole screen exists to do.
+    //   • This row is the stream's LATEST visit. A stream can briefly show
+    //     two rows here (a payment reverted after the next visit was already
+    //     started, so the next one survived the revert's cleanup). Projecting
+    //     from the older of them would date the stall from the wrong visit.
+    //   • That latest visit is in the past. If anything is still ahead, the
+    //     stream is running and there is nothing to report.
+    const latest = latestByJob.get(o.job.id) ?? null;
+    const isLatest = !!latest && !!o.startAt && latest.getTime() === o.startAt.getTime();
+    let nextVisitDueOn: EtDateKey | null = null;
+    let expiredDays: number | null = null;
+    if (!held && isLatest && latest!.getTime() <= now.getTime() && freq > 0) {
+      const { rawStartAt } = computeNextOccurrenceStart(
+        o.startAt,
+        o.endAt,
+        freq,
+        o.nextStartOverride ?? null,
+      );
+      nextVisitDueOn = etFormatDate(rawStartAt);
+      const daysUntilDue = etDaysBetween(today, nextVisitDueOn);
+      // Negative = the day it was due has passed. Due today or later is a
+      // stream that is merely between visits, which is its normal state.
+      if (daysUntilDue < 0) expiredDays = -daysUntilDue;
+    }
     out.push({
       id: o.id,
       jobId: o.job.id,
@@ -241,6 +488,18 @@ export async function listRepeatingStreams(
       streamPausedAt: o.streamPausedAt?.toISOString() ?? null,
       streamResumeReminderAt: o.streamResumeReminderAt?.toISOString() ?? null,
       reminderDue: !!o.streamResumeReminderAt && o.streamResumeReminderAt <= now,
+      awaitingPaymentSince: wait?.waitingSince?.toISOString() ?? null,
+      awaitingPaymentDays: wait?.waitingDays ?? null,
+      paymentRequestedAt: wait?.requestedAt?.toISOString() ?? null,
+      paymentRequestedDays: wait?.requestedDays ?? null,
+      paymentFirstRequestedAt: wait?.firstRequestedAt?.toISOString() ?? null,
+      paymentFirstRequestedDays: wait?.firstRequestedDays ?? null,
+      paymentResendCount: wait?.resendCount ?? 0,
+      paymentNeverRequested: wait ? wait.neverRequested : false,
+      nextVisitDueOn,
+      expiredDays,
+      expirySuppressed: !!o.nextVisitWarningSuppressedAt,
+      ...contactFor(o.job.property?.client),
       suggestedResumeAt:
         held && o.startAt && freq > 0
           ? etFormatDate(computeResumeStartAt(o.startAt, freq, now))
@@ -250,188 +509,24 @@ export async function listRepeatingStreams(
   return out;
 }
 
-/** What happened to one occurrence in a selection. */
-export type SelectionOutcome = {
-  occurrenceId: string;
-  ok: boolean;
-  /** Operator-facing, and only when `ok` is false. */
-  message?: string;
-};
-
-export type SelectionResult = {
-  applied: number;
-  refused: number;
-  outcomes: SelectionOutcome[];
-};
-
 /**
- * Narrow a selection of ids to the ones this caller may actually act on.
+ * THE SELECTION WRITE PATHS WERE HERE, AND WERE REMOVED 2026-11-10.
  *
- * THIS IS THE SECURITY BOUNDARY OF THE SELECTION PATH, and it exists because
- * `pauseStream` has no idea who is calling. Every other caller of it reaches
- * it through a route holding one occurrence id that the operator had on
- * screen; this one takes a list from the request body. A portfolio-limited
- * holder could otherwise post an id from a district they cannot see and have
- * it written, because the write itself never asks.
+ * `pauseSelection` / `resumeSelection` (plus `withinScope`, which was their
+ * security boundary, and `MAX_SELECTION`) let Work → Repeating act on many
+ * ticked rows at once. They worked, and they were careful: per-row
+ * transactions, per-row outcomes, scoped against the caller's portfolios
+ * because the ids came from a request body.
  *
- * Returns the ids that survive, so the handler can refuse the rest by name
- * rather than failing the whole call.
+ * They went because the book is not big enough to need them — about forty
+ * pausable streams, which is one screenful. The operator: "we don't have
+ * enough that make it worth it for now. I can rethink it when there are many
+ * more clients."
+ *
+ * REMOVED, NOT LEFT UNREACHABLE. This module's own header explains what the
+ * feature it replaced got wrong, and part of that wrongness is still sitting
+ * on the Job model as two dead columns. A route nothing calls is the same
+ * debt in a different shape: it stays in the route map, it stays gated, and
+ * it is a write surface nobody exercises. `git log` has the whole thing, and
+ * `docs/features/repeating.md` records the design if it comes back.
  */
-async function withinScope(
-  occurrenceIds: string[],
-  portfolioWhere: Record<string, unknown>,
-): Promise<Set<string>> {
-  const rows = await prisma.jobOccurrence.findMany({
-    where: withPortfolio<Prisma.JobOccurrenceWhereInput>(
-      { id: { in: occurrenceIds } },
-      portfolioWhere,
-    ),
-    select: { id: true },
-  });
-  return new Set(rows.map((r) => r.id));
-}
-
-function validateSelection(occurrenceIds: unknown): string[] {
-  if (!Array.isArray(occurrenceIds) || occurrenceIds.length === 0) {
-    throw new ServiceError("INVALID", "Pick at least one repeating job occurrence.", 400);
-  }
-  const ids = [...new Set(occurrenceIds.map((x) => String(x)))];
-  if (ids.length > MAX_SELECTION) {
-    throw new ServiceError(
-      "INVALID",
-      `That is more than ${MAX_SELECTION} services at once. Narrow the filter and do it in passes.`,
-      400,
-    );
-  }
-  return ids;
-}
-
-/**
- * Hold every stream in the selection, under ONE reason.
- *
- * PER-ROW INDEPENDENT, deliberately. One transaction around all of them
- * would mean a single row whose status moved under the operator — a visit
- * started while they were choosing — rolls back twenty-eight good pauses and
- * reports nothing useful. Each row gets its own transaction (pauseStream
- * opens one) and its own outcome, and the caller is told which ones did not
- * take.
- *
- * SEQUENTIAL, not parallel: these are write transactions against a
- * serverless Postgres, and a selection is a twice-a-year action where being
- * right matters more than being quick.
- *
- * No audit row is written HERE. Each `pauseStream` writes its own, carrying
- * the reason, label, note and reminder; a sweep is already legible in the
- * trail as N rows with one actor and one timestamp. A batch-level row would
- * double-count every pause in it.
- */
-export async function pauseSelection(
-  currentUserId: string,
-  occurrenceIdsRaw: unknown,
-  opts: { reasonCode: string; reason?: string | null; reminderAt?: Date | null },
-  portfolioWhere: Record<string, unknown> = {},
-): Promise<SelectionResult> {
-  const ids = validateSelection(occurrenceIdsRaw);
-  if (!opts.reasonCode?.trim()) {
-    throw new ServiceError(
-      "INVALID",
-      "Pick a reason for pausing — it is what makes a paused service findable again.",
-      400,
-    );
-  }
-  const allowed = await withinScope(ids, portfolioWhere);
-
-  const outcomes: SelectionOutcome[] = [];
-  for (const id of ids) {
-    if (!allowed.has(id)) {
-      outcomes.push({ occurrenceId: id, ok: false, message: "Not found." });
-      continue;
-    }
-    try {
-      await pauseStream(currentUserId, id, opts);
-      outcomes.push({ occurrenceId: id, ok: true });
-    } catch (err) {
-      outcomes.push({
-        occurrenceId: id,
-        ok: false,
-        message: err instanceof ServiceError ? err.message : "Could not hold this one.",
-      });
-    }
-  }
-  return {
-    applied: outcomes.filter((o) => o.ok).length,
-    refused: outcomes.filter((o) => !o.ok).length,
-    outcomes,
-  };
-}
-
-/**
- * Restart every stream in the selection.
- *
- * TWO MODES, and the default is the one that does not pile the book up.
- * `startAt` set restarts them all on that date, which the operator may
- * genuinely want for a handful. Omitted, each stream steps forward from its
- * own last date by its own cadence until it lands today-or-later — the same
- * `computeResumeStartAt` the single-row path uses and the same date the
- * table showed before they committed.
- */
-export async function resumeSelection(
-  currentUserId: string,
-  occurrenceIdsRaw: unknown,
-  opts: { startAt?: Date | null },
-  portfolioWhere: Record<string, unknown> = {},
-): Promise<SelectionResult> {
-  const ids = validateSelection(occurrenceIdsRaw);
-  const allowed = await withinScope(ids, portfolioWhere);
-
-  // Cadence and current date per row, for the per-stream default. Read once
-  // rather than inside the loop.
-  const rows = await prisma.jobOccurrence.findMany({
-    where: { id: { in: [...allowed] } },
-    select: {
-      id: true,
-      startAt: true,
-      frequencyDays: true,
-      job: { select: { frequencyDays: true } },
-    },
-  });
-  const byId = new Map(rows.map((r) => [r.id, r]));
-
-  const now = new Date();
-  const outcomes: SelectionOutcome[] = [];
-  for (const id of ids) {
-    if (!allowed.has(id)) {
-      outcomes.push({ occurrenceId: id, ok: false, message: "Not found." });
-      continue;
-    }
-    const row = byId.get(id);
-    const freq = row?.frequencyDays ?? row?.job?.frequencyDays ?? null;
-    let startAt = opts.startAt ?? null;
-    if (!startAt) {
-      if (!row?.startAt || !freq || freq <= 0) {
-        outcomes.push({
-          occurrenceId: id,
-          ok: false,
-          message: "No cadence to restart on — pick a date instead.",
-        });
-        continue;
-      }
-      startAt = computeResumeStartAt(row.startAt, freq, now);
-    }
-    try {
-      await resumeStream(currentUserId, id, startAt);
-      outcomes.push({ occurrenceId: id, ok: true });
-    } catch (err) {
-      outcomes.push({
-        occurrenceId: id,
-        ok: false,
-        message: err instanceof ServiceError ? err.message : "Could not restart this one.",
-      });
-    }
-  }
-  return {
-    applied: outcomes.filter((o) => o.ok).length,
-    refused: outcomes.filter((o) => !o.ok).length,
-    outcomes,
-  };
-}

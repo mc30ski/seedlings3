@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-09-16T00:42:54.057Z
+  modified: 2026-11-10T19:00:00.000Z
 ---
 
 # Theming — 14 themes, and why a two-theme habit breaks them
@@ -71,6 +71,16 @@ light values.
    themes. *Gated.*
 2. **A raw ramp value or hex is one colour forever.** The title bar was
    `#dce5d0` and rendered identical sage in all 14. *Gated.*
+2b. **A HOST RECIPE CAN STRIP HALF A VARIANT (2026-11-10).** A Badge handed
+   to `Select.Trigger asChild` kept `solid`'s FOREGROUND and lost its
+   BACKGROUND — Chakra's trigger recipe overrode the fill — so the chip was
+   white text on a white ground. **Not ugly, ABSENT**, and the e2e read the
+   right string out of the DOM throughout because the text was there and
+   painted white. Fix: name BOTH halves explicitly (`{p}.solid` + `{p}.contrast`,
+   which themeTokens tunes as a pair) and pin back the height/border/fontSize
+   the recipe imposes. **Lesson: when a component wears another component's
+   trigger, measure the rendered element — a variant is not atomic.**
+
 3. **`solid` used as text.** *Gated.*
 4. **Adding a theme touches seven maps.** Miss one and it half-lands —
    Funkadelic shipped with the Light header because `buildSemanticColors`

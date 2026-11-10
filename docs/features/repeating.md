@@ -61,7 +61,7 @@ deliberately stopped.
 rules that fall out of that, and that the gate enforces:
 
 1. **No new state.** Nothing on this screen writes a column, a flag or an id
-   that records that a selection happened. The only writes are the ordinary
+   that records that a sweep happened. The only writes are the ordinary
    per-occurrence pause and resume.
 2. **No cascade.** The operator ticks rows they can see. Nothing is inferred
    from a customer, a portfolio or a date range.
@@ -87,21 +87,36 @@ because a one-off on this screen would have no action.
 The cadence fallback is why this cannot be a `where` clause on the Job alone,
 and why the filtering happens in the service after the read.
 
+### …but cadence alone is not enough (fixed 2026-11-10)
+
+A row must **also** be `workflow === "STANDARD"` and not carry the legacy
+`isOneOff` flag. Cadence resolves *through the job*, so a `ONE_OFF`
+occurrence carrying no cadence of its own, sitting on a job that still has
+`frequencyDays: 14` from when it did repeat, resolved to 14 and was listed as
+a repeating stream. **Production had five of them** — on a screen whose first
+paragraph tells the operator one-off visits are not listed.
+
+`listNextOccurrenceGhosts` carries a comment about the identical trap: it
+advertised next visits for one-offs for exactly this reason, and excludes
+every non-`STANDARD` workflow for exactly this fix. The dev database is all
+`STANDARD`, which is why no test and no amount of local clicking found it —
+it was found by counting production rows by workflow. Gated.
+
 ## States, and which can be acted on
 
 | Status | Shown as | Action |
 |---|---|---|
 | `SCHEDULED` | Scheduled | **Pause** |
-| `STREAM_PAUSED` | Held | **Resume**, **Edit pause** |
+| `STREAM_PAUSED` | Paused repeating | **Resume**, **Edit pause** |
 | `PENDING_PAYMENT` | Awaiting payment | none — blocked |
 | `IN_PROGRESS` | On site | none — blocked |
 | `PAUSED` | Timer paused | none — blocked |
 
 `pauseStream` refuses anything but `SCHEDULED` with a 409, and that refusal
 is the product rule, not an implementation limit: **settle the money first,
-then hold the visit that replaces it.** A blocked row is shown with its
-reason stated on the row and a **disabled** checkbox — it cannot be ticked.
-Letting it be ticked and refused at commit time teaches nothing.
+then pause the visit that replaces it.** A blocked row carries **no pause
+control at all**, and the State cell states the reason. Offering a control
+whose every click refuses teaches nothing.
 
 ### The `PENDING_PAYMENT` trap, stated out loud
 
@@ -116,6 +131,396 @@ before this screen existed nothing said so. The summary strip states the count
 to Money → Payments. Resolving it closes that visit and generates a new
 `SCHEDULED` one, which then appears here as pausable — **the end-of-season
 flow is deliberately two passes**: clear the blocked ones, then hold the rest.
+
+## The two clocks (added 2026-11-10)
+
+"Awaiting payment" reads the same at two days and at forty-five, and
+forty-five is the one that has already cost the stream its visits. Two numbers
+fix that, and they are **two halves of one story, not two features**.
+
+Both numbers come from **one rule in one file**,
+[`apps/api/src/lib/paymentWait.ts`](../../apps/api/src/lib/paymentWait.ts),
+and are drawn by **one component**,
+`apps/web/src/ui/components/PaymentWaitBadges.tsx`. Money → Awaiting payment
+and Work → Repeating both call both. That is not tidiness: the two screens
+asked the same question about the same rows and answered it differently, and
+a second copy is how they got there.
+
+### How long the money has been waiting
+
+`awaitingPaymentSince` / `awaitingPaymentDays`, `PENDING_PAYMENT` rows only.
+Rendered as "Waiting 23 days" (or "Finished today" at zero, because "Waiting
+0 days" is not a sentence).
+
+**Anchored on `completedAt`, not on the invoice.** The money clock starts when
+the work was finished: that is the moment the visit became a receivable,
+whether or not anybody got round to asking for the money.
+`paymentRequestFirstSentAt` reads like the truer anchor — the schema even
+documents it as powering an "originally requested N days ago" display, and
+nothing on the web had ever read it — but it is **null on 10 of the 12 pending
+rows in dev**. A clock hung on it shows nothing across most of the list, and
+nothing at all on the worst row in it: the visit nobody ever invoiced.
+`completedAt` is non-null on every pending row in both databases, and
+`updateOccurrence` keeps it that way on purpose (it stamps it on any
+transition into a completion state, because a null one hid finished work from
+the customer's own service history).
+
+Fallback order for a legacy row, in the order they would have been written:
+`completedAt ?? paymentRequestFirstSentAt ?? paymentRequestSentAt ?? startAt`.
+
+### …and when we last asked (2026-11-10)
+
+`paymentRequestedDays` / `paymentFirstRequestedDays` / `paymentResendCount` /
+`paymentNeverRequested`. Rendered beside the waiting badge as "Requested 2
+days ago".
+
+**The waiting badge is drawn first, deliberately.** A re-send moves
+"Requested" back to today while the visit has been unpaid for six weeks, so
+reading the resettable number first makes an old receivable look fresh. That
+is exactly what Money → Awaiting payment did when it showed only the invoice
+clock.
+
+**"Never requested" is its own state, not a missing number.** "Asked, no
+answer" is the client's move; "never asked" is yours. Nine of the twelve
+pending rows in dev are in this state, and **Money → Awaiting payment cannot
+show them at all** — `listOutstanding` selects on `paymentRequestSentAt != null`,
+so a visit nobody invoiced is invisible there by construction. Work →
+Repeating is the only screen that surfaces it.
+
+### What changed on the Money side
+
+`listOutstanding` gained `waitingSince` / `waitingDays`, and **lost its
+`date-handling-allow: elapsed-time` exemption**. It floored a millisecond
+difference, which is a different number from the calendar one: a request sent
+at 11pm yesterday was "0 days" by milliseconds and "1 day" by the calendar,
+so the operator read "Requested today" the following morning — and it
+disagreed with this screen, which counts calendar days. Both now use
+`describePaymentWait`.
+
+### When the repeating has expired
+
+`nextVisitDueOn` / `expiredDays` / `expirySuppressed`.
+
+**"Expired" is the app's existing word, borrowed whole from the next-visit
+ghost**: the stream's next visit came due and was never created, so the stream
+has silently stopped. It is a **stall, not a configuration** — no job carries
+an end date, so there is nothing else the word could mean here.
+
+This is the *consequence* of the clock above. The next visit is only created
+when the current one closes, so a payment left sitting past one cadence period
+**is** the stream stopping. In production on 2026-11-10: 9 expired streams,
+the oldest 31 days, **8 of the 9 awaiting payment**. The pending number says
+how long nobody acted; this one says what it cost.
+
+Three conditions, each load-bearing:
+
+| Condition | Why |
+|---|---|
+| **Not `STREAM_PAUSED`** | A paused stream stopped *on purpose*, with a reason and a reminder date. Calling that expired paints the operator's own decision as a failure — and it is the one thing this whole screen exists to do. |
+| **This row is the stream's latest visit** | A stream can briefly show two rows (a payment reverted after the next visit had already been started, so it survived the revert's cleanup). Projecting from the older one dates the stall from the wrong visit. Decided by one `groupBy` over *all* of the job's occurrences, `CANCELED`/`ARCHIVED` excluded — a cancelled future visit is not a visit. |
+| **That latest visit is in the past** | If anything is still ahead, the stream is running. A 29-day unpaid visit on a stream that kept going is *not* expired, and dev has exactly that row. |
+
+Projected with `computeNextOccurrenceStart` and read off **`rawStartAt`, never
+`startAt`** — `startAt` is a display date that snaps an overdue visit forward
+to today so it is not invisible in a forward-looking view, so measured against
+it nothing is ever late. That field's own doc comment reserves it for this
+question.
+
+### A silenced stall is carried, not obeyed
+
+`nextVisitWarningSuppressedAt` is what buys silence from the header alert and
+the Today chip. Re-shouting it here would undo a deliberate decision; dropping
+the row would hide it from the one screen built for reviewing the whole book.
+So it is **still shown, and shown quietly**: muted instead of red, and out of
+the "N expired" summary count.
+
+### Rendering
+
+**Expired wears the house sign.** Work → Jobs already marks expired next
+visits with a near-black chip on the Today group, and that is the *same
+stall* seen from the other end — the visit that never got made, versus the
+visit that blocked it. Two colours for one condition is how an operator ends
+up believing they have two problems.
+
+- Next visit cell: a solid near-black `Expired 9d` pill under the date, due
+  date in the `title`. `subtle` instead of `solid` when silenced.
+- Row: a **3px left stripe** in `fg` — the chip's own ink, so the two read as
+  one signal — `border.emphasized` when silenced, `transparent` otherwise.
+  The width is **unconditional**: a border that appears only on some rows
+  moves those rows' contents 3px right, and columns that do not line up is
+  the exact failure the `COLS` constant exists to prevent, reintroduced on
+  precisely the rows that most need reading.
+- Summary strip: a near-black `N expired` chip.
+
+**Why `solid` on the gray palette and not the Jobs chip's `gray.600` /
+`gray.50`.** Those are raw ramp values, which the theming rules here forbid:
+a raw ramp number is the same wash in all fourteen themes, including the four
+built on a dark ground, where a `gray.600` chip sits on a near-black card and
+stops being the obvious thing. The semantic step resolves per theme. (The
+Jobs chip still pins them — a latent soft spot there, not copied here.)
+
+**The two money badges are orange on this screen and purple on the Money
+card**, which is the one axis where "the same badge" is not literally the
+same. Order, wording, size and the rule for which one goes loud are
+identical and gated. The hue cannot be: the Money card's own comment records
+that orange there "read as a different feature dropped inside this one", and
+purple means **Held** in this very column.
+
+## Vocabulary: "Paused repeating", never "Held" (fixed 2026-11-10)
+
+The state badge read **"Held"** — a word invented for this tab and used
+nowhere else in the product. Work → Jobs filters on "Paused repeating",
+Customers on "Paused repeating only", Services alerts on "Paused repeating to
+review", Settings owns "Repeating Job Occurrence Pause Reasons" — and the
+button **on this very row** says "Pause repeating". A row whose action and
+whose state use different words for one thing teaches the operator they are
+two things. Same failure class as the role-named boolean that hid customers'
+completed jobs in production; see `feedback_names_carry_meaning`.
+
+**The full two-word label, not a bare "Paused".** `PAUSED` is a *worker's
+timer* stopped mid-visit and renders as "Timer paused" in this same column.
+Shortening it would put two unrelated states one word apart. Internally the
+predicate is `isPausedRepeating` for the same reason — `isPaused` is one
+careless rename away from the timer state.
+
+Gated: the badge label, the "Timer paused" distinction, and a scan of every
+operator-facing string in the tab and the service for residual hold-language
+(comment-stripped, so the comments explaining the change don't trip it).
+
+### The reminder queue: "to review", not "a check-back"
+
+Same problem, second invented word. The chip read **"2 due a check-back"**,
+while the header alert and the Tasks page section both read **"Paused
+repeating to review"** and both navigate to *exactly this set* — so an
+operator clicking that alert landed on a screen giving the same two rows a
+third name.
+
+The chip is now **"N to review"** and the filter button **"To review"**.
+
+**Two words legitimately survive, in their right places.** The *date* is a
+**"Reminder date"** — the pause dialog's own field label, and what the row
+states ("reminder Mar 15" / "no reminder date"). The *work item* its arrival
+creates is a **review**. That is a distinction, not a contradiction, which is
+why the internal names (`dueOnly`, and `reminderDue` off the wire) say the
+reminder is due and stay as they are.
+
+### A dead sort key fell out of this
+
+`SortKey` carried `"checkBack"` with a live `case` in the comparator, and it
+was **not in `SORTABLE`** — the one list both the headers and the phone
+picker render from — so nothing could ever select it. `tsc` is perfectly
+happy with an unreachable union member. Removed, and a gate now asserts every
+`SortKey` appears in `SORTABLE`.
+
+## The summary strip is also the filter (2026-11-10)
+
+Each chip shows a count and filters to that slice; clicking the lit one
+clears back to everything, the same toggle the Due button already had.
+
+**Each chip resolves to ONE piece of state.** Two of the six name a filter
+that already had its own control — "paused" is `pausedOnly` and "due" is
+`dueOnly` — so those chips **write that existing state** and read their lit
+flag back out of it (`activeLens`). Only "scheduled" / "blocked" / "expired"
+needed new state (`View`). Both of those separate controls have since been
+folded into their chips (below), so each filter now has one control *and* one
+piece of state.
+
+This is not fussiness. Giving the chips their own booleans would be the
+deleted bulk-pause bug in miniature: two switches for one question, which
+drift, and then clearing the button leaves the table filtered with nothing on
+screen saying why. Click "paused" and the StreamPauseFilter button lights up
+with it, because there is only one `pausedOnly`.
+
+Two further rules, both gated:
+
+- **The near-black fill means EXPIRED and nothing else on the strip.** The
+  "N repeating" chip sat on the gray palette and went `solid` when active —
+  near-black, the expired colour exactly, on a chip with nothing to do with
+  expiry. It is `tone="neutral"`, which is excluded from the **fill** and
+  takes a darker grey (`gray.emphasized`) instead.
+
+  **Excluded from the fill, not from the emphasis.** The first fix dropped
+  its ring too, which overcorrected: the one chip that clears every filter
+  then gave no sign it had been used. Three rungs now — `subtle` at rest,
+  `emphasized` + ring when it is the active lens, `solid` reserved for
+  expiry.
+- **A chip's count and a chip's filter are the same expression.** The four
+  predicates (`isScheduled` / `isPausedRepeating` / `isBlocked` /
+  `isExpired`) are
+  module-level and used by both. Counted one way and filtered another, a chip
+  reads "6 expired" and then shows a different six.
+- **Changing the lens used to drop the selection**, so a footer could never
+  offer to pause twelve streams you can no longer see. Moot since the
+  multi-select went; the rule is recorded because it is the first thing a
+  rebuild has to put back.
+
+### The strip is every filter on the screen
+
+Two buttons used to sit under it, each repeating what a chip already said.
+Both are folded in:
+
+- **"To review"** → the chip. `dueOnly` has exactly one writer again.
+- **The pause-reason icon button** → the **"N paused" chip is the menu**. It
+  counted the paused rows while a separate purple icon narrowed them to a
+  reason, and neither control mentioned the other.
+
+**The chip body filters; only the caret opens the menu.** The whole chip was
+the menu trigger at first, so clicking it did not filter — you had to open the
+menu and then pick "Paused — any reason", a second step with nothing on screen
+to suggest it, while the five chips beside it all filtered on the first click.
+The operator's words: *"that isn't obvious."*
+
+So: one click on the body filters to every paused row and clicks again to
+clear, exactly like its neighbours; the caret narrows to one reason. Because
+the Badge **is** the Select trigger (`asChild`), a click anywhere in it
+reaches the menu — the body therefore stops the event at **`pointerdown`**,
+which is where Ark actually opens, and stopping only `click` is too late. The
+caret is left unwrapped and still bubbles through.
+
+The body click is a **plain toggle**, not "widen to all paused". Widening was
+the other candidate and it loses: it makes this one chip answer a click
+differently depending on its own state, which is the thing that sent the
+operator hunting through a menu in the first place. "All repeating job
+occurrences" at the top of the menu also clears it.
+
+The menu is the shared `StreamPauseFilter` with a `trigger` prop: a prop and
+not a second component, because what must stay single is the **item list** and
+the rule that switching off drops the reason. Jobs and Services pass no
+trigger and keep the icon; a gate asserts that.
+
+**The chip's count follows the reason** (`passesPauseFilter(r, true,
+reasonCode)`), and the label becomes "1 paused · Season over". Counting every
+paused row while showing only one reason's would be the same
+count-says-one-thing, table-shows-another failure the other five chips are
+held to.
+
+One setter, `setLens(target, reason)`, takes the target outright; the chips
+compute their own toggle on top of it. Both entry points still land in one
+statement of what a lens change does to the other filters.
+
+#### The invisible-chip bug this produced
+
+Handing the chip to `Select.Trigger asChild` let Chakra's trigger recipe
+override the badge's `solid` **background** while leaving its `solid`
+**foreground** alone — white text on the page's white ground. The chip was
+not ugly, it was **absent**, and the e2e read the right string out of the DOM
+the whole time because the text was present and painted in white.
+
+A chip now names **both halves of the pair** (`{palette}.solid` /
+`{palette}.contrast` — themeTokens tunes them together per theme) and pins
+back the height, border and font size the recipe imposes. Measured, not
+eyeballed: all six chips are 20px tall, 12px text, no border. Gated.
+
+## Multi-select was REMOVED (2026-11-10)
+
+Work → Repeating could tick many rows and pause or resume them together. It
+worked: one reason, one note, one reminder written as N ordinary
+per-occurrence pauses, each reported back individually, with the shared-date
+resume warning about its own pile-up.
+
+It went because **the book is not big enough to need it** — about forty
+pausable streams, one screenful. The operator: *"we don't have enough that
+make it worth it for now. I can rethink it when there are many more
+clients."*
+
+**Removed in every layer, not hidden**, and a gate asserts it stays that way:
+
+| Layer | Gone |
+|---|---|
+| Service | `pauseSelection`, `resumeSelection`, `withinScope`, `MAX_SELECTION` |
+| Routes | `POST /repeating-streams/pause`, `POST /repeating-streams/resume` |
+| Shared controls | `useStreamPauseSelection`, `StreamSelectionRow` |
+| Dialog | `pause-many` / `resume-many` modes, `selectionCount`, `summaryNode` |
+| Tab | checkboxes, "Select these N", the selection bar |
+
+The feature *this* module replaced left `Job.clientBulkPausedAt` behind, and
+two dead columns became a second way to pause that had to stay in step with
+the first. Dead routes, an unreachable dialog mode and an unused hook are the
+same debt in a different shape — and each one is individually harmless, which
+is exactly how all four come back one at a time. **If it is rebuilt
+deliberately, the gate is the thing to delete, and deleting it is a decision
+somebody makes on purpose.**
+
+### What it was (for whoever rebuilds it)
+
+Bulk was never "do 40 things" — it was **one decision applied to 40 rows**.
+End of season *is* one decision, so one reason + one note + one reminder was
+the shape of the thought, not a compromise. The reminder came from the
+reason's own horizon (`season_over` carries 150 days in production), so the
+operator never typed a date. Resume defaulted to **each stream on its own
+cadence**, which is the half you cannot practically do by hand — doing 29
+individually means computing 29 dates, and a human reaches for one shared
+date, which piles the book into one week in April.
+
+The boundary that made it coherent: **bulk = one decision, N rows; single =
+N decisions.** A customer-specific pause ("they're redoing the patio, call in
+three weeks") has a per-customer note and date, and was always a single-row
+action.
+
+## Messaging the customer from a row (2026-11-10)
+
+Pausing somebody's service is a thing they should hear about, and telling
+them meant a trip to Customers, a search and a copy-pasted phone number — far
+enough away that it would not happen. Each row now carries a message icon
+(`ClientContactMenu`) offering **Text / Email / Call**, plus a **draft keyed
+to what the row is about to do**:
+
+- a pausable row drafts *"we're pausing your ⟨service⟩ after ⟨date⟩"*
+- a paused row drafts *"we're restarting your ⟨service⟩ starting ⟨date⟩"*
+- an awaiting-payment row drafts **nothing** — Money → Payments owns that
+  message because it carries the invoice link and records the handoff, and a
+  cheerier second version written from here would reach the customer with
+  neither
+
+**The trigger is a full-width button, not an icon.** It lives in the row's
+actions column, whose rule is that every control there shares a width, size
+and alignment — a stack, not a wrapped row, because three buttons at three
+widths on three alignments is what that column originally shipped as and
+could not be read. A square icon dropped into a stack of stretched buttons
+broke the same rule from the other side: it was the one thing in the column
+that did not line up. Order is **the decision, then telling them, then
+navigating away** — Pause/Resume, Message, Open. Gated, and measured: all
+three are 176px wide on the same left edge.
+
+**It drafts, it never sends.** Every item opens the operator's own SMS or
+mail client with the text filled in, through the same `buildSmsHref` /
+`buildMailtoHref` / `fetchCommsCc` the job cards use — so a message from here
+carries the same CC list as one from Work → Jobs. That is the only version
+safe to offer beside a pause: the message stays theirs to read, edit or
+abandon, and nothing is recorded as sent that a person did not send.
+
+**Contact details ride on `clients.view`, not on this tab's own capability.**
+The table opens on `schedule.view-all` — an oversight *read* over the
+calendar — and seeing every visit is not the same trust as holding every
+customer's phone number; the live book has a role in exactly that position.
+The server **omits** the fields rather than the UI hiding them, because a
+field the client never receives cannot be read out of a network tab. A
+customer with neither phone nor email gets **no icon at all** — a disabled
+one teaches the operator to ignore the control. (Production: all 53 rows have
+a phone, none have an email.)
+
+### Historical: the selection bar (removed with the multi-select)
+
+The operator's report: *"You have a 'Select these' button, which it does. But
+there is no place to take a collective action on those things. So what is the
+point of selecting them?"*
+
+**The bar existed the whole time**, sticky at the bottom of the viewport, two
+inches below where they were looking. It rendered on the page's own
+background behind a hairline rule, with **outline** buttons identical to the
+per-row "Pause repeating" ones — so it read as more page, not as a place to
+act. `toBeVisible()` passed throughout; the e2e now asserts
+`toBeInViewport()` and that the bar offers at least one button.
+
+Fixed by making it look like what it is: its own surface (`bg.panel`), lifted
+off the list with a shadow and a purple border, and **solid** buttons. Solid
+is the commit rung everywhere in this app, and it is what separates "do this
+to the 40 rows I picked" from the outline button that does one row.
+
+**One Clear, not two.** A "Clear selection" sat beside "Select these N" at
+the top while the bar carried its own "Clear" at the bottom — two controls
+for one action at opposite ends of the screen. The top row is the
+**selector**; the bar is the **actor**. Gated.
 
 ## Capabilities
 
@@ -153,28 +558,25 @@ frozen portfolio rows: a property that moved into somebody's district last
 week is their work to hold this autumn, and the frozen basis is the one that
 was deleted for having no referent (see `project_portfolio_money_basis`).
 
-The selection writes scope on **`schedule.manage`**, not on the read's
-capability — a territorial grant of the write must bound what a selection can
-touch even where the holder's `schedule.view-all` is wider.
-
-**`withinScope` in `repeatingStreams.ts` is the security boundary of the
-selection path.** `pauseStream` has no idea who is calling: every other caller
-reaches it with one occurrence id the operator had on screen, and this one
-takes a list from the request body. Ids outside the caller's scope are
-refused by name — `"Not found."` — rather than failing the whole call.
+The tab makes no scoped write of its own. Every pause and resume is an
+ordinary per-occurrence call on its existing endpoint, already scoped there —
+which is the point of the tab being a lens. (`withinScope` was the security
+boundary of the removed selection path: it took a LIST of ids from a request
+body, which the per-row endpoints never do.)
 
 ## Endpoints
 
 | | | |
 |---|---|---|
 | `GET` | `/repeating-streams` | `schedule.view-all` |
-| `POST` | `/repeating-streams/pause` | `schedule.manage` |
-| `POST` | `/repeating-streams/resume` | `schedule.manage` |
 
-Selections are capped at `MAX_SELECTION` (200). The live book is 57 streams,
-so that is headroom, not a limit anybody meets — it is there because the
-handler loops, and a loop whose length comes from the request body is a loop
-the caller sizes.
+**One route.** The two selection writes went with the multi-select on
+2026-11-10; everything this screen writes goes through the per-occurrence
+pause endpoints that Services and Jobs already use.
+
+Contact details on the row are a **second capability** — `clients.view` —
+checked in the handler with `callerCan` and omitted from the payload when
+absent. See "Messaging the customer from a row".
 
 ### Reason labels are resolved server-side
 
@@ -218,56 +620,45 @@ shows all its occurrences and highlights the one.
 
 It deliberately does **not** reuse `goToStreamPauseReminders`. That one
 resolves the job by looking the occurrence up in `/stream-pauses/reminders`
-— held occurrences whose check-back is already **due** — and switches on the
+— paused occurrences whose reminder is already **due** — and switches on the
 held-only filter. Correct for the alert it was built for; wrong here, where
 most rows are scheduled, awaiting payment, or held until spring. Every one of
 those missed the lookup, got hidden by the filter, and landed the operator on
 "No jobs match current filters", which reads as a broken tab.
 
-### Per-row outcomes, not one toast
+## Resume — the date, and why it is suggested
 
-Both writes are **per-row independent**. One transaction around all of them
-would mean a single row whose status moved under the operator — a visit
-started while they were choosing — rolls back twenty-eight good pauses.
+A resume takes one date, from the row's own **Resume repeating** dialog. It
+opens pre-filled with this stream's own cadence stepped forward
+(`defaultResumeStartAt` = today + its interval), so the commonest next action
+is "confirm" rather than "now change it". The table shows the same
+`suggestedResumeAt`, computed server-side by `computeResumeStartAt`, so the
+date shown on the row is the date the dialog offers.
 
-Each row gets its own transaction (`pauseStream` opens one) and its own
-outcome. The response is `{ applied, refused, outcomes[] }`, and the UI
-reports it as "Paused 21 of 23. 2 not done: …" naming up to three.
+**The date is read with `parseUserDate`, never `new Date`.** It arrives from
+an `<input type="date">` as a bare `YYYY-MM-DD`, and `new Date("2026-11-24")`
+is UTC midnight — the *twenty-third* in ET. Every resume from a card put the
+visit back **one day early**, silently, until this was fixed on 2026-11-10;
+the pause reminder had the same flaw, which also moved the "N to review"
+count at the boundary. Found by an e2e asserting a 14-day service restarts
+one cadence on and getting 13. Gated.
 
-**A selection that reports one toast is a selection that lies.** If two rows
-were refused and the message says "Done", those two are invisible until next
-spring.
-
-Writes are **sequential**, not parallel: these are write transactions against
-a serverless Postgres, and a selection is a twice-a-year action where being
-right matters more than being quick.
-
-## Resume — the spring pile-up
-
-`POST /repeating-streams/resume` takes an optional `startAt`:
-
-- **omitted (the default)** — each stream steps forward from its own last
-  date by its own cadence until it lands today-or-later, via
-  `computeResumeStartAt`, the same function the single-row path uses.
-- **set** — every selected stream restarts on that one date.
-
-The default is not a tidiness preference. **Give thirty held streams one
-shared date in April and thirty visits land in the same week** — a book-wide
-pile-up created by the control meant to undo a book-wide hold. The live book
-has cadences of 5, 7, 10, 14, 16, 21 and 28 days; stepping each forward by its
-own interval puts them back on the rhythm they already had.
-
-The table shows each held row's `suggestedResumeAt`, computed by that same
-function, so the date shown before committing is the date written. The dialog
-states the consequence of the one-date option with the live count in it.
+> The removed multi-select resume could instead step **every** selected
+> stream forward on its own cadence in one pass — the half you cannot
+> practically do by hand, since resuming 29 individually means computing 29
+> dates and a human reaches for one shared date, piling the book into one
+> April week. That is the strongest argument for rebuilding it if the book
+> grows; see "Multi-select was REMOVED".
 
 ## Frontend
 
 | | |
 |---|---|
 | Tab | [`apps/web/src/ui/tabs/RepeatingTab.tsx`](../../apps/web/src/ui/tabs/RepeatingTab.tsx) |
-| Shared actions + both controllers | [`StreamPauseControls.tsx`](../../apps/web/src/ui/components/StreamPauseControls.tsx) |
-| The one dialog, five modes | [`StreamPauseDialog.tsx`](../../apps/web/src/ui/dialogs/StreamPauseDialog.tsx) |
+| Shared actions + the controller | [`StreamPauseControls.tsx`](../../apps/web/src/ui/components/StreamPauseControls.tsx) |
+| The one dialog, three modes | [`StreamPauseDialog.tsx`](../../apps/web/src/ui/dialogs/StreamPauseDialog.tsx) |
+| Both money clocks | [`PaymentWaitBadges.tsx`](../../apps/web/src/ui/components/PaymentWaitBadges.tsx) |
+| Message the customer | [`ClientContactMenu.tsx`](../../apps/web/src/ui/components/ClientContactMenu.tsx) |
 
 **One implementation of the pause.** `RepeatingTab`, `ServicesTab` and
 `JobsTab` all mount `StreamPauseActions`, render `streamControls.dialogs`, use
@@ -275,21 +666,15 @@ states the consequence of the one-date option with the live count in it.
 That rule is gated; hand-rolling the dialog is how Services and Jobs drifted
 the first time.
 
-The selection controller (`useStreamPauseSelection`) lives in the same module
-as the single-row one, because the two must agree about what pausing means:
-the same mandatory reason, the same reminder horizon, the same dialog. The
-only difference is that one is handed a list.
-
-`StreamPauseDialog` grew two modes rather than gaining a sibling —
-`pause-many` and `resume-many` — specifically so the **reason field** is not
-copied. It is mandatory and it pre-fills the reminder from that reason's own
-horizon; a second copy of that logic is a second set of pauses that are hard
-to find again.
+The dialog's three modes are `pause`, `update` and `resume` — one per thing
+you can do to one stream. It carried `pause-many` and `resume-many` too, so
+the **reason field** was not copied; those went with the multi-select, and
+the reason logic they were protecting is unchanged.
 
 ### Layout
 
-**One row implementation, responsive by CSS grid** — `auto 1fr` on a phone,
-seven columns at `md`. Not a table for desks plus a card list for phones:
+**One row implementation, responsive by CSS grid** — one track on a phone,
+six columns at `md` (the seventh was the checkbox). Not a table for desks plus a card list for phones:
 that is two copies of every cell, and two copies of one decision is the drift
 class this feature's own neighbourhood has already produced (a teal timing
 band on a grey card). Column headers render at `md` and up; below that each
@@ -306,7 +691,7 @@ arrow on every header says nothing about which order the rows are in.
 
 Three rules the gate holds:
 
-- **Blanks sort last in BOTH directions.** "No check-back date" is the
+- **Blanks sort last in BOTH directions.** A blank Reason is the
   commonest value in that column, so letting blanks fall out of the
   comparator naturally would float every one of them to the top the moment
   the column is reversed, burying the dates the operator reversed it to see.
@@ -325,18 +710,18 @@ a second hand-written list is how a column ends up sortable on a desk and
 missing on a phone. The sort is not persisted, same reasoning as the day
 map's mode: it is how you are reading the list this minute.
 
-### Selection
+### The actions column
 
-- A blocked row's checkbox is **disabled**.
-- "Select these N" names the count and operates on the **filtered** set — a
-  select-all over a filtered table is the one place a selection can quietly be
-  bigger than it looks.
-- The footer bar is **sticky** and carries **a count per button** ("Pause 21",
-  "Resume 2"). A mixed selection is normal in spring, and "Pause" over 23 rows
-  when only 21 can be paused is the quiet arithmetic this screen removes.
-- Any successful write clears the selection: a write moves rows between the
-  filters the table is showing, so the selection it was made from is no longer
-  meaningful.
+Every control in it is the **same width, size and alignment**, in a fixed
+order: **Pause/Resume → Message → Open**. A stack rather than a wrapped row,
+because three buttons at three widths on three alignments is what this column
+originally shipped as and it could not be read; a square icon dropped into a
+stack of stretched buttons broke the same rule from the other side. Measured,
+not eyeballed: 176px wide, same left edge.
+
+A **blocked** row simply has no pause control, and the State cell says why.
+(It used to carry a disabled checkbox beside that sentence; with the
+multi-select gone the rule is just "absent, and explained".)
 
 ### Links out, never a second editor
 
@@ -354,30 +739,47 @@ Tasks card.
 
 ## Testing
 
-- **Backend gate** — `repeating-build-gate.test.ts`, registered in
-  `test:build-gate`. Asserts the no-new-state rules, the capability split, the
-  scope check on the selection path, per-row outcomes, and that the three tabs
-  share one pause implementation.
+**Verified 2026-11-10 — the names below are the files that exist.**
+
+- **Backend gate** — [`repeating-build-gate.test.ts`](../../apps/api/src/services/repeating-build-gate.test.ts),
+  registered in the `test:build-gate` filter list (an unregistered gate
+  shrinks the run silently). It asserts the no-new-state rules, the
+  capability split, the membership test including the one-off exclusion, both
+  money clocks and their shared rule, the expiry rules, the chip/filter
+  invariants, the vocabulary, the ET date parsing, **and that the
+  multi-select stays removed in all five layers.**
 - **Route map** — `npm run routemap:check`; G5 fails the build if a guard and
-  the map disagree.
-- **API authz** — `--project=api` derives from the route map, so all three
-  endpoints are driven both ways automatically.
-- **Playwright** — `repeating-table.spec.ts` (owner: the table, the filters,
-  a blocked row, a single pause) and `repeating-readonly.spec.ts` (auditor:
-  table renders, no action controls). Run:
-  `cd apps/web && npx playwright test --project=owner repeating`
+  the map disagree. This tab now contributes **one** route.
+- **API authz** — `--project=api` derives from the route map, so
+  `GET /repeating-streams` is driven both ways automatically.
+- **Playwright** — two files, both `--project=owner`:
+  - [`repeating-table-owner.spec.ts`](../../apps/web/tests/e2e/specs/repeating-table-owner.spec.ts)
+    — the table, a blocked row offering no pause, a per-row pause written to
+    the database and read back, the reason filter, messaging, the chips, and
+    the paused chip's reason menu.
+  - [`repeating-mobile-owner.spec.ts`](../../apps/web/tests/e2e/specs/repeating-mobile-owner.spec.ts)
+    — renders narrow and measures; no sideways scroll.
+  - `cd apps/web && npx playwright test --project=owner repeating`
 
 ### Personas that matter
 
 | Persona | `schedule.view-all` | `schedule.manage` | Expectation |
 |---|---|---|---|
-| `owner` | ✓ | ✓ | full table, selection, actions |
-| `auditor` | ✓ | — | table renders, no checkboxes, no action buttons |
+| `owner` | ✓ | ✓ | full table and actions |
 | `coordinator` | — | ✓ | **no tab** — see the operator note above |
 | `employee` | — | — | no tab |
 
-Both halves of the capability split are real grants in the live book, which
-is why both are asserted rather than assumed.
+Which personas see the tab at all is asserted by `persona-sweep`, which
+parses `TAB_REQUIREMENTS` rather than hard-coding a list.
+
+> **THE READ-ONLY TIER HAS NO PLAYWRIGHT PERSONA.** The live book's `Auditor`
+> role holds `schedule.view-all` *without* `schedule.manage`, but no seeded
+> dev role does — the seed's examples are Coordinator, Bookkeeper and
+> Payroll. So "table renders, no action controls" is a real production state
+> that **cannot be driven by a spec today**; the build gate asserts the
+> affordances sit behind `canManage` instead. Adding an Auditor example role
+> plus a Clerk account would make it drivable, and is the single most
+> valuable test this feature is missing.
 
 ## Non-goals
 

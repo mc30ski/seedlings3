@@ -10,7 +10,7 @@ metadata:
 inherit from. **61 entitlements** (`roles.view` added 2026-10-15 to split
 SEEING the role catalogue from EDITING it), each carrying a human sentence in
 `packages/permissions/entitlements.ts` that the UI can render. See
-`docs/features/permissions-ROUTE-MAP.md` (**639 rows, GENERATED** —
+`docs/features/permissions-ROUTE-MAP.md` (**656 rows as of 2026-11-10, GENERATED** —
 `npm run routemap` / `routemap:check`, from
 `apps/api/scripts/build-route-map.ts`; **G5 fails the build whenever it and
 the guards disagree**). **Never hand-reconcile this file.** Three separate

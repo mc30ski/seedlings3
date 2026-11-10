@@ -18,7 +18,7 @@ failure; verify with a direct `createSignInToken` call before chasing it.
 
 ## The files
 - `helpers/endpoints.ts` — parses `apps/api/src/routes/*.ts` AT RUN TIME into
-  the 639-endpoint inventory, bucketed exactly as
+  the route-map inventory (656 rows as of 2026-11-10 — it moves; the suite derives it, so never hard-code it), bucketed exactly as
   `apps/api/scripts/build-route-map.ts` buckets it (entitlement 496 / ownership 103 /
   public 24 / client-portal 10 / system 6). **Not a committed fixture** — a
   generated list goes stale the moment a route lands, and the point of the

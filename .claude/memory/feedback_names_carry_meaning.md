@@ -43,3 +43,28 @@ renamed by a hand-written `ALTER TABLE … RENAME COLUMN` migration —
 have emitted DROP + ADD, silently resetting every flagged visit to false.
 ~30 callsites, mechanical. The schema comment now also says outright: do
 not filter client-facing queries on it.
+
+
+## Three invented words in one tab (Work → Repeating, 2026-11-10)
+
+The operator found all three by asking "what is this?":
+
+| Invented | The app's own word | Where the app already said it |
+|---|---|---|
+| "service" | **repeating job occurrence** | the Settings card that owns pause reasons |
+| "Held" | **Paused repeating** | Jobs filter, Customers filter, Services alert — *and the button on the same row* |
+| "due a check-back" | **to review** | the header alert and Tasks section that LINK to this screen |
+
+Each was read as a *different thing* from the thing it named. "Held" was the
+worst: the row's action said **Pause repeating** while its state said
+**Held**, which teaches that they are two things.
+
+**The check that would have caught all three: grep the rest of the product
+for the concept before naming it.** A gate now scans every operator-facing
+string in that tab and its service for the two retired words. It also turned
+up dead code — `SortKey` carried an unreachable `"checkBack"` member that
+tsc was perfectly happy with.
+
+**Keep the long form when a short one collides.** The badge is "Paused
+repeating", not "Paused", because `PAUSED` is a *worker's timer* and renders
+as "Timer paused" in the same column.

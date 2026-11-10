@@ -36,7 +36,6 @@ import {
   Badge,
   Box,
   Button,
-  Checkbox,
   HStack,
   Portal,
   Select,
@@ -45,19 +44,19 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { ArrowDown, ArrowUp, BellRing, CalendarClock, ExternalLink, PauseCircle, Repeat } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarClock, ChevronDown, ExternalLink, PauseCircle, Repeat } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import type { Scope } from "@/src/lib/scope";
 import { fmtDate } from "@/src/lib/dates";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import PaymentWaitBadges from "@/src/ui/components/PaymentWaitBadges";
+import ClientContactMenu, { type DraftMessage } from "@/src/ui/components/ClientContactMenu";
 import {
   ALL_PAUSE_REASONS,
   StreamPauseActions,
   StreamPauseFilter,
   passesPauseFilter,
   useStreamPauseControls,
-  useStreamPauseSelection,
-  type StreamSelectionRow,
 } from "@/src/ui/components/StreamPauseControls";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import type { PauseReason } from "@/src/lib/pauseReasons";
@@ -90,6 +89,29 @@ type Row = {
   streamResumeReminderAt: string | null;
   reminderDue: boolean;
   suggestedResumeAt: string | null;
+  /** PENDING_PAYMENT only. Measured from the day the work was finished —
+   *  see the server type for why that and not the invoice date. */
+  awaitingPaymentSince: string | null;
+  awaitingPaymentDays: number | null;
+  /** The other clock — when we last asked the client, and the original ask. */
+  paymentRequestedAt: string | null;
+  paymentRequestedDays: number | null;
+  paymentFirstRequestedAt: string | null;
+  paymentFirstRequestedDays: number | null;
+  paymentResendCount: number;
+  /** Nobody has asked for this money yet — the operator's move. */
+  paymentNeverRequested: boolean;
+  /** The day this stream's next visit was due, when it stopped making them. */
+  nextVisitDueOn: string | null;
+  /** Days past that date. Non-null IS the expired condition. */
+  expiredDays: number | null;
+  /** The stall has already been silenced elsewhere — show it quietly. */
+  expirySuppressed: boolean;
+  /** The customer's primary contact. Null unless the caller holds
+   *  `clients.view` — the server omits them, it does not hide them. */
+  contactName: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
 };
 
 /** Columns at desk width; one stacked block on a phone.
@@ -114,14 +136,15 @@ type Row = {
  *  name would widen that track on its row alone and bring the same drift
  *  straight back. */
 const COLS = {
-  base: "auto minmax(0, 1fr)",
+  // ONE TRACK ON A PHONE now that the tick column is gone; cells no longer
+  // need pinning to a second column (see the note on `Cell`).
+  base: "minmax(0, 1fr)",
   md:
-    "32px " + // tick
     "minmax(0, 1.5fr) " + // customer + property
     "minmax(0, 1fr) " + // service + cadence
-    "104px " + // next visit — a date has a known width
-    "188px " + // state badge, and why it is blocked
-    "minmax(0, 1.4fr) " + // reason + note + check-back
+    "116px " + // next visit — a date, with the Expired chip beneath it
+    "232px " + // state badge, both money clocks, and why it is blocked
+    "minmax(0, 1.2fr) " + // reason + note + reminder
     "176px", // actions
 };
 
@@ -141,7 +164,34 @@ const STATE_ORDER = [
   "PAUSED",
 ] as const;
 
-type SortKey = "customer" | "service" | "next" | "state" | "reason" | "checkBack";
+/** Every key here must appear in `SORTABLE` below, which is the ONE list
+ *  both the headers and the phone picker render from — so a key missing
+ *  from it is a branch nothing can reach. `"checkBack"` was exactly that:
+ *  a member of this union with a live `case` in the comparator and no way
+ *  on earth to select it. Found by the vocabulary scan, not by tsc, which
+ *  is perfectly happy with an unreachable union member. */
+type SortKey = "customer" | "service" | "next" | "state" | "reason";
+
+/**
+ * The summary strip doubles as the filter, and each chip resolves to ONE
+ * piece of state — never a second copy of one that already exists.
+ *
+ * Two of these six already had a dedicated control: "paused" is what
+ * `StreamPauseFilter` writes and "due" is what the Due button writes. Giving
+ * the chips their own booleans for those would have been two switches for one
+ * question, which is the precise shape of the bug that got the previous
+ * bulk-pause feature deleted — a stale second stamp swept up a job the
+ * operator had deliberately stopped.
+ *
+ * So the chips WRITE the existing state and READ their active flag back out
+ * of it (`activeLens` below). Click "paused" and the StreamPauseFilter button
+ * lights up with it, because there is only one `pausedOnly`.
+ */
+type Lens = "all" | "scheduled" | "paused" | "blocked" | "due" | "expired";
+
+/** The three lenses that needed state of their own; the other three are
+ *  derived from controls that already existed. */
+type View = "all" | "scheduled" | "blocked" | "expired";
 
 /**
  * The sortable columns, in render order.
@@ -215,8 +265,239 @@ function Cell({
   );
 }
 
+/**
+ * One chip in the summary strip: a count, and the way into that slice.
+ *
+ * ONE COMPONENT so "lit" looks the same on all six. The active rung is
+ * `solid` against `subtle`, which is the same step the Due button and the
+ * sort headers already use for on/off on this screen.
+ *
+ * THREE TONES, and the distinction between them is a colour rule rather
+ * than a styling preference:
+ *
+ *   "expired" — the near-black house sign, matching the "Expired N" chip
+ *       Work → Jobs puts on the Today group. THE DARK FILL MEANS EXPIRED AND
+ *       NOTHING ELSE on this strip. It pins no raw ramp value: the Jobs chip
+ *       uses `gray.600`/`gray.50`, which is the one thing the theming rules
+ *       here forbid, because a raw ramp number is the same wash in all
+ *       fourteen themes — including the four built on a dark ground, where a
+ *       gray.600 chip sits on a near-black card and stops being obvious. The
+ *       `solid` step resolves per theme instead.
+ *
+ *   "neutral" — the "show everything" chip. It NEVER takes a fill or a ring,
+ *       and that is the fix for a real collision: it was grey like every
+ *       other unlit chip, then went `solid` on the gray palette when active
+ *       — which is near-black, the expired colour exactly, on a chip that
+ *       has nothing to do with expiry.
+ *
+ *       Leaving it unemphasised is also the more honest state. This chip
+ *       being "active" means NO filter is applied, which is the table's
+ *       resting state, not a selection. Nothing was chosen, so nothing
+ *       should look chosen — the confirmation that the click worked is the
+ *       other chips going dark and the rows coming back.
+ *
+ *   "normal" — subtle, going solid with a ring when lit. The coloured
+ *       palettes stay legible as themselves at both rungs.
+ */
+function LensChip({
+  lens,
+  active,
+  onPick,
+  palette,
+  tone = "normal",
+  withMenu = false,
+  title,
+  children,
+  ...rest
+}: {
+  lens: Lens;
+  active: boolean;
+  onPick: (l: Lens) => void;
+  palette: string;
+  tone?: "normal" | "expired" | "neutral";
+  /** This chip opens a menu instead of toggling — it gets a caret so the
+   *  difference is visible before you click, and drops the "click again to
+   *  show everything" hint, which is not how it clears. */
+  withMenu?: boolean;
+  title: string;
+  children: React.ReactNode;
+} & Record<string, unknown>) {
+  const expired = tone === "expired";
+  const neutral = tone === "neutral";
+  // The ring is what separates a LIT chip from an unlit expired one, which
+  // is already solid. EVERY chip gets it, the neutral one included — what
+  // that chip must not take is the near-black FILL, not the emphasis.
+  const lit = active;
+  // Filled with the palette's `solid` step — near-black on gray, which is
+  // the expired sign. The neutral chip is deliberately excluded and takes a
+  // darker grey instead; see below.
+  const filled = expired || (lit && !neutral);
+  return (
+    <Badge
+      as="button"
+      variant={filled ? "solid" : "subtle"}
+      colorPalette={palette}
+      /* BOTH HALVES OF THE PAIR, SPELLED OUT, and that is not belt-and-braces.
+         The paused chip is handed to `Select.Trigger asChild`, and Chakra's
+         trigger recipe overrode the badge's `solid` BACKGROUND while leaving
+         its `solid` FOREGROUND alone — so the lit chip rendered white text on
+         the page's white ground and simply vanished. Invisible, not ugly: the
+         e2e read the right string out of the DOM the whole time.
+
+         `solid` is a fill and `contrast` is the ink that has to stay legible
+         on it; themeTokens keeps them tuned as a pair per theme, which is why
+         naming both here still themes correctly where a raw hex would not. */
+      /* THREE RUNGS, NOT TWO. The lit neutral chip steps from `gray.subtle`
+         to `gray.emphasized` — visibly pressed, still plainly grey. It had
+         been excluded from emphasis altogether, which fixed the collision
+         with the expired chip (both went near-black) by overcorrecting: the
+         one chip that clears every filter gave no sign it had been used. */
+      bg={
+        filled
+          ? `${palette}.solid`
+          : lit
+            ? `${palette}.emphasized`
+            : `${palette}.subtle`
+      }
+      color={filled ? `${palette}.contrast` : `${palette}.fg`}
+      /* The same recipe also imposes a form-control's height and border on
+         the chip it is wrapping, which made the paused one a 36px outlined
+         box in a row of 20px tinted chips. Pinned back to the badge's own
+         shape so it sits in the strip as one of six, not as a form field
+         that wandered in — height, border AND font size, which was the last
+         one left and made this chip's text a size larger than its five
+         neighbours. Measured, not eyeballed: all six are 20px tall, 12px
+         text, no border. */
+      {...(withMenu ? { h: "auto", minH: "0", border: "none", fontSize: "xs" } : {})}
+      onClick={() => onPick(lens)}
+      cursor="pointer"
+      px="2"
+      borderRadius={expired ? "full" : undefined}
+      title={`${title}${active && !neutral && !withMenu ? " — click again to show everything" : ""}`}
+      aria-pressed={neutral ? undefined : active}
+      outline={lit ? "2px solid" : undefined}
+      outlineColor={lit ? "fg.muted" : undefined}
+      outlineOffset={lit ? "1px" : undefined}
+      data-active={active ? "1" : "0"}
+      data-lens={lens}
+      display={withMenu ? "inline-flex" : undefined}
+      alignItems={withMenu ? "center" : undefined}
+      gap={withMenu ? "1" : undefined}
+      {...rest}
+    >
+      {/* THE CHIP BODY FILTERS; ONLY THE CARET OPENS THE MENU.
+          The whole chip was the menu trigger, so clicking it did not filter
+          — you had to open it and then pick "Paused — any reason", a second
+          step with nothing on screen to suggest it, while the five chips
+          beside it all filtered on the first click.
+
+          The Badge IS the Select trigger (asChild), so a click anywhere in
+          it reaches the menu. The body stops that at both `pointerdown` —
+          which is where the menu actually opens, so stopping only `click`
+          is too late — and `click`, then toggles the lens itself. The caret
+          is left unwrapped and so still bubbles through. */}
+      {withMenu ? (
+        <Box
+          as="span"
+          display="inline-flex"
+          alignItems="center"
+          onPointerDown={(e: React.PointerEvent) => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={(e: React.MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onPick(lens);
+          }}
+          data-testid="lens-chip-body"
+        >
+          {children}
+        </Box>
+      ) : (
+        children
+      )}
+      {withMenu && (
+        <Box as="span" display="inline-flex" title="Narrow to one pause reason">
+          <ChevronDown size={11} />
+        </Box>
+      )}
+    </Badge>
+  );
+}
+
+/** THE FOUR PREDICATES, module level so the chip's count and the chip's
+ *  filter are provably the same expression. They were inline in two places
+ *  and that is how a count and the list under it start to disagree. */
+const isScheduled = (r: Row) => r.status === "SCHEDULED";
+/** `PausedRepeating`, never bare `isPaused` — `status === "PAUSED"` is a
+ *  worker's timer stopped mid-visit, an unrelated state this table also
+ *  lists. The two have been one careless rename apart since they were named. */
+const isPausedRepeating = (r: Row) => r.status === "STREAM_PAUSED";
+/** Cannot be held yet — blocked on something else being resolved first. */
+const isBlocked = (r: Row) => !r.canPause && !r.canResume;
+/** A silenced stall is deliberately NOT expired for counting or filtering —
+ *  somebody already said they know about it. The row still shows it, muted. */
+const isExpired = (r: Row) => r.expiredDays !== null && !r.expirySuppressed;
+
+/**
+ * The message the operator would plausibly send about THIS row.
+ *
+ * Keyed on what they are about to do, which is the whole value: the point of
+ * a contact icon here rather than a trip to Customers is that the decision
+ * and the telling happen in one place. A row with nothing obvious to say
+ * returns null and still offers the bare Text / Email / Call.
+ *
+ * DRAFTS, NEVER SENDS — see the note in ClientContactMenu. The operator
+ * reads and edits every one of these in their own messaging app, which is
+ * why the copy can be warm without being a liability: nothing goes out that
+ * a person did not read first.
+ */
+function draftFor(row: Row): DraftMessage | null {
+  const who = row.contactName ? `Hi ${row.contactName},` : "Hi,";
+  const what = row.service ? row.service.toLowerCase() : "recurring service";
+  const where = row.propertyName && row.propertyName !== "—" ? ` at ${row.propertyName}` : "";
+
+  if (row.canPause) {
+    const when = row.startAt ? ` after the visit on ${fmtDate(row.startAt)}` : "";
+    return {
+      label: "Draft: we're pausing this",
+      subject: "Seedlings Lawn Care — pausing your service",
+      body:
+        `${who}\n\nJust a heads up that we're going to pause your ${what}${where}${when}. ` +
+        `Nothing else changes, and we'll be in touch before we start back up.\n\n` +
+        `Thanks,\nSeedlings Lawn Care`,
+    };
+  }
+  if (row.canResume) {
+    const when = row.suggestedResumeAt ? ` starting ${fmtDate(row.suggestedResumeAt)}` : "";
+    return {
+      label: "Draft: we're starting back up",
+      subject: "Seedlings Lawn Care — restarting your service",
+      body:
+        `${who}\n\nGood news — we're restarting your ${what}${where}${when}. ` +
+        `You don't need to do anything.\n\nThanks,\nSeedlings Lawn Care`,
+    };
+  }
+  // AWAITING PAYMENT IS NOT DRAFTED HERE, on purpose. Money → Payments owns
+  // that message because it carries the invoice link and records the
+  // handoff; a cheerful second version written from this screen would reach
+  // the customer without either.
+  return null;
+}
+
 function statusMeta(row: Row): { label: string; palette: string } {
-  if (row.status === "STREAM_PAUSED") return { label: "Held", palette: "purple" };
+  // "PAUSED REPEATING", WHICH IS WHAT THE REST OF THE APP CALLS IT. This
+  // read "Held" — a word invented for this tab and used nowhere else in the
+  // product. Work → Jobs filters on "Paused repeating", Customers filters on
+  // "Paused repeating only", Services alerts on "Paused repeating to
+  // review", and the button on this very row says "Pause repeating". A row
+  // whose action and whose state use different words for one thing teaches
+  // the operator that they are two things.
+  //
+  // The full two-word label rather than a bare "Paused", because "Timer
+  // paused" is a DIFFERENT state four lines below this one: `PAUSED` is a
+  // worker's timer stopped mid-visit, `STREAM_PAUSED` is the repeating
+  // stopped. Shortening it would put two unrelated states one word apart in
+  // the same column.
+  if (row.status === "STREAM_PAUSED") return { label: "Paused repeating", palette: "purple" };
   if (row.status === "SCHEDULED") return { label: "Scheduled", palette: "blue" };
   if (row.status === "PENDING_PAYMENT") return { label: "Awaiting payment", palette: "orange" };
   if (row.status === "IN_PROGRESS") return { label: "On site", palette: "green" };
@@ -243,9 +524,9 @@ export default function RepeatingTab({
    */
   onOpenService: (jobId: string, id: string) => void;
 }) {
-  // `schedule.manage` — the capability `POST /repeating-streams/pause` and
-  // every per-row write are guarded on. Named here, on the control's own
-  // screen, rather than inferred from where the tab happens to be mounted.
+  // `schedule.manage` — the capability every per-row pause and resume
+  // endpoint is guarded on. Named here, on the control's own screen, rather
+  // than inferred from where the tab happens to be mounted.
   const canManage = scope.can("schedule.manage");
 
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -254,7 +535,7 @@ export default function RepeatingTab({
   const [pausedOnly, setPausedOnly] = useState(false);
   const [reasonCode, setReasonCode] = useState<string>(ALL_PAUSE_REASONS);
   const [dueOnly, setDueOnly] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<View>("all");
   const [busyId, setBusyId] = useState("");
   /**
    * ONE SORT STATE, two affordances.
@@ -309,14 +590,6 @@ export default function RepeatingTab({
   }, [load]);
 
   const streamControls = useStreamPauseControls({ onChanged: () => load() });
-  const selection = useStreamPauseSelection({
-    onChanged: async () => {
-      // A write moves rows between the filters this table is showing, so the
-      // selection it was made from is no longer meaningful.
-      setSelected(new Set());
-      await load();
-    },
-  });
 
   /**
    * The reason options, derived from the ROWS rather than the taxonomy.
@@ -342,6 +615,13 @@ export default function RepeatingTab({
     const kept = (rows ?? []).filter((r) => {
       if (!passesPauseFilter(r, pausedOnly, reasonCode)) return false;
       if (dueOnly && !r.reminderDue) return false;
+      // The three lenses with state of their own. Each predicate is the
+      // SAME expression its chip counts with — written once below in
+      // `counts` and reused here, so a chip can never read "6 expired" and
+      // then show a different six.
+      if (view === "scheduled" && !isScheduled(r)) return false;
+      if (view === "blocked" && !isBlocked(r)) return false;
+      if (view === "expired" && !isExpired(r)) return false;
       if (!needle) return true;
       return (
         r.clientName.toLowerCase().includes(needle) ||
@@ -354,12 +634,13 @@ export default function RepeatingTab({
      * NULLS LAST IN BOTH DIRECTIONS, and that is a deliberate rule rather
      * than a fallout of the comparator.
      *
-     * A row with no check-back date, or no name of its own, carries no
+     * A row with no pause reason, or no name of its own, carries no
      * information about where it belongs in that order. Letting it fall out
      * of the comparison naturally would float every one of them to the top
-     * the moment you reversed the sort — and on this table "no check-back
-     * date" is the commonest value in the column, so reversing would bury
-     * the dates under the blanks instead of showing the furthest-out ones.
+     * the moment you reversed the sort — and on this table a blank Reason is
+     * the commonest value in that column by far, since only a paused row has
+     * one, so reversing would bury the reasons under the blanks instead of
+     * showing them.
      */
     const dir = sortDir === "asc" ? 1 : -1;
     const cmp = (a: string | number | null, b: string | number | null): number => {
@@ -398,8 +679,6 @@ export default function RepeatingTab({
           }
         case "reason":
           return r.streamPauseReasonLabel;
-        case "checkBack":
-          return r.streamResumeReminderAt ? Date.parse(r.streamResumeReminderAt) : null;
         default:
           return null;
       }
@@ -414,7 +693,7 @@ export default function RepeatingTab({
       // reshuffle rows that compare equal.
       return cmp(a.startAt ? Date.parse(a.startAt) : null, b.startAt ? Date.parse(b.startAt) : null);
     });
-  }, [rows, q, pausedOnly, reasonCode, dueOnly, sortKey, sortDir]);
+  }, [rows, q, pausedOnly, reasonCode, dueOnly, view, sortKey, sortDir]);
 
   /** The phone picker's options — SAME list the headers render from, so the
    *  two cannot offer different columns. */
@@ -427,56 +706,83 @@ export default function RepeatingTab({
     const all = rows ?? [];
     return {
       total: all.length,
-      live: all.filter((r) => r.status === "SCHEDULED").length,
-      held: all.filter((r) => r.status === "STREAM_PAUSED").length,
-      blocked: all.filter((r) => !r.canPause && !r.canResume).length,
+      live: all.filter(isScheduled).length,
+      // THROUGH THE SHARED PREDICATE, because this chip's filter is now a
+      // reason as well as a state. Counting every paused row while showing
+      // only the "Season over" ones is exactly the count-says-one-thing,
+      // table-shows-another failure the other five chips are gated against.
+      paused: all.filter((r) => passesPauseFilter(r, true, reasonCode)).length,
+      blocked: all.filter(isBlocked).length,
       due: all.filter((r) => r.reminderDue).length,
+      expired: all.filter(isExpired).length,
     };
-  }, [rows]);
+  }, [rows, reasonCode]);
 
-  /** Rows a selection may contain at all. A blocked row cannot be ticked —
-   *  a disabled box beside a stated reason teaches the rule; letting it be
-   *  ticked and refused at commit time teaches nothing. */
-  const selectableIds = useMemo(
-    () => filtered.filter((r) => r.canPause || r.canResume).map((r) => r.id),
-    [filtered],
+  /**
+   * WHICH CHIP IS LIT, derived rather than stored.
+   *
+   * Three of the six lenses live in state that predates them, so asking
+   * "which chip is active" has to be a question about that state and not a
+   * seventh variable tracking it. Stored separately, clearing the Due button
+   * would leave its chip lit.
+   */
+  /** The chosen reason in the operator's words, for the chip and its title.
+   *  Falls back to the raw code so a reason retired since the pause was
+   *  written still renders as something rather than vanishing. */
+  const pauseReasonLabel =
+    reasons.find((r) => r.code === reasonCode)?.label ?? reasonCode;
+
+  const activeLens: Lens = pausedOnly
+    ? "paused"
+    : dueOnly
+      ? "due"
+      : view !== "all"
+        ? view
+        : "all";
+
+  /**
+   * THE ONE PLACE A LENS CHANGE HAPPENS. No toggling here — it takes the
+   * target outright — because the two ways into it want different answers to
+   * "what does clicking the thing that is already on mean":
+   *
+   *   • A chip toggles: clicking the lit one clears back to everything.
+   *   • The paused dropdown does not. Picking a second reason while paused is
+   *     already on is a re-narrowing, not a request to switch it off; routed
+   *     through a toggle it would have cleared the filter instead.
+   *
+   * Both still land here, so there is still one statement of what a lens
+   * change does to the other filters.
+   */
+  const setLens = useCallback((target: Lens, reason: string = ALL_PAUSE_REASONS) => {
+    setPausedOnly(target === "paused");
+    // A reason only means something inside the paused lens; leaving it set
+    // would silently narrow the NEXT paused click to last time's reason.
+    setReasonCode(target === "paused" ? reason : ALL_PAUSE_REASONS);
+    setDueOnly(target === "due");
+    setView(
+      target === "scheduled" || target === "blocked" || target === "expired" ? target : "all",
+    );
+  }, []);
+
+  /** A chip: clicking the lit one returns to everything. */
+  const applyLens = useCallback(
+    (next: Lens) => {
+      const target: Lens = next === activeLens ? "all" : next;
+      setLens(target);
+    },
+    [activeLens, setLens],
   );
 
-  const selectedRows = useMemo(
-    () => (rows ?? []).filter((r) => selected.has(r.id)),
-    [rows, selected],
+  /**
+   * The paused chip's dropdown, which is the shared `StreamPauseFilter`
+   * wearing the chip as its trigger. It speaks `{active, reasonCode}`; this
+   * translates that into the lens model without a second copy of the rules.
+   */
+  const applyPauseFilter = useCallback(
+    (next: { active: boolean; reasonCode: string }) =>
+      setLens(next.active ? "paused" : "all", next.reasonCode),
+    [setLens],
   );
-  const toPause = selectedRows.filter((r) => r.canPause);
-  const toResume = selectedRows.filter((r) => r.canResume);
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  /** The label a selection carries into the confirm and into any failure
-   *  report. One builder, so the dialog and the message agree. */
-  function selectionRow(r: Row): StreamSelectionRow {
-    return {
-      // `occurrenceId` here, not `id`: a selection OUTCOME is keyed by the
-      // occurrence it describes, and the endpoints answer in those terms.
-      occurrenceId: r.id,
-      // The cadence stands in when the stream has no name of its own, so a
-      // confirm never lists a row as "Patel Residence — Home · null".
-      label: `${r.clientName} — ${r.propertyName} · ${
-        r.service ?? (r.frequencyDays ? `every ${r.frequencyDays} days` : "repeating")
-      }`,
-      detail: r.canResume && r.suggestedResumeAt
-        ? `restarts ${fmtDate(r.suggestedResumeAt)}`
-        : r.startAt
-          ? `next ${fmtDate(r.startAt)}`
-          : null,
-    };
-  }
 
   if (rows === null) {
     return (
@@ -488,7 +794,7 @@ export default function RepeatingTab({
   }
 
   return (
-    <VStack align="stretch" gap={3} pb={selected.size > 0 ? "16" : "2"}>
+    <VStack align="stretch" gap={3} pb="2">
       {/* THE UNIT IS THE JOB OCCURRENCE, and the copy has to say so. This
           read "Every service that repeats", which names the wrong thing: one
           service can carry several repeating occurrences — mowing and hedging
@@ -506,26 +812,116 @@ export default function RepeatingTab({
           <Text fontWeight="semibold">Repeating job occurrences</Text>
         </HStack>
         <Text fontSize="xs" color="fg.muted">
-          Every job occurrence that repeats, and whether it is running or held.
-          Hold a whole season here in one pass instead of opening each visit.
-          One-off visits are not listed — there is nothing to hold on one.
+          Every job occurrence that repeats, and whether it is running or paused.
+          Pause a whole season here in one pass instead of opening each visit.
+          One-off visits are not listed — there is nothing to pause on one.
         </Text>
       </Box>
 
-      {/* The shape of the book, before any filter. The blocked count is the
-          number worth stating out loud: those are the streams an end-of-season
-          sweep silently misses, and until this screen existed nothing said so. */}
+      {/* THE SHAPE OF THE BOOK, AND THE FILTER. Counted against every row,
+          never the filtered set — the strip says what the book is, and a
+          strip whose numbers moved as you filtered could not tell you that.
+
+          Each chip is also the way into its own slice. Clicking the lit one
+          clears back to everything, which is the toggle the Due button
+          already had. See the `Lens` type for why three of these write state
+          that already existed rather than adding their own. */}
       <HStack gap={2} wrap="wrap" data-testid="repeating-summary">
-        <Badge variant="subtle">{counts.total} repeating</Badge>
-        <Badge variant="subtle" colorPalette="blue">{counts.live} scheduled</Badge>
-        <Badge variant="subtle" colorPalette="purple">{counts.held} held</Badge>
+        <LensChip
+          lens="all"
+          active={activeLens === "all"}
+          onPick={applyLens}
+          palette="gray"
+          tone="neutral"
+          title="Show every repeating job occurrence"
+        >
+          {counts.total} repeating
+        </LensChip>
+        <LensChip lens="scheduled" active={activeLens === "scheduled"} onPick={applyLens} palette="blue"
+          title="Only the ones still running — these are what an end-of-season sweep pauses">
+          {counts.live} scheduled
+        </LensChip>
+        {/* THE PAUSED CHIP IS THE REASON FILTER. It used to be a chip plus a
+            separate purple icon button two rows down, which between them
+            said one thing twice: the chip counted the paused rows, the
+            button narrowed them to a reason, and neither mentioned the
+            other. Folding the menu onto the chip leaves one control that
+            states the count, the state, and the reason it is narrowed to.
+
+            It opens a menu rather than toggling, unlike the other five — a
+            second reason picked while paused is already on is a
+            re-narrowing, not a request to switch off. "All repeating job
+            occurrences" at the top of the menu is how you clear it. */}
+        <StreamPauseFilter
+          active={pausedOnly}
+          reasonCode={reasonCode}
+          reasons={reasons}
+          onChange={applyPauseFilter}
+          offLabel="All repeating job occurrences"
+          trigger={
+            <LensChip
+              lens="paused"
+              active={activeLens === "paused"}
+              /* Clicking the body filters to every paused row, exactly like
+                 the five chips beside it. The caret is what opens the reason
+                 menu — see the note in LensChip about why the body has to
+                 stop the event at pointerdown. */
+              onPick={applyLens}
+              palette="purple"
+              withMenu
+              /* A PLAIN TOGGLE, like the five beside it. Widening to "all
+                 paused" on a click while narrowed was the other candidate
+                 and it loses: it makes this one chip answer a click
+                 differently depending on its own state, which is the thing
+                 that just sent the operator hunting through a menu. */
+              title={
+                !pausedOnly
+                  ? "Only the ones already paused — the repeating is stopped, the customer is not archived. Use the arrow to narrow to one reason"
+                  : reasonCode !== ALL_PAUSE_REASONS
+                    ? `Showing only: paused — ${pauseReasonLabel}. Click to show everything; use the arrow to pick another reason`
+                    : "Showing only the paused ones. Click to show everything; use the arrow to narrow to one reason"
+              }
+            >
+              {counts.paused} paused
+              {pausedOnly && reasonCode !== ALL_PAUSE_REASONS ? ` · ${pauseReasonLabel}` : ""}
+            </LensChip>
+          }
+        />
         {counts.blocked > 0 && (
-          <Badge variant="subtle" colorPalette="orange">
-            {counts.blocked} cannot be held yet
-          </Badge>
+          <LensChip lens="blocked" active={activeLens === "blocked"} onPick={applyLens} palette="orange"
+            title="Only the ones that cannot be paused until something else is resolved first">
+            {counts.blocked} cannot be paused yet
+          </LensChip>
         )}
         {counts.due > 0 && (
-          <Badge variant="subtle" colorPalette="red">{counts.due} due a check-back</Badge>
+          <LensChip lens="due" active={activeLens === "due"} onPick={applyLens} palette="red"
+            title="Only the paused ones whose reminder date has arrived — the ones asking for a decision">
+            {counts.due} to review
+          </LensChip>
+        )}
+        {/* THE NUMBER NOBODY WAS BEING TOLD. A stream whose next visit came
+            due and was never made is not held, not scheduled and not
+            finished — it is simply gone from the calendar, and the only
+            trace was a gap. Nine of them in the live book when this was
+            written, the oldest a month old, eight waiting on money.
+
+            THE DARK CHIP IS THE HOUSE SIGN FOR EXPIRED — the same one Work →
+            Jobs puts on the Today group for expired next visits, which is
+            the same event seen from the other end. Two names and two colours
+            for one condition is how an operator ends up thinking they are
+            two problems. */}
+        {counts.expired > 0 && (
+          <LensChip
+            lens="expired"
+            active={activeLens === "expired"}
+            onPick={applyLens}
+            palette="gray"
+            tone="expired"
+            title="The next visit came due and was never created — usually because the current one is still waiting on payment."
+            data-testid="repeating-expired-count"
+          >
+            {counts.expired} expired
+          </LensChip>
         )}
       </HStack>
 
@@ -538,50 +934,17 @@ export default function RepeatingTab({
             placeholder="Customer, property or service…"
           />
         </Box>
-        <StreamPauseFilter
-          active={pausedOnly}
-          reasonCode={reasonCode}
-          reasons={reasons}
-          onChange={(next) => { setPausedOnly(next.active); setReasonCode(next.reasonCode); }}
-        />
-        <Button
-          size="sm"
-          variant={dueOnly ? "subtle" : "outline"}
-          colorPalette={dueOnly ? "red" : undefined}
-          onClick={() => setDueOnly((v) => !v)}
-          title="Only the held services whose check-back date has arrived"
-          data-testid="repeating-due-filter"
-        >
-          <BellRing size={13} />
-          Due
-        </Button>
+        {/* NO FILTER CONTROLS LEFT HERE — the summary strip is all of them.
+            A "To review" button and a pause-reason icon button used to sit
+            beside this box, each saying what a chip one row up already said.
+            Both are folded into their chips, so every filter on this screen
+            has exactly one control and the strip is the whole story. */}
       </HStack>
 
       {failed && (
         <Text fontSize="sm" color="red.fg">
           Could not load the list. Nothing has been changed.
         </Text>
-      )}
-
-      {canManage && selectableIds.length > 0 && (
-        <HStack gap={2} wrap="wrap">
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => setSelected(new Set(selectableIds))}
-            data-testid="repeating-select-all"
-          >
-            {/* NAMES WHAT IT WILL TICK, and it is the filtered set, not the
-                whole book. "Select all" over a filtered table is the one
-                place a selection can quietly be bigger than it looks. */}
-            Select these {selectableIds.length}
-          </Button>
-          {selected.size > 0 && (
-            <Button size="xs" variant="ghost" onClick={() => setSelected(new Set())}>
-              Clear selection
-            </Button>
-          )}
-        </HStack>
       )}
 
       {/* SORTING ON A PHONE, where the headers that carry it do not render.
@@ -642,7 +1005,11 @@ export default function RepeatingTab({
         px={2}
         hideBelow="md"
       >
-        <Box />
+        {/* NO LEADING SPACER. There was one, for the checkbox column, and
+            removing that column from COLS without removing it here put SIX
+            header cells into five tracks — every title sat over the column
+            to its right, which is the exact unreadability COLS exists to
+            prevent, reintroduced by a deletion rather than an addition. */}
         {/* EACH TITLE IS THE CONTROL. Rendered from SORTABLE rather than
             written out, so a column cannot be sortable in the header and
             missing from the phone picker below. The arrow appears only on
@@ -696,8 +1063,6 @@ export default function RepeatingTab({
         <VStack align="stretch" gap={2} data-testid="repeating-rows">
           {filtered.map((row) => {
             const meta = statusMeta(row);
-            const selectable = row.canPause || row.canResume;
-            const isSelected = selected.has(row.id);
             return (
               <Box
                 key={row.id}
@@ -706,32 +1071,40 @@ export default function RepeatingTab({
                 gap={3}
                 alignItems="start"
                 borderWidth="1px"
-                borderColor={isSelected ? "purple.emphasized" : "border"}
-                bg={isSelected ? "purple.faint" : undefined}
+                borderColor="border"
+                /* A STRIPE, AND IT IS ALWAYS THERE. The expired rows are the
+                   ones to find while scanning, so the highlight has to work
+                   without reading any cell — but a border that only appears
+                   on some rows moves those rows' contents 3px right, and
+                   columns that do not line up is the exact failure this
+                   table's COLS constant exists to prevent. So every row
+                   reserves the stripe and only the expired ones ink it.
+
+                   Left edge rather than the whole border: the full border is
+                   already spoken for by the row's own outline. */
+                borderLeftWidth="3px"
+                borderLeftColor={
+                  row.expiredDays === null
+                    ? "transparent"
+                    : row.expirySuppressed
+                      ? "border.emphasized"
+                      : /* Matches the chip rather than competing with it. It
+                           was red while the chip is near-black, which made
+                           one condition look like two marks for two
+                           reasons. `fg` is the ink the chip is filled with,
+                           so the stripe and the chip read as one signal and
+                           both invert together on a dark ground. */
+                        "fg"
+                }
                 borderRadius="md"
                 px={2}
                 py={2}
                 data-testid={`repeating-row-${row.id}`}
                 data-status={row.status}
-                data-selected={isSelected ? "1" : "0"}
+                data-expired={row.expiredDays === null ? "0" : String(row.expiredDays)}
               >
-                <Box pt="1">
-                  {canManage && (
-                    <Checkbox.Root
-                      checked={isSelected}
-                      disabled={!selectable}
-                      onCheckedChange={() => toggle(row.id)}
-                      size="sm"
-                      aria-label={`Select ${row.clientName} ${row.service ?? "repeating job occurrence"}`}
-                    >
-                      <Checkbox.HiddenInput />
-                      <Checkbox.Control />
-                    </Checkbox.Root>
-                  )}
-                </Box>
-
-                {/* On a phone everything after the checkbox stacks into the
-                    second column; at desk width each piece takes its own. */}
+                {/* On a phone the cells stack; at desk width each takes its
+                    own column. */}
                 <Cell label="Customer">
                   <Text fontSize="sm" fontWeight="medium">{row.clientName}</Text>
                   <Text fontSize="xs" color="fg.muted">{row.propertyName}</Text>
@@ -760,12 +1133,89 @@ export default function RepeatingTab({
 
                 <Cell label="Next visit">
                   <Text fontSize="sm">{row.startAt ? fmtDate(row.startAt) : "—"}</Text>
+                  {/* THE STREAM HAS STOPPED MAKING VISITS. Said in the
+                      column it happened to: the date above is the last one
+                      this stream produced, and the next one never arrived.
+
+                      QUIET WHEN SILENCED. `expirySuppressed` means somebody
+                      already decided this stall is known about, and shouting
+                      it in red here would undo that. The row still carries
+                      the fact, because this screen is where the book gets
+                      reviewed — it just stops being an alarm. */}
+                  {row.expiredDays !== null && (
+                    <Badge
+                      mt="1"
+                      size="xs"
+                      /* THE HOUSE SIGN FOR EXPIRED — the near-black chip Work
+                         → Jobs puts on the Today group for expired next
+                         visits. Same condition seen from the other end of
+                         the same stall, so it gets the same mark; a red
+                         icon-and-text here said "a different kind of
+                         problem" about an identical one.
+
+                         `solid` on gray rather than the Jobs chip's pinned
+                         `gray.600`/`gray.50`: a raw ramp value is the same
+                         wash in all fourteen themes, and four of them put
+                         this row on a dark ground where a gray.600 chip
+                         stops being obvious. The semantic step inverts per
+                         theme, so it stays the loudest thing on the row.
+
+                         SUBTLE WHEN SILENCED. Somebody already said they
+                         know; it stays visible and stops shouting. */
+                      variant={row.expirySuppressed ? "subtle" : "solid"}
+                      colorPalette="gray"
+                      borderRadius="full"
+                      px="2"
+                      whiteSpace="nowrap"
+                      title={
+                        `The next visit was due ${
+                          row.nextVisitDueOn ? fmtDate(row.nextVisitDueOn) : "earlier"
+                        } and was never created, so this stream has stopped.` +
+                        (row.expirySuppressed ? " This warning has been silenced." : "")
+                      }
+                      data-testid="repeating-expired"
+                    >
+                      Expired {row.expiredDays}d
+                    </Badge>
+                  )}
                 </Cell>
 
                 <Cell label="State">
                   <Badge size="sm" variant="subtle" colorPalette={meta.palette}>
                     {meta.label}
                   </Badge>
+                  {/* BOTH CLOCKS, from the component Money → Awaiting
+                      payment draws too. The badge said "Awaiting payment"
+                      and stopped there, which reads the same at two days and
+                      at forty-five — and forty-five is the one that has cost
+                      the stream its visits.
+
+                      ORANGE, matching the status badge directly above it, so
+                      the money information on this row is one colour family.
+                      Purple would have matched the Money card but collides
+                      with "Held" in this very column. */}
+                  {row.awaitingPaymentDays !== null && (
+                    <Box mt={1} data-testid="repeating-awaiting-age">
+                      <PaymentWaitBadges
+                        palette="orange"
+                        size="xs"
+                        /* THE LOUD RUNG IS "IT HAS ALREADY COST A VISIT".
+                           Money → Awaiting payment reads its own
+                           PAYMENT_REQUEST_STALE_DAYS setting, which is about
+                           chasing an invoice. On this screen the question is
+                           whether the wait has broken the stream, and that
+                           answer is already computed. */
+                        stale={row.expiredDays !== null && !row.expirySuppressed}
+                        wait={{
+                          waitingDays: row.awaitingPaymentDays,
+                          requestedDays: row.paymentRequestedDays,
+                          firstRequestedDays: row.paymentFirstRequestedDays,
+                          resendCount: row.paymentResendCount,
+                          neverRequested: row.paymentNeverRequested,
+                        }}
+                      />
+                    </Box>
+                  )}
                   {/* WHY A ROW CANNOT BE TICKED, said on the row. The rule is
                       the operator's: settle the money first, then hold the
                       visit that replaces it. */}
@@ -810,8 +1260,8 @@ export default function RepeatingTab({
                         </Box>
                         <Text fontSize="2xs" color={row.reminderDue ? "red.fg" : "fg.muted"}>
                           {row.streamResumeReminderAt
-                            ? `check back ${fmtDate(row.streamResumeReminderAt)}`
-                            : "no check-back date"}
+                            ? `reminder ${fmtDate(row.streamResumeReminderAt)}`
+                            : "no reminder date"}
                         </Text>
                       </HStack>
                     </>
@@ -846,6 +1296,16 @@ export default function RepeatingTab({
                     setBusyId={setBusyId}
                     size="xs"
                   />
+                  {/* MESSAGE THE CUSTOMER, beside the decision rather than a
+                      tab away. Pausing somebody's service is a thing they
+                      should hear about, and the draft behind this button is
+                      keyed to what this row is about to do. Renders nothing
+                      at all when the caller may not see contacts, or when
+                      the customer has neither phone nor email.
+
+                      SECOND IN THE ORDER, deliberately: the decision, then
+                      telling them about it, then navigating away. */}
+                  <ClientContactMenu contact={row} draft={draftFor(row)} />
                   {/* Ghost, because it navigates rather than changing
                       anything — but the same size as the others, so the
                       column reads as one block. */}
@@ -866,61 +1326,7 @@ export default function RepeatingTab({
         </VStack>
       )}
 
-      {/* THE SELECTION BAR. Sticky, because the rows it describes are what
-          you scrolled through to build it, and a count you have to scroll
-          back up to read is a count you stop trusting. */}
-      {canManage && selected.size > 0 && (
-        <Box
-          position="sticky"
-          bottom="0"
-          bg="bg"
-          borderTopWidth="1px"
-          borderColor="border.emphasized"
-          py={2}
-          px={2}
-          data-testid="repeating-selection-bar"
-        >
-          <HStack gap={2} wrap="wrap">
-            <Text fontSize="sm" fontWeight="medium">
-              {selected.size} selected
-            </Text>
-            {/* EACH BUTTON CARRIES ITS OWN COUNT. A mixed selection is normal
-                in spring — some held, some running — and "Pause" over 23 rows
-                when only 21 can be paused is the kind of quiet arithmetic
-                this screen exists to remove. */}
-            {toPause.length > 0 && (
-              <Button
-                size="sm"
-                colorPalette="purple"
-                variant="outline"
-                loading={selection.busy}
-                onClick={() => selection.openPauseMany(toPause.map(selectionRow))}
-                data-testid="repeating-pause-selected"
-              >
-                Pause {toPause.length}
-              </Button>
-            )}
-            {toResume.length > 0 && (
-              <Button
-                size="sm"
-                colorPalette="green"
-                variant="outline"
-                loading={selection.busy}
-                onClick={() => selection.openResumeMany(toResume.map(selectionRow))}
-                data-testid="repeating-resume-selected"
-              >
-                Resume {toResume.length}
-              </Button>
-            )}
-            <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
-              Clear
-            </Button>
-          </HStack>
-        </Box>
-      )}
-
       {streamControls.dialogs}
-      {selection.dialogs}
     </VStack>
   );
 }

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-10-13T00:00:00.000Z
+  modified: 2026-11-10T19:00:00.000Z
 ---
 
 **Started 2026-10-11. Backend complete as of 2026-10-13. Nothing committed,
@@ -21,18 +21,23 @@ back. Any note claiming "flag OFF so behaviour is unchanged" is describing
 Full detail lives in `docs/features/permissions.md` (design),
 `permissions-BUILD.md` (backend steps + gates) and
 `permissions-UI-BUILD.md` (the remaining phase). `permissions-ROUTE-MAP.md` is
-maintained BY HAND (639 rows) — **there is no committed generator script**, and
-two ad-hoc reconcile scripts destroyed it in the past by rewriting rows they
-did not understand. **G5 fails the build whenever it and the guards disagree**,
-which is what actually keeps it correct. Read those, not this.
+**GENERATED — `apps/api/scripts/build-route-map.ts`, committed** (`npm run
+routemap`, `routemap:check`). It was maintained by hand, and THREE ad-hoc
+reconcile scripts destroyed it by rewriting rows they did not understand;
+the generator exists because of that. It also owns the one prose line a gate
+reads ("N distinct method+path pairs"), so adding a route no longer breaks
+the build one step later in a file the author never touched.
+**G5 fails the build whenever the map and the guards disagree**, which is
+what keeps it correct. Read those, not this.
 
-## Verified numbers (2026-10-13 — re-verify, they move)
-- **60 entitlements** in `packages/permissions/entitlements.ts`, each with a
-  human sentence the UI can render.
-- **639 routes** total; **496** carry a `requires(...)` guard. The rest are
-  `approvedUser` ownership routes (~95 endpoints) and public/webhook paths.
-- **34 route files**, **36 build-gate files**, **43 G-numbered assertions**.
-- Build gate: **58 files / 2037 tests green**. `tsc` clean in both apps.
+## Verified numbers (RE-COUNTED 2026-11-10 — they move, count again)
+- **65 entitlements** carry at least one route in the map.
+- **656 routes** total; **508** behind an entitlement. The rest:
+  **108** `approvedUser` ownership, **24** public, **10** client-portal,
+  **6** system/cron.
+- **45 build-gate files**; build gate **67 files / 2198 tests green**.
+  `tsc` clean in both apps.
+- (The 2026-10-13 figures were 639 / 496 / 58 files / 2037 tests.)
 - Starter ladder, by INHERITANCE: Trainee 13 → Worker 16 → Admin 37 → Super 60.
 
 ## What the backend now looks like

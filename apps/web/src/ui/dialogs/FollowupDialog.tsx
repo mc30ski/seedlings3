@@ -19,7 +19,7 @@ import { createListCollection } from "@chakra-ui/react/collection";
 import { X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
-import { bizDateKey } from "@/src/lib/dates";
+import { bizDateKey, bizInstantFromEtParts } from "@/src/lib/dates";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -188,7 +188,11 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
     try {
       const body: Record<string, unknown> = {
         title: title.trim(),
-        startAt: date + "T09:00:00",
+        // 9am ET. NOT `date + "T09:00:00"` — that string carries no zone, so
+          // `new Date()` on the server read it in the SERVER's zone (UTC on
+          // Vercel) and every task landed at 4am ET. The date was right, the
+          // hour was not; production had 11 rows at exactly 09:00Z.
+          startAt: bizInstantFromEtParts(date, "09:00"),
         notes: notes.trim() || null,
         frequencyDays: isRepeating ? modeToDays(repeatMode, customDays) : null,
         clientIds: selectedClientIds,

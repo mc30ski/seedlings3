@@ -226,196 +226,23 @@ export function useStreamPauseControls({
   };
 }
 
-/** One row in a selection, as the confirm needs to name it. */
-export type StreamSelectionRow = {
-  occurrenceId: string;
-  /** "Client — Property · Service", built by the caller. */
-  label: string;
-  /** A second line where one helps — the date a resume would land on. */
-  detail?: string | null;
-};
-
-export type StreamPauseSelection = {
-  openPauseMany: (rows: StreamSelectionRow[]) => void;
-  openResumeMany: (rows: StreamSelectionRow[]) => void;
-  busy: boolean;
-  /** Render once, beside the tab's other dialogs. */
-  dialogs: React.ReactNode;
-};
-
-type SelectionOutcome = { occurrenceId: string; ok: boolean; message?: string };
-type SelectionResult = { applied: number; refused: number; outcomes: SelectionOutcome[] };
-
 /**
- * ACT ON A SELECTION OF STREAMS — the Repeating tab's half of this module.
+ * SELECTION ACTIONS WERE HERE, AND WERE REMOVED 2026-11-10.
  *
- * It lives beside the single-row controller because the two must agree about
- * what pausing means: the same mandatory reason, the same reminder horizon,
- * the same dialog. The ONLY difference is that this one is handed a list.
+ * Work → Repeating could tick many rows and pause or resume them together.
+ * It worked — one reason, one note, one reminder written as N ordinary
+ * per-occurrence pauses, each reported back individually. It went because
+ * the book is not big enough to need it: ~40 pausable streams, which is a
+ * screenful, and the operator would rather see each one. Their words: "we
+ * don't have enough that make it worth it for now. I can rethink it when
+ * there are many more clients."
  *
- * It is NOT a cascade, and the distinction is the entire reason this is
- * allowed to exist. The removed client-level "Pause services" acted on
- * whatever Jobs happened to exist at that moment, named none of them, and
- * left a stamp behind so it could undo itself. This acts on rows the operator
- * ticked and can see, lists them in the confirm, writes nothing but the
- * ordinary per-occurrence pause, and reports back per row.
+ * REMOVED RATHER THAN HIDDEN, and that is the point. The feature this whole
+ * module replaced left `Job.clientBulkPausedAt` behind on the model, and two
+ * dead columns became a second way to pause that had to stay in step with
+ * the first. Dead routes and an unreachable dialog mode are the same debt in
+ * a different shape. `git log` has the whole thing if it comes back.
  */
-export function useStreamPauseSelection({
-  onChanged,
-}: {
-  /** The caller's reload. Runs once after the whole selection, not per row. */
-  onChanged: () => void | Promise<void>;
-}): StreamPauseSelection {
-  const [selection, setSelection] = useState<
-    { mode: "pause-many" | "resume-many"; rows: StreamSelectionRow[] } | null
-  >(null);
-  const [busy, setBusy] = useState(false);
-
-  /**
-   * Report what actually happened, row by row.
-   *
-   * A SELECTION THAT REPORTS ONE TOAST IS A SELECTION THAT LIES. Rows move
-   * under the operator while they are choosing — a visit gets started, a
-   * payment clears — and `pauseStream` refuses anything but SCHEDULED. If
-   * twenty-one of twenty-three take and two are refused, "Done" is false and
-   * the two that did not take are invisible until next spring.
-   */
-  function describe(result: SelectionResult, rows: StreamSelectionRow[], verb: string) {
-    const name = new Map(rows.map((r) => [r.occurrenceId, r.label]));
-    const failed = result.outcomes.filter((o) => !o.ok);
-    const total = result.applied + result.refused;
-    if (failed.length === 0) {
-      publishInlineMessage({
-        type: "SUCCESS",
-        text: `${verb} ${result.applied} of ${total}.`,
-      });
-      return;
-    }
-    // Name a few, then say how many more. The whole list in a toast is
-    // unreadable; a bare number is not actionable.
-    const shown = failed
-      .slice(0, 3)
-      .map((o) => `${name.get(o.occurrenceId) ?? "a service"} — ${o.message ?? "refused"}`)
-      .join("; ");
-    const more = failed.length > 3 ? ` (and ${failed.length - 3} more)` : "";
-    publishInlineMessage({
-      type: result.applied > 0 ? "WARNING" : "ERROR",
-      text: `${verb} ${result.applied} of ${total}. ${failed.length} not done: ${shown}${more}`,
-    });
-  }
-
-  async function run(
-    rows: StreamSelectionRow[],
-    work: () => Promise<SelectionResult>,
-    verb: string,
-    failureText: string,
-  ) {
-    setBusy(true);
-    try {
-      const result = await work();
-      describe(result, rows, verb);
-      setSelection(null);
-      window.dispatchEvent(new CustomEvent("seedlings:stream-pauses-changed"));
-      await onChanged();
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage(failureText, err) });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /** The rows, listed in the confirm. Scrolls rather than growing the
-   *  dialog past the viewport — thirty rows is a normal autumn selection. */
-  const summary = (rows: StreamSelectionRow[]) => (
-    <Box
-      borderWidth="1px"
-      borderColor="border.emphasized"
-      borderRadius="md"
-      maxH="200px"
-      overflowY="auto"
-      px={3}
-      py={2}
-      data-testid="stream-selection-summary"
-    >
-      <VStack align="stretch" gap={1}>
-        {rows.map((r) => (
-          <Box key={r.occurrenceId}>
-            <Text fontSize="xs">{r.label}</Text>
-            {r.detail && (
-              <Text fontSize="2xs" color="fg.muted">{r.detail}</Text>
-            )}
-          </Box>
-        ))}
-      </VStack>
-    </Box>
-  );
-
-  const dialogs = (
-    <>
-      {selection?.mode === "pause-many" && (
-        <StreamPauseDialog
-          open
-          mode="pause-many"
-          selectionCount={selection.rows.length}
-          summaryNode={summary(selection.rows)}
-          busy={busy}
-          onCancel={() => { if (!busy) setSelection(null); }}
-          onConfirm={async ({ reasonCode, reason, reminderAt }) =>
-            run(
-              selection.rows,
-              () =>
-                apiPost<SelectionResult>("/api/repeating-streams/pause", {
-                  occurrenceIds: selection.rows.map((r) => r.occurrenceId),
-                  reasonCode,
-                  reason,
-                  reminderAt,
-                }),
-              "Paused",
-              "Failed to pause the selected services.",
-            )
-          }
-        />
-      )}
-      {selection?.mode === "resume-many" && (
-        <StreamPauseDialog
-          open
-          mode="resume-many"
-          selectionCount={selection.rows.length}
-          summaryNode={summary(selection.rows)}
-          busy={busy}
-          onCancel={() => { if (!busy) setSelection(null); }}
-          onConfirm={async ({ startAt }) =>
-            run(
-              selection.rows,
-              () =>
-                apiPost<SelectionResult>("/api/repeating-streams/resume", {
-                  occurrenceIds: selection.rows.map((r) => r.occurrenceId),
-                  startAt,
-                }),
-              "Resumed",
-              "Failed to resume the selected services.",
-            )
-          }
-        />
-      )}
-    </>
-  );
-
-  return {
-    openPauseMany: (rows) => setSelection({ mode: "pause-many", rows }),
-    openResumeMany: (rows) => setSelection({ mode: "resume-many", rows }),
-    busy,
-    dialogs,
-  };
-}
-
-/** The pause/resume/edit cluster for one occurrence.
- *
- *  Renders nothing unless the occurrence is in a state where a pause action
- *  makes sense, so callers drop it into an action row unconditionally.
- *
- *  `schedule.manage`: pausing a stream without that would silently stop the work
- *  they are scheduled for, and they have no way to see the consequence. */
 export function StreamPauseActions({
   occ,
   canManage,
@@ -441,7 +268,7 @@ export function StreamPauseActions({
         id="occ-stream-pause"
         itemId={occ.id}
         label="Pause repeating"
-        title="Hold this repeating job occurrence — the service and its other repeating job occurrences keep running"
+        title="Pause this repeating job occurrence — the service and its other repeating job occurrences keep running"
         onClick={async () => { controls.openPause(occ); }}
         variant="outline"
         colorPalette="purple"
@@ -507,14 +334,31 @@ export function StreamPauseFilter({
   onChange,
   reasons,
   size = "sm",
+  trigger,
+  offLabel = "All visits",
 }: {
-  /** Whether the list is narrowed to held visits at all. */
+  /** Whether the list is narrowed to paused visits at all. */
   active: boolean;
   /** ALL_PAUSE_REASONS, or the one reason to narrow to. */
   reasonCode: string;
   onChange: (next: { active: boolean; reasonCode: string }) => void;
   reasons: PauseReason[];
   size?: "xs" | "sm" | "md";
+  /**
+   * Render the menu under somebody else's control instead of the icon
+   * button. Work → Repeating hangs it off its "N paused" summary chip, which
+   * already states the count and the active reason — so a separate icon
+   * button beside it was a second control saying the same thing.
+   *
+   * A PROP RATHER THAN A SECOND COMPONENT, because what has to stay single
+   * is not the button: it is the ITEM LIST and the rule below that switching
+   * off also drops the reason. A copied menu is how one surface ends up
+   * offering a retired reason the other has stopped offering.
+   */
+  trigger?: React.ReactNode;
+  /** What the "no filter" item is called. The unit differs by host — Jobs
+   *  and Services list visits; Repeating lists repeating job occurrences. */
+  offLabel?: string;
 }) {
   const value = active ? reasonCode : PAUSE_FILTER_OFF;
 
@@ -524,12 +368,12 @@ export function StreamPauseFilter({
         items: [
           // The menu carries the words the trigger no longer does, so
           // picking is unambiguous even though the button is a bare icon.
-          { label: "All visits", value: PAUSE_FILTER_OFF },
+          { label: offLabel, value: PAUSE_FILTER_OFF },
           { label: "Paused — any reason", value: ALL_PAUSE_REASONS },
           ...reasons.map((r) => ({ label: `Paused — ${r.label}`, value: r.code })),
         ],
       }),
-    [reasons],
+    [reasons, offLabel],
   );
 
   // ICON ONLY, like every other filter trigger in these toolbars. What is
@@ -562,6 +406,9 @@ export function StreamPauseFilter({
     >
       <Select.HiddenSelect />
       <Select.Control>
+        {trigger ? (
+          <Select.Trigger asChild>{trigger}</Select.Trigger>
+        ) : (
         <Select.Trigger
           w="auto"
           minW="0"
@@ -585,6 +432,7 @@ export function StreamPauseFilter({
           <PauseCircle size={14} />
           <Select.Indicator display="none" />
         </Select.Trigger>
+        )}
       </Select.Control>
       <Portal>
         <Select.Positioner>
