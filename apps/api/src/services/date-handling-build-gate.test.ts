@@ -88,6 +88,50 @@ type Rule = {
 };
 
 const FORBIDDEN_PATTERNS: Rule[] = [
+  // 29. `new Date(<request-supplied value>)` — THE HOLE TWO SHIPPED BUGS
+  //     CAME THROUGH (2026-11-10). A bare "YYYY-MM-DD" parses as UTC
+  //     midnight, which is the PREVIOUS DAY in ET: resuming a paused
+  //     repeating job occurrence put it back on the schedule one day early,
+  //     and the pause reminder came due a day early with it. Rule 7 catches
+  //     `new Date(2026, 10, 3)` (numeric args) and nothing caught this.
+  //
+  //     `parseUserDate` is never worse: it anchors a bare date key at ET
+  //     midnight and passes a full datetime straight through. So there is no
+  //     case where `new Date(body.x)` is the right call for a value a person
+  //     picked, and the rule needs no exemptions.
+  {
+    pattern: /new\s+Date\s*\(\s*(?:req\s*\.\s*)?(?:body|query|params)\s*\./,
+    reason:
+      "`new Date()` on a request value parses a bare YYYY-MM-DD as UTC midnight — " +
+      "the previous calendar day in ET. This shipped: a resume landed a day early.",
+    fix: "Use `parseUserDate(String(body.x))` — ET midnight for a date key, pass-through for a full datetime.",
+  },
+  // 30. BUILDING AN INSTANT BY STRING CONCATENATION. Two variants, both
+  //     shipped (2026-11-10):
+  //       `date + "T09:00:00"`   — no zone, so it is read in whatever zone
+  //                                the code runs in. On Vercel (UTC) every
+  //                                task and follow-up landed at 4am ET;
+  //                                production had 11 rows at exactly 09:00Z.
+  //       `date + "T13:00:00Z"`  — a hard-coded UTC hour standing in for an
+  //                                ET wall-clock hour. 9am EDT, 8am EST: the
+  //                                reminder drifts an hour when the clocks
+  //                                change.
+  //
+  //     `T12:00:00Z` IS DELIBERATELY ALLOWED and is the only exception. UTC
+  //     noon is the same calendar day in every US zone, so it is the safe
+  //     anchor for turning a date key into something a formatter can read —
+  //     the documented pattern behind `fmtDate`'s date-key auto-routing, used
+  //     in ~25 places. The hazard is a NON-NOON time, which is always an
+  //     attempt to express a wall-clock moment the long way round.
+  {
+    pattern: /["'`]T(?!12:00)(?:[01]\d|2[0-3]):[0-5]\d/,
+    reason:
+      "An instant built by string concatenation. Without a zone it is read in the runtime's " +
+      "zone (UTC in production); with a hard-coded Z it drifts an hour across DST. Both shipped.",
+    fix:
+      "Use `etInstantFromParts(dateKey, 'HH:MM')` (api) or `bizInstantFromEtParts(dateKey, 'HH:MM')` (web). " +
+      "`T12:00:00Z` is the one allowed literal — the UTC-noon display anchor.",
+  },
   // 1. UTC YYYY-MM-DD slicing — the OG date bug in this codebase.
   // 16. `.slice(0, 10)` on an ISO string that is ALREADY a string — the
   //     variant rule #1 misses because there's no `.toISOString()` call on

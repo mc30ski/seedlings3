@@ -1,7 +1,8 @@
 import { randomBytes } from "crypto";
 import type { Prisma, PaymentCommsMode } from "@prisma/client";
 import { prisma } from "../db/prisma";
-import { etFormatDateOpts } from "../lib/dates";
+import { etFormatDateOpts, etToday } from "../lib/dates";
+import { describePaymentWait } from "../lib/paymentWait";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
 import { sendSMS, sendEmail } from "../lib/notifications";
@@ -1101,6 +1102,8 @@ export const paymentRequests = {
         paymentRequestSentAt: true,
         paymentRequestFirstSentAt: true,
         paymentRequestResendCount: true,
+        // The waiting clock's anchor — see lib/paymentWait.ts.
+        completedAt: true,
         paymentRequestToken: true,
         paymentRequestTokenCreatedAt: true,
         // Reconciliation hint — the payment method key + timestamp
@@ -1175,18 +1178,25 @@ export const paymentRequests = {
         }),
     );
     const now = Date.now();
-    // date-handling-allow: elapsed-time — "days since requested" for a
-    // display label (e.g. "Requested 3 days ago"). ≤1-hour DST drift
-    // doesn't matter for a human-readable bucket count.
-    const dayMs = 86_400_000;
+    // ONE ET DAY FOR THE WHOLE LIST — resolved here rather than per row, so
+    // a list that straddles midnight cannot report two different "todays".
+    const today = etToday();
     return occs.map((o) => {
+      // THE SHARED RULE, and it replaced a `date-handling-allow:
+      // elapsed-time` exemption that floored a millisecond difference. That
+      // is a different number from this one: a request sent at 11pm
+      // yesterday is "0 days" by milliseconds and "1 day" by the calendar,
+      // so the operator read "Requested today" the following morning. It
+      // also disagreed with Work → Repeating, which counts calendar days —
+      // the same rows, two screens, two answers.
+      const wait = describePaymentWait(o, today);
       const requestedAt = o.paymentRequestSentAt!;
-      const daysSinceRequested = Math.floor((now - requestedAt.getTime()) / dayMs);
+      const daysSinceRequested = wait.requestedDays ?? 0;
       // First-sent history: for legacy rows the backfill seeded this from
       // sentAt, so it's non-null in practice for anything in this list.
       // The nullish fallback keeps the type honest for any edge case.
       const firstSentAt = o.paymentRequestFirstSentAt ?? requestedAt;
-      const daysSinceFirstSent = Math.floor((now - firstSentAt.getTime()) / dayMs);
+      const daysSinceFirstSent = wait.firstRequestedDays ?? 0;
       const linkExpiresAt = o.paymentRequestTokenCreatedAt
         ? new Date(o.paymentRequestTokenCreatedAt.getTime() + expiryHours * 3_600_000)
         : null;
@@ -1202,6 +1212,13 @@ export const paymentRequests = {
         daysSinceRequested,
         firstSentAt,
         daysSinceFirstSent,
+        // HOW LONG THE VISIT HAS BEEN A RECEIVABLE, which is a different
+        // question from how long the client has had the invoice. A visit
+        // finished 27 days ago and invoiced this morning reads "Requested
+        // today" — true, and badly misleading on its own. Work → Repeating
+        // was already showing this number; now both screens show both.
+        waitingSince: wait.waitingSince,
+        waitingDays: wait.waitingDays,
         resendCount: o.paymentRequestResendCount ?? 0,
         stale: daysSinceRequested >= staleDays,
         linkExpiresAt,

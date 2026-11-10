@@ -111,11 +111,12 @@ table instead.
 | `d.getMonth()` for season/quarter | Same. | Web: `bizMonth()`. |
 | `d.setHours(0,0,0,0)` / `d.setUTCHours(0,0,0,0)` | Wrong timezone for midnight. | API: `etMidnight(etToday())`. |
 | `new Date(YYYY, MM, DD)` | Server-local midnight. | API: `etMidnight("YYYY-MM-DD")`. |
-| `new Date("YYYY-MM-DD")` for ET-anchored data | Parses as UTC midnight. | API: `etMidnight(str)` / `parseUserDate(str)`. |
+| `new Date("YYYY-MM-DD")` for ET-anchored data | Parses as UTC midnight — **the previous calendar day in ET**. *Shipped 2026-11-10: every resume of a paused repeating job occurrence landed a day early.* | API: `parseUserDate(str)` (or `etMidnight(str)`). **Gate rule 29** now fails the build on `new Date(body.…)`. |
 | `.setDate(getDate() + n)` / `.setMonth(getMonth() + n)` for fixed-duration windows | Server-local. `setMonth` also has [crazy overflow behavior](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/setMonth) (March 31 → February 31 → March 3). | API: `etAddDays(str, n)` on string keys. Web: `bizAddDays(key, n)`. |
 | `new Intl.DateTimeFormat(...)` inline at a callsite | Easy to typo. Easy to forget the `timeZone` parameter. | Add a helper to the canonical file. |
 | `new Date(d.getTime() + 86_400_000)` for "tomorrow" | Breaks on DST boundaries (most days have 86_400_000 ms, two have 86_400_000 ± 3_600_000). | API: `etAddDays(str, 1)` + `etMidnight`. Web: `bizTomorrow()` or `bizAddDays`. |
-| `new Date(dateKey + "T09:00")` / `.toISOString()` for "9 AM on date X" | The `T09:00` is interpreted in the browser's local timezone. A user in PST creating a job for "9 AM" results in a stored instant of 9 AM PST = 12 PM ET. | Web: `bizInstantFromEtParts(dateKey, "09:00")`. |
+| `dateKey + "T09:00:00"` (no zone) for "9 AM on date X" | Interpreted in whatever zone the code runs in. *Shipped: the server is UTC on Vercel, so every task and follow-up landed at **4 AM ET**.* | Web: `bizInstantFromEtParts(dateKey, "09:00")`. API: `etInstantFromParts`. **Gate rule 30.** |
+| `dateKey + "T13:00:00Z"` — a hard-coded UTC hour standing in for an ET wall-clock hour | Correct in one half of the year only. *Shipped: 13:00Z is 9 AM EDT but **8 AM EST**, so reminders set in summer fired an hour early all winter.* | Same helpers. **Gate rule 30.** The ONE allowed literal is `T12:00:00Z` — UTC noon is the same calendar day in every US zone, so it is the safe anchor for handing a date key to a formatter. |
 | A local `fmtDate()` / `dateKey()` / `pad()` helper inside a component | That's how we end up with 15 slightly-different formatters, each with their own bugs. | Add it to the canonical file with a clear name. Use it from there. |
 
 ---
@@ -156,6 +157,14 @@ helper that converts to ET, adds days as a string, then converts back.
 ---
 
 ## How this rule is enforced — automated build gate
+
+> **A rule in this document is not enforcement.** Both shapes above were
+> already listed as forbidden here, correctly, and both still shipped — the
+> gate simply had no pattern for either. **If you add a row to the tables
+> above, add the matching `FORBIDDEN_PATTERNS` entry in the same change**, or
+> you have written documentation, not a rule. (Rules 29 and 30 were added
+> 2026-11-10, after the two bugs, to close exactly this gap.)
+
 
 The forbidden patterns above are **mechanically enforced** by a test in
 [`apps/api/src/services/date-handling-build-gate.test.ts`](../apps/api/src/services/date-handling-build-gate.test.ts).

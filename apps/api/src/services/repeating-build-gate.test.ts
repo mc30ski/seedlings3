@@ -34,6 +34,14 @@ const CONTROLS = "apps/web/src/ui/components/StreamPauseControls.tsx";
 const DIALOG = "apps/web/src/ui/dialogs/StreamPauseDialog.tsx";
 const TABLE = "apps/web/src/lib/tabRequirements.ts";
 const SPEC = "docs/features/repeating.md";
+/** The one place the two money clocks are computed... */
+const WAIT = "apps/api/src/lib/paymentWait.ts";
+/** ...and the one place they are drawn. */
+const BADGES = "apps/web/src/ui/components/PaymentWaitBadges.tsx";
+/** The OTHER screen that asks the same question about the same rows. */
+const MONEY = "apps/web/src/ui/components/OutstandingRequestsSection.tsx";
+const OUTSTANDING = "apps/api/src/services/paymentRequests.ts";
+const CONTACT = "apps/web/src/ui/components/ClientContactMenu.tsx";
 
 /** Source with comments stripped, for assertions that must not be satisfied
  *  by a sentence ABOUT the rule instead of the rule. */
@@ -49,7 +57,7 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
   it("reads the files it guards", () => {
     // A gate whose paths have moved passes vacuously, which is the one
     // failure mode that looks identical to success.
-    for (const f of [SERVICE, ROUTES, TAB, CONTROLS, DIALOG, TABLE, SPEC]) {
+    for (const f of [SERVICE, ROUTES, TAB, CONTROLS, DIALOG, TABLE, SPEC, WAIT, BADGES, MONEY, OUTSTANDING, CONTACT]) {
       expect(read(f).length, `${f} is empty or missing`).toBeGreaterThan(200);
     }
   });
@@ -58,23 +66,6 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
   // 1. NO NEW STATE
   // ───────────────────────────────────────────────────────────────────────
 
-  it("the selection writes go through the per-occurrence pause, not their own", () => {
-    // The whole claim of this feature is that a selection is N ordinary
-    // pauses. A direct write here would be a second code path to the same
-    // state, and the two would drift on the history row, the audit row, or
-    // the reason snapshot — all three of which pauseStream owns.
-    const src = code(read(SERVICE));
-    expect(src, "pauseSelection must call the shared pauseStream")
-      .toMatch(/await pauseStream\(/);
-    expect(src, "resumeSelection must call the shared resumeStream")
-      .toMatch(/await resumeStream\(/);
-    expect(src, "and must not write occurrence status itself")
-      .not.toMatch(/jobOccurrence\.update\s*\(/);
-    expect(src, "nor open a transaction of its own around the sweep")
-      .not.toMatch(/\$transaction/);
-    expect(src, "nor write a pause history row directly")
-      .not.toMatch(/jobOccurrencePauseEvent/);
-  });
 
   it("nothing records that a batch happened", () => {
     // THE EXACT SHAPE OF THE REMOVED FEATURE. A column, a flag or an id
@@ -126,16 +117,15 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
   // 2. THE CAPABILITY SPLIT
   // ───────────────────────────────────────────────────────────────────────
 
-  it("the read is schedule.view-all and the writes are schedule.manage", () => {
-    const src = read(ROUTES);
-    expect(src, "the guard must be declared from the entitlement")
-      .toMatch(/const req_scheduleViewAll = requires\("schedule\.view-all"\)/);
-    expect(src, "the list is the oversight read")
-      .toMatch(/app\.get\("\/repeating-streams", req_scheduleViewAll/);
-    for (const verb of ["pause", "resume"]) {
-      expect(src, `the ${verb} selection must need schedule.manage`)
-        .toMatch(new RegExp(`app\\.post\\("/repeating-streams/${verb}", req_scheduleManage`));
-    }
+  it("the read is schedule.view-all, and that is the only route this tab has", () => {
+    // ONE ROUTE NOW. The two selection writes went with the multi-select on
+    // 2026-11-10; every write this screen makes is an ordinary per-occurrence
+    // pause on its own existing endpoint.
+    const src = code(read(ROUTES));
+    expect(src, "the list must be guarded on the oversight read")
+      .toMatch(/app\.get\(\s*"\/repeating-streams",\s*req_scheduleViewAll/);
+    expect(src, "and the selection writes must stay gone — see the note in the service")
+      .not.toMatch(/repeating-streams\/(pause|resume)/);
   });
 
   it("the tab row names the endpoint it reads, and only that", () => {
@@ -165,67 +155,33 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     // live book's Auditor role does. So the rendered read-only state cannot
     // be driven by a spec today, and this is what stands in for it.
     //
-    // Each affordance is checked individually on purpose: a single
-    // `canManage` somewhere in the file would be satisfied by gating the
-    // checkbox and forgetting the footer, which is a bar offering to pause
-    // twenty services to somebody whose every click would 403.
+    // Since the multi-select went, every affordance on this screen is a
+    // PER-ROW control, and they all come from `StreamPauseActions`, which
+    // takes `canManage` and renders nothing without it. So the check is that
+    // the tab hands it down honestly rather than hard-coding a true.
     const src = code(read(TAB));
-    const guarded = [
-      // The per-row tick.
-      /\{canManage && \(\s*<Checkbox\.Root/,
-      // The select-all row.
-      /\{canManage && selectableIds\.length > 0 && \(/,
-      // The sticky selection bar that carries Pause / Resume.
-      /\{canManage && selected\.size > 0 && \(/,
-    ];
-    const ungated = guarded.filter((re) => !re.test(src)).map(String);
-    expect(
-      ungated,
-      "an action affordance is not behind `canManage` — an oversight reader " +
-        "would be offered a control whose every click refuses",
-    ).toEqual([]);
-    // And the shared cluster is handed the same answer rather than deciding
-    // for itself from somewhere else.
-    expect(src, "the row actions take canManage from the tab's own check")
-      .toMatch(/canManage=\{canManage\}/);
+    expect(src, "the tab must read the capability its actions mutate behind")
+      .toMatch(/scope\.can\("schedule\.manage"\)/);
+    expect(src, "and hand it to the shared per-row actions")
+      .toMatch(/<StreamPauseActions[\s\S]{0,200}canManage=\{canManage\}/);
+    expect(src, "never a literal")
+      .not.toMatch(/canManage=\{true\}/);
   });
 
   // ───────────────────────────────────────────────────────────────────────
   // 3. THE SELECTION PATH IS SCOPED
   // ───────────────────────────────────────────────────────────────────────
 
-  it("a selection cannot reach outside the caller's portfolios", () => {
-    // pauseStream has no idea who is calling. Every other caller reaches it
-    // with one id the operator had on screen; this one takes a LIST from the
-    // request body, so a portfolio-limited holder could post an id from a
-    // district they cannot see and have it written.
-    const src = code(read(SERVICE));
-    expect(src, "the scope narrowing must exist")
-      .toMatch(/async function withinScope\(/);
-    const pause = src.slice(src.indexOf("export async function pauseSelection"));
-    expect(pause.slice(0, 1400), "pauseSelection must narrow before writing")
-      .toMatch(/await withinScope\(/);
-    const resume = src.slice(src.indexOf("export async function resumeSelection"));
-    expect(resume.slice(0, 1400), "resumeSelection must narrow before writing")
-      .toMatch(/await withinScope\(/);
-    // And the narrowing has to be USED, not merely computed.
-    expect(pause.slice(0, 2000), "ids outside scope must be refused by name")
-      .toMatch(/allowed\.has\(/);
-    expect(resume.slice(0, 2600), "ids outside scope must be refused by name")
-      .toMatch(/allowed\.has\(/);
-  });
 
-  it("the writes scope on the write's own capability", () => {
-    // A territorial grant of `schedule.manage` must bound what a selection
-    // touches even where the same person's `schedule.view-all` is wider.
-    // Scoping the write on the READ's capability would widen it.
-    const src = read(ROUTES);
-    const seg = src.slice(src.indexOf('app.post("/repeating-streams/pause"'));
-    expect(seg.slice(0, 1600), "the pause selection scopes on schedule.manage")
-      .toMatch(/occurrencePortfolioWhere\(req\.principal, "schedule\.manage"\)/);
-    const seg2 = src.slice(src.indexOf('app.post("/repeating-streams/resume"'));
-    expect(seg2.slice(0, 1600), "the resume selection scopes on schedule.manage")
-      .toMatch(/occurrencePortfolioWhere\(req\.principal, "schedule\.manage"\)/);
+  it("the read scopes on its own capability", () => {
+    // A territory-limited holder must not see another district's book, and
+    // the fragment has to be built with the capability the ROUTE is guarded
+    // on — scoping a `schedule.view-all` read with `schedule.manage` would
+    // hand the read-only oversight reader an empty table.
+    const src = code(read(ROUTES));
+    const listRoute = src.slice(src.indexOf('"/repeating-streams"'));
+    expect(listRoute.slice(0, 900), "the list must scope on schedule.view-all")
+      .toMatch(/occurrencePortfolioWhere\(req\.principal, "schedule\.view-all"\)/);
   });
 
   it("the list is scoped by current membership, not the frozen rows", () => {
@@ -240,41 +196,12 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
       .toMatch(/occurrencePortfolioWhere\(req\.principal, "schedule\.view-all"\)/);
   });
 
-  it("the loop is bounded by something the caller does not choose", () => {
-    const src = code(read(SERVICE));
-    expect(src, "a cap must exist").toMatch(/MAX_SELECTION\s*=\s*\d+/);
-    expect(src, "and be enforced on the incoming list")
-      .toMatch(/length > MAX_SELECTION/);
-  });
 
   // ───────────────────────────────────────────────────────────────────────
   // 4. IT TELLS THE TRUTH ABOUT WHAT HAPPENED
   // ───────────────────────────────────────────────────────────────────────
 
-  it("rows are written independently and reported per row", () => {
-    const src = code(read(SERVICE));
-    expect(src, "the result must carry per-row outcomes")
-      .toMatch(/outcomes/);
-    expect(src, "and separate what applied from what did not")
-      .toMatch(/applied:[\s\S]{0,80}refused:/);
-    // A throw inside the loop would abandon the rest of the selection.
-    const pause = src.slice(src.indexOf("export async function pauseSelection"));
-    expect(pause.slice(0, 2000), "a refused row must not abort the selection")
-      .toMatch(/catch\s*\(/);
-  });
 
-  it("a partial failure is not reported as success", () => {
-    // THE WAY A SELECTION LIES. 21 of 23 taking, with a green "Done", leaves
-    // two services running through the winter and nothing to find them by.
-    const src = code(read(CONTROLS));
-    const i = src.indexOf("function describe(");
-    expect(i, "the selection controller must describe its own result").toBeGreaterThan(-1);
-    const body = src.slice(i, i + 1800);
-    expect(body, "failures must be counted").toMatch(/failed/);
-    expect(body, "and named, not just counted").toMatch(/name\.get\(/);
-    expect(body, "and must not be published as SUCCESS")
-      .toMatch(/type: result\.applied > 0 \? "WARNING" : "ERROR"/);
-  });
 
   // ───────────────────────────────────────────────────────────────────────
   // 5. ONE PAUSE IMPLEMENTATION, AND ONE CONFIRM THAT NAMES THE ROWS
@@ -294,87 +221,15 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
       .not.toMatch(/<StreamPauseDialog/);
   });
 
-  it("the selection confirm lists the rows, not just a count", () => {
-    // The operator's own objection to the removed feature was that it "sorta
-    // hid what was happening as it cascaded actions". A count is a cascade
-    // with a number on it.
-    const ctrl = code(read(CONTROLS));
-    // BOTH selection dialogs, counted — not "it appears somewhere".
-    //
-    // This asserted a single match and was caught by mutation: deleting the
-    // summary from the PAUSE dialog still passed, because the resume dialog
-    // alone satisfied it. The failure that matters is per-dialog, and pausing
-    // thirty services unlisted is the worse of the two.
-    const summaries = ctrl.match(/summaryNode=\{summary\(/g) ?? [];
-    expect(
-      summaries.length,
-      "both the pause-many and resume-many dialogs must list their rows",
-    ).toBe(2);
-    expect(ctrl, "the summary must render each row's label")
-      .toMatch(/rows\.map\(\(r\) =>[\s\S]{0,400}r\.label/);
-    const dlg = code(read(DIALOG));
-    expect(dlg, "and the dialog must render it")
-      .toMatch(/props\.summaryNode/);
-  });
 
-  it("the selection dialog reuses the mandatory reason field", () => {
-    // The reason is what makes a pause findable again next spring, and it
-    // pre-fills the reminder from its own horizon. A second copy of that
-    // logic is a second set of pauses nobody can find.
-    const dlg = code(read(DIALOG));
-    expect(dlg, "pause-many must take the same reason branch as pause")
-      .toMatch(/asksForReason\s*=[\s\S]{0,200}"pause-many"/);
-    expect(dlg, "and a reason must still be required to confirm")
-      .toMatch(/canConfirm/);
-  });
 
   // ───────────────────────────────────────────────────────────────────────
   // 6. THE TWO WAYS THE SCREEN COULD MISLEAD
   // ───────────────────────────────────────────────────────────────────────
 
-  it("a row that cannot be held cannot be ticked, and says why", () => {
-    const src = code(read(TAB));
-    expect(src, "selectability comes from what the row can actually do")
-      .toMatch(/const selectable = row\.canPause \|\| row\.canResume/);
-    expect(src, "and disables the checkbox")
-      .toMatch(/disabled=\{!selectable\}/);
-    expect(read(TAB), "the blocker must be stated on the row")
-      .toMatch(/row\.blockedReason/);
-    // The server has to supply a reason for every blocked state or the row
-    // renders a disabled box with nothing beside it.
-    const svc = code(read(SERVICE));
-    expect(svc, "every non-actionable status needs operator-facing copy")
-      .toMatch(/function blockedReasonFor\(/);
-    for (const status of ["PENDING_PAYMENT", "IN_PROGRESS", "PAUSED"]) {
-      expect(svc, `${status} must have a stated reason`).toMatch(status);
-    }
-  });
 
-  it("select-all operates on the filtered rows and says how many", () => {
-    // A select-all over a filtered table is the one place a selection can
-    // quietly be larger than what is on screen.
-    const src = code(read(TAB));
-    expect(src, "the selectable set derives from the FILTERED rows")
-      .toMatch(/selectableIds[\s\S]{0,200}filtered\.filter\(/);
-    expect(read(TAB), "and the control names the count it will tick")
-      .toMatch(/Select these \{selectableIds\.length\}/);
-  });
 
-  it("resuming a selection defaults to each stream's own cadence", () => {
-    // ONE SHARED DATE DROPS THE BOOK ON ONE WEEK. Thirty held streams
-    // resumed onto one April date is thirty visits in a day — a pile-up
-    // created by the control meant to undo a book-wide hold.
-    const dlg = code(read(DIALOG));
-    expect(dlg, "cadence must be the default mode")
-      .toMatch(/useState<"cadence" \| "date">\("cadence"\)/);
-    const svc = code(read(SERVICE));
-    expect(svc, "and the server must compute per-row when no date is given")
-      .toMatch(/computeResumeStartAt\(row\.startAt, freq, now\)/);
-    // The same function the single-row path and the table's preview use, so
-    // the date shown before committing is the date written.
-    expect(svc, "the table must preview that same date")
-      .toMatch(/suggestedResumeAt/);
-  });
+
 
   it("a read-only reader gets labels without a capability they lack", () => {
     // `/pause-reasons` requires `schedule.manage`. Resolving labels on the
@@ -395,6 +250,57 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
   // ───────────────────────────────────────────────────────────────────────
   // 6b. SORTING — one decision, and an order that means something
   // ───────────────────────────────────────────────────────────────────────
+
+  it("every sort key is reachable from the one list", () => {
+    // `SORTABLE` is what both the headers and the phone picker render from,
+    // so a key in the union that is missing from it is a branch nothing can
+    // select. `"checkBack"` sat there with a live `case` in the comparator
+    // and no way to reach it — tsc is perfectly happy with an unreachable
+    // union member, so nothing said so.
+    const tab = code(read(TAB));
+    const union = tab.match(/type SortKey =([^;]+);/)?.[1] ?? "";
+    const keys = [...union.matchAll(/"([a-zA-Z]+)"/g)].map((m) => m[1]);
+    expect(keys.length, "could not read the SortKey union").toBeGreaterThan(2);
+    const list = tab.slice(tab.indexOf("const SORTABLE"), tab.indexOf("];", tab.indexOf("const SORTABLE")));
+    for (const k of keys) {
+      expect(list, `SortKey "${k}" is not offered by SORTABLE, so nothing can select it`)
+        .toContain(`key: "${k}"`);
+    }
+  });
+
+  it("the header row has exactly one cell per column track", () => {
+    // IT DID NOT, AND THE BUG ARRIVED BY DELETION. Removing the checkbox
+    // column from COLS left the header's leading spacer behind, so six
+    // header cells went into five tracks and every title sat over the column
+    // to its right — the exact unreadability COLS exists to prevent, and the
+    // thing tsc cannot see because a grid child count is not a type.
+    // SLICED FROM THE RAW FILE — the markers are comments, which `code()`
+    // strips — then stripped, so a `<Box />` written inside a comment is not
+    // counted as a header cell.
+    const raw = read(TAB);
+    const md = raw.slice(raw.indexOf("  md:"), raw.indexOf("};", raw.indexOf("  md:")));
+    // TRACK-SHAPED LITERALS, not every quote in the block. A trailing
+    // comment on one of those lines quotes a sample value, and `code()`
+    // keeps end-of-line comments — so a bare quote count read 7 tracks
+    // where there are 6.
+    const tracks = (md.match(/"[^"]*(?:fr\)|px)\s*"/g) ?? []).length;
+    expect(tracks, "could not count the md column tracks").toBeGreaterThan(3);
+
+    const header = code(
+      raw.slice(
+        raw.indexOf("{/* Column headers, desk width only"),
+        raw.indexOf("{filtered.length === 0"),
+      ),
+    );
+    expect(header.length, "could not isolate the header row").toBeGreaterThan(200);
+    // One cell per sortable column, plus however many bare spacers remain.
+    const spacers = (header.match(/<Box \/>/g) ?? []).length;
+    const sortable = (code(raw).match(/\{ key: "/g) ?? []).length;
+    expect(
+      sortable + spacers,
+      `the header draws ${sortable} titles + ${spacers} spacers into ${tracks} tracks`,
+    ).toBe(tracks);
+  });
 
   it("the headers and the phone picker sort from one list", () => {
     // The headers only render at desk width, so a phone needs its own
@@ -536,21 +442,661 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     }
   });
 
+  it("the multi-select stays removed, in every layer it reached", () => {
+    // REMOVED 2026-11-10, not hidden. The book is ~40 pausable streams —
+    // one screenful — and the operator would rather see each one: "we don't
+    // have enough that make it worth it for now. I can rethink it when there
+    // are many more clients."
+    //
+    // THIS ASSERTION IS THE POINT OF THE REMOVAL. The feature this whole
+    // module replaced left `Job.clientBulkPausedAt` behind, and two dead
+    // columns became a second way to pause that had to stay in step with the
+    // first. Dead routes, an unreachable dialog mode and an unused hook are
+    // that same debt in a different shape — and each one is individually
+    // harmless, which is exactly how all four come back one at a time.
+    //
+    // If it is rebuilt deliberately, this test is the thing to delete, and
+    // deleting it is a decision somebody has to make on purpose.
+    const layers: Array<[string, string, RegExp]> = [
+      ["the service", SERVICE, /pauseSelection|resumeSelection|withinScope|MAX_SELECTION/],
+      ["the routes", ROUTES, /repeating-streams\/(pause|resume)/],
+      ["the shared controls", CONTROLS, /useStreamPauseSelection|StreamSelectionRow/],
+      ["the dialog", DIALOG, /pause-many|resume-many|selectionCount|summaryNode/],
+      ["the tab", TAB, /setSelected|selectableIds|Checkbox\.Root|repeating-selection-bar/],
+    ];
+    for (const [label, file, pattern] of layers) {
+      expect(code(read(file)), `the selection path is back in ${label}`)
+        .not.toMatch(pattern);
+    }
+    // And the map must not still advertise the routes.
+    expect(read("docs/features/permissions-ROUTE-MAP.md"), "the route map still lists them")
+      .not.toContain("/repeating-streams/pause");
+  });
+
+  it("a date the operator picked is parsed in ET, not as UTC midnight", () => {
+    // A SHIPPED OFF-BY-ONE, found by an e2e asserting a 14-day service
+    // restarts one cadence on and getting 13.
+    //
+    // Both of this feature's date inputs are `<input type="date">`, so they
+    // arrive as a bare "2026-11-24" — and `new Date("2026-11-24")` is UTC
+    // midnight, which is the TWENTY-THIRD in ET. Every resume from a card
+    // put the visit back a day early, and every pause reminder came due a
+    // day early with it, which also moved the "N to review" count at the
+    // boundary. Silent in both directions: the date picked and the date
+    // shown only disagree if you go back and look.
+    //
+    // `parseUserDate` is the canonical reader — it anchors a bare date key
+    // at ET midnight and passes a full datetime through untouched.
+    const src = code(read(ROUTES));
+    const streamRoutes = src.slice(
+      src.indexOf('"/occurrences/:occurrenceId/stream-pause"'),
+      src.indexOf('"/repeating-streams"'),
+    );
+    expect(streamRoutes.length, "could not isolate the stream pause routes")
+      .toBeGreaterThan(200);
+    expect(streamRoutes, "an operator-picked date must not be read as UTC midnight")
+      .not.toMatch(/new Date\(\s*(body|String\(body)\.(newStartAt|reminderAt)/);
+    expect(streamRoutes, "the resume date must go through parseUserDate")
+      .toMatch(/parseUserDate\(String\(body\.newStartAt\)\)/);
+    expect(streamRoutes, "and so must the reminder date")
+      .toMatch(/parseUserDate\(String\(body\.reminderAt\)\)/);
+  });
+
+  it("contact details need their own capability, and are omitted not hidden", () => {
+    // THE TAB OPENS ON `schedule.view-all` — an oversight READ over the
+    // calendar. Seeing every visit is not the same trust as holding every
+    // customer's phone number, and the live book has a role in exactly that
+    // position. So the contact rides on `clients.view` ("See customers,
+    // properties and contacts"), which is the capability that owns these
+    // details everywhere else.
+    //
+    // OMITTED SERVER-SIDE, not hidden in the UI: a field the client never
+    // receives cannot be read out of a network tab.
+    const svc = code(read(SERVICE));
+    const routes = code(read(ROUTES));
+    expect(routes, "the list route must ask for the contact capability separately")
+      .toMatch(/listRepeatingStreams\([\s\S]{0,200}callerCan\(req, "clients\.view"\)/);
+    expect(svc, "and the service must default closed")
+      .toMatch(/includeContact = false/);
+    expect(svc, "the contacts must only be selected when permitted")
+      .toMatch(/\.\.\.\(includeContact[\s\S]{0,80}contacts: \{/);
+    // `callerCan` reads `req.principal`, so it honours the active
+    // perspective. A fresh DB lookup would restore powers the lens removed —
+    // a bug that has shipped three times in this codebase.
+    expect(routes, "the capability must come from the principal, not a fresh read")
+      .not.toMatch(/userCan\(db[\s\S]{0,80}clients\.view/);
+  });
+
+  it("messaging drafts, and never sends", () => {
+    // Every item opens the operator's own SMS or mail client with the text
+    // filled in. That is the only version safe to offer beside a
+    // pause: the message stays theirs to read, edit or abandon, and nothing
+    // is recorded as sent that a person did not send.
+    const menu = code(read(CONTACT));
+    expect(menu, "the draft must go out through the shared comms helpers")
+      .toMatch(/buildSmsHref|buildMailtoHref/);
+    expect(menu, "and carry the same CC list as a message from a job card")
+      .toMatch(/fetchCommsCc\(\)/);
+    expect(menu, "nothing here may post to the server")
+      .not.toMatch(/apiPost|apiPatch|apiDelete/);
+    // A customer with no phone and no email gets no icon — a disabled one
+    // teaches the operator to ignore the control.
+    expect(menu, "an unreachable customer must render nothing")
+      .toMatch(/if \(!contactPhone && !contactEmail\) return null/);
+
+    // IT SITS IN THE ROW'S ACTIONS COLUMN, whose rule is that every control
+    // there has the same width, size and alignment — a stack, not a wrapped
+    // row, because three buttons at three widths on three alignments is what
+    // that column shipped as and could not be read. A square icon dropped
+    // into a stack of stretched buttons broke the same rule from the other
+    // side; it was the one thing in the column that did not line up.
+    // SCOPED TO THE TRIGGER. The wrapper carries `w="full"` too, so a
+    // whole-file match is satisfied by it — and shrinking the BUTTON back
+    // out of the column's width sailed through.
+    const trigger = menu.slice(
+      menu.indexOf("<Button"),
+      menu.indexOf("</Button>", menu.indexOf("<Button")),
+    );
+    expect(trigger.length, "could not isolate the trigger").toBeGreaterThan(60);
+    expect(trigger, "the trigger must stretch like the buttons beside it")
+      .toMatch(/w="full"/);
+    expect(menu, "an icon-only trigger is what looked wrong")
+      .not.toMatch(/<IconButton/);
+
+    const tab = code(read(TAB));
+    // AWAITING PAYMENT IS NOT DRAFTED HERE. Money → Payments owns that
+    // message because it carries the invoice link and records the handoff;
+    // a second, cheerier version written from this screen would reach the
+    // customer with neither.
+    // ISOLATED AND COUNTED. Asserting the function's closing `return null`
+    // proved nothing — an extra draft added ABOVE it leaves the ending
+    // exactly as it was, and that mutation sailed through. What has to hold
+    // is the SHAPE: two drafts, one per thing this screen does.
+    const draftFn = tab.slice(
+      tab.indexOf("function draftFor(row: Row)"),
+      tab.indexOf("function statusMeta"),
+    );
+    expect(draftFn.length, "could not isolate draftFor").toBeGreaterThan(200);
+    expect(draftFn, "the draft must be keyed to what the row is about to do")
+      .toMatch(/if \(row\.canPause\)[\s\S]{0,900}if \(row\.canResume\)/);
+    const drafts = (draftFn.match(/return \{/g) ?? []).length;
+    expect(drafts, "exactly two drafts: the pause and the resume").toBe(2);
+    expect(draftFn, "everything else must fall through to no draft")
+      .toMatch(/return null;/);
+    expect(
+      /invoice|\bpay\b|payment/i.test(draftFn),
+      "the payment message belongs to Money → Payments — it carries the invoice link and records the handoff",
+    ).toBe(false);
+  });
+
   // ───────────────────────────────────────────────────────────────────────
   // 7. MEMBERSHIP, AND THE SPEC THAT DESCRIBES IT
   // ───────────────────────────────────────────────────────────────────────
 
   it("membership is the cadence, with the occurrence overriding the service", () => {
-    // A one-off has nothing to hold. The fallback is why this cannot be a
-    // `where` clause on the Job alone — and dropping it would silently fill
-    // the table with one-off visits that have no action.
+    // The fallback is why this cannot be a `where` clause on the Job alone.
     const src = code(read(SERVICE));
     expect(src, "the cadence fallback must be applied")
-      .toMatch(/o\.frequencyDays \?\? o\.job\?\.frequencyDays \?\? null/);
+      .toMatch(/o\.frequencyDays \?\? o\.job\.frequencyDays \?\? null/);
     expect(src, "and a row with no cadence must be skipped")
       .toMatch(/if \(freq === null\) continue/);
     expect(src, "only live streams are listed")
       .toMatch(/ACTIVE_STREAM_STATUSES/);
+  });
+
+  it("cadence alone is not membership — a one-off is excluded on its workflow", () => {
+    // THIS IS THE BUG THIS ASSERTION EXISTS FOR, and it was live in
+    // production: five ONE_OFF occurrences listed as repeating streams.
+    //
+    // Cadence resolves THROUGH the job, so a one-off carrying none of its own
+    // on a job that still has `frequencyDays: 14` from when it did repeat
+    // resolved to 14 and passed the test above. The screen's own first
+    // paragraph tells the operator one-off visits are not listed.
+    //
+    // `listNextOccurrenceGhosts` carries a comment about the identical trap —
+    // it advertised next visits for one-offs for exactly this reason. The dev
+    // database is all STANDARD, which is why no test and no amount of local
+    // clicking could have found it.
+    const src = code(read(SERVICE));
+    expect(src, "a non-STANDARD workflow must be dropped")
+      .toMatch(/o\.workflow !== "STANDARD"/);
+    expect(src, "and so must the legacy isOneOff flag, which outlives the workflow")
+      .toMatch(/o\.isOneOff/);
+    expect(src, "both have to be selected to be read")
+      .toMatch(/workflow: true/);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // 8. THE TWO CLOCKS — how long the money has waited, and what it cost
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("the money clock starts at completion, not at the invoice", () => {
+    // `paymentRequestFirstSentAt` reads like the truer anchor and the schema
+    // even documents it as powering an "N days ago" display — but it is null
+    // on 10 of 12 pending rows in dev, so a clock hung on it shows nothing on
+    // most of the list and nothing at all on the worst row in it: the visit
+    // nobody ever invoiced. `completedAt` is non-null on every pending row in
+    // both databases and the schema keeps it that way on purpose.
+    const src = code(read(WAIT));
+    expect(src, "completion must be the first choice")
+      .toMatch(/o\.completedAt \?\? o\.paymentRequestFirstSentAt/);
+    expect(src, "the day count must go through the ET helpers, not raw ms")
+      .toMatch(/etDaysBetween\(etFormatDate\(d\), today\)/);
+    expect(src, "and be clamped, or a visit closed out after ET midnight reads -1 days")
+      .toMatch(/Math\.max\(0, etDaysBetween/);
+    // The caller resolves "today" once. Per-row `etToday()` can straddle
+    // midnight mid-list and report two different todays in one table.
+    expect(src, "today must be a parameter, not read per row")
+      .toMatch(/today: EtDateKey = etToday\(\)/);
+  });
+
+  it("ONE rule answers the money clocks for BOTH screens", () => {
+    // Money → Awaiting payment showed "Requested 3 days ago"; Work →
+    // Repeating showed "Waiting 27 days". Same rows, two screens, two
+    // numbers, and no way to reconcile them without opening the job. The
+    // fix is not "show both on both" — it is one rule that both call, or
+    // they drift again the moment one of them is edited.
+    const repeating = code(read(SERVICE));
+    const outstanding = code(read(OUTSTANDING));
+    for (const [name, src] of [["Repeating", repeating], ["Awaiting payment", outstanding]] as const) {
+      expect(src, `${name} must call the shared rule`).toMatch(/describePaymentWait\(/);
+    }
+    // The millisecond exemption `listOutstanding` used to carry produced a
+    // DIFFERENT number from the calendar one: a request sent at 11pm
+    // yesterday is "0 days" by milliseconds and "1 day" by the calendar, so
+    // the operator read "Requested today" the next morning.
+    expect(outstanding, "the elapsed-ms exemption must not come back")
+      .not.toMatch(/date-handling-allow: elapsed-time/);
+    expect(outstanding, "and the hand-rolled day division with it")
+      .not.toMatch(/Math\.floor\(\(now - \w+\.getTime\(\)\) \/ dayMs\)/);
+  });
+
+  it("both screens draw the clocks with one component", () => {
+    // "Same badge look and feel" is not a thing you achieve by writing the
+    // same markup twice. The wording helpers lived in the Money section and
+    // were deleted from it when this moved.
+    const tab = code(read(TAB));
+    const money = code(read(MONEY));
+    for (const [name, src] of [["Repeating", tab], ["Awaiting payment", money]] as const) {
+      expect(src, `${name} must render the shared badges`).toMatch(/<PaymentWaitBadges/);
+    }
+    const badges = code(read(BADGES));
+    expect(badges, "waiting is stated as days and reads as a sentence at zero")
+      .toMatch(/Finished today/);
+    expect(badges, "and the invoice clock keeps its own wording")
+      .toMatch(/Requested \$\{days\} days ago/);
+    // Waiting is listed first deliberately: a re-send moves "Requested" back
+    // to today while the visit has been unpaid for six weeks, so reading the
+    // resettable number first makes an old receivable look fresh.
+    //
+    // BOTH MARKERS HAVE TO BE PRESENT BEFORE THE ORDER MEANS ANYTHING — a
+    // bare indexOf comparison is satisfied by a MISSING marker (-1 is less
+    // than everything), which is how this assertion first passed against a
+    // file where one of the two badges had been renamed away.
+    const iWaiting = badges.indexOf('data-testid="payment-wait-waiting"');
+    const iRequested = badges.indexOf('data-testid="payment-wait-requested"');
+    expect(iWaiting, "the waiting badge must be there to be ordered").toBeGreaterThan(-1);
+    expect(iRequested, "and so must the requested badge").toBeGreaterThan(-1);
+    expect(
+      iWaiting,
+      "the non-resetting clock must be rendered before the resettable one",
+    ).toBeLessThan(iRequested);
+    // "Never asked" and "asked, no answer" are opposite problems — one is
+    // the operator's move, the other the client's.
+    expect(badges, "never-requested must be its own state, not a missing number")
+      .toMatch(/Never requested/);
+  });
+
+  it("expiry is read off rawStartAt, which is the only date that can be late", () => {
+    // `computeNextOccurrenceStart` returns `startAt` as a DISPLAY date: an
+    // overdue visit is snapped forward to today so it is not invisible in a
+    // forward-looking view. Measure against that and nothing is ever expired.
+    // Its own doc comment reserves `rawStartAt` for this question.
+    const src = code(read(SERVICE));
+    expect(src, "the projection must come from the renewer's own function")
+      .toMatch(/computeNextOccurrenceStart\(/);
+    expect(src, "and it must destructure rawStartAt, not startAt")
+      .toMatch(/\{\s*rawStartAt\s*\}\s*=\s*computeNextOccurrenceStart/);
+    expect(src, "expired is strictly before today — due today is a stream between visits")
+      .toMatch(/if \(daysUntilDue < 0\) expiredDays/);
+  });
+
+  it("a held stream is never expired, and only the stream's latest visit can be", () => {
+    // Two separate ways to get this wrong, both of which produce a red mark
+    // on a row that is behaving correctly:
+    //
+    //   • A held stream stopped ON PURPOSE, with a reason and a check-back
+    //     date. Painting the operator's own decision as a failure would
+    //     discredit the one thing this screen exists to do.
+    //   • A stream can briefly show two rows (a payment reverted after the
+    //     next visit had already been started, so it survived the cleanup).
+    //     Projecting from the older one dates the stall from the wrong visit.
+    const src = code(read(SERVICE));
+    expect(src, "the expiry branch must require !held and isLatest")
+      .toMatch(/if \(!held && isLatest &&/);
+    expect(src, "latest must be decided against every occurrence of the job, not the listed ones")
+      .toMatch(/groupBy\([\s\S]{0,400}_max: \{ startAt: true \}/);
+    expect(src, "a cancelled future visit is not a visit")
+      .toMatch(/notIn: \[JobOccurrenceStatus\.CANCELED, JobOccurrenceStatus\.ARCHIVED\]/);
+    expect(src, "and nothing is expired while a visit is still ahead of it")
+      .toMatch(/latest!\.getTime\(\) <= now\.getTime\(\)/);
+  });
+
+  it("a silenced stall is carried, not obeyed — and rendered quietly", () => {
+    // Suppressing a next-visit warning is what buys silence from the header
+    // alert and the Today chip. Re-shouting it here would undo a deliberate
+    // decision; dropping the row would hide it from the one screen built for
+    // reviewing the whole book. So: still shown, no longer an alarm, and out
+    // of the count that drives the badge.
+    const svc = code(read(SERVICE));
+    const tab = code(read(TAB));
+    expect(svc, "the service must report the suppression rather than filter on it")
+      .toMatch(/expirySuppressed: !!o\.nextVisitWarningSuppressedAt/);
+    expect(svc, "it must not be used to skip the row")
+      .not.toMatch(/nextVisitWarningSuppressedAt\) continue/);
+    expect(tab, "a suppressed stall must drop to the quiet variant")
+      .toMatch(/variant=\{row\.expirySuppressed \? "subtle" : "solid"\}/);
+    expect(tab, "and must stay out of the count — which is the shared predicate")
+      .toMatch(/r\.expiredDays !== null && !r\.expirySuppressed/);
+  });
+
+  it("expired wears the house sign, not a second invented one", () => {
+    // Work → Jobs already marks expired next visits with a near-black chip
+    // on the Today group. This screen shows the SAME stall from the other
+    // end — the visit that never got made, seen from the visit that blocked
+    // it — so a red icon-and-text here told the operator they had two
+    // different problems.
+    const tab = code(read(TAB));
+    expect(tab, "the row marker must be a solid dark chip")
+      .toMatch(/variant=\{row\.expirySuppressed \? "subtle" : "solid"\}[\s\S]{0,120}colorPalette="gray"/);
+    // The Jobs chip pins `gray.600`/`gray.50`. A raw ramp value is the same
+    // wash in all fourteen themes, four of which ground the page in near
+    // black — where a gray.600 chip stops being the obvious thing. The
+    // semantic step inverts per theme instead.
+    expect(tab, "raw ramp greys must not be copied across for the chip")
+      .not.toMatch(/bg="gray\.(600|700)"/);
+    // One condition, one mark: the stripe takes the chip's own ink rather
+    // than staying red beside a black chip.
+    expect(tab, "the stripe must match the chip")
+      .toMatch(/borderLeftColor=\{[\s\S]{0,400}"fg"/);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // 9. THE SUMMARY STRIP IS ALSO THE FILTER
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("a chip's count and a chip's filter are the same expression", () => {
+    // The strip states what the book is; clicking a chip shows that slice.
+    // Counted one way and filtered another, a chip reads "6 expired" and
+    // then shows a different six — and the operator cannot tell which
+    // number is the lie.
+    const tab = code(read(TAB));
+    for (const pred of ["isScheduled", "isPausedRepeating", "isBlocked", "isExpired"]) {
+      expect(tab, `${pred} must be defined once at module level`)
+        .toMatch(new RegExp(`const ${pred} = \\(r: Row\\)`));
+    }
+    expect(tab, "the counts must be built from the predicates")
+      .toMatch(/all\.filter\(isExpired\)\.length/);
+    expect(tab, "and the filter must use the very same ones")
+      .toMatch(/view === "expired" && !isExpired\(r\)/);
+  });
+
+  it("a chip writes the filter state that already existed, never a second copy", () => {
+    // THE RULE THAT DELETED THE PREVIOUS FEATURE. Client-level bulk pause
+    // needed its own `Job.clientBulkPausedAt` bookkeeping to undo itself,
+    // which became a second way to pause that had to stay in step with the
+    // first. It did not, and a stale stamp swept up a job the operator had
+    // deliberately stopped.
+    //
+    // Two of these six chips name a filter that already has a control:
+    // "held" is `pausedOnly` (StreamPauseFilter) and "due" is `dueOnly` (the
+    // Due chip). Giving the chips their own booleans would be the same
+    // shape of bug in miniature — click the chip, then clear the button, and
+    // the rows stay filtered with nothing on screen saying why.
+    const tab = code(read(TAB));
+    expect(tab, "paused must write the existing pausedOnly")
+      .toMatch(/setPausedOnly\(target === "paused"\)/);
+    expect(tab, "due must write the existing dueOnly")
+      .toMatch(/setDueOnly\(target === "due"\)/);
+    // And `dueOnly` must have exactly ONE writer now that its button is
+    // gone — the chip. A second one reintroduces the two-switch problem
+    // from the other direction.
+    const dueWriters = (code(tab).match(/setDueOnly\(/g) ?? []).length;
+    expect(dueWriters, "dueOnly must be written in exactly one place").toBe(1);
+    // Only the three with no existing home get the new state.
+    expect(tab, "the new state covers only the three that needed it")
+      .toMatch(/type View = "all" \| "scheduled" \| "blocked" \| "expired"/);
+    // Which chip is LIT has to be read back out of that state, or clearing
+    // the StreamPauseFilter leaves the paused chip lit.
+    expect(tab, "the active chip must be derived, not stored")
+      .toMatch(/const activeLens: Lens = pausedOnly/);
+    // ONE SETTER. The chips toggle and the paused dropdown does not, and
+    // that difference is real — a second reason picked while paused is on is
+    // a re-narrowing, not a request to switch off. Both still have to land
+    // in one statement of what a lens change does to the other filters and
+    // the selection, or the dropdown quietly stops clearing them.
+    expect(tab, "every entry point must route through setLens")
+      .toMatch(/const setLens = useCallback\(/);
+    expect(tab, "the chips' toggle must delegate rather than reimplement")
+      .toMatch(/const target: Lens = next === activeLens \? "all" : next;\s*\n\s*setLens\(target\);/);
+    expect(tab, "and so must the pause dropdown")
+      .toMatch(/setLens\(next\.active \? "paused" : "all", next\.reasonCode\)/);
+    const setters = (code(tab).match(/setPausedOnly\(/g) ?? []).length;
+    expect(setters, "pausedOnly must be written in exactly one place").toBe(1);
+    expect(tab, "there must be no seventh variable tracking it")
+      .not.toMatch(/useState<Lens>/);
+    // A reason only means something inside the held lens.
+    expect(tab, "leaving the paused lens must clear the reason")
+      .toMatch(/setReasonCode\(target === "paused" \? reason : ALL_PAUSE_REASONS\)/);
+    // There is no selection to drop any more — the multi-select went on
+    // 2026-11-10 — so what this guards now is that it stays gone. A tab that
+    // reintroduces selection state without the rest of the design is how the
+    // half-built version comes back.
+    expect(tab, "selection state must not reappear piecemeal")
+      .not.toMatch(/setSelected|selectableIds|repeating-select-all/);
+  });
+
+  it("the screen calls a paused repeating what the rest of the app calls it", () => {
+    // It said "Held" — a word invented for this tab and used nowhere else in
+    // the product. Work → Jobs filters on "Paused repeating", Customers on
+    // "Paused repeating only", Services alerts on "Paused repeating to
+    // review", and the button ON THIS VERY ROW says "Pause repeating". A row
+    // whose action and whose state use different words for one thing teaches
+    // the operator that they are two things — the same failure as the
+    // role-named boolean that hid customers' completed jobs in production.
+    const tab = read(TAB);
+    expect(tab, "the state badge must use the product's own words")
+      .toMatch(/STREAM_PAUSED"\) return \{ label: "Paused repeating"/);
+    // The full two-word label matters: `PAUSED` is a worker's timer stopped
+    // mid-visit and is rendered in this same column. One word apart would
+    // put two unrelated states next to each other.
+    expect(tab, '"Timer paused" must stay distinct from "Paused repeating"')
+      .toMatch(/label: "Timer paused"/);
+    // No operator-facing "hold" left anywhere on the screen or in the
+    // refusal copy the server sends it.
+    // COMMENT-STRIPPED. The comments above deliberately quote the old word
+    // to explain why it went; scanning them would make this assertion
+    // impossible to satisfy without deleting its own rationale.
+    const copy = [code(tab), code(read(SERVICE))].join("\n");
+    const strings = copy.match(/"[^"\n]{4,}"/g) ?? [];
+    const holdy = strings.filter((x) => /\b(hold|holds|holding|held)\b/i.test(x));
+    expect(holdy, `operator-facing copy still says "hold": ${holdy.join(", ")}`).toEqual([]);
+    // Same rule, second invented word. "Check-back" named the reminder
+    // queue on this screen alone.
+    const checky = strings.filter((x) => /check.?back/i.test(x));
+    expect(checky, `operator-facing copy still says "check-back": ${checky.join(", ")}`).toEqual([]);
+  });
+
+  it("the pause-reason menu is the shared one, worn by the chip", () => {
+    // The chip counted the paused rows; a purple icon button two rows down
+    // narrowed them to a reason; neither mentioned the other. Folded into
+    // one control that states the count, the state and the reason.
+    //
+    // A `trigger` PROP rather than a second menu, because what has to stay
+    // single is not the button — it is the item list and the rule that
+    // switching off drops the reason. A copied menu is how one surface ends
+    // up offering a reason another has retired.
+    const tab = code(read(TAB));
+    const controls = code(read(CONTROLS));
+    // SCOPED TO THE CALL SITE for everything below. Whole-file matches here
+    // are satisfied by the five ordinary chips and by LensChip's own prop
+    // declarations, which is how two of these assertions first passed
+    // against a chip that had lost the behaviour they name.
+    const triggerBlock = tab.slice(
+      tab.indexOf("<StreamPauseFilter"),
+      tab.indexOf("/>", tab.indexOf("offLabel=")),
+    );
+    expect(triggerBlock.length, "could not isolate the trigger").toBeGreaterThan(80);
+    expect(tab, "the chip must be handed to the shared filter as its trigger")
+      .toMatch(/<StreamPauseFilter[\s\S]{0,400}trigger=\{[\s\S]{0,200}<LensChip/);
+    expect(controls, "the shared filter must render a supplied trigger as-is")
+      .toMatch(/<Select\.Trigger asChild>\{trigger\}<\/Select\.Trigger>/);
+    expect(controls, "switching off must still drop the reason, for every host")
+      .toMatch(/onChange\(\{ active: false, reasonCode: ALL_PAUSE_REASONS \}\)/);
+    // The other two hosts must be untouched — they still want the icon.
+    expect(code(read("apps/web/src/ui/tabs/JobsTab.tsx")), "Jobs must keep the icon trigger")
+      .not.toMatch(/<StreamPauseFilter[\s\S]{0,300}trigger=/);
+    // The chip opens a menu instead of toggling, and says so before it is
+    // clicked.
+    expect(triggerBlock, "the menu chip must carry its caret marker")
+      .toMatch(/withMenu/);
+    // THE BODY FILTERS, THE CARET OPENS THE MENU. The whole chip was the
+    // trigger, so clicking it did not filter — you had to open the menu and
+    // then pick "Paused — any reason", a second step with nothing on screen
+    // to suggest it, while the five chips beside it all filtered on the
+    // first click. The operator's words: "that isn't obvious".
+    // SCOPED TO THE TRIGGER. The other five chips also read
+    // `onPick={applyLens}`, so a whole-file match is satisfied by them —
+    // and neutering THIS one back to a no-op sailed through, leaving the
+    // chip opening a menu instead of filtering, which is the entire bug.
+    expect(triggerBlock, "the chip body must filter like every other chip")
+      .toMatch(/onPick=\{applyLens\}/);
+    expect(tab, "the body must carry its own click target")
+      .toMatch(/data-testid="lens-chip-body"/);
+    // The Badge IS the Select trigger, so a click anywhere in it reaches the
+    // menu. Stopping only `click` is too late — Ark opens on pointerdown.
+    expect(tab, "the body must stop the event at pointerdown, not just click")
+      .toMatch(/onPointerDown=\{\(e: React\.PointerEvent\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\}/);
+    expect(tab, "and at click, where it toggles the lens instead")
+      .toMatch(/e\.stopPropagation\(\);\s*\n\s*onPick\(lens\);/);
+    // The count has to follow the reason or the chip lies — the same rule
+    // the other five chips are held to.
+    expect(tab, "the paused count must honour the chosen reason")
+      .toMatch(/all\.filter\(\(r\) => passesPauseFilter\(r, true, reasonCode\)\)\.length/);
+    expect(tab, "and recompute when it changes").toMatch(/\}, \[rows, reasonCode\]\)/);
+  });
+
+  it("the reminder queue is called what the alert that links here calls it", () => {
+    // The header alert and the Tasks page section both read "Paused
+    // repeating to review" and both navigate to EXACTLY this set. The chip
+    // said "due a check-back" — so clicking that alert landed the operator
+    // on a screen giving the same two rows a third name.
+    //
+    // Two words legitimately survive, in their right places: the DATE is a
+    // "Reminder date" (the pause dialog's own field label) and the WORK ITEM
+    // its arrival creates is a review. That is a distinction, not a
+    // contradiction — which is why the internal names (`dueOnly`,
+    // `reminderDue` off the wire) stay as they are.
+    const tab = read(TAB);
+    expect(tab, "the chip must use the queue's established name")
+      .toMatch(/\{counts\.due\} to review/);
+    // THE BUTTON IS GONE, and that is the assertion now. It said the same
+    // thing the chip says, right beside it — two controls for one question,
+    // which is the shape this screen is otherwise careful about. `dueOnly`
+    // has exactly one writer again.
+    expect(tab, "the separate To review button must not come back")
+      .not.toMatch(/data-testid="repeating-due-filter"/);
+    expect(tab, "the row states the reminder DATE, which is the dialog's word")
+      .toMatch(/`reminder \$\{fmtDate\(row\.streamResumeReminderAt\)\}`/);
+    // The alert this screen is the destination for. `alert-ordering-build-gate`
+    // pins the alert itself; this says the two must agree.
+    expect(read("apps/web/pages/index.tsx"), "the alert that links here must still carry that name")
+      .toContain("Paused repeating to review");
+  });
+
+  it("a chip states both halves of its fill, so a host recipe cannot strip one", () => {
+    // THE BUG THIS EXISTS FOR WAS INVISIBLE, NOT UGLY. Handing the paused
+    // chip to `Select.Trigger asChild` let Chakra's trigger recipe override
+    // the badge's `solid` BACKGROUND while leaving its `solid` FOREGROUND
+    // alone — white text on the page's white ground. The chip simply was not
+    // there, and the e2e read the right string out of the DOM throughout,
+    // because the text was present and correct and painted in white.
+    //
+    // `solid` is a FILL and `contrast` is the ink that stays legible on it;
+    // themeTokens tunes them as a pair per theme (see the note there about
+    // lightening one half putting white on green at 2.28:1). Naming both
+    // explicitly survives the recipe and still themes.
+    const tab = code(read(TAB));
+    expect(tab, "the filled rung must name its own background")
+      .toMatch(/filled\s*\n?\s*\? `\$\{palette\}\.solid`/);
+    expect(tab, "the lit-but-not-filled rung too — that is the neutral chip's step")
+      .toMatch(/: lit\s*\n?\s*\? `\$\{palette\}\.emphasized`/);
+    expect(tab, "and the resting one")
+      .toMatch(/: `\$\{palette\}\.subtle`/);
+    expect(tab, "and the ink that belongs with it")
+      .toMatch(/color=\{filled \? `\$\{palette\}\.contrast` : `\$\{palette\}\.fg`\}/);
+    // The same recipe imposes a form control's height, border and font size.
+    // All six chips are one row; one of them silently becoming a 36px
+    // outlined box is the column-alignment failure in miniature.
+    expect(tab, "a menu chip must be pinned back to the badge's own shape")
+      .toMatch(/withMenu \? \{ h: "auto", minH: "0", border: "none", fontSize: "xs" \}/);
+  });
+
+  it("the near-black fill means EXPIRED and nothing else on the strip", () => {
+    // It did not, and the collision was visible on screen: the "N repeating"
+    // chip sat on the gray palette and went `solid` when active, which is
+    // near-black — the expired colour exactly, on a chip that has nothing to
+    // do with expiry. Two unrelated things wearing one signal.
+    //
+    // The fix is a rule, not a one-off restyle: the dark fill is spent on
+    // expiry, and the "show everything" chip takes no fill and no ring at
+    // all. That is also the truer state — it being "active" means NO filter
+    // is applied, which is the table at rest, not a selection.
+    const tab = code(read(TAB));
+    expect(tab, "the strip must distinguish the three tones explicitly")
+      .toMatch(/tone\?: "normal" \| "expired" \| "neutral"/);
+    expect(tab, 'only the expired chip may be "expired"')
+      .toMatch(/tone="expired"/);
+    expect(tab, 'and the show-everything chip must be "neutral"')
+      .toMatch(/lens="all"[\s\S]{0,200}tone="neutral"/);
+    // The neutral chip must be excluded from BOTH emphasis rungs — a fill
+    // alone or a ring alone would bring the collision halfway back.
+    // WHAT THE NEUTRAL CHIP MUST NOT TAKE IS THE NEAR-BLACK FILL, NOT THE
+    // EMPHASIS. Excluding it from emphasis altogether was the first fix and
+    // it overcorrected: the one chip that clears every filter then gave no
+    // sign it had been used. It is lit like the others, a step darker
+    // (`gray.emphasized`) rather than `gray.solid`, which stays the expired
+    // sign.
+    expect(tab, "the neutral chip must never take the solid fill")
+      .toMatch(/const filled = expired \|\| \(lit && !neutral\);/);
+    expect(tab, "but it must still light up like the rest")
+      .toMatch(/const lit = active;/);
+  });
+
+  it("the lit chip clears back to everything", () => {
+    // Every chip toggles the same way, so none of them is a special case.
+    const tab = code(read(TAB));
+    expect(tab, "clicking the active chip must return to all")
+      .toMatch(/const target: Lens = next === activeLens \? "all" : next/);
+  });
+
+  it("the expiry stripe is reserved on every row, so no column shifts", () => {
+    // The whole reason COLS exists is that this table's columns did not line
+    // up and could not be read at a glance. A 3px border that appears only on
+    // the expired rows moves those rows' contents 3px right and brings the
+    // same unreadability back on exactly the rows that most need reading.
+    const tab = code(read(TAB));
+    expect(tab, "the stripe width must be unconditional")
+      .toMatch(/borderLeftWidth="3px"/);
+    expect(tab, "and the colour, not the width, is what varies — transparent when fine")
+      .toMatch(/row\.expiredDays === null\s*\?\s*"transparent"/);
+    expect(tab, "the row must expose the state for the specs to read")
+      .toMatch(/data-expired=/);
+  });
+
+  it("both clocks reach the screen", () => {
+    // The tab's Row type is a HAND-COPY of the server's, and the two have
+    // already drifted once in this feature: the local shape said `string`
+    // after the server had started returning null, `.toLowerCase()` threw
+    // inside the filter, and the table rendered empty with no error on
+    // screen. TypeScript cannot see across the wire, so the fields are
+    // asserted present on both sides instead.
+    const svc = code(read(SERVICE));
+    const tab = code(read(TAB));
+    // THE TYPE BLOCKS, not the whole file. A plain `toContain` over the tab
+    // passes on a field that is only ever READ — which is the first thing
+    // this assertion was written wrong as, and the mutation proving it
+    // (deleting the declaration, keeping the read) sailed through. It is
+    // `tsc` that catches that one; this assertion has to be about the
+    // declared shape or it is about nothing.
+    const block = (src: string, header: RegExp) => {
+      const i = src.search(header);
+      expect(i, `could not find ${header} to read the row shape from`).toBeGreaterThan(-1);
+      const end = src.indexOf("\n};", i);
+      expect(end, "the row type must be a closed block").toBeGreaterThan(i);
+      return src.slice(i, end);
+    };
+    const svcRow = block(svc, /export type RepeatingStreamRow = \{/);
+    const tabRow = block(tab, /^type Row = \{/m);
+    for (const field of [
+      "awaitingPaymentSince",
+      "awaitingPaymentDays",
+      "nextVisitDueOn",
+      "expiredDays",
+      "expirySuppressed",
+      "paymentRequestedDays",
+      "paymentFirstRequestedDays",
+      "paymentResendCount",
+      "paymentNeverRequested",
+    ]) {
+      expect(svcRow, `the service's row must declare ${field}`).toContain(`${field}:`);
+      expect(tabRow, `and the tab's hand-copy must declare ${field}`).toContain(`${field}:`);
+    }
+    // The two nullable shapes that have actually drifted here before.
+    expect(tabRow, "a day count is a number or absent, never a string")
+      .toMatch(/awaitingPaymentDays: number \| null/);
+    expect(tabRow, "and expiredDays being non-null IS the expired condition")
+      .toMatch(/expiredDays: number \| null/);
   });
 
   it("the spec records the rules this gate enforces", () => {
@@ -560,9 +1106,28 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     for (const phrase of [
       "clientBulkPausedAt",
       "schedule.view-all",
-      "MAX_SELECTION",
       "computeResumeStartAt",
       "PENDING_PAYMENT",
+      // The two clocks, and the three traps a future reader would otherwise
+      // walk straight back into: the invoice looks like the right anchor, the
+      // display date looks like the right date to measure against, and
+      // cadence looks like the whole of membership.
+      "completedAt",
+      "rawStartAt",
+      "expiredDays",
+      "isOneOff",
+      "nextVisitWarningSuppressedAt",
+      // The shared rule, the shared component, and the filter invariant —
+      // each one a thing a future reader would otherwise rebuild badly.
+      "describePaymentWait",
+      "PaymentWaitBadges",
+      "Never requested",
+      "activeLens",
+      "pointerdown",
+      "gray.emphasized",
+      "clients.view",
+      "ClientContactMenu",
+      "pauseSelection",
     ]) {
       expect(spec, `the spec must still explain ${phrase}`).toContain(phrase);
     }

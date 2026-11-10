@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-11-09T18:01:23.900Z
+  modified: 2026-11-10T19:00:00.000Z
 ---
 
 # A gate that passes on first write has proved nothing
@@ -33,8 +33,32 @@ in this repo, all in gates whose first run was green:
   mapping table rather than the other file's real source; deleting a dropdown
   entry left it green.
 
+**2026-11-10, Work → Repeating: ~50 mutations run, SIX assertions were too
+weak on first write.** Every one passed against a mutation it was written to
+catch, and the failure mode was the same each time — **the regex matched
+something OTHER than its subject:**
+
+| The assertion said | What it actually matched |
+|---|---|
+| this field is declared on the row | the field, *read* elsewhere in the file |
+| this chip filters on click | the other five chips' identical `onPick` |
+| this chip opens a menu | the prop's own *declaration* on the component |
+| the lens change drops the selection | the Clear button's identical call |
+| the waiting badge is drawn first | a MISSING badge (`indexOf` → `-1` < everything) |
+| the trigger is full-width | the *wrapper's* `w="full"` |
+
+**The fix is always the same: SCOPE THE SLICE.** Cut the function, the JSX
+block or the type declaration out first, assert `length > n` so the cut
+itself cannot fail silently, then match inside it. A whole-file `toMatch` is
+only safe when the string genuinely occurs once in the file, and in a 1,400
+line component it almost never does.
+
 **How to apply:**
 
+- **Slice before you match** when the subject is one site among several of
+  the same shape. Assert the slice is non-empty.
+- Before asserting an ORDER with `indexOf`, assert both ends are `> -1` —
+  a missing marker satisfies every ordering comparison.
 - Prefer **counting** matches over `toMatch` when a rule covers N callsites.
 - Suspect every bound you wrote — a length cap, a character class, a search
   window, `.slice(0, n)`. State in a comment why the bound is where it is.

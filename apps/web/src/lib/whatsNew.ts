@@ -76,11 +76,19 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     id: "repeating-tab",
     headline: "Every repeating job occurrence in one place",
+    // ONE ANNOUNCEMENT, NOT TWO. The expired marker and the waiting
+    // time were added the day after this entry was written and before it
+    // had ever reached production (nobody has a `FeatureAnnouncementSeen`
+    // row for it), so they are part of this tab's first appearance rather
+    // than a change to it. A second entry would have fired in the same
+    // breath as the first and read as two new things.
     body:
       "Work → Repeating lists every job occurrence that repeats, with what is " +
       "running and what is held. Tick the ones you want and hold or restart " +
       "them together — useful when the season ends and most of the book goes " +
-      "on hold at once.",
+      "on hold at once. It also flags the streams that have quietly stopped: " +
+      "an unpaid visit says how long it has been waiting, and one whose next " +
+      "visit came due and was never created is marked expired.",
     // `schedule.view-all` is what GET /repeating-streams is guarded on, so
     // this reaches exactly the people the tab opens for — including the
     // oversight reader who can see the table but not act on it. Announcing

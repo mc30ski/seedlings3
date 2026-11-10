@@ -20,7 +20,7 @@ helper.** No exceptions outside the ones documented in
 The build gate at [`apps/api/src/services/date-handling-build-gate.test.ts`](apps/api/src/services/date-handling-build-gate.test.ts)
 scans every `.ts`/`.tsx` file under `apps/api/src`, `apps/api/prisma`,
 `apps/web/src`, and `apps/web/pages` against the `FORBIDDEN_PATTERNS` array
-(28 entries as of 2026-10-18 — count it, don't trust this number). It runs
+(30 entries as of 2026-11-10 — count it, don't trust this number). It runs
 on every API build (wired via `test:build-gate` + `turbo.json`
 `build.dependsOn test`). A failing scan blocks the merge.
 
@@ -54,7 +54,7 @@ cd apps/api && npm run test:build-gate
 
 This runs the whole gate roster — the date-handling scan, helper unit tests,
 payment invariants, export integrity and the rest — in a few seconds
-(2065 tests / ~3.3 s on 2026-10-18). If anything fails, fix it before
+(2198 tests / ~3.6 s on 2026-11-10). If anything fails, fix it before
 reporting the task as done.
 
 ## Feature specs

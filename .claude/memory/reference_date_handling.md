@@ -1,11 +1,11 @@
 ---
 name: date-handling-reference
-description: Canonical reference for all date handling in the app — ET-anchored helpers in apps/api/src/lib/dates.ts (server) and apps/web/src/lib/dates.ts (browser); forbidden patterns + full decision tables documented in docs/DATE_HANDLING.md.
+description: Canonical reference for all date handling in the app — ET-anchored helpers in apps/api/src/lib/dates.ts (server) and apps/web/src/lib/dates.ts (browser); forbidden patterns + full decision tables documented in docs/DATE_HANDLING.md. **`new Date("YYYY-MM-DD")` is UTC midnight = previous ET day — shipped bug fixed 2026-11-10. All sibling sites audited and fixed; **gate rules 29 + 30 now close the shape permanently (30 patterns).**
 metadata: 
   node_type: memory
   type: reference
   originSessionId: d1686705-f7d7-47c4-8f20-2cd1389e185a
-  modified: 2026-08-21T19:24:16.364Z
+  modified: 2026-11-10T19:00:00.000Z
 ---
 
 `docs/DATE_HANDLING.md` is the canonical reference for all date handling
@@ -118,6 +118,77 @@ build-gate test so future code routes through it.
   Date instant is acceptable when "preserve the instant, not the wall
   clock" is the right semantics — DST drift is ≤1 hour and our jobs
   are day-anchored.
+
+## THE DOC WAS RIGHT; THE GATE DIDN'T ENFORCE IT (2026-11-10)
+
+**The sharpest lesson of the whole episode.** `docs/DATE_HANDLING.md` already
+listed BOTH shapes as forbidden — `new Date("YYYY-MM-DD")` and
+`new Date(dateKey + "T09:00")` — with the correct helper named. Both shipped
+anyway, because **neither had a `FORBIDDEN_PATTERNS` entry**. The policy was
+documentation, not a rule.
+
+**So: adding a row to the tables in `docs/DATE_HANDLING.md` without adding
+the matching gate pattern in the same change accomplishes nothing.** That
+instruction is now written into the doc's own enforcement section.
+
+## `new Date("YYYY-MM-DD")` IS UTC MIDNIGHT — a shipped bug, 2026-11-10
+
+A bare date key parses as **UTC** midnight, which is the **previous day in
+ET**. `apps/api/src/routes/occurrences.ts` did `new Date(body.newStartAt)` on
+values straight out of an `<input type="date">`, so **every resume of a
+paused repeating job occurrence landed one day early**, and the pause
+reminder with it (which also moved the "N to review" count at the boundary).
+Silent both ways — the date picked and the date shown only disagree if you go
+back and look.
+
+**`parseUserDate(raw)` is the reader for anything a person picked**: ET
+midnight for a bare `YYYY-MM-DD`, pass-through for a full datetime. It is
+strictly better than `new Date` for user input, so there is no case where
+`new Date(body.x)` is the right call for a date a human chose.
+
+**THE OTHER 7 SITES WERE AUDITED 2026-11-10 — no further off-by-one.** Each
+`new Date(body.…)` in `routes/occurrences.ts` was traced to its web caller
+and checked against production data:
+
+| Route | Client sends | Verdict |
+|---|---|---|
+| `/events/:id` | `bizInstantFromEtParts(date, time)` | correct |
+| `/announcements/:id` | `bizInstantFromEtParts(date, "09:00")` | correct |
+| `/occurrences/:id/reminder` | `date + "T13:00:00Z"` | date correct; **hard-coded UTC hour = 9am EDT but 8am EST** |
+| `/tasks/:id`, `/followups/:id` | `date + "T09:00:00"` | date correct; **no zone, so parsed in the SERVER's zone — 09:00Z = 4am ET on Vercel** |
+| `/standalone-reminders/:id` | no web PATCH caller found | unexercised |
+
+Confirmed by prod data: all 11 TASK/FOLLOWUP rows sit at exactly `09:00Z`
+(= 4am ET), all 8 reminders at `13:00Z`. **Dates are right; only the clock
+hour is wrong**, so nothing is on the wrong day and nothing is urgent.
+
+**THE HOLE IS CLOSED — rules 29 and 30, added 2026-11-10 (now 30 patterns).**
+The 28 earlier rules caught `new Date(2026, 10, 3)` (numeric args),
+`.toISOString().slice(0,10)`, `setHours(0,0,0,0)` and the rest; both of these
+bugs walked straight past them.
+
+- **29. `new Date(<request value>)`** — matches `new Date(body.…)`,
+  `new Date(req.body.…)`, `query.`, `params.`. Fix: `parseUserDate(...)`,
+  which is never worse (ET midnight for a date key, pass-through for a full
+  datetime), so the rule needs **no exemptions**.
+- **30. An instant built by string concatenation** — matches any
+  `"T<hh>:<mm>"` literal EXCEPT `T12:00:00Z`. Catches both shipped variants:
+  no-zone (`+ "T09:00:00"`, read in the runtime's zone) and hard-coded-Z
+  (`+ "T13:00:00Z"`, drifts an hour across DST). Fix:
+  `etInstantFromParts` / `bizInstantFromEtParts`.
+
+**`T12:00:00Z` IS THE ONE ALLOWED LITERAL** and must stay allowed: UTC noon
+is the same calendar day in every US zone, so it is the safe anchor for
+turning a date key into something a formatter reads — the documented pattern
+behind `fmtDate`'s date-key auto-routing, used in ~25 places. A rule that
+banned all `T\d\d:` would flag every one of them.
+
+All four callsites fixed the same day: `TaskDialog` ×2, `FollowupDialog`,
+and JobsTab's reminder. Verified across the DST boundary — the old shapes
+gave 5am/4am ET and 9am/**8am** ET; the helper gives 9am ET in both.
+
+Found by an e2e asserting a 14-day service restarts one cadence on and
+getting 13 — not by the gate, and not by tsc.
 
 Document is at `docs/DATE_HANDLING.md`. Update it whenever the helpers
 change or a new pattern needs to be added to the forbidden list.

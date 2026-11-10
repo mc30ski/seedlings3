@@ -28,15 +28,12 @@ import { bizToday, bizAddDays } from "@/src/lib/dates";
 export type StreamPauseDialogMode =
   | "pause"
   | "update"
-  | "resume"
-  // THE SELECTION MODES, for the Repeating tab. They are here rather than in
-  // a dialog of their own because the thing that must not drift is the REASON
-  // field: it is mandatory, it pre-fills the reminder from its own horizon,
-  // and a second copy of that logic is a second set of pauses that are hard
-  // to find again. Holding thirty services is the same question as holding
-  // one, asked once.
-  | "pause-many"
-  | "resume-many";
+  | "resume";
+// THE SELECTION MODES — "pause-many" / "resume-many" — WERE REMOVED
+// 2026-11-10 along with the Repeating tab's multi-select. They shared this
+// dialog on purpose (one mandatory reason, one reminder horizon), and they
+// are gone rather than left unreachable: an unused mode is a branch nobody
+// exercises and everybody has to read. `git log` has them.
 
 type Props =
   | {
@@ -76,35 +73,7 @@ type Props =
       onConfirm: (input: { newStartAt: string }) => void | Promise<void>;
       busy?: boolean;
     }
-  | {
-      open: boolean;
-      mode: "pause-many";
-      /** How many streams are selected. Named in the title and the button, so
-       *  the operator reads the count on the control they are about to press
-       *  and not only in the row of checkboxes behind the dialog. */
-      selectionCount: number;
-      /** The rows themselves, rendered by the caller. A count alone is not
-       *  "you know exactly what you are getting" — the list is. */
-      summaryNode?: React.ReactNode;
-      onCancel: () => void;
-      onConfirm: (input: {
-        reasonCode: string;
-        reason: string | null;
-        reminderAt: string | null;
-      }) => void | Promise<void>;
-      busy?: boolean;
-    }
-  | {
-      open: boolean;
-      mode: "resume-many";
-      selectionCount: number;
-      summaryNode?: React.ReactNode;
-      onCancel: () => void;
-      /** `startAt` null means "each on its own cadence" — the server then
-       *  computes one date per stream. A string is one shared date. */
-      onConfirm: (input: { startAt: string | null }) => void | Promise<void>;
-      busy?: boolean;
-    };
+  ;
 
 export default function StreamPauseDialog(props: Props) {
   const initialReason =
@@ -128,64 +97,26 @@ export default function StreamPauseDialog(props: Props) {
     return bizAddDays(bizToday(), typeof days === "number" && days > 0 ? days : 14);
   }
   const [newStartAt, setNewStartAt] = useState(initialStart);
-  /**
-   * Selection resume only: restart each stream on its OWN rhythm, or all of
-   * them on one date.
-   *
-   * CADENCE IS THE DEFAULT, and it is not a tidiness preference. Give thirty
-   * held streams one shared date in April and thirty visits land in the same
-   * week — a book-wide pile-up created by the control meant to undo a
-   * book-wide hold. Stepping each one forward by its own interval puts them
-   * back on the rhythm they already had.
-   */
-  const [resumeMode, setResumeMode] = useState<"cadence" | "date">("cadence");
-  const [sharedStartAt, setSharedStartAt] = useState("");
-
-  const many = props.mode === "pause-many" || props.mode === "resume-many";
-  const count = many ? (props as { selectionCount: number }).selectionCount : 0;
-  const plural =
-    count === 1 ? "repeating job occurrence" : "repeating job occurrences";
 
   const title =
     props.mode === "pause"
       ? "Pause this repeating job occurrence?"
       : props.mode === "update"
         ? "Extend the pause"
-        : props.mode === "resume"
-          ? "Resume this repeating job occurrence?"
-          : props.mode === "pause-many"
-            ? `Pause ${count} ${plural}?`
-            : `Resume ${count} ${plural}?`;
+        : "Resume this repeating job occurrence?";
 
   const description =
     props.mode === "pause"
       ? `This holds just the ${props.occurrenceLabel} repeating on this service. The service's other repeating job occurrences (mowing, say, while you hold hedging) keep running. The customer and the service stay Active.`
       : props.mode === "update"
         ? "Update the reason and/or reminder date without changing anything else."
-        : props.mode === "resume"
-          ? `Choose a fresh date for the ${props.occurrenceLabel} to restart. Its repeating schedule will resume from that visit forward.`
-          : props.mode === "pause-many"
-            // COUNT-AWARE, because a selection of one is a normal thing to
-            // do from a filtered table and "each of these 1" is the kind of
-            // sentence that makes an operator doubt the screen.
-            ? count === 1
-              ? "The reason, note and check-back date below are recorded against it exactly as if you had paused it from its own card. Every other job occurrence stays on its schedule. Customers and services stay Active."
-              : `One reason, one note and one check-back date are recorded against all ${count}, exactly as if you had paused them one at a time. Every other job occurrence stays on its schedule. Customers and services stay Active.`
-            : count === 1
-              ? "It goes back on the schedule. Nothing else about it changes."
-              : `All ${count} go back on the schedule. Nothing else about them changes.`;
+        : `Choose a fresh date for the ${props.occurrenceLabel} to restart. Its repeating schedule will resume from that visit forward.`;
 
   // A reason is REQUIRED to pause or to edit a pause. The free text is not —
   // it is the detail, and demanding prose is how you get "n/a" typed into a
   // field you then cannot aggregate.
-  const canConfirm =
-    props.mode === "resume"
-      ? !!newStartAt
-      : props.mode === "resume-many"
-        ? resumeMode === "cadence" || !!sharedStartAt
-        : !!reasonCode;
-  const asksForReason =
-    props.mode === "pause" || props.mode === "update" || props.mode === "pause-many";
+  const canConfirm = props.mode === "resume" ? !!newStartAt : !!reasonCode;
+  const asksForReason = props.mode === "pause" || props.mode === "update";
 
   /** Picking a reason pre-fills the reminder from its own horizon.
    *
@@ -223,12 +154,6 @@ export default function StreamPauseDialog(props: Props) {
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
                 <Text fontSize="sm" color="fg.muted">{description}</Text>
-
-                {/* WHAT IS ABOUT TO BE TOUCHED, LISTED. The whole reason a
-                    selection is safe where the removed client-level cascade
-                    was not is that the operator can see the rows; printing a
-                    count and hiding the names would give that away. */}
-                {many && props.summaryNode}
 
                 {asksForReason && (
                   <>
@@ -369,63 +294,6 @@ export default function StreamPauseDialog(props: Props) {
                   </Box>
                 )}
 
-                {props.mode === "resume-many" && (
-                  <Box>
-                    <Text fontSize="xs" fontWeight="medium" mb={1}>
-                      When do they restart?
-                    </Text>
-                    {/* A segmented pair, not a dropdown: there are two
-                        answers, one is strongly preferred, and both need a
-                        sentence of their own to choose between. */}
-                    <VStack align="stretch" gap={2}>
-                      <Button
-                        size="sm"
-                        variant={resumeMode === "cadence" ? "subtle" : "outline"}
-                        colorPalette={resumeMode === "cadence" ? "green" : undefined}
-                        justifyContent="flex-start"
-                        onClick={() => setResumeMode("cadence")}
-                        data-testid="resume-many-cadence"
-                        aria-pressed={resumeMode === "cadence"}
-                      >
-                        Each on its own cadence
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={resumeMode === "date" ? "subtle" : "outline"}
-                        colorPalette={resumeMode === "date" ? "green" : undefined}
-                        justifyContent="flex-start"
-                        onClick={() => {
-                          setResumeMode("date");
-                          if (!sharedStartAt) setSharedStartAt(bizAddDays(bizToday(), 7));
-                        }}
-                        data-testid="resume-many-date"
-                        aria-pressed={resumeMode === "date"}
-                      >
-                        All on one date
-                      </Button>
-                      {resumeMode === "cadence" ? (
-                        <Text fontSize="2xs" color="fg.muted">
-                          Each one steps forward from its own last visit by its own interval
-                          until it lands today or later, so they spread back out the way they
-                          were before. This is almost always what you want.
-                        </Text>
-                      ) : (
-                        <>
-                          <Input
-                            type="date"
-                            value={sharedStartAt}
-                            onChange={(e) => setSharedStartAt(e.target.value)}
-                          />
-                          <Text fontSize="2xs" color="fg.muted">
-                            Every selected service restarts on this date. With {count}{" "}
-                            selected that is {count} visits in one day — fine for a handful,
-                            rarely what you want for a whole season.
-                          </Text>
-                        </>
-                      )}
-                    </VStack>
-                  </Box>
-                )}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>
@@ -434,18 +302,10 @@ export default function StreamPauseDialog(props: Props) {
                   Cancel
                 </Button>
                 <Button
-                  colorPalette={
-                    props.mode === "resume" || props.mode === "resume-many"
-                      ? "green"
-                      : "purple"
-                  }
+                  colorPalette={props.mode === "resume" ? "green" : "purple"}
                   onClick={async () => {
                     if (props.mode === "resume") {
                       await props.onConfirm({ newStartAt });
-                    } else if (props.mode === "resume-many") {
-                      await props.onConfirm({
-                        startAt: resumeMode === "date" ? sharedStartAt || null : null,
-                      });
                     } else {
                       await props.onConfirm({
                         reasonCode,
@@ -462,11 +322,7 @@ export default function StreamPauseDialog(props: Props) {
                     ? "Pause repeating"
                     : props.mode === "update"
                       ? "Save changes"
-                      : props.mode === "resume"
-                        ? "Resume repeating"
-                        : props.mode === "pause-many"
-                          ? `Pause ${count}`
-                          : `Resume ${count}`}
+                      : "Resume repeating"}
                 </Button>
               </HStack>
             </Dialog.Footer>

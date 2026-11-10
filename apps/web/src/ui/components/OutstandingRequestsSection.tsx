@@ -35,6 +35,7 @@ import { bizToday, fmtDateTime, type EtDateKey } from "@/src/lib/dates";
 import DateInput from "@/src/ui/components/DateInput";
 import { PaymentContactsLine as ContactsLine } from "@/src/ui/components/PaymentContactsLine";
 import { PaymentPropertyLine } from "@/src/ui/components/PaymentPropertyLine";
+import PaymentWaitBadges from "@/src/ui/components/PaymentWaitBadges";
 
 type PaymentMethodConfig = {
   key: string;
@@ -60,6 +61,10 @@ type OutstandingRow = {
    *  how long the client has actually been sitting on this invoice. */
   firstSentAt: string;
   daysSinceFirstSent: number;
+  /** When the work was FINISHED — the receivable clock's anchor, which does
+   *  not reset when an invoice is re-sent. See api lib/paymentWait.ts. */
+  waitingSince: string | null;
+  waitingDays: number | null;
   /** Number of RE-sends since the original send (does not count the
    *  initial send). Zero for one-and-done invoices. */
   resendCount: number;
@@ -100,28 +105,6 @@ type OutstandingRow = {
   }>;
 };
 
-function agoLabel(days: number): string {
-  if (days <= 0) return "Requested today";
-  if (days === 1) return "Requested 1 day ago";
-  return `Requested ${days} days ago`;
-}
-
-/** Same "N days ago" wording anchored on the original send. Only used
- *  when a request has been re-sent at least once — otherwise the plain
- *  agoLabel already reads correctly. */
-function firstSentLabel(days: number): string {
-  if (days <= 0) return "Originally requested today";
-  if (days === 1) return "Originally requested 1 day ago";
-  return `Originally requested ${days} days ago`;
-}
-
-/** Short "last today / 1 day ago / 3 days ago" fragment for the re-send
- *  badge tooltip / label. */
-function lastResendFragment(days: number): string {
-  if (days <= 0) return "today";
-  if (days === 1) return "1 day ago";
-  return `${days} days ago`;
-}
 
 export default function OutstandingRequestsSection({ onReady }: {
   /**
@@ -459,40 +442,29 @@ export default function OutstandingRequestsSection({ onReady }: {
                         just a display anchor, not a staleness signal
                         (the client-facing pay link expiry is what actually
                         matters for stale). */}
-                    <Badge
-                      size="sm"
-                      /* Three rungs, deliberately:
-                           stale      → solid purple, the loud one
-                           not stale  → subtle purple (purple.100) on the
-                                        card's purple.50, so it reads as
-                                        present without competing
-                         Grey was the third option and it lost: on a
-                         purple card a grey chip is quieter than "quiet",
-                         it looks disabled. Solid on a stale row because
-                         the subtle fill is purple.100 — the exact fill
-                         the stale CARD now uses, so the chip vanished
-                         into the background it exists to warn about. */
-                      colorPalette="purple"
-                      variant={r.stale ? "solid" : "subtle"}
-                      title={
-                        r.resendCount > 0
-                          ? `Original request sent ${r.daysSinceFirstSent}d ago; latest re-send ${lastResendFragment(r.daysSinceRequested)}.`
-                          : undefined
-                      }
-                    >
-                      {r.resendCount > 0
-                        ? firstSentLabel(r.daysSinceFirstSent)
-                        : agoLabel(r.daysSinceRequested)}
-                    </Badge>
-                    {r.resendCount > 0 && (
-                      <Badge
-                        size="sm"
-                        colorPalette="blue"
-                        title={`This request has been re-sent ${r.resendCount} time${r.resendCount === 1 ? "" : "s"} since the original send. Latest re-send: ${lastResendFragment(r.daysSinceRequested)}.`}
-                      >
-                        Re-sent {r.resendCount}× · last {lastResendFragment(r.daysSinceRequested)}
-                      </Badge>
-                    )}
+                    {/* BOTH CLOCKS, from the component Work → Repeating
+                        draws too. This card used to show only the invoice
+                        clock, so a visit finished five weeks ago and
+                        re-invoiced this morning read "Requested today" —
+                        true, and the most misleading thing on the screen.
+                        The hue stays purple; see the note in the shared
+                        component about why that is the one axis the two
+                        surfaces differ on. */}
+                    <PaymentWaitBadges
+                      palette="purple"
+                      stale={r.stale}
+                      wait={{
+                        waitingDays: r.waitingDays,
+                        requestedDays: r.daysSinceRequested,
+                        firstRequestedDays: r.daysSinceFirstSent,
+                        resendCount: r.resendCount,
+                        // Every row in THIS list has an invoice out — that
+                        // is what `listOutstanding` selects on. The flag is
+                        // still passed rather than hard-coded false, so the
+                        // day the query widens the badge is already right.
+                        neverRequested: !r.requestedAt,
+                      }}
+                    />
                     {r.linkExpired && (
                       <Badge size="sm" colorPalette="red">Pay link expired</Badge>
                     )}

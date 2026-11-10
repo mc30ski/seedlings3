@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-08-21T19:40:45.515Z
+  modified: 2026-11-10T19:00:00.000Z
 ---
 
 # Build-gate roster
@@ -232,23 +232,42 @@ silent no-op.
 
 - **theming-build-gate** — the app has 14 themes and four of them are dark-grounded WITHOUT being the Dark theme, so `_dark` misses them. Forbids `{ base, _dark }` raw-ramp pairs, hardcoded hex, `solid` used as a text colour, and a theme id missing from any of the seven maps it must be wired into. Also guards that the eight theme e2e specs still exist. See [[reference-theming]].
 
-## repeating-build-gate (added 2026-11-09)
+## repeating-build-gate (added 2026-11-09, heavily extended 2026-11-10)
 
-`apps/api/src/services/repeating-build-gate.test.ts` — 29 tests, for
-Work → Repeating ([[project_repeating_tab]], spec
+`apps/api/src/services/repeating-build-gate.test.ts` — **44 tests** (was 29),
+for Work → Repeating ([[project_repeating_tab]], spec
 `docs/features/repeating.md`).
 
 Mostly asserts what the feature must NOT acquire, because it replaces a
 client-level bulk pause that was deleted for acquiring exactly those things:
-no state recording that a batch happened, no reader of the dead
+no state recording that a sweep happened, no reader of the dead
 `Job.clientBulkPaused*` columns, no write that bypasses the shared
 `pauseStream`. Plus the capability split (`schedule.view-all` reads,
-`schedule.manage` writes, and the tab row names only the first), the scope
-check on the selection path, per-row outcomes, blanks-sort-last, the state
-rank, and two LAYOUT rules that no other check can see — the action column is
-one stretched stack at one size, and the row goes to the shared cluster
-**uncast** (an `as any` there once hid a field-name mismatch that made every
-named pause-reason filter return zero rows).
+`schedule.manage` writes, and the tab row names only the first), and LAYOUT
+rules no other check can see — the action column is one stretched stack at
+one size, the header row has exactly one cell per grid track, and the row
+goes to the shared cluster **uncast**.
 
-Mutation-tested: 25 planted violations, 24 caught on the first pass, the
-miss repaired — see [[feedback_mutation_test_every_gate]].
+Added 2026-11-10:
+- **The multi-select must stay removed in all five layers** (service, routes,
+  shared controls, dialog, tab). Delete *that* test to rebuild it on purpose.
+- Membership excludes one-offs on `workflow`/`isOneOff`, not cadence alone —
+  five `ONE_OFF` rows were listed in production.
+- Both money clocks come from one rule (`lib/paymentWait.ts`) and one
+  component (`PaymentWaitBadges`), used by Repeating **and** Money → Awaiting
+  payment.
+- Expiry reads `rawStartAt`, never the display `startAt`; held streams and
+  non-latest rows are never expired.
+- Operator-picked dates go through `parseUserDate` — `new Date("YYYY-MM-DD")`
+  is UTC midnight, a shipped off-by-one.
+- Vocabulary: "Paused repeating" not "Held", "to review" not "check-back",
+  scanned across every operator-facing string.
+- Every `SortKey` must appear in `SORTABLE` (caught unreachable dead code).
+- Contact details ride on `clients.view`, omitted server-side.
+- Chip count and chip filter are the same expression; the near-black fill
+  means expired and nothing else.
+
+Mutation-tested throughout: ~50 planted violations across the two sessions.
+**Six assertions were too weak on first write**, each matching something
+other than its subject — see [[feedback_mutation_test_every_gate]] for the
+table and the "slice before you match" rule that came out of it.
