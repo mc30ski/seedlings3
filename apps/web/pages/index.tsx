@@ -3972,7 +3972,11 @@ export default function HomePage() {
    * hides the job, and the operator lands on "No jobs match current
    * filters". Passing the jobId we already have skips both.
    */
-  const goToServiceOccurrence = useCallback((jobId: string, occurrenceId: string) => {
+  /** `occurrenceId` may be NULL — a repeating stream with no live visit has
+   *  no occurrence to open, and the right behaviour there is to open the job
+   *  with nothing highlighted. The body already handled it; only the type
+   *  insisted otherwise. */
+  const goToServiceOccurrence = useCallback((jobId: string, occurrenceId: string | null) => {
     gotoOperatorSurface({ tab: "services", category: "Work" });
     setStreamReviewOccId(typeof occurrenceId === "string" ? occurrenceId : null);
     setStreamReviewJobId(typeof jobId === "string" ? jobId : null);

@@ -179,9 +179,20 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     // on — scoping a `schedule.view-all` read with `schedule.manage` would
     // hand the read-only oversight reader an empty table.
     const src = code(read(ROUTES));
-    const listRoute = src.slice(src.indexOf('"/repeating-streams"'));
-    expect(listRoute.slice(0, 900), "the list must scope on schedule.view-all")
-      .toMatch(/occurrencePortfolioWhere\(req\.principal, "schedule\.view-all"\)/);
+    const i = src.indexOf('"/repeating-streams"');
+    const listRoute = src.slice(i, i + 1200);
+    // BOTH ROOTINGS, ONE CAPABILITY. The list answers two questions now —
+    // which live visits, and which streams have none — and they reach a
+    // portfolio by different paths (an occurrence through `job.property`, a
+    // job through `property`). Scoping one and not the other, or scoping
+    // them on different capabilities, leaves half the table unbounded for a
+    // territory-limited holder.
+    expect(listRoute, "the occurrence half must scope on schedule.view-all")
+      .toMatch(/occurrence: occurrencePortfolioWhere\(req\.principal, "schedule\.view-all"\)/);
+    expect(listRoute, "and the job half on the very same capability")
+      .toMatch(/job: portfolioWhereVia\(req\.principal, "schedule\.view-all", "property"\)/);
+    const caps = listRoute.match(/"schedule\.[a-z-]+"/g) ?? [];
+    expect(new Set(caps).size, `both halves must name ONE capability, saw ${caps.join(", ")}`).toBe(1);
   });
 
   it("the list is scoped by current membership, not the frozen rows", () => {
@@ -192,8 +203,16 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     const seg = read(ROUTES);
     const i = seg.indexOf('app.get("/repeating-streams"');
     expect(i, "the list route must exist").toBeGreaterThan(-1);
-    expect(seg.slice(i, i + 600))
+    // 1400, not 600: the window has to hold BOTH rootings and the comment
+    // that explains them. A window sized to yesterday's route is a gate that
+    // starts passing vacuously the first time somebody adds a line.
+    const route = seg.slice(i, i + 1400);
+    expect(route, "the live visits resolve through job.property — where it sits TODAY")
       .toMatch(/occurrencePortfolioWhere\(req\.principal, "schedule\.view-all"\)/);
+    // The job half reaches the same place one join shorter. Same principle:
+    // the property's CURRENT membership, never a frozen row.
+    expect(route, "and the streams with no visit resolve through property")
+      .toMatch(/portfolioWhereVia\(req\.principal, "schedule\.view-all", "property"\)/);
   });
 
 
@@ -345,7 +364,11 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     expect(src, "a declared rank must exist").toMatch(/const STATE_ORDER = \[/);
     const order = /const STATE_ORDER = \[([\s\S]*?)\]/.exec(src)?.[1] ?? "";
     const names = [...order.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]);
+    // THE UNSERVED RANK FIRST. They are customers the book says we have and
+    // are not visiting — the only state on this screen where nobody has
+    // decided anything, and the one that used not to appear at all.
     expect(names, "the rank is the order the work is in").toEqual([
+      "NO_VISIT",
       "SCHEDULED",
       "STREAM_PAUSED",
       "PENDING_PAYMENT",
@@ -433,7 +456,12 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     // a handful of rows and dumped every other one on "No jobs match current
     // filters". The table has the jobId; it must hand it over.
     expect(src, "a row must offer a way to the service, by job id")
-      .toMatch(/onOpenService\(row\.jobId, row\.id\)/);
+      .toMatch(/onOpenService\(row\.jobId, row\.occurrenceId\)/);
+    // NOT `row.id`. A stream with no visit carries `id = "job:<jobId>"`, and
+    // handing that over as an occurrence id sends Services hunting for a row
+    // that does not exist.
+    expect(src, "Open must not pass the synthetic row key as an occurrence id")
+      .not.toMatch(/onOpenService\(row\.jobId, row\.id\)/);
     // Editing a cadence or a price in two places is two places for them to
     // disagree. Those stay in Services.
     for (const forbidden of [/frequencyDays:\s*\d/, /apiPatch\(/, /defaultPrice/]) {
@@ -580,13 +608,110 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     expect(draftFn, "the draft must be keyed to what the row is about to do")
       .toMatch(/if \(row\.canPause\)[\s\S]{0,900}if \(row\.canResume\)/);
     const drafts = (draftFn.match(/return \{/g) ?? []).length;
-    expect(drafts, "exactly two drafts: the pause and the resume").toBe(2);
+    expect(drafts, "three drafts: the pause, the resume, and the check-in").toBe(3);
+    // The third is the one this screen exists for — a customer who stopped
+    // being visited, where the useful next action is to ask whether they
+    // still want the service rather than silently rebook or silently drop.
+    expect(draftFn, "an unserved stream must draft the check-in")
+      .toMatch(/if \(row\.dormancy\)/);
     expect(draftFn, "everything else must fall through to no draft")
       .toMatch(/return null;/);
     expect(
       /invoice|\bpay\b|payment/i.test(draftFn),
       "the payment message belongs to Money → Payments — it carries the invoice link and records the handoff",
     ).toBe(false);
+  });
+
+  it("a stream is listed whether or not it has a visit", () => {
+    // THE BUG THAT COST A CUSTOMER. This table listed live OCCURRENCES, so a
+    // stream appeared only while it happened to have one — and the moment
+    // its last visit closed, was cancelled, or was never created, the
+    // customer dropped silently off the board. Nine streams in production
+    // were invisible that way. One had been cancelled in September while her
+    // job stayed an ACCEPTED fortnightly; 73 days and five missed visits
+    // later the business found out from a bad review.
+    //
+    // The operator's rule, and the one this asserts: a thing may disappear
+    // only if somebody deliberately archived it.
+    const svc = code(read(SERVICE));
+    expect(svc, "there must be a pass that finds streams with no live visit")
+      .toMatch(/async function dormantStreams\(/);
+    // AT THE START OF ITS OWN LINE, at function-body indent. A bare match on
+    // the call text is satisfied by `if (false) out.push(...)` — which is
+    // exactly the mutation that proved this assertion too weak, and exactly
+    // the shape of the bug it is meant to prevent coming back.
+    expect(svc, "and the list must append it unconditionally")
+      .toMatch(/\n {2}out\.push\(\.\.\.\(await dormantStreams\(/);
+    // Only the deliberate acts hide a row.
+    expect(svc, "an archived customer or property is excluded")
+      .toMatch(/property: \{ archivedAt: null, client: \{ archivedAt: null \} \}/);
+    expect(svc, "and an archived job, which is the narrower deliberate act")
+      .toMatch(/status: JobStatus\.ACCEPTED/);
+    // REPEATING EITHER WAY ROUND. One production stream carries its cadence
+    // only on its occurrences; a job-only test drops exactly the kind of row
+    // this pass exists to stop losing.
+    expect(svc, "a job whose cadence lives only on its occurrences must still count")
+      .toMatch(/OR: \[\s*\{ frequencyDays: \{ not: null \} \}/);
+    expect(svc, "the three kinds of nothing must be distinguished")
+      .toMatch(/"never-ran"[\s\S]{0,200}"cancelled"[\s\S]{0,200}"stopped"/);
+    // MISSED VISITS, NOT DAYS. "73 days" means nothing without the cadence;
+    // "5.2 missed" is the same sentence for a weekly and a monthly customer,
+    // and it is what makes the list sortable across a mixed book.
+    expect(svc, "neglect must be measured in cycles, not days")
+      .toMatch(/etDaysBetween\(etFormatDate\(lastServed\), today\) \/ freq/);
+    // SERVED, not merely scheduled — a cancelled or still-future visit is
+    // not work done, and counting it would reset the clock on the silence.
+    expect(svc, "last-served must count only work actually done")
+      .toMatch(/JobOccurrenceStatus\.COMPLETED[\s\S]{0,160}JobOccurrenceStatus\.CLOSED/);
+    // A dormant row has no occurrence, so its key cannot be mistaken for one.
+    expect(svc, "a visit-less row needs a key that is not an occurrence id")
+      .toMatch(/id: `job:\$\{j\.id\}`/);
+    expect(svc, "and must say so explicitly").toMatch(/occurrenceId: null/);
+    // THE STATUS IT EMITS MUST NOT APE AN ENUM MEMBER. This is asserted on
+    // the SERVICE as well as the tab, because the service is where the value
+    // is produced — a tab-only check passed while the service happily went
+    // back to emitting "CANCELLED" (two Ls, against the enum's one).
+    expect(svc, "a visit-less row carries the one synthetic status")
+      .toMatch(/status: NO_VISIT,/);
+    expect(svc, "which must be declared, not inlined")
+      .toMatch(/export const NO_VISIT = "NO_VISIT";/);
+    expect(svc, "and no invented status may look like a JobOccurrenceStatus")
+      .not.toMatch(/"(STOPPED|CANCELLED|NEVER_RAN)"/);
+  });
+
+  it("the unserved reach the screen, ranked first, and can be filtered to", () => {
+    const tab = code(read(TAB));
+    for (const f of ["dormancy", "missedCycles", "lastServedAt", "occurrenceId"]) {
+      expect(tab, `the tab's hand-copied Row must declare ${f}`).toContain(`${f}:`);
+    }
+    // ONE SYNTHETIC STATUS, AND IT MUST NOT LOOK LIKE AN ENUM MEMBER.
+    //
+    // `status` carries a real `JobOccurrenceStatus` on every other row. The
+    // first cut of this feature put "STOPPED" and "CANCELLED" in it, and
+    // "CANCELLED" has TWO Ls where `JobOccurrenceStatus.CANCELED` has one —
+    // so `status === "CANCELED"` would silently skip these rows and
+    // `=== "CANCELLED"` would silently skip the real ones, with nothing
+    // anywhere failing. Which KIND of absence it is belongs in `dormancy`.
+    expect(tab, "the unserved share one status that is not an enum member")
+      .toMatch(/"NO_VISIT"/);
+    expect(tab, "no invented status may ape a JobOccurrenceStatus spelling")
+      .not.toMatch(/"(STOPPED|CANCELLED|NEVER_RAN)"/);
+    expect(tab, "the label must be keyed on dormancy, not on a status string")
+      .toMatch(/row\.dormancy === "stopped"[\s\S]{0,400}row\.dormancy === "never-ran"/);
+    expect(tab, "and so must the predicate")
+      .toMatch(/const isUnserved = \(r: Row\) => r\.dormancy !== null;/);
+    expect(tab, "counted through the shared predicate")
+      .toMatch(/unserved: all\.filter\(isUnserved\)\.length/);
+    expect(tab, "and filtered through the very same one")
+      .toMatch(/view === "unserved" && !isUnserved\(r\)/);
+    // They are the only rows where nobody has decided anything, so they go
+    // to the top rather than sorting in among the working streams.
+    expect(tab, "the unserved must rank above every working state")
+      .toMatch(/"NO_VISIT",\s*\n\s*"SCHEDULED"/);
+    // Within one state they share no date, so the worst neglect must break
+    // the tie or eleven-missed and two-missed arrive in database order.
+    expect(tab, "worst neglect first among them")
+      .toMatch(/\(b\.missedCycles \?\? -1\) - \(a\.missedCycles \?\? -1\)/);
   });
 
   // ───────────────────────────────────────────────────────────────────────
