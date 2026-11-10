@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-11-10T16:30:00.000Z
+  modified: 2026-11-11T00:00:00.000Z
 ---
 
 Built 2026-11-09. **Canonical spec: `docs/features/repeating.md`** — read that,
@@ -98,6 +98,46 @@ unreachable union member. Gate now asserts every SortKey is in SORTABLE.
 The "N repeating" chip went `solid` on gray when active = near-black = the
 expired colour, on an unrelated chip. Now `tone="neutral"`: no fill, no
 ring — which is truer anyway, since its being active means NO filter.
+
+## EVERY STREAM IS LISTED, visit or no visit (2026-11-11)
+
+**THE BUG THAT COST A CUSTOMER — the most important thing in this file.**
+The tab listed live OCCURRENCES, so a stream vanished the moment its last
+visit closed/cancelled or was never created. **9 prod streams invisible.**
+One was cancelled in September with her job still an ACCEPTED fortnightly;
+her phone contact was accidentally blocked so she couldn't reach the
+business, and the business couldn't see she was unserved. **73 days, 5 missed
+visits, bad review arrived before anyone noticed.**
+
+Fix is **ADDITIVE**: the occurrence pass is untouched; a second JOB-rooted
+pass (`dormantStreams`) appends rows for streams with no live visit. Prod
+53 → 61.
+
+- **May disappear only if deliberately archived** — customer, property, or
+  job. PROPOSED excluded (a quote isn't a customer). Everything else listed.
+- **ONE synthetic status `NO_VISIT`** + `dormancy` (`never-ran`/`cancelled`/
+  `stopped`) for the kind. Ranks FIRST in STATE_ORDER. **The first cut put
+  "STOPPED"/"CANCELLED" in `status` — and "CANCELLED" has TWO Ls where
+  `JobOccurrenceStatus.CANCELED` has one.** A `=== "CANCELED"` check would
+  silently skip these rows and `=== "CANCELLED"` would silently skip the real
+  ones, with nothing failing. Label + filter key on `dormancy`, never a
+  status string. Gated on BOTH service and tab — a tab-only assertion passed
+  while the service went right back to emitting the enum-alike.
+- **`missedCycles`, not days.** 73 days is meaningless without the cadence;
+  "5.2 missed" reads the same weekly or monthly. Worst-neglect breaks ties.
+  Counts only visits actually SERVED (not cancelled, not future).
+- **Two rootings, one capability**: occurrence→`job.property`,
+  job→`property`; route passes both together, gated that they match.
+- **A dormant row has NO occurrence**: key is `job:<id>`, `occurrenceId` null.
+  **Open passes `occurrenceId`, never `id`.**
+- **Repeating tested either way round** — one prod job carries its cadence
+  only on its occurrences (Rex); a job-only test drops it.
+
+**Related but NOT the same thing:** `listNextOccurrenceGhosts` misses all of
+these for three reasons of its own (bails with no occurrences, treats a
+cancelled latest as ending the series, skips a latest that is a ONE-OFF —
+which is how 4 customers went dark while being served by hand). A ghost
+PROJECTS the next visit; this asks about the customer. Don't merge them.
 
 ## MULTI-SELECT REMOVED 2026-11-10 — don't rebuild it casually
 

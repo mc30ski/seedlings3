@@ -632,6 +632,99 @@ test.describe("Work → Repeating", () => {
     }
   });
 
+  test("a stream with no live visit is still listed, and says how long", async ({ page }) => {
+    // THE BUG THAT COST A CUSTOMER. This table listed live occurrences, so a
+    // stream vanished the moment its last visit closed or was cancelled. A
+    // real customer sat cancelled for 73 days and five missed visits with
+    // her job still marked an ACCEPTED fortnightly, and the business found
+    // out from a bad review.
+    const stamp = Date.now();
+    const STOPPED = `E2E Unserved Stopped ${stamp}`;
+    const CANCELLED = `E2E Unserved Cancelled ${stamp}`;
+
+    // Both fixtures are 14-day services last served 70 days ago — five
+    // missed visits — so the number on screen is arithmetic, not a guess.
+    const stopped = await makeRepeatingFixture(STOPPED, "SCHEDULED", { daysAgo: 70 });
+    const cancelled = await makeRepeatingFixture(CANCELLED, "SCHEDULED", { daysAgo: 70 });
+    try {
+      // Take the live visit away: one finishes cleanly, one is cancelled.
+      // Neither leaves anything for the old occurrence-rooted query to find.
+      await prisma.jobOccurrence.update({
+        where: { id: stopped.occurrence.id },
+        data: { status: "CLOSED", completedAt: new Date(Date.now() - 70 * 86_400_000) },
+      });
+      await prisma.jobOccurrence.update({
+        where: { id: cancelled.occurrence.id },
+        data: { status: "CANCELED" },
+      });
+
+      await gotoRepeatingTab(page);
+      const search = page.locator("input#repeating-search");
+      await expect(search).toBeVisible({ timeout: 20_000 });
+      await search.fill("E2E Unserved");
+
+      // KEYED ON THE JOB, because there is no occurrence to key on.
+      const stoppedRow = page.locator(`[data-testid="repeating-row-job:${stopped.job.id}"]`);
+      const cancelledRow = page.locator(`[data-testid="repeating-row-job:${cancelled.job.id}"]`);
+
+      await expect(
+        stoppedRow,
+        "a stream whose last visit closed must still be listed — it used to vanish",
+      ).toBeVisible({ timeout: 20_000 });
+      // BOTH carry the same status — there is no visit, and that is all
+      // `status` means here. Which KIND of absence shows on the badge, from
+      // `dormancy`; `status` deliberately does not ape a JobOccurrenceStatus
+      // spelling (an invented "CANCELLED" with two Ls once sat in this field
+      // beside the enum's one-L CANCELED).
+      await expect(stoppedRow).toHaveAttribute("data-status", "NO_VISIT");
+      await expect(stoppedRow).toContainText("Not being served");
+      await expect(cancelledRow).toBeVisible();
+      await expect(cancelledRow).toHaveAttribute("data-status", "NO_VISIT");
+      await expect(
+        cancelledRow,
+        "a cancelled stream must read differently from one that merely stopped",
+      ).toContainText("Cancelled, nothing since");
+
+      // MISSED VISITS, NOT DAYS: 70 days on a 14-day service is 5.0.
+      await expect(
+        stoppedRow,
+        "neglect must be stated in missed visits, which reads the same for a weekly and a monthly customer",
+      ).toContainText("5 missed");
+
+      // Nothing to pause — and offering a control whose every click refuses
+      // teaches the operator to ignore controls.
+      await expect(stoppedRow.getByRole("button", { name: /Pause repeating/i })).toHaveCount(0);
+      await expect(stoppedRow.getByRole("button", { name: /Resume repeating/i })).toHaveCount(0);
+
+      // The draft is the one this row exists for: ask whether they still
+      // want the service, rather than silently rebook or silently drop.
+      await prisma.clientContact.updateMany({
+        where: { clientId: stopped.scratch.clientId },
+        data: { phone: "(555) 404-0001" },
+      });
+      await page.reload();
+      await expect(search).toBeVisible({ timeout: 30_000 });
+      await search.fill("E2E Unserved");
+      await expect(stoppedRow).toBeVisible({ timeout: 20_000 });
+      await stoppedRow.locator('[data-testid="contact-menu-trigger"]').click();
+      await expect(
+        page.locator('[data-testid="contact-menu-draft"]'),
+      ).toHaveText(/still on/i);
+      await page.keyboard.press("Escape");
+
+      // And the chip counts them and filters to exactly them.
+      const chip = page.locator('[data-lens="unserved"]');
+      await expect(chip).toBeVisible();
+      const said = Number((await chip.innerText()).match(/\d+/)?.[0] ?? -1);
+      await search.fill("");
+      await chip.click();
+      await expect(page.locator('[data-testid^="repeating-row-"]')).toHaveCount(said);
+    } finally {
+      await cleanup(stopped);
+      await cleanup(cancelled);
+    }
+  });
+
   test("every summary chip filters to exactly the rows it counted", async ({ page }) => {
     // THE CLAIM THAT MATTERS: a chip says "6 expired" and then shows six.
     // The gate asserts the count and the filter are the same expression,

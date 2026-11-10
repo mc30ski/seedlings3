@@ -28,7 +28,7 @@
 // comment said it was relying on anyway.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { JobOccurrenceStatus, Prisma } from "@prisma/client";
+import { JobOccurrenceStatus, JobStatus, Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { withPortfolio } from "../lib/portfolioScope";
 import { etDaysBetween, etFormatDate, etToday, type EtDateKey } from "../lib/dates";
@@ -238,7 +238,55 @@ export type RepeatingStreamRow = {
    * already had.
    */
   suggestedResumeAt: string | null;
+
+  // ── THE STREAM WITH NO LIVE VISIT ────────────────────────────────────
+  /**
+   * The occurrence this row is about — **NULL when the stream has none.**
+   *
+   * `id` is the row key and stays unique either way: the occurrence's id, or
+   * `job:<jobId>` for a stream with no occurrence to name it. Read this one,
+   * not `id`, when you mean "the visit".
+   */
+  occurrenceId: string | null;
+  /**
+   * WHY THIS STREAM HAS NO LIVE VISIT, or null when it has one.
+   *
+   * THE WHOLE REASON THIS FIELD EXISTS. This table listed live occurrences,
+   * so a stream appeared only while it happened to have one — and the moment
+   * its last visit closed, was cancelled, or was never created, the customer
+   * dropped silently off the board. NINE STREAMS IN PRODUCTION WERE INVISIBLE
+   * that way. One was a customer who had been trying to reach the business
+   * and could not: her repeating was cancelled in September, her job stayed
+   * an ACCEPTED fortnightly, and 73 days and five missed visits later nobody
+   * knew. The bad review arrived before the realisation did.
+   *
+   * So a stream is listed whether or not it has a visit, and this says which
+   * kind of nothing it is:
+   *   "never-ran"  — accepted, has a cadence, never produced a visit at all
+   *   "cancelled"  — its most recent visit was cancelled, nothing since
+   *   "stopped"    — its last visit finished and no next one was created
+   */
+  dormancy: "never-ran" | "cancelled" | "stopped" | null;
+  /** When this customer was last actually served. Dormant rows only. */
+  lastServedAt: string | null;
+  /**
+   * Visits missed since `lastServedAt`, in THIS stream's own cadence.
+   *
+   * The unit is deliberate. "73 days" means nothing without knowing whether
+   * somebody is weekly or monthly; "5.2 missed visits" is the same sentence
+   * for both, and it is what makes this list sortable across a mixed book.
+   */
+  missedCycles: number | null;
 };
+
+/**
+ * The `status` of a stream that has no occurrence to take one from.
+ *
+ * Deliberately not spelled like anything in `JobOccurrenceStatus`: it is not
+ * a visit state, it is the absence of a visit. Which KIND of absence is
+ * `dormancy`'s job.
+ */
+export const NO_VISIT = "NO_VISIT";
 
 /** The one person to message about this stream, or nulls.
  *
@@ -277,10 +325,27 @@ function contactFor(client: unknown): {
  * the frozen basis is the one that was deleted for having no referent.
  */
 export async function listRepeatingStreams(
-  portfolioWhere: Record<string, unknown> = {},
+  /**
+   * BOTH ROOTINGS OF ONE SCOPE, passed together on purpose.
+   *
+   * This function now asks two questions — "which live visits?" and "which
+   * streams have none?" — and they are rooted differently: an occurrence
+   * reaches its portfolio through `job.property`, a job through `property`.
+   * Taking them as one object means a caller cannot supply one and forget
+   * the other, which would leave half the list unscoped. Both must be built
+   * from the SAME capability; the route does that in one place and a gate
+   * checks it.
+   */
+  scope: {
+    /** `occurrencePortfolioWhere(principal, cap)` */
+    occurrence?: Record<string, unknown>;
+    /** `portfolioWhereVia(principal, cap, "property")` */
+    job?: Record<string, unknown>;
+  } = {},
   /** `clients.view` — see the note on `contactName`. Default closed. */
   includeContact = false,
 ): Promise<RepeatingStreamRow[]> {
+  const portfolioWhere = scope.occurrence ?? {};
   const rows = await prisma.jobOccurrence.findMany({
     where: withPortfolio<Prisma.JobOccurrenceWhereInput>(
       {
@@ -500,10 +565,206 @@ export async function listRepeatingStreams(
       expiredDays,
       expirySuppressed: !!o.nextVisitWarningSuppressedAt,
       ...contactFor(o.job.property?.client),
+      // This row IS a live visit, so none of the dormancy story applies.
+      occurrenceId: o.id,
+      dormancy: null,
+      lastServedAt: null,
+      missedCycles: null,
       suggestedResumeAt:
         held && o.startAt && freq > 0
           ? etFormatDate(computeResumeStartAt(o.startAt, freq, now))
           : null,
+    });
+  }
+  // ── PASS THREE: THE STREAMS WITH NO LIVE VISIT. ──────────────────────
+  //
+  // Everything above is rooted in an occurrence, so a stream that has none
+  // cannot appear there however wrong its silence is. These are found from
+  // the JOB instead — the only thing that survives when the visits stop.
+  //
+  // WHY THE JOB AND NOT A FIXED-UP GHOST. `listNextOccurrenceGhosts` is the
+  // existing "a next visit is missing" machinery, and it misses every one of
+  // these for three separate reasons of its own: it bails when there are no
+  // occurrences, it treats a cancelled latest as ending the series, and it
+  // skips a job whose latest occurrence is a ONE-OFF — which is how four
+  // real customers went dark while somebody kept serving them by hand. A
+  // ghost is a PROJECTION of the next visit; this is a question about the
+  // customer, and it wants its own answer.
+  out.push(...(await dormantStreams(new Set(out.map((r) => r.jobId)), scope.job ?? {}, includeContact)));
+  return out;
+}
+
+/**
+ * Repeating streams that produced no live visit at all.
+ *
+ * WHAT COUNTS AS GONE, and the line is the operator's: a thing is allowed to
+ * disappear only if somebody deliberately archived it.
+ *   · archived CUSTOMER or PROPERTY — excluded. Deliberate.
+ *   · archived JOB — excluded. Also deliberate, and the narrower act.
+ *   · everything else — listed, whatever state it is in.
+ *
+ * PROPOSED jobs are excluded because a quote is not yet a customer being
+ * served; they would arrive as noise the day proposals get used in anger.
+ */
+async function dormantStreams(
+  alreadyListed: Set<string>,
+  jobScope: Record<string, unknown>,
+  includeContact: boolean,
+): Promise<RepeatingStreamRow[]> {
+  const jobs = await prisma.job.findMany({
+    where: withPortfolio<Prisma.JobWhereInput>(
+      {
+        status: JobStatus.ACCEPTED,
+        property: { archivedAt: null, client: { archivedAt: null } },
+        // REPEATING EITHER WAY ROUND. The cadence usually sits on the job,
+        // but one production stream carries it only on its occurrences —
+        // a job-only test would have dropped exactly the kind of row this
+        // whole pass exists to stop losing.
+        OR: [
+          { frequencyDays: { not: null } },
+          {
+            occurrences: {
+              some: { frequencyDays: { not: null }, workflow: "STANDARD", isOneOff: false },
+            },
+          },
+        ],
+      },
+      jobScope,
+    ),
+    select: {
+      id: true,
+      description: true,
+      frequencyDays: true,
+      property: {
+        select: {
+          displayName: true,
+          client: {
+            select: {
+              id: true,
+              displayName: true,
+              ...(includeContact
+                ? {
+                    contacts: {
+                      where: { status: "ACTIVE" as const },
+                      orderBy: [{ isPrimary: "desc" as const }, { createdAt: "asc" as const }],
+                      take: 1,
+                      select: {
+                        firstName: true,
+                        lastName: true,
+                        nickname: true,
+                        phone: true,
+                        email: true,
+                      },
+                    },
+                  }
+                : {}),
+            },
+          },
+        },
+      },
+      occurrences: {
+        orderBy: { startAt: "desc" },
+        select: {
+          status: true,
+          startAt: true,
+          jobType: true,
+          title: true,
+          frequencyDays: true,
+          workflow: true,
+          isOneOff: true,
+        },
+      },
+    },
+  });
+
+  const today = etToday();
+  const out: RepeatingStreamRow[] = [];
+  for (const j of jobs) {
+    if (alreadyListed.has(j.id)) continue; // it has a live visit; already above
+
+    // The repeating half of its history, for the cadence and the story.
+    const reps = j.occurrences.filter(
+      (o) => (o.frequencyDays ?? j.frequencyDays) !== null && o.workflow === "STANDARD" && !o.isOneOff,
+    );
+    const freq = reps[0]?.frequencyDays ?? j.frequencyDays ?? null;
+
+    // WHAT KIND OF NOTHING. The LATEST event of any kind decides whether
+    // this was cancelled, because a cancellation is the operator's own act
+    // and reads differently from a visit that simply stopped coming.
+    const latest = j.occurrences[0] ?? null;
+    const dormancy: NonNullable<RepeatingStreamRow["dormancy"]> = !latest
+      ? "never-ran"
+      : latest.status === JobOccurrenceStatus.CANCELED
+        ? "cancelled"
+        : "stopped";
+
+    // SERVED, not merely scheduled — the question is when this customer last
+    // had work done, so a cancelled or still-scheduled visit does not count.
+    const lastServed =
+      j.occurrences.find(
+        (o) =>
+          o.startAt &&
+          (o.status === JobOccurrenceStatus.COMPLETED ||
+            o.status === JobOccurrenceStatus.PENDING_PAYMENT ||
+            o.status === JobOccurrenceStatus.CLOSED),
+      )?.startAt ?? null;
+    const missedCycles =
+      lastServed && freq && freq > 0
+        ? Math.round((etDaysBetween(etFormatDate(lastServed), today) / freq) * 10) / 10
+        : null;
+
+    out.push({
+      // NOT an occurrence id — there is no occurrence. Prefixed so it can
+      // never be mistaken for one by a caller that stopped reading
+      // `occurrenceId`.
+      id: `job:${j.id}`,
+      occurrenceId: null,
+      jobId: j.id,
+      clientId: j.property?.client?.id ?? null,
+      clientName: j.property?.client?.displayName ?? "—",
+      propertyName: j.property?.displayName ?? "—",
+      service: reps[0]?.jobType || reps[0]?.title || j.description || null,
+      frequencyDays: freq,
+      // ONE SYNTHETIC VALUE, AND IT CANNOT BE MISTAKEN FOR AN ENUM MEMBER.
+      //
+      // This field carries a real `JobOccurrenceStatus` on every other row,
+      // and the first cut of this one put "STOPPED" and "CANCELLED" in it —
+      // invented strings sitting in a field that otherwise holds the enum.
+      // "CANCELLED" was the dangerous one: the enum spells it CANCELED, with
+      // ONE L. A `status === "CANCELED"` check would silently skip these
+      // rows and a `=== "CANCELLED"` check would silently skip the real
+      // ones, and neither would fail anywhere.
+      //
+      // So there is now exactly one synthetic value, named for what is
+      // actually true — there is no visit — and `dormancy` beside it carries
+      // which of the three kinds of nothing this is. One field, one job.
+      status: NO_VISIT,
+      startAt: null,
+      canPause: false,
+      canResume: false,
+      blockedReason: null,
+      streamPauseReasonCode: null,
+      streamPauseReasonLabel: null,
+      streamPauseReason: null,
+      streamPausedAt: null,
+      streamResumeReminderAt: null,
+      reminderDue: false,
+      awaitingPaymentSince: null,
+      awaitingPaymentDays: null,
+      paymentRequestedAt: null,
+      paymentRequestedDays: null,
+      paymentFirstRequestedAt: null,
+      paymentFirstRequestedDays: null,
+      paymentResendCount: 0,
+      paymentNeverRequested: false,
+      nextVisitDueOn: null,
+      expiredDays: null,
+      expirySuppressed: false,
+      suggestedResumeAt: null,
+      ...contactFor(j.property?.client),
+      dormancy,
+      lastServedAt: lastServed?.toISOString() ?? null,
+      missedCycles,
     });
   }
   return out;

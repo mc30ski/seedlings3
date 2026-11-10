@@ -71,6 +71,96 @@ rules that fall out of that, and that the gate enforces:
    second. That is what the removed feature's own schema comment said it was
    relying on anyway.
 
+## Every stream is listed, with or without a visit (2026-11-11)
+
+**THE BUG THAT COST A CUSTOMER.** This table listed live *occurrences*, so a
+stream appeared only while it happened to have one. The moment its last visit
+closed, was cancelled, or was never created, the customer dropped silently
+off the board — no row, no count, nothing to filter to. **Nine streams in
+production were invisible that way.**
+
+One of them was a customer whose repeating was cancelled in September while
+her job stayed an `ACCEPTED` fortnightly. Her phone contact had been blocked
+by accident, so she could not reach the business, and the business could not
+see that she was going unserved. **73 days and five missed visits later, the
+bad review arrived before the realisation did.**
+
+So the list now answers two questions, not one:
+
+| | Rooted in | Finds |
+|---|---|---|
+| live visits | occurrence | what it always found — unchanged |
+| **streams with none** | **job** | stopped, cancelled, never started |
+
+**ADDITIVE, NOT A REWRITE.** Every row that existed before still exists,
+identically — the occurrence pass is untouched. The job pass only *adds* rows
+for streams the first pass could not see. Production went 53 → 61.
+
+### What may disappear
+
+The operator's rule: **a thing may vanish only if somebody deliberately
+archived it.**
+
+- archived **customer** or **property** → excluded
+- archived **job** → excluded (also deliberate, and the narrower act)
+- `PROPOSED` job → excluded; a quote is not yet a customer being served
+- **everything else is listed**, whatever state it is in
+
+### Three kinds of nothing — and ONE status
+
+`status` carries a real `JobOccurrenceStatus` on every other row. A stream
+with no occurrence has none to take one from, so it carries the single
+synthetic **`NO_VISIT`**, and **`dormancy`** says which kind of absence it is:
+`"never-ran"` (accepted, has a cadence, never produced a visit),
+`"cancelled"` (most recent visit cancelled, nothing since), `"stopped"`
+(last visit finished, no next one created).
+
+> **Why not three statuses.** The first cut put `"STOPPED"` and
+> `"CANCELLED"` straight into `status` — invented strings in a field that
+> otherwise holds the enum. **`"CANCELLED"` has two Ls; the enum's
+> `CANCELED` has one.** A `status === "CANCELED"` check would silently skip
+> these rows and a `=== "CANCELLED"` check would silently skip the real ones,
+> and nothing anywhere would fail. One field, one job: `status` says whether
+> there is a visit, `dormancy` says what kind of nothing. Gated on BOTH the
+> service and the tab — a tab-only check passed while the service went
+> straight back to emitting the enum-alike.
+
+`NO_VISIT` ranks **first** in `STATE_ORDER`, above every working state. These
+are the only rows on the screen where *nobody has decided anything*. The
+label and the filter are keyed on `dormancy`, never on a status string.
+
+### Measured in missed visits, not days
+
+`missedCycles` = days since last served ÷ this stream's own cadence. "73 days"
+means nothing without knowing whether somebody is weekly or monthly; **"5.2
+missed" is the same sentence for both**, and it is what makes the list
+sortable across a mixed book. Within a state, worst neglect sorts first —
+they share no date, so without that tiebreak eleven-missed and two-missed
+arrive in database order.
+
+**Last *served*, not last scheduled.** A cancelled or still-future visit is
+not work done, and counting it would reset the clock on the very silence
+being measured.
+
+### Two rootings, one capability
+
+An occurrence reaches its portfolio through `job.property`; a job through
+`property`. The route passes **both fragments together**, built from
+`schedule.view-all`, so a caller cannot scope one and leave the other open.
+Gated, including that both name the same capability.
+
+### Gotchas
+
+- **A dormant row has no occurrence.** Its key is `` `job:${jobId}` `` and
+  `occurrenceId` is null. **Open passes `occurrenceId`, never `id`** — handing
+  the synthetic key over as an occurrence id sends Services hunting for a row
+  that does not exist.
+- **Repeating is tested either way round.** The cadence usually sits on the
+  job, but one production stream carries it only on its occurrences; a
+  job-only test drops exactly the kind of row this pass exists to save.
+- `StreamPauseActions` renders nothing for these states, so no action is
+  offered that would refuse.
+
 ## Membership — what is in the list
 
 A row is a **live repeating occurrence**:

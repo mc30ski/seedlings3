@@ -718,7 +718,15 @@ export default async function occurrenceRoutes(app: FastifyInstance) {
   app.get("/repeating-streams", req_scheduleViewAll, async (req: any) => {
     const { listRepeatingStreams } = await import("../services/repeatingStreams");
     return listRepeatingStreams(
-      occurrencePortfolioWhere(req.principal, "schedule.view-all"),
+      // ONE CAPABILITY, BOTH ROOTINGS. The list answers two questions now —
+      // which live visits, and which streams have none — and they reach a
+      // portfolio by different paths: an occurrence through `job.property`,
+      // a job through `property`. Built here together so the two halves can
+      // never be scoped differently, which would leave one of them open.
+      {
+        occurrence: occurrencePortfolioWhere(req.principal, "schedule.view-all"),
+        job: portfolioWhereVia(req.principal, "schedule.view-all", "property"),
+      },
       // CONTACT DETAILS ARE A SECOND QUESTION. The route is guarded on
       // `schedule.view-all` — an oversight read over the calendar — and
       // seeing every visit is not the same trust as holding every

@@ -112,6 +112,14 @@ type Row = {
   contactName: string | null;
   contactPhone: string | null;
   contactEmail: string | null;
+  /** NULL when this stream has no live visit — see `dormancy`. `id` is the
+   *  row key either way (`job:<jobId>` when there is no occurrence). */
+  occurrenceId: string | null;
+  /** Why this stream has no live visit. Null when it has one. */
+  dormancy: "never-ran" | "cancelled" | "stopped" | null;
+  lastServedAt: string | null;
+  /** Visits missed since `lastServedAt`, in this stream's own cadence. */
+  missedCycles: number | null;
 };
 
 /** Columns at desk width; one stacked block on a phone.
@@ -157,6 +165,11 @@ const COLS = {
  * three that cannot be held until something else is resolved.
  */
 const STATE_ORDER = [
+  // THE UNSERVED COME FIRST. Everything below them is a stream doing
+  // something; this one is a customer the book says we have and are not
+  // visiting, which is the most urgent thing this screen can tell you and
+  // the thing it used not to say at all.
+  "NO_VISIT",
   "SCHEDULED",
   "STREAM_PAUSED",
   "PENDING_PAYMENT",
@@ -187,11 +200,11 @@ type SortKey = "customer" | "service" | "next" | "state" | "reason";
  * of it (`activeLens` below). Click "paused" and the StreamPauseFilter button
  * lights up with it, because there is only one `pausedOnly`.
  */
-type Lens = "all" | "scheduled" | "paused" | "blocked" | "due" | "expired";
+type Lens = "all" | "scheduled" | "paused" | "blocked" | "due" | "expired" | "unserved";
 
 /** The three lenses that needed state of their own; the other three are
  *  derived from controls that already existed. */
-type View = "all" | "scheduled" | "blocked" | "expired";
+type View = "all" | "scheduled" | "blocked" | "expired" | "unserved";
 
 /**
  * The sortable columns, in render order.
@@ -436,6 +449,11 @@ const isBlocked = (r: Row) => !r.canPause && !r.canResume;
 /** A silenced stall is deliberately NOT expired for counting or filtering —
  *  somebody already said they know about it. The row still shows it, muted. */
 const isExpired = (r: Row) => r.expiredDays !== null && !r.expirySuppressed;
+/** No live visit at all: stopped, cancelled, or never started.
+ *
+ *  Asks `dormancy`, which EXISTS only for these rows, rather than matching a
+ *  list of status strings — one less place for a spelling to drift. */
+const isUnserved = (r: Row) => r.dormancy !== null;
 
 /**
  * The message the operator would plausibly send about THIS row.
@@ -476,6 +494,22 @@ function draftFor(row: Row): DraftMessage | null {
         `You don't need to do anything.\n\nThanks,\nSeedlings Lawn Care`,
     };
   }
+  if (row.dormancy) {
+    // THE MESSAGE THIS WHOLE FEATURE IS FOR. The row exists because a
+    // customer stopped being visited and nobody noticed; the useful next
+    // action is almost always to ask them whether they still want the
+    // service, not to silently rebook or silently drop them.
+    const gap = row.lastServedAt ? ` since ${fmtDate(row.lastServedAt)}` : "";
+    return {
+      label: "Draft: are we still on?",
+      subject: "Seedlings Lawn Care — checking in",
+      body:
+        `${who}\n\nI was reviewing our schedule and noticed we haven't been ` +
+        `out${where}${gap}. I wanted to check whether you'd like us to pick ` +
+        `your ${what} back up, or whether you'd rather we hold off.\n\n` +
+        `Either way is fine — just let me know.\n\nThanks,\nSeedlings Lawn Care`,
+    };
+  }
   // AWAITING PAYMENT IS NOT DRAFTED HERE, on purpose. Money → Payments owns
   // that message because it carries the invoice link and records the
   // handoff; a cheerful second version written from this screen would reach
@@ -502,6 +536,19 @@ function statusMeta(row: Row): { label: string; palette: string } {
   if (row.status === "PENDING_PAYMENT") return { label: "Awaiting payment", palette: "orange" };
   if (row.status === "IN_PROGRESS") return { label: "On site", palette: "green" };
   if (row.status === "PAUSED") return { label: "Timer paused", palette: "yellow" };
+  // THE STREAMS WITH NO LIVE VISIT. Red, because every one of them is a
+  // customer the business believes it is serving and is not — the state that
+  // let a cancelled fortnightly go 73 days unnoticed.
+  //
+  // KEYED ON `dormancy`, NOT ON A FAKE STATUS. `status` carries a real
+  // `JobOccurrenceStatus` on every other row; these have no occurrence, so
+  // theirs is the single synthetic `NO_VISIT` and the three-way distinction
+  // lives in its own field. The first cut put "STOPPED"/"CANCELLED" in
+  // `status` — and "CANCELLED" has two Ls where the enum has one, which is a
+  // mismatch no test and no compiler would ever have reported.
+  if (row.dormancy === "stopped") return { label: "Not being served", palette: "red" };
+  if (row.dormancy === "cancelled") return { label: "Cancelled, nothing since", palette: "red" };
+  if (row.dormancy === "never-ran") return { label: "Never started", palette: "red" };
   return { label: row.status, palette: "gray" };
 }
 
@@ -522,7 +569,7 @@ export default function RepeatingTab({
    * had already arrived, and every other row (scheduled, awaiting payment,
    * held until spring) landed on "No jobs match current filters".
    */
-  onOpenService: (jobId: string, id: string) => void;
+  onOpenService: (jobId: string, occurrenceId: string | null) => void;
 }) {
   // `schedule.manage` — the capability every per-row pause and resume
   // endpoint is guarded on. Named here, on the control's own screen, rather
@@ -622,6 +669,7 @@ export default function RepeatingTab({
       if (view === "scheduled" && !isScheduled(r)) return false;
       if (view === "blocked" && !isBlocked(r)) return false;
       if (view === "expired" && !isExpired(r)) return false;
+      if (view === "unserved" && !isUnserved(r)) return false;
       if (!needle) return true;
       return (
         r.clientName.toLowerCase().includes(needle) ||
@@ -689,6 +737,14 @@ export default function RepeatingTab({
     return [...kept].sort((a, b) => {
       const primary = cmp(key(a), key(b));
       if (primary !== 0) return primary;
+      // WORST NEGLECT FIRST among the unserved. They share a state and have
+      // no `startAt` to break the tie, so without this the customer missed
+      // eleven times and the one missed twice arrive in whatever order the
+      // database felt like.
+      if (a.missedCycles !== null || b.missedCycles !== null) {
+        const d = (b.missedCycles ?? -1) - (a.missedCycles ?? -1);
+        if (d !== 0) return d;
+      }
       // One stable tie-break for every column, so repeated clicks do not
       // reshuffle rows that compare equal.
       return cmp(a.startAt ? Date.parse(a.startAt) : null, b.startAt ? Date.parse(b.startAt) : null);
@@ -715,6 +771,7 @@ export default function RepeatingTab({
       blocked: all.filter(isBlocked).length,
       due: all.filter((r) => r.reminderDue).length,
       expired: all.filter(isExpired).length,
+      unserved: all.filter(isUnserved).length,
     };
   }, [rows, reasonCode]);
 
@@ -760,7 +817,9 @@ export default function RepeatingTab({
     setReasonCode(target === "paused" ? reason : ALL_PAUSE_REASONS);
     setDueOnly(target === "due");
     setView(
-      target === "scheduled" || target === "blocked" || target === "expired" ? target : "all",
+      target === "scheduled" || target === "blocked" || target === "expired" || target === "unserved"
+        ? target
+        : "all",
     );
   }, []);
 
@@ -837,6 +896,17 @@ export default function RepeatingTab({
         >
           {counts.total} repeating
         </LensChip>
+        {/* THE CHIP THIS WHOLE PASS EXISTS FOR. A customer whose repeating
+            stopped used to vanish from this table entirely — no row, no
+            count, nothing to filter to. One of them was cancelled in
+            September and went 73 days and five missed visits before anyone
+            noticed, and the way they noticed was a bad review. */}
+        {counts.unserved > 0 && (
+          <LensChip lens="unserved" active={activeLens === "unserved"} onPick={applyLens} palette="red"
+            title="Customers we believe we have, with no visit booked and nobody having decided to stop — stopped, cancelled, or never started">
+            {counts.unserved} not being served
+          </LensChip>
+        )}
         <LensChip lens="scheduled" active={activeLens === "scheduled"} onPick={applyLens} palette="blue"
           title="Only the ones still running — these are what an end-of-season sweep pauses">
           {counts.live} scheduled
@@ -1132,7 +1202,27 @@ export default function RepeatingTab({
                 </Cell>
 
                 <Cell label="Next visit">
-                  <Text fontSize="sm">{row.startAt ? fmtDate(row.startAt) : "—"}</Text>
+                  {/* NO DATE MEANS NO VISIT, and the cell has to say which
+                      kind of nothing rather than printing an em dash. The
+                      number is MISSED VISITS, not days: "73 days" means
+                      nothing without knowing the cadence, while "5.2 missed"
+                      reads the same for a weekly and a monthly customer. */}
+                  {row.dormancy ? (
+                    <>
+                      <Text fontSize="sm" color="red.fg" fontWeight="medium">
+                        {row.missedCycles === null
+                          ? "No visit ever"
+                          : `${row.missedCycles} missed`}
+                      </Text>
+                      <Text fontSize="2xs" color="fg.muted">
+                        {row.lastServedAt
+                          ? `last served ${fmtDate(row.lastServedAt)}`
+                          : "never served"}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text fontSize="sm">{row.startAt ? fmtDate(row.startAt) : "—"}</Text>
+                  )}
                   {/* THE STREAM HAS STOPPED MAKING VISITS. Said in the
                       column it happened to: the date above is the last one
                       this stream produced, and the next one never arrived.
@@ -1312,7 +1402,12 @@ export default function RepeatingTab({
                   <Button
                     size="xs"
                     variant="ghost"
-                    onClick={() => onOpenService(row.jobId, row.id)}
+                    /* `occurrenceId`, NOT `id`. A stream with no visit has
+                       `id = "job:<jobId>"`, and handing that over as an
+                       occurrence id would send Services hunting for a row
+                       that does not exist. Null is already handled there —
+                       it means "just open the job". */
+                    onClick={() => onOpenService(row.jobId, row.occurrenceId)}
                     title="Open this job occurrence in Services"
                     data-testid="repeating-open-service"
                   >
