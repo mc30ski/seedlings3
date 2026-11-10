@@ -324,6 +324,29 @@ the row would hide it from the one screen built for reviewing the whole book.
 So it is **still shown, and shown quietly**: muted instead of red, and out of
 the "N expired" summary count.
 
+### The reminder sits under the STATE badge
+
+"Paused repeating" invites exactly one question — *until when?* — and the
+answer used to sit two columns away in small grey text under a heading that
+says **Reason**. The operator's verdict: *"it's not obvious."*
+
+It now reads `review 3/15/2027` directly beneath the badge, red and
+`review due` once the date has passed.
+
+**The Next visit column cannot carry it.** On a paused row that column shows
+the date the pause is *holding* — which is not a next visit at all, and is
+the thing that prompted the question. Left as-is deliberately (it is the
+honest "what it was"), with the answer now beside the state instead.
+
+**A pause with no reminder reads `no reminder — won't resurface`, in amber.**
+That is not decoration: both surfaces that resurface a paused stream query
+reminders that are already DUE, so a pause without one is invisible to them
+forever. Exactly that happened to the production pause predating the reason
+dropdown — three months silent.
+
+One fact, one place: the reminder is gone from the Reason cell, which now
+carries the reason and its note. Gated both ways.
+
 ### Rendering
 
 **Expired wears the house sign.** Work → Jobs already marks expired next

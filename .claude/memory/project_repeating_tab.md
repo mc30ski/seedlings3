@@ -159,6 +159,15 @@ the right shape. Reminder came from the reason's horizon (`season_over` =
 150d in prod), so no date was typed. Resume defaulted to each stream's OWN
 cadence; a shared date piles the book into one April week.
 
+**Reminder lives under the STATE badge, not in Reason (2026-11-11).**
+"Paused repeating" asks "until when?" and the answer was two columns away in
+small grey text under a heading saying *Reason* — operator: "it's not
+obvious." Now `review 3/15/2027` beneath the badge, red + `review due` when
+past. **Next visit cannot carry it**: on a paused row that column shows the
+date the pause is HOLDING, not a next visit. No reminder → amber
+`no reminder — won't resurface` (both resurfacing surfaces query only DUE
+reminders, so one without a date is invisible forever).
+
 ## Messaging from a row (2026-11-10)
 
 `ClientContactMenu` — Text/Email/Call + a draft keyed to the row's next

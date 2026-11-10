@@ -1091,8 +1091,33 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     // has exactly one writer again.
     expect(tab, "the separate To review button must not come back")
       .not.toMatch(/data-testid="repeating-due-filter"/);
-    expect(tab, "the row states the reminder DATE, which is the dialog's word")
-      .toMatch(/`reminder \$\{fmtDate\(row\.streamResumeReminderAt\)\}`/);
+    // THE ROW STATES THE DATE, UNDER THE BADGE THAT PROMPTS THE QUESTION.
+    // "Paused repeating" invites exactly one question — until when? — and
+    // the answer used to sit two columns away in small grey text under a
+    // heading that says "Reason". The operator's words: "it's not obvious".
+    //
+    // The Next visit column cannot carry it either: on a paused row that
+    // column shows the date the pause is HOLDING, which is not a next visit.
+    expect(tab, "the row must state the reminder date")
+      .toMatch(/review"\} \$\{fmtDate\(row\.streamResumeReminderAt\)\}/);
+    const stateCell = tab.slice(
+      tab.indexOf('<Cell label="State">'),
+      tab.indexOf('<Cell label="Reason"'),
+    );
+    expect(stateCell.length, "could not isolate the State cell").toBeGreaterThan(200);
+    expect(stateCell, "the reminder belongs beside the state, not in Reason")
+      .toMatch(/data-testid="repeating-reminder"/);
+    const reasonCell = tab.slice(tab.indexOf('<Cell label="Reason"'));
+    expect(
+      reasonCell.slice(0, reasonCell.indexOf("</Cell>")),
+      "and must not ALSO be in Reason — one fact, one place",
+    ).not.toMatch(/streamResumeReminderAt/);
+    // A PAUSE WITH NO REMINDER NEVER COMES BACK. Both surfaces that
+    // resurface a paused stream query reminders that are already DUE, so one
+    // with no reminder is invisible to them forever — which is what happened
+    // to the production pause that predates the reason dropdown.
+    expect(stateCell, "a pause with no reminder must say that it will not resurface")
+      .toMatch(/no reminder — won't resurface/);
     // The alert this screen is the destination for. `alert-ordering-build-gate`
     // pins the alert itself; this says the two must agree.
     expect(read("apps/web/pages/index.tsx"), "the alert that links here must still carry that name")

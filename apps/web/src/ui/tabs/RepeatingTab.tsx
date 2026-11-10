@@ -1274,6 +1274,52 @@ export default function RepeatingTab({
                   <Badge size="sm" variant="subtle" colorPalette={meta.palette}>
                     {meta.label}
                   </Badge>
+                  {/* WHEN IT COMES BACK, under the badge that says it is
+                      paused — because "Paused repeating" invites exactly one
+                      question and the answer was two columns away in small
+                      grey text, under a heading that says "Reason".
+
+                      The Next visit column cannot carry it either: for a
+                      paused row that column shows the date the pause is
+                      HOLDING, which is not a next visit at all. */}
+                  {row.canResume && (
+                    <HStack gap={1} mt={1}>
+                      <Box
+                        flex="0 0 auto"
+                        color={
+                          row.reminderDue
+                            ? "red.fg"
+                            : row.streamResumeReminderAt
+                              ? "fg.muted"
+                              : "orange.fg"
+                        }
+                      >
+                        <CalendarClock size={11} />
+                      </Box>
+                      <Text
+                        fontSize="2xs"
+                        fontWeight={row.reminderDue ? "medium" : undefined}
+                        color={
+                          row.reminderDue
+                            ? "red.fg"
+                            : row.streamResumeReminderAt
+                              ? "fg.muted"
+                              : "orange.fg"
+                        }
+                        data-testid="repeating-reminder"
+                      >
+                        {row.streamResumeReminderAt
+                          ? `${row.reminderDue ? "review due" : "review"} ${fmtDate(row.streamResumeReminderAt)}`
+                          : /* THE PAUSE THAT DISAPPEARS. Both surfaces that
+                               resurface a paused stream query reminders that
+                               are already DUE, so one with no reminder is
+                               invisible to them forever — which is exactly
+                               what happened to the production pause that
+                               predates the reason dropdown. */
+                            "no reminder — won't resurface"}
+                      </Text>
+                    </HStack>
+                  )}
                   {/* BOTH CLOCKS, from the component Money → Awaiting
                       payment draws too. The badge said "Awaiting payment"
                       and stopped there, which reads the same at two days and
@@ -1344,16 +1390,6 @@ export default function RepeatingTab({
                       {row.streamPauseReason && (
                         <Text fontSize="2xs" color="fg.muted">{row.streamPauseReason}</Text>
                       )}
-                      <HStack gap={1} mt={1}>
-                        <Box color={row.reminderDue ? "red.fg" : "fg.muted"}>
-                          <CalendarClock size={11} />
-                        </Box>
-                        <Text fontSize="2xs" color={row.reminderDue ? "red.fg" : "fg.muted"}>
-                          {row.streamResumeReminderAt
-                            ? `reminder ${fmtDate(row.streamResumeReminderAt)}`
-                            : "no reminder date"}
-                        </Text>
-                      </HStack>
                     </>
                   ) : (
                     <Text fontSize="xs" color="fg.muted">—</Text>
