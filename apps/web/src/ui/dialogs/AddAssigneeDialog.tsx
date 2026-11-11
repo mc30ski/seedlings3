@@ -174,17 +174,31 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
   async function handleRemove(userId: string) {
     dlgErr.clear();
     setBusyId(userId);
+    const leaving = userId === myId;
     try {
       const endpoint = `/api/occurrences/${occurrenceId}/assignees/${userId}`;
       await apiDelete(endpoint);
       setMembers((prev) => prev.filter((m) => m.userId !== userId));
-      publishInlineMessage({ type: "SUCCESS", text: "Team member removed." });
+      publishInlineMessage({ type: "SUCCESS", text: leaving ? "You left this visit." : "Team member removed." });
       onChanged?.();
     } catch (err: any) {
       if (err?.code === "CLAIMER_CANNOT_BE_REMOVED") {
-        publishInlineMessage({ type: "WARNING", text: "Reassign the claimer role to someone else before removing this person." });
+        publishInlineMessage({
+          type: "WARNING",
+          text: leaving
+            ? "Reassign the claimer role to someone else before you leave."
+            : "Reassign the claimer role to someone else before removing this person.",
+        });
+      } else if (err?.code === "USE_UNCLAIM_TO_LEAVE") {
+        // THE ONE CASE THAT IS NOT A LEAVE. Dropping the sole claimer here
+        // would strand the visit's group link; Unclaim clears it. Named as
+        // the button they are being sent to, on the card behind this dialog.
+        publishInlineMessage({
+          type: "WARNING",
+          text: "You are the only worker on this visit — use Unclaim on the job card to release it.",
+        });
       } else {
-        dlgErr.setError(getErrorMessage("Failed to remove team member.", err));
+        dlgErr.setError(getErrorMessage(leaving ? "Failed to leave this visit." : "Failed to remove team member.", err));
       }
     } finally { setBusyId(""); }
   }

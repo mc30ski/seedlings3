@@ -51,5 +51,20 @@ The two methods are complementary: the sweep only sees calls that fire for a
 persona it walks, the audit only sees what is statically visible but covers
 every tab against every role.
 
+**A SECOND SHAPE, found 2026-11-11: a control no capability can satisfy.**
+Manage Team's `Leave` button was offered only to a NON-claimer
+(`isMe && !isClaimerRow`), and `removeOccurrenceAssignee` refused EVERY
+self-removal — the exact case it was offered in. So the button had never
+worked for anyone, and holding every capability did not help, because the
+refusal sat BELOW the `schedule.manage` check. The operator reported it as a
+permissions bug ("even though I'm acting as Super") and it was not one.
+The refusal also gave dangerous advice — "use unclaim" — when
+`unclaimOccurrence` deletes the WHOLE team: following it to leave a
+three-person visit would have thrown the other two off as well. Now refused
+only for the sole claimer (Unclaim also clears `assignedGroupId`), gated in
+`claimer-invariant-build-gate.test.ts`. **The lesson generalises: a UI gate
+can also disagree with its endpoint's BUSINESS RULE, not just its
+capability, and the persona sweep cannot see that — it only walks tabs.**
+
 Related: [[reference-tab-blend-pattern]], [[reference-capabilities-model]],
-[[feedback-names-carry-meaning]].
+[[feedback-names-carry-meaning]], [[reference-claimer-invariant]].

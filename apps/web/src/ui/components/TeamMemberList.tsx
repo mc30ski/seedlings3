@@ -129,6 +129,10 @@ export default function TeamMemberList({
   const [selected, setSelected] = useState<string[]>([]);
   const [addAsObserver, setAddAsObserver] = useState(false);
   const [confirmRemoveClaimer, setConfirmRemoveClaimer] = useState<string | null>(null);
+  /** Leaving is a mutation on a mobile-first screen, and it moves money:
+   *  the payout split recomputes without you. It gets the same confirm
+   *  every other destructive control here does. */
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   const assignedIds = useMemo(() => members.map((m) => m.userId), [members]);
   const availableWorkers = useMemo(
@@ -217,7 +221,7 @@ export default function TeamMemberList({
             </HStack>
           </VStack>
           {isMe && !isClaimerRow && onLeave ? (
-            <Button size="xs" variant="ghost" colorPalette="red" loading={busyId === m.userId} disabled={busyId !== ""} onClick={onLeave}>
+            <Button size="xs" variant="ghost" colorPalette="red" loading={busyId === m.userId} disabled={busyId !== ""} onClick={() => setConfirmLeave(true)}>
               Leave
             </Button>
           ) : !isMe ? (
@@ -382,6 +386,52 @@ export default function TeamMemberList({
           </Button>
         </HStack>
       </div>
+
+      {/* Confirm leave dialog */}
+      {confirmLeave && onLeave && (
+        <Box
+          position="fixed"
+          inset="0"
+          zIndex={10000}
+          bg="blackAlpha.600"
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          onClick={() => setConfirmLeave(false)}
+        >
+          <Box
+            bg="bg.panel"
+            rounded="xl"
+            p={5}
+            mx={4}
+            maxW="sm"
+            w="full"
+            shadow="lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Text fontWeight="semibold" mb={2}>Leave this visit?</Text>
+            <Text fontSize="sm" color="fg.muted" mb={4}>
+              You come off the team and the payout split is recalculated
+              without you. The rest of the team stays on the job.
+            </Text>
+            <HStack justify="flex-end" gap={2}>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmLeave(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                colorPalette="red"
+                onClick={() => {
+                  onLeave();
+                  setConfirmLeave(false);
+                }}
+              >
+                Leave
+              </Button>
+            </HStack>
+          </Box>
+        </Box>
+      )}
 
       {/* Confirm remove claimer dialog */}
       {confirmRemoveClaimer && (
