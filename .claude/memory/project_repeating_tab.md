@@ -123,9 +123,31 @@ pass (`dormantStreams`) appends rows for streams with no live visit. Prod
   ones, with nothing failing. Label + filter key on `dormancy`, never a
   status string. Gated on BOTH service and tab — a tab-only assertion passed
   while the service went right back to emitting the enum-alike.
-- **`missedCycles`, not days.** 73 days is meaningless without the cadence;
-  "5.2 missed" reads the same weekly or monthly. Worst-neglect breaks ties.
-  Counts only visits actually SERVED (not cancelled, not future).
+- **`missedCycles`, not days, and WHOLE ones.** 73 days is meaningless
+  without the cadence; "5 missed" reads the same weekly or monthly.
+  Worst-neglect breaks ties. Counts only visits actually SERVED (not
+  cancelled, not future). **FLOORED since 2026-11-11** — it shipped rounding
+  to a tenth and the operator's first reaction to "5.2 missed" was that
+  nobody is two tenths of a visit behind. Floor makes **0** reachable; that
+  is not a missed visit and reads `none missed yet` in amber, not red. The
+  e2e fixture is deliberately 75 days on a 14-day service (5.35), because
+  the old exact-multiple fixture passed whether it floored or rounded.
+- **The Service column was three fields with no labelling (fixed
+  2026-11-11).** `occurrence.jobType || occurrence.title || job.description`
+  collapsed server-side into one string. Three defects at once: the tab
+  printed the raw code `MOW_TRIM_BLOW` while every other screen runs it
+  through `jobTypeLabel`; a 232-char `job.description` (mowing INSTRUCTIONS,
+  not a name) wrapped to four lines and tripled a row's height; and the same
+  string is lower-cased into the customer SMS draft, which read "your
+  mow_trim_blow". Now `jobType` travels separately and one `serviceLabel()`
+  serves cell/search/sort/draft. **The cell has ONE shape**: cadence primary
+  always, name beneath it clamped to 2 lines — it used to swap the two
+  typographic roles depending on whether the stream was named, in two
+  capitalisations. PROD 2026-11-11: 50 of 53 live streams have NO name at
+  all; `jobType` appears only on visit-less rows, read from their last
+  repeating visit. `jobType` also holds operator free text ("Clean
+  Driveway") — the schema calls it "legacy/custom free-text job type" — so
+  `jobTypeLabel` returning the value untouched is correct, not a miss.
 - **Two rootings, one capability**: occurrence→`job.property`,
   job→`property`; route passes both together, gated that they match.
 - **A dormant row has NO occurrence**: key is `job:<id>`, `occurrenceId` null.

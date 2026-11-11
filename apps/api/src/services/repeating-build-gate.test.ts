@@ -677,6 +677,19 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
       .toMatch(/export const NO_VISIT = "NO_VISIT";/);
     expect(svc, "and no invented status may look like a JobOccurrenceStatus")
       .not.toMatch(/"(STOPPED|CANCELLED|NEVER_RAN)"/);
+
+    // WHOLE VISITS, NOT FRACTIONS OF ONE. The first cut rounded to a tenth
+    // and the screen read "5.2 missed" — a quantity nobody is, and one the
+    // operator cannot act on. Sliced to the expression itself, because a
+    // Math.floor anywhere else in this file would satisfy a file-wide match
+    // while this line went on producing decimals.
+    const missed = svc.slice(svc.indexOf("const missedCycles ="), svc.indexOf("const missedCycles =") + 200);
+    expect(missed.length, "the missedCycles expression must be found at all")
+      .toBeGreaterThan(40);
+    expect(missed, "missed visits are whole visits, floored")
+      .toMatch(/Math\.floor\([\s\S]{0,90}\/ freq\)/);
+    expect(missed, "and never a fraction of a visit")
+      .not.toMatch(/Math\.round|\* 10\) \/ 10|toFixed/);
   });
 
   it("the unserved reach the screen, ranked first, and can be filtered to", () => {
@@ -712,6 +725,64 @@ describe("[build-gate] Repeating — the lens does not become a second pause", (
     // the tie or eleven-missed and two-missed arrive in database order.
     expect(tab, "worst neglect first among them")
       .toMatch(/\(b\.missedCycles \?\? -1\) - \(a\.missedCycles \?\? -1\)/);
+
+    // ZERO IS NOT A MISSED VISIT. Flooring made 0 reachable — a stream
+    // stopped inside its own first cadence window owes nobody anything
+    // yet — and "0 missed" in the overdue colour is a false alarm on a
+    // screen whose whole job is that the operator trusts its alarms.
+    const cell = tab.slice(tab.indexOf('<Cell label="Next visit">'), tab.indexOf('<Cell label="Next visit">') + 1200);
+    expect(cell.length, "the Next visit cell must be found at all")
+      .toBeGreaterThan(200);
+    expect(cell, "a floored count of zero says so in words")
+      .toMatch(/row\.missedCycles === 0[\s\S]{0,60}"none missed yet"/);
+    expect(cell, "and is not drawn as overdue")
+      .toMatch(/color=\{row\.missedCycles === 0 \? "orange\.fg" : "red\.fg"\}/);
+  });
+
+  it("the Service column has one shape, and no raw code reaches a customer", () => {
+    const svc = code(read(SERVICE));
+    const tab = code(read(TAB));
+
+    // THE CODE AND THE OPERATOR'S WORDS ARE TWO FIELDS, NOT ONE.
+    //
+    // They were collapsed into `service` with `||`, so the column printed
+    // whichever happened to exist: a raw "MOW_TRIM_BLOW" on one row, 45
+    // characters of mowing instructions on the next. Worse, `service` is
+    // lower-cased into a customer-facing SMS draft, so the code went out
+    // as "your mow_trim_blow". Split, the web can label the code and treat
+    // the free text as the footnote it is.
+    expect(svc, "the raw job-type code travels in its own field")
+      .toMatch(/jobType: o\.jobType \|\| null,/);
+    expect(svc, "on the visit-less rows too")
+      .toMatch(/jobType: reps\[0\]\?\.jobType \|\| null,/);
+    expect(svc, "and `service` carries only the operator's own words")
+      .not.toMatch(/service: [^\n]*jobType/);
+
+    // ONE RESOLVER. The tab asks this question in four places — cell,
+    // search, sort, draft — and the draft is the one that cannot afford a
+    // raw code. A second inline `row.jobType ||` chain is how three of the
+    // four stayed right while the fourth drifted.
+    expect(tab, "the label is resolved once, through the shared map")
+      .toMatch(/function serviceLabel\(row: Row\): string \| null \{\s*\n\s*return jobTypeLabel\(row\.jobType\) \|\| row\.service \|\| null;/);
+    const draft = tab.slice(tab.indexOf("function draftFor("), tab.indexOf("function draftFor(") + 400);
+    expect(draft.length, "the draft builder must be found at all").toBeGreaterThan(100);
+    expect(draft, "the customer-facing draft names the service through it")
+      .toMatch(/serviceLabel\(row\)/);
+    expect(draft, "never off the raw field")
+      .not.toMatch(/row\.service|row\.jobType/);
+
+    // ONE SHAPE PER ROW. The cadence and the name used to swap typographic
+    // roles depending on whether the stream was named, in two different
+    // capitalisations, and the column could not be read down.
+    const cell = tab.slice(tab.indexOf('<Cell label="Service">'), tab.indexOf('<Cell label="Service">') + 700);
+    expect(cell.length, "the Service cell must be found at all").toBeGreaterThan(150);
+    expect(cell, "the cadence is the primary line unconditionally")
+      .toMatch(/<Text fontSize="sm">\s*\n\s*\{row\.frequencyDays \? `Every \$\{row\.frequencyDays\} days`/);
+    expect(cell, "and the name is always the secondary one")
+      .toMatch(/fontSize="xs" color="fg\.muted" lineClamp=\{2\}/);
+    // The lower-case "every" was the other half of the inconsistency.
+    expect(cell, "with one capitalisation of the cadence, not two")
+      .not.toMatch(/`every \$\{/);
   });
 
   // ───────────────────────────────────────────────────────────────────────

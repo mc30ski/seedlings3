@@ -101,6 +101,16 @@ export type RepeatingStreamRow = {
    * worse than an empty one — it reads as data until you notice it never
    * changes. The cadence beside it is what actually distinguishes the rows.
    */
+  /** The RAW job-type code, never a label: "MOW_TRIM_BLOW", not "Mow / Trim
+   *  / Blow". The code→label map lives on the web (`JOB_TYPE_OPTIONS`), and
+   *  this field exists so the screen can apply it. In production the column
+   *  also holds operator free text ("Clean Driveway") — the schema calls it
+   *  "legacy/custom free-text job type" — so a value missing from the map is
+   *  normal and renders as typed. */
+  jobType: string | null;
+  /** The operator's OWN WORDS for this stream — its title, else the job
+   *  description. A CODE MUST NEVER LAND HERE: this field is lower-cased
+   *  into a customer-facing SMS draft, and it read "your mow_trim_blow". */
   service: string | null;
   /** The occurrence's own cadence when it overrides, else the service's. */
   frequencyDays: number | null;
@@ -540,7 +550,8 @@ export async function listRepeatingStreams(
       clientId: o.job.property?.client?.id ?? null,
       clientName: o.job.property?.client?.displayName ?? "—",
       propertyName: o.job.property?.displayName ?? "—",
-      service: o.jobType || o.title || o.job.description || null,
+      jobType: o.jobType || null,
+      service: o.title || o.job.description || null,
       frequencyDays: freq,
       status: o.status,
       startAt: o.startAt?.toISOString() ?? null,
@@ -708,9 +719,16 @@ async function dormantStreams(
             o.status === JobOccurrenceStatus.PENDING_PAYMENT ||
             o.status === JobOccurrenceStatus.CLOSED),
       )?.startAt ?? null;
+    // WHOLE VISITS, FLOORED — nobody is "5.2 visits behind". A part-grown
+    // cycle is time that has not come due yet, so it rounds DOWN to the
+    // number of services actually owed. Flooring also keeps the claim
+    // conservative: this number can understate the neglect, never overstate
+    // it, which is the right direction for a figure the operator acts on.
+    // It CAN be 0 — a stream stopped inside its own first cadence window
+    // owes nothing yet; the screen says so rather than printing "0 missed".
     const missedCycles =
       lastServed && freq && freq > 0
-        ? Math.round((etDaysBetween(etFormatDate(lastServed), today) / freq) * 10) / 10
+        ? Math.floor(etDaysBetween(etFormatDate(lastServed), today) / freq)
         : null;
 
     out.push({
@@ -723,7 +741,8 @@ async function dormantStreams(
       clientId: j.property?.client?.id ?? null,
       clientName: j.property?.client?.displayName ?? "—",
       propertyName: j.property?.displayName ?? "—",
-      service: reps[0]?.jobType || reps[0]?.title || j.description || null,
+      jobType: reps[0]?.jobType || null,
+      service: reps[0]?.title || j.description || null,
       frequencyDays: freq,
       // ONE SYNTHETIC VALUE, AND IT CANNOT BE MISTAKEN FOR AN ENUM MEMBER.
       //

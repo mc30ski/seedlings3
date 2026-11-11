@@ -131,16 +131,57 @@ label and the filter are keyed on `dormancy`, never on a status string.
 
 ### Measured in missed visits, not days
 
-`missedCycles` = days since last served ÷ this stream's own cadence. "73 days"
-means nothing without knowing whether somebody is weekly or monthly; **"5.2
-missed" is the same sentence for both**, and it is what makes the list
-sortable across a mixed book. Within a state, worst neglect sorts first —
-they share no date, so without that tiebreak eleven-missed and two-missed
-arrive in database order.
+`missedCycles` = days since last served ÷ this stream's own cadence,
+**floored**. "73 days" means nothing without knowing whether somebody is
+weekly or monthly; **"5 missed" is the same sentence for both**, and it is
+what makes the list sortable across a mixed book. Within a state, worst
+neglect sorts first — they share no date, so without that tiebreak
+eleven-missed and two-missed arrive in database order.
+
+**Whole visits.** The first cut rounded to a tenth and the column read "5.2
+missed" — a quantity nobody is. A part-grown cycle is time that has not come
+due, so it rounds DOWN: the figure can understate the neglect and never
+overstate it. Flooring makes **0** reachable (a stream stopped inside its own
+first cadence window), which is not a missed visit and is not drawn as one —
+it reads `none missed yet`, in amber rather than red. The row still belongs on
+the list: there is no next visit coming, it is simply not yet overdue.
 
 **Last *served*, not last scheduled.** A cancelled or still-future visit is
 not work done, and counting it would reset the clock on the very silence
 being measured.
+
+### The Service column: one shape on every row
+
+Three different database columns feed this one idea, and production uses all
+three at once:
+
+| Source | What it actually holds | Live prod rows |
+|---|---|---|
+| `JobOccurrence.jobType` | A CODE on most rows (`MOW_TRIM_BLOW`, `FULL_SERVICE`), but the schema calls it "legacy/custom free-text job type" and operators have typed sentences into it ("Clean Driveway", "Remove limbs") | 0 live — only on visit-less rows, from their last repeating visit |
+| `JobOccurrence.title` | A per-occurrence name | 0 |
+| `Job.description` | Free-text INSTRUCTIONS, up to 232 characters ("NO MOWING. Edging, trimming, and blowing only") | 3 |
+| nothing | — | 50 |
+
+They were collapsed server-side into one `service` string with `||`, which
+produced three defects at once: the column printed `MOW_TRIM_BLOW` raw while
+every other screen runs it through `jobTypeLabel`; a 232-character
+instruction wrapped to four lines and tripled a row's height; and because the
+same string is lower-cased into the **customer-facing SMS draft**, the draft
+read "your mow_trim_blow".
+
+So the code travels in its own field (`jobType`) and `service` carries only
+the operator's own words. The web resolves both through one `serviceLabel()`
+— the tab asks this question four times (cell, search, sort, draft) and the
+draft is the one that cannot afford a raw code.
+
+**The cell has one shape.** The cadence is the primary line on every row,
+always capitalised the same way, because it is the fact every row has (50 of
+53). Anything naming the stream sits beneath it in the single secondary
+style, clamped to two lines. Previously the two swapped typographic roles
+depending on whether the stream happened to be named, in two different
+capitalisations, and the column could not be read down. The Service sort
+follows the cadence for the same reason — ordering on a name most rows do not
+display looks broken.
 
 ### Two rootings, one capability
 

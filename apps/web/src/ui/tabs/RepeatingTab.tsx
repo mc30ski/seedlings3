@@ -48,6 +48,7 @@ import { ArrowDown, ArrowUp, CalendarClock, ChevronDown, ExternalLink, PauseCirc
 import { apiGet } from "@/src/lib/api";
 import type { Scope } from "@/src/lib/scope";
 import { fmtDate } from "@/src/lib/dates";
+import { jobTypeLabel } from "@/src/lib/labels";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import PaymentWaitBadges from "@/src/ui/components/PaymentWaitBadges";
 import ClientContactMenu, { type DraftMessage } from "@/src/ui/components/ClientContactMenu";
@@ -75,6 +76,7 @@ type Row = {
    *  returning null, `.toLowerCase()` threw inside the filter, and the whole
    *  table rendered empty with no error on screen. The e2e spec caught it;
    *  the compiler could not. */
+  jobType: string | null;
   service: string | null;
   frequencyDays: number | null;
   status: string;
@@ -468,9 +470,34 @@ const isUnserved = (r: Row) => r.dormancy !== null;
  * why the copy can be warm without being a liability: nothing goes out that
  * a person did not read first.
  */
+/**
+ * WHAT THIS STREAM IS, IN WORDS, FROM WHICHEVER FIELD HAPPENS TO CARRY IT.
+ *
+ * Three different columns feed this one idea, and in production all three
+ * are in use at once:
+ *   • `jobType` — a CODE on most rows ("MOW_TRIM_BLOW"), but the schema
+ *     calls it "legacy/custom free-text job type" and operators have typed
+ *     sentences into it ("Clean Driveway", "Remove limbs"). `jobTypeLabel`
+ *     maps a known code and returns anything else untouched, which is
+ *     exactly right for a column holding both.
+ *   • `title` — a per-occurrence name, rare on repeating work.
+ *   • the job description — free-text INSTRUCTIONS, up to 232 characters in
+ *     production ("NO MOWING. Edging, trimming, and blowing only"). It is
+ *     not a service name, which is why it comes last and is clamped where
+ *     it renders.
+ *
+ * Resolved in ONE place because the tab asks this question four times —
+ * cell, search, sort and the customer-facing SMS draft — and the draft is
+ * the one that cannot afford a raw code: it read "your mow_trim_blow".
+ */
+function serviceLabel(row: Row): string | null {
+  return jobTypeLabel(row.jobType) || row.service || null;
+}
+
 function draftFor(row: Row): DraftMessage | null {
   const who = row.contactName ? `Hi ${row.contactName},` : "Hi,";
-  const what = row.service ? row.service.toLowerCase() : "recurring service";
+  const named = serviceLabel(row);
+  const what = named ? named.toLowerCase() : "recurring service";
   const where = row.propertyName && row.propertyName !== "—" ? ` at ${row.propertyName}` : "";
 
   if (row.canPause) {
@@ -674,7 +701,7 @@ export default function RepeatingTab({
       return (
         r.clientName.toLowerCase().includes(needle) ||
         r.propertyName.toLowerCase().includes(needle) ||
-        (r.service ?? "").toLowerCase().includes(needle)
+        (serviceLabel(r) ?? "").toLowerCase().includes(needle)
       );
     });
 
@@ -707,9 +734,16 @@ export default function RepeatingTab({
           // Property second, so one customer's properties stay together.
           return `${r.clientName}\u0000${r.propertyName}`;
         case "service":
-          // Nothing names most of these, so fall through to the cadence —
-          // the thing the cell actually shows when the name is missing.
-          return r.service ?? (r.frequencyDays !== null ? `￿${String(r.frequencyDays).padStart(6, "0")}` : null);
+          // SORTS ON WHAT THE CELL LEADS WITH. The cadence is now the first
+          // line of every row in this column, so ordering on the name would
+          // rearrange the column by a string most rows do not display —
+          // the sort would look broken while being internally consistent.
+          // The name breaks ties beneath it. Both missing is a genuine
+          // null, so those rows keep the nulls-last treatment either way.
+          if (r.frequencyDays === null && serviceLabel(r) === null) return null;
+          return `${
+            r.frequencyDays !== null ? String(r.frequencyDays).padStart(6, "0") : "￿"
+          }\u0000${serviceLabel(r) ?? ""}`;
         case "next":
           return r.startAt ? Date.parse(r.startAt) : null;
         case "state":
@@ -1180,23 +1214,28 @@ export default function RepeatingTab({
                   <Text fontSize="xs" color="fg.muted">{row.propertyName}</Text>
                 </Cell>
 
-                {/* THE CADENCE IS THE PRIMARY LINE WHEN NOTHING NAMES THE
-                    STREAM, which is nearly always: no live stream in dev and
-                    one of forty-five in production carries a job type, title
-                    or description. Rendering a placeholder word on every row
-                    filled the column with something that looked like data
-                    until you noticed it never changed. */}
+                {/* ONE SHAPE ON EVERY ROW: CADENCE FIRST, NAME UNDER IT.
+                    Both lines used to swap roles depending on whether the
+                    stream happened to be named — the cadence was the big
+                    line on one row and the small grey one on the next, in
+                    two different capitalisations — so the column could not
+                    be read down. The cadence is the fact every row has (50
+                    of 53 live production streams have nothing else), so it
+                    takes the primary line always, and anything that names
+                    the stream sits beneath it in the one secondary style.
+
+                    CLAMPED, because the "name" is often not one. The third
+                    source `serviceLabel` falls back to is the job
+                    description, which in production runs to 232 characters
+                    of instructions and wrapped to four lines, pushing one
+                    row to three times the height of its neighbours. */}
                 <Cell label="Service">
-                  {row.service ? (
-                    <>
-                      <Text fontSize="sm">{row.service}</Text>
-                      <Text fontSize="xs" color="fg.muted">
-                        {row.frequencyDays ? `every ${row.frequencyDays} days` : "—"}
-                      </Text>
-                    </>
-                  ) : (
-                    <Text fontSize="sm">
-                      {row.frequencyDays ? `Every ${row.frequencyDays} days` : "—"}
+                  <Text fontSize="sm">
+                    {row.frequencyDays ? `Every ${row.frequencyDays} days` : "—"}
+                  </Text>
+                  {serviceLabel(row) && (
+                    <Text fontSize="xs" color="fg.muted" lineClamp={2} title={serviceLabel(row) ?? undefined}>
+                      {serviceLabel(row)}
                     </Text>
                   )}
                 </Cell>
@@ -1205,14 +1244,26 @@ export default function RepeatingTab({
                   {/* NO DATE MEANS NO VISIT, and the cell has to say which
                       kind of nothing rather than printing an em dash. The
                       number is MISSED VISITS, not days: "73 days" means
-                      nothing without knowing the cadence, while "5.2 missed"
-                      reads the same for a weekly and a monthly customer. */}
+                      nothing without knowing the cadence, while "5 missed"
+                      reads the same for a weekly and a monthly customer.
+
+                      WHOLE VISITS ONLY. It is floored in the service, so a
+                      stream stopped part-way through its own cadence reads
+                      0 — which is not a missed visit and must not be drawn
+                      as one. It still belongs on this list: there is no
+                      next visit coming, it is simply not yet overdue. */}
                   {row.dormancy ? (
                     <>
-                      <Text fontSize="sm" color="red.fg" fontWeight="medium">
+                      <Text
+                        fontSize="sm"
+                        color={row.missedCycles === 0 ? "orange.fg" : "red.fg"}
+                        fontWeight="medium"
+                      >
                         {row.missedCycles === null
                           ? "No visit ever"
-                          : `${row.missedCycles} missed`}
+                          : row.missedCycles === 0
+                            ? "none missed yet"
+                            : `${row.missedCycles} missed`}
                       </Text>
                       <Text fontSize="2xs" color="fg.muted">
                         {row.lastServedAt
