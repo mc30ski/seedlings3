@@ -642,16 +642,19 @@ test.describe("Work → Repeating", () => {
     const STOPPED = `E2E Unserved Stopped ${stamp}`;
     const CANCELLED = `E2E Unserved Cancelled ${stamp}`;
 
-    // Both fixtures are 14-day services last served 70 days ago — five
-    // missed visits — so the number on screen is arithmetic, not a guess.
-    const stopped = await makeRepeatingFixture(STOPPED, "SCHEDULED", { daysAgo: 70 });
+    // The stopped fixture is a 14-day service last served SEVENTY-FIVE days
+    // ago. That is 5.35 cycles, and the screen must say 5: nobody is a third
+    // of a visit behind, and the count is floored so it can never overstate
+    // the neglect. An exact multiple would have passed whether the figure
+    // floored or rounded, which is why this one deliberately is not.
+    const stopped = await makeRepeatingFixture(STOPPED, "SCHEDULED", { daysAgo: 75 });
     const cancelled = await makeRepeatingFixture(CANCELLED, "SCHEDULED", { daysAgo: 70 });
     try {
       // Take the live visit away: one finishes cleanly, one is cancelled.
       // Neither leaves anything for the old occurrence-rooted query to find.
       await prisma.jobOccurrence.update({
         where: { id: stopped.occurrence.id },
-        data: { status: "CLOSED", completedAt: new Date(Date.now() - 70 * 86_400_000) },
+        data: { status: "CLOSED", completedAt: new Date(Date.now() - 75 * 86_400_000) },
       });
       await prisma.jobOccurrence.update({
         where: { id: cancelled.occurrence.id },
@@ -685,7 +688,8 @@ test.describe("Work → Repeating", () => {
         "a cancelled stream must read differently from one that merely stopped",
       ).toContainText("Cancelled, nothing since");
 
-      // MISSED VISITS, NOT DAYS: 70 days on a 14-day service is 5.0.
+      // MISSED VISITS, NOT DAYS, AND WHOLE ONES: 75 days on a 14-day
+      // service is 5.35 cycles, which is 5 missed visits.
       await expect(
         stoppedRow,
         "neglect must be stated in missed visits, which reads the same for a weekly and a monthly customer",
