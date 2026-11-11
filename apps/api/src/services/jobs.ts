@@ -3304,18 +3304,47 @@ export const jobs: ServicesJobs = {
         }
       }
 
-      // Cannot remove yourself via this endpoint — use unclaim instead
-      if (targetUserId === actingUserId) {
-        throw new ServiceError("INVALID_INPUT", "Use unclaim to remove yourself.", 400);
-      }
-
       // Without this, removing the claimer out from under a team leaves the
       // survivors unable to start the visit, with nothing on screen
       // explaining why. See lib/claimerInvariant.ts.
       const targetIsClaimer = target.assignedById === targetUserId && target.role !== "observer";
       const otherWorkers = assignees.filter((a) => a.userId !== targetUserId && a.role !== "observer");
       if (targetIsClaimer && otherWorkers.length > 0) {
-        throw new ServiceError("CLAIMER_CANNOT_BE_REMOVED", "Reassign the claimer role to someone else before removing this person.", 400);
+        throw new ServiceError(
+          "CLAIMER_CANNOT_BE_REMOVED",
+          targetUserId === actingUserId
+            ? "Reassign the claimer role to someone else before you leave."
+            : "Reassign the claimer role to someone else before removing this person.",
+          400,
+        );
+      }
+
+      // LEAVING IS JUST REMOVING YOURSELF — and it used to be refused here
+      // UNCONDITIONALLY, with "Use unclaim to remove yourself."
+      //
+      // That made the Manage Team dialog's `Leave` button dead for
+      // everybody, because the dialog only ever offers it to a NON-claimer
+      // (`isMe && !isClaimerRow`) — exactly the case this rejected. No
+      // capability helped: the refusal sat BELOW the `schedule.manage`
+      // check, so an owner acting as Super hit it too.
+      //
+      // And the advice was dangerous. `unclaimOccurrence` deletes EVERY
+      // assignee on the visit and returns it to UNCLAIMED. A worker who
+      // followed the instruction to get themselves off a three-person job
+      // would have thrown the other two off it as well.
+      //
+      // So self-removal is ordinary removal now, with ONE case kept back:
+      // the sole claimer. Unclaim really is the right door for them,
+      // because it also clears `assignedGroupId` — dropping the last
+      // assignee here would leave the visit pointing at a group with
+      // nobody on it. A claimer who is NOT alone fell through to the rule
+      // above, which already says the useful thing: reassign first.
+      if (targetUserId === actingUserId && targetIsClaimer && otherWorkers.length === 0) {
+        throw new ServiceError(
+          "USE_UNCLAIM_TO_LEAVE",
+          "You are the only worker on this visit — use Unclaim to release it.",
+          400,
+        );
       }
 
       await tx.jobOccurrenceAssignee.deleteMany({
@@ -3328,6 +3357,10 @@ export const jobs: ServicesJobs = {
         occurrenceId,
         targetUserId,
         action: "removed",
+        // Somebody taking themselves off a visit and a lead taking them off
+        // it are different events to anyone reading this trail later, and
+        // the actor/target ids alone make that a join to work out.
+        ...(targetUserId === actingUserId ? { self: true } : {}),
       });
 
       return { removed: true as const };

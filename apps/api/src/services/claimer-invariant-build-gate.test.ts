@@ -300,6 +300,56 @@ describe("[build-gate] G33 — only a paid person takes a paid seat", () => {
     expect(jobs).toMatch(/NOT_ON_PAYROLL/);
   });
 
+  it("Leave is a button the API can actually say yes to", () => {
+    // A CONTROL THAT ALWAYS REFUSES. `removeOccurrenceAssignee` rejected
+    // every self-removal with "Use unclaim to remove yourself." — and the
+    // Manage Team dialog only ever OFFERS Leave to a non-claimer
+    // (`isMe && !isClaimerRow`), which is precisely the case it rejected.
+    // So the button could not work for anybody, and no capability helped:
+    // the refusal sat below the `schedule.manage` check, so an owner acting
+    // as Super hit it too.
+    //
+    // The advice it gave was the dangerous half. `unclaimOccurrence` does
+    // `deleteMany({ where: { occurrenceId } })` — the WHOLE team — so a
+    // worker following the instruction to get themselves off a three-person
+    // visit would have thrown the other two off it as well.
+    const jobs = fs.readFileSync(path.join(__dirname, "jobs.ts"), "utf8");
+    const fn = jobs.slice(
+      jobs.indexOf("async removeOccurrenceAssignee"),
+      jobs.indexOf("async reassignClaimer"),
+    );
+    expect(fn.length, "removeOccurrenceAssignee must be found at all").toBeGreaterThan(400);
+
+    // The refusal must be CONDITIONAL — on being the sole claimer, where
+    // Unclaim is genuinely the right door because it also clears
+    // `assignedGroupId`. A bare `targetUserId === actingUserId` throw is
+    // the dead button coming back.
+    expect(fn, "self-removal may only be refused for the SOLE CLAIMER").toMatch(
+      /if \(targetUserId === actingUserId && targetIsClaimer && otherWorkers\.length === 0\)/,
+    );
+    const selfThrows = fn
+      .split("\n")
+      .filter((l) => /targetUserId === actingUserId/.test(l) && /throw|if \(/.test(l));
+    expect(
+      selfThrows.every((l) => /targetIsClaimer/.test(l)),
+      "every self-removal refusal must also test for the claimer",
+    ).toBe(true);
+
+    // And the UI's offer must match what the API allows, or the button is
+    // dead again from the other side.
+    const list = fs.readFileSync(
+      path.join(WEB_SRC, "ui/components/TeamMemberList.tsx"),
+      "utf8",
+    );
+    expect(list, "Leave is offered to a non-claimer, which the API now permits").toMatch(
+      /isMe && !isClaimerRow && onLeave/,
+    );
+    // Mobile-first, and it recomputes the payout split: it confirms.
+    expect(list, "Leave must confirm before it fires").toMatch(
+      /onClick=\{\(\) => setConfirmLeave\(true\)\}/,
+    );
+  });
+
   it("leaving payroll vacates open paid seats, and leaves COMPLETED work alone", () => {
     // Promised payouts were locked at completion under the class the person
     // held then. Rewriting them restates what someone was owed for work
