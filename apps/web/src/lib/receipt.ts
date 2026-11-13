@@ -17,6 +17,16 @@ export type ReceiptData = {
   clientName: string;
   propertyAddress: string;
   jobType: string;
+  /** ALREADY-FORMATTED DISPLAY TEXT, not a date key — "11/13/2026", or
+   *  "—" when the timestamp is absent. Both call sites build them with
+   *  `fmtDate(occ.startAt)` (JobsTab, ClientMyJobsTab) and the PDF prints
+   *  them verbatim.
+   *
+   *  SAID OUT LOUD BECAUSE THE NAME LIES. `statement.ts` has a
+   *  `serviceDate` too and that one IS an ET date key, branded. These are
+   *  not, and must not be: branding them would be a false claim that
+   *  compiles. The two were nearly branded together in one pass on
+   *  2026-11-13 and `tsc` is what caught the difference. */
   serviceDate: string;
   completedDate: string;
   amount: number;

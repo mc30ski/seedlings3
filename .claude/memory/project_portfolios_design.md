@@ -387,3 +387,37 @@ Tree built and cleaned. Three migrations (`sortOrder`, `instructions`,
 `color`) are committed AND applied to production. This session's work adds
 no schema change — the move uses existing columns and delete removes a row
 — so it deploys without a migration.
+
+## The strip's tab table — a Set became a table (2026-11-12)
+
+`apps/web/src/lib/portfolioFilteredTabs.ts` was `FILTERED_TABS`, a flat
+`Set` of tab names, read by the purple strip and the tab-row marker.
+**A name cannot answer the question**, because there are two ways to be
+narrowed: a **lens** you picked from the chip, and a **grant** that is
+simply your access. `GET /reports/portfolio-performance` passes
+`ignoreLens` on purpose — the tab compares portfolios, so a lens
+collapsing it to one would empty it — while a grant still applies. With a
+Set there was **no entry true for both readers**: omitting `performance`
+told a grant-limited lead the whole business was in front of them, listing
+it would have told a lens-holder their lens narrowed a tab that ignored it.
+
+Now `TAB_NARROWING`: each tab carries `{ grant, lens }`, each of which is
+`true`, `false`, or `{ part: "…" }`. The third shape is for a company-wide
+tab with ONE narrowed panel — `equipment` (the Insights leaderboard reads
+`/operations`) and `portfolios` (the property picker reads `/properties`).
+The strip stays quiet for those but says **"this tab is company-wide apart
+from the Insights panel"** instead of "shows the whole business", which was
+true of the tab and false of the control about to be used.
+
+- Callers pass `NarrowingInForce`; strongest applicable wins. `grantIsNarrowing`
+  split out of `portfolioIsNarrowing` — conflating them would mark a
+  lens-only reader's tabs as grant-narrowed.
+- **No exemption list.** There was one for a day; mutation testing got
+  `repeating: "excuse"` through it. The table states every case instead,
+  and G50 fails a `{ grant: false, lens: false }` entry as "this rule
+  switched off for that tab".
+- G50 proves the table matches the API **both ways**. `apps/api/src/lib/
+  portfolio-narrowing.test.ts` (registered in the build-gate filter list,
+  via `@web-lib`) proves the RESOLVER — a `tabNarrowing` returning `true`
+  for everything satisfies every regex in G50.
+- Found via [[project_repeating_tab]], where `repeating` was simply absent.

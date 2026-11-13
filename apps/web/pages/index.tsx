@@ -90,7 +90,11 @@ import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 import { setPerspective, getAreaLens, CAPABILITIES_CHANGED_EVENT, PERSPECTIVE_CHANGED_EVENT, AREA_LENS_CHANGED_EVENT } from "@/src/lib/impersonation";
-import { portfolioIsNarrowing, tabIsFiltered } from "@/src/lib/portfolioFilteredTabs";
+import {
+  grantIsNarrowing,
+  portfolioIsNarrowing,
+  tabIsFiltered,
+} from "@/src/lib/portfolioFilteredTabs";
 import RolesTab from "@/src/ui/tabs/RolesTab";
 import PortfoliosTab from "@/src/ui/tabs/PortfoliosTab";
 
@@ -1187,6 +1191,20 @@ export default function HomePage() {
     grantCount: ((me as any)?.portfolioScope?.trails ?? []).length,
     narrows: (me as any)?.portfolioScope?.narrows,
   });
+  /**
+   * WHICH KIND is in force, not merely whether something is — the marker
+   * has to agree with the strip, and the strip now distinguishes them.
+   * `performance` narrows under a grant and ignores a lens, so marking it
+   * for a lens-holder would promise a narrowing that tab deliberately
+   * refuses to apply.
+   */
+  const narrowingInForce = {
+    lens: lensOnNow,
+    grant: grantIsNarrowing({
+      grantCount: ((me as any)?.portfolioScope?.trails ?? []).length,
+      narrows: (me as any)?.portfolioScope?.narrows,
+    }),
+  };
 
   const staffTabs = withCapabilityVisibility([
         {
@@ -1991,7 +2009,13 @@ export default function HomePage() {
       // affected?" before you click, and leaves the row unmarked in the
       // ordinary unfiltered case.
       innerTabs: portfolioNarrowing
-        ? staffTabs.map((t) => (tabIsFiltered(t.value) ? { ...t, portfolioFiltered: true } : t))
+        ? staffTabs.map((t) =>
+            // THE WHOLE TAB, not a panel inside it. Equipment and
+            // Portfolios are company-wide tabs with one narrowed control
+            // each; a marker on them would say their figures are a
+            // portfolio's, which is the overclaim the strip avoids too.
+            tabIsFiltered(t.value, narrowingInForce) ? { ...t, portfolioFiltered: true } : t,
+          )
         : staffTabs,
     },
   ];

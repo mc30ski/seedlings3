@@ -37,11 +37,12 @@ import {
   reopenWorkday,
   editWorkdayTimes,
   activeMs,
+  fmtWorkdayDate,
   type OpenMileageSummary,
   type WorkdaySummary,
   type WorkdayTodayPayload,
 } from "@/src/lib/workday";
-import { fmtTimeOpts, fmtDateWeekday, bizDateKey, bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/dates";
+import { fmtTimeOpts, bizDateKeyOf, bizToLocalInputValue, bizParseLocalInputValue } from "@/src/lib/dates";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { CompactBanner, SkeletonBanner } from "@/src/ui/tabs/JobsTab.parts";
@@ -230,13 +231,23 @@ function SetEndTimeDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  // Default the picker to 6pm ET on the same date the workday
-  // started. `workday.workdayDate` comes from Prisma as an ISO
-  // datetime (UTC midnight for the ET day) — passing that raw into
-  // a datetime-local input produces garbage. Route through
-  // bizDateKey to get the pure YYYY-MM-DD ET date, then build the
-  // local input value directly.
-  const workdayDateKey = bizDateKey(workday.workdayDate);
+  // Default the picker to 6pm ET on the date the workday started.
+  //
+  // THE COMMENT THAT USED TO SIT HERE WAS WRONG, AND IT COST A DAY.
+  // It said `workday.workdayDate` "comes from Prisma as an ISO datetime
+  // (UTC midnight for the ET day)" and therefore had to be routed through
+  // `bizDateKey`. It does not: `WorkerWorkday.workdayDate` is a String
+  // column holding "YYYY-MM-DD" in ET, and the API hands it over
+  // untouched. `bizDateKey` reads its argument as an INSTANT, so
+  // re-keying a key moved it back one day — UTC midnight is 7pm ET the
+  // evening before.
+  //
+  // The effect in production: a workday left open on Wednesday
+  // 2026-11-11 defaulted this picker to 6pm on TUESDAY the 10th, which
+  // is before the workday started, so `isBeforeStart` below refused
+  // every submission until the owner overruled the app and typed a day
+  // it was insisting was wrong.
+  const workdayDateKey = bizDateKeyOf(workday.workdayDate);
   const defaultEnd = `${workdayDateKey}T18:00`;
   const [when, setWhen] = useState(defaultEnd);
   const [busy, setBusy] = useState(false);
@@ -284,7 +295,7 @@ function SetEndTimeDialog({
             <Dialog.CloseTrigger />
             <Dialog.Header>
               <Dialog.Title>
-                Set end time — {fmtDateWeekday(bizDateKey(workday.workdayDate))}
+                Set end time — {fmtWorkdayDate(workday.workdayDate)}
               </Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
@@ -453,7 +464,7 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
               </Text>
               {payload.openPrior.map((w) => (
                 <HStack key={w.id} justify="space-between">
-                  <Text fontSize="sm" fontWeight="semibold">{fmtDateWeekday(bizDateKey(w.workdayDate))}</Text>
+                  <Text fontSize="sm" fontWeight="semibold">{fmtWorkdayDate(w.workdayDate)}</Text>
                   <Text fontSize="xs" color="fg.muted">
                     started {fmtTimeOpts(w.startedAt, { hour: "numeric", minute: "2-digit" })}
                   </Text>
@@ -464,7 +475,7 @@ export function WorkdayBanner({ viewAsUserId }: { viewAsUserId?: string | null }
         >
           You didn't end your workday on{" "}
           <Text as="span" fontWeight="semibold">
-            {fmtDateWeekday(bizDateKey(payload.openPrior[0].workdayDate))}
+            {fmtWorkdayDate(payload.openPrior[0].workdayDate)}
           </Text>
           {payload.openPrior.length > 1 && (
             <Text as="span"> ({payload.openPrior.length - 1} more after this)</Text>

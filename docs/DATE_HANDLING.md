@@ -117,6 +117,10 @@ table instead.
 | `new Date(d.getTime() + 86_400_000)` for "tomorrow" | Breaks on DST boundaries (most days have 86_400_000 ms, two have 86_400_000 ± 3_600_000). | API: `etAddDays(str, 1)` + `etMidnight`. Web: `bizTomorrow()` or `bizAddDays`. |
 | `dateKey + "T09:00:00"` (no zone) for "9 AM on date X" | Interpreted in whatever zone the code runs in. *Shipped: the server is UTC on Vercel, so every task and follow-up landed at **4 AM ET**.* | Web: `bizInstantFromEtParts(dateKey, "09:00")`. API: `etInstantFromParts`. **Gate rule 30.** |
 | `dateKey + "T13:00:00Z"` — a hard-coded UTC hour standing in for an ET wall-clock hour | Correct in one half of the year only. *Shipped: 13:00Z is 9 AM EDT but **8 AM EST**, so reminders set in summer fired an hour early all winter.* | Same helpers. **Gate rule 30.** The ONE allowed literal is `T12:00:00Z` — UTC noon is the same calendar day in every US zone, so it is the safe anchor for handing a date key to a formatter. |
+| `bizDateKey(x)` where `x` is ALREADY a date key | It reads its argument as an **instant**, so a bare `YYYY-MM-DD` parses as UTC midnight — the previous calendar day in ET. No throw, no empty string; the key simply comes back a day early. *Shipped 2026-11-13: a workday left open on **Wednesday** was announced as "you didn't end your workday on **Tuesday**", and the picker defaulted to 6pm on that Tuesday — before the workday had started — so the dialog's own before-start guard refused every submission.* | Pass the key through; it is already what you want. Where it may be either, `bizDateKeyOf(x)`. **Gate rule 31**, and the stronger guard: `bizDateKey` now REFUSES a branded `EtDateKey` at compile time. |
+| A date-key field typed as a plain `string` | The brand is what makes the row above a compile error rather than a regex's problem. An unbranded field opts out of it silently. | Type it `EtDateKey` on **both** sides. `WorkdaySummary.workdayDate` is the worked example; `PayrollPeriod`'s three keys and `StatementRow`'s two followed on 2026-11-13. |
+| A date-key field branded on the API and plain `string` in the web copy | The two are separate declarations that never meet, so both compile and the drift is invisible. This is the layer *under* every rule in this document: the helpers, the gate and the brand all sit downstream of a copy that silently stopped matching its source. | `mirror-types-build-gate.test.ts` compares each declared mirror field for field. It found this exact asymmetry the hour it was written. |
+| A field NAMED like a date key that holds formatted text | `receipt.ts`'s `serviceDate` is `fmtDate()` output — `"11/13/2026"`, or `"—"`. `statement.ts`'s identically-named field IS a key. Branding by name would be a false claim that compiles once somebody adds a cast. | Read the producer, not the name. Both are now commented to say which they are. |
 | A local `fmtDate()` / `dateKey()` / `pad()` helper inside a component | That's how we end up with 15 slightly-different formatters, each with their own bugs. | Add it to the canonical file with a clear name. Use it from there. |
 
 ---
@@ -163,7 +167,19 @@ helper that converts to ET, adds days as a string, then converts back.
 > gate simply had no pattern for either. **If you add a row to the tables
 > above, add the matching `FORBIDDEN_PATTERNS` entry in the same change**, or
 > you have written documentation, not a rule. (Rules 29 and 30 were added
-> 2026-11-10, after the two bugs, to close exactly this gap.)
+> 2026-11-10, after the two bugs, to close exactly this gap. Rule 31
+> followed on 2026-11-13, after a third.)
+
+> **And where the TYPE can say it, let the type say it.** Rule 31's regex
+> matches argument NAMES, so it only ever catches the spellings somebody
+> thought of. The real guard for that bug is the signature: `bizDateKey`
+> takes `(string & { __brand?: undefined }) | IsoInstant | Date`, so handing
+> it a branded `EtDateKey` fails `tsc` whatever the variable is called. A
+> regex is the fallback for values the brand cannot reach — a date-key field
+> still typed `string`, or one arriving through `as any`.
+> `web-date-helpers.test.ts` holds both the signature and the brand in place;
+> widening either would delete the compile error without failing anything
+> else.
 
 
 The forbidden patterns above are **mechanically enforced** by a test in

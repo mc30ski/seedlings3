@@ -2262,6 +2262,78 @@ describe("[build-gate] every tab explainer is driven from the breadcrumb", () =>
     ).toEqual([]);
   });
 
+  it("every staff tab HAS one", () => {
+    /**
+     * THE RULE NOTHING WAS CHECKING. Every other rule here is about
+     * explainers that exist: that they are hoisted, that nothing renders
+     * above them, that the panel reads as a layer. None of them fires on a
+     * tab with no explainer at all — the whole describe iterates
+     * `webFilesContaining("<TabExplainer")`, so a tab without one is simply
+     * not in the loop.
+     *
+     * Work → Repeating shipped that way and nobody saw it for weeks. The
+     * only symptom is an ABSENCE: no help panel, and because the breadcrumb
+     * (i) is driven by whichever explainer is mounted, no icon either. An
+     * icon that is missing on one tab out of thirty is not a thing anybody
+     * notices — you have to be looking for it, on that tab, having just
+     * come from another.
+     *
+     * The oracle is index.tsx: each tab entry's `value:` is the tab id and
+     * the first component in its `content:` is what renders it. A tab may
+     * carry the panel itself or delegate to a dedicated explainer component
+     * (Jobs does, because its copy is 280 lines long).
+     */
+    const index = web("../pages/index.tsx");
+    const ids = [...index.matchAll(/\n\s*value: "([a-z][a-z-]*)",/g)];
+    expect(ids.length, "could not parse the tab list out of index.tsx").toBeGreaterThan(20);
+
+    /**
+     * NOT STAFF TABS, and each for a reason that is not "we forgot".
+     *
+     * The client portal has no help system at all — no (i), no panel, no
+     * shared preference — so these are not tabs missing a thing their
+     * neighbours have. `client` and `staff` are the two SHELLS; they carry
+     * a `value:` because the shell switch is a tab list of its own.
+     */
+    const NOT_A_STAFF_TAB = new Set([
+      "client", "staff",
+      "my-jobs", "statements", "public", "client-services", "client-promotions",
+    ]);
+
+    // `web()` throws on a missing file, and most of these lookups are
+    // misses by design — a tab's component lives in exactly one of the
+    // three directories.
+    const maybe = (rel: string) => { try { return web(rel); } catch { return ""; } };
+    const DIRS = ["ui/tabs", "ui/components", "ui/tools"];
+    const missing: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i][1];
+      if (NOT_A_STAFF_TAB.has(id)) continue;
+      const from = ids[i].index!;
+      const to = i + 1 < ids.length ? ids[i + 1].index! : index.length;
+      const m = /<([A-Z]\w+)\b/.exec(index.slice(from, to));
+      if (!m) { missing.push(`${id}: no component in its content`); continue; }
+      const comp = m[1];
+      let src = "";
+      for (const d of DIRS) {
+        src = maybe(`${d}/${comp}.tsx`);
+        if (src) break;
+      }
+      if (!src) { missing.push(`${id}: ${comp}.tsx not found in ${DIRS.join(", ")}`); continue; }
+      // Itself, or a dedicated explainer component it renders.
+      if (src.includes("<TabExplainer")) continue;
+      const delegate = /<([A-Z]\w*Explainer)\b/.exec(src);
+      if (delegate && maybe(`ui/components/${delegate[1]}.tsx`).includes("<TabExplainer")) continue;
+      missing.push(`${id} (${comp})`);
+    }
+    expect(
+      missing,
+      "a staff tab with no help panel — which also means no (i) in the " +
+        "breadcrumb while that tab is open. Add a TabExplainer, or, if it is " +
+        "not a staff tab, say so in NOT_A_STAFF_TAB with the reason.",
+    ).toEqual([]);
+  });
+
   it("every explainer asks the same question the same way", () => {
     // 36 hand-written titles — "What Home shows", "What Crews are", "How
     // supplies are tracked" — each a small guess at the right noun and verb

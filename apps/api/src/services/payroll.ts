@@ -202,9 +202,9 @@ export class PayrollConservationError extends Error {
 
 export type ImportResult = {
   periodId: string;
-  periodStart: string;
-  periodEnd: string;
-  payDay: string;
+  periodStart: EtDateKey;
+  periodEnd: EtDateKey;
+  payDay: EtDateKey;
   label: string | null;
   entryCount: number;
   /** True when this replaced an existing period rather than creating one. */
@@ -503,11 +503,42 @@ function nameKey(last: string, first: string): string {
 
 // ── Reads ────────────────────────────────────────────────────────────────────
 
+/**
+ * The three ET date keys on a `PayrollPeriod` row, branded at the DB
+ * boundary.
+ *
+ * Prisma types them `String`, because the columns ARE strings — the schema
+ * stores "YYYY-MM-DD" in ET, exactly like `WorkerWorkday.workdayDate`. The
+ * only writer is `payrollImport`, which parses the Gusto CSV through
+ * `parseUsDateToEtDateKey` and therefore validates before anything lands.
+ * So this is the documented trusted-boundary cast, in ONE place rather
+ * than scattered across four `.map()` bodies.
+ *
+ * WHY IT IS WORTH BRANDING AT ALL. An ET date key that stays typed `string`
+ * opts out of the guard on `bizDateKey`, which refuses a branded key
+ * precisely because converting one moves it to the previous day. That bug
+ * shipped on `workdayDate` (see docs/DATE_HANDLING.md, rule 31): a
+ * Wednesday workday was announced as Tuesday and could not be closed. These
+ * columns are the same shape and were one `bizDateKey()` away from the same
+ * thing.
+ */
+function periodDates(p: { periodStart: string; periodEnd: string; payDay: string }): {
+  periodStart: EtDateKey;
+  periodEnd: EtDateKey;
+  payDay: EtDateKey;
+} {
+  return {
+    periodStart: p.periodStart as EtDateKey,
+    periodEnd: p.periodEnd as EtDateKey,
+    payDay: p.payDay as EtDateKey,
+  };
+}
+
 export type PayrollPeriodSummary = {
   id: string;
-  periodStart: string;
-  periodEnd: string;
-  payDay: string;
+  periodStart: EtDateKey;
+  periodEnd: EtDateKey;
+  payDay: EtDateKey;
   label: string | null;
   /** Present only for management. Workers get their own numbers, not the team's. */
   teamTotals?: {
@@ -552,9 +583,7 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
     });
     return periods.map((p) => ({
       id: p.id,
-      periodStart: p.periodStart,
-      periodEnd: p.periodEnd,
-      payDay: p.payDay,
+      ...periodDates(p),
       label: p.label,
       mine: {
         grossEarnings: p.entries[0]?.grossEarnings ?? null,
@@ -576,9 +605,7 @@ export async function listPeriods(viewer: PayrollViewer): Promise<PayrollPeriodS
     const t = (p.totals ?? {}) as { values?: Partial<Record<NumericField, number | null>> };
     return {
       id: p.id,
-      periodStart: p.periodStart,
-      periodEnd: p.periodEnd,
-      payDay: p.payDay,
+      ...periodDates(p),
       label: p.label,
       teamTotals: {
         grossEarnings: t.values?.grossEarnings ?? null,
@@ -699,9 +726,9 @@ export async function listEntries(
  * the first time a schedule changes. See the spec.
  */
 export async function getMyLatest(userId: string): Promise<{
-  payDay: string;
-  periodStart: string;
-  periodEnd: string;
+  payDay: EtDateKey;
+  periodStart: EtDateKey;
+  periodEnd: EtDateKey;
   netPay: number | null;
   grossEarnings: number | null;
   periodsOnRecord: number;
@@ -718,9 +745,7 @@ export async function getMyLatest(userId: string): Promise<{
   });
 
   return {
-    payDay: entry.payrollPeriod.payDay,
-    periodStart: entry.payrollPeriod.periodStart,
-    periodEnd: entry.payrollPeriod.periodEnd,
+    ...periodDates(entry.payrollPeriod),
     netPay: entry.netPay,
     grossEarnings: entry.grossEarnings,
     periodsOnRecord,
@@ -755,7 +780,7 @@ export async function getMyLatest(userId: string): Promise<{
  */
 export async function getPendingMatchNotice(userId: string): Promise<{
   affected: boolean;
-  payDay: string | null;
+  payDay: EtDateKey | null;
 }> {
   const NONE = { affected: false, payDay: null };
 
@@ -780,7 +805,7 @@ export async function getPendingMatchNotice(userId: string): Promise<{
   });
   if (history === 0) return NONE;
 
-  return { affected: true, payDay: latest.payDay };
+  return { affected: true, payDay: periodDates(latest).payDay };
 }
 
 // ── Identity mapping (`payroll.manage` only) ────────────────────────────────────────────

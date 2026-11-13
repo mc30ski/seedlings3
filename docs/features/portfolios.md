@@ -141,9 +141,55 @@ territory the grants do not already cover.
   with a lens set days ago on another tab is what made the tree read
   "Carrboro · 4" above a panel reading "Nothing in Carrboro yet".
 
-Which tabs the filter touches is one list, `apps/web/src/lib/portfolioFilteredTabs.ts`,
-measured from the API's call sites and guarded by G50. Ledger, Reconcile
-and Forecast are **not** filtered.
+### Which tabs the filter touches — and by which route in
+
+One table, `TAB_NARROWING` in `apps/web/src/lib/portfolioFilteredTabs.ts`,
+measured from the API's call sites and guarded by G50 in both directions.
+Ledger, Reconcile and Forecast are **not** filtered.
+
+It was a flat `Set` of tab names until **2026-11-12**, and a name cannot
+answer the question, because there are two ways to be narrowed and they are
+not the same event:
+
+| | |
+|---|---|
+| a **lens** | a portfolio picked from the header chip — a view setting, with an × to clear it |
+| a **grant** | a role granted *inside* a portfolio, so that is simply what this person's access is; no × is offered, because there is nothing to switch off |
+
+Most tabs obey both. `performance` obeys one: `GET
+/reports/portfolio-performance` passes `ignoreLens` deliberately (the tab
+compares portfolios side by side, and a lens collapsing it to one would
+empty the comparison), while a grant still applies, because a grant is what
+you may see rather than what you chose to look at. With a single list there
+was **no entry that was true for both readers** — omitting it told a
+grant-limited lead the whole business was in front of them, listing it would
+have told a lens-holder their lens had narrowed a tab that ignored it.
+
+Each tab therefore carries `{ grant, lens }`, and each of those is one of:
+
+- `true` — the tab's own lists and totals narrow;
+- `false` — that kind of narrowing does not reach the tab at all;
+- `{ part: "…" }` — the tab is company-wide **apart from** the named panel.
+
+The third shape covers `equipment` (its Insights leaderboard reads
+`/operations`, which comes from occurrences) and `portfolios` (only the
+property picker in the filing dialog reads `/properties`). The strip stays
+quiet for those — their own figures *are* the company's — but it no longer
+says "this tab shows the whole business", which was true of the tab and
+false of the control the reader was about to use. It says "this tab is
+company-wide apart from the Insights panel" instead.
+
+The caller supplies which kinds are in force; the strongest applicable
+answer wins, so a grant-limited lead who also picks a lens is narrowed by
+both. There is **no exemption list** — for one day there was, and an escape
+hatch with a prose justification is a hatch: mutation testing got
+`repeating: "excuse"` through it. The table states all three cases instead.
+
+Behaviour is locked in by `apps/api/src/lib/portfolio-narrowing.test.ts`,
+run from the build gate through the `@web-lib` alias. G50 proves the table
+agrees with the API; those tests prove the resolver reads it correctly —
+a `tabNarrowing` returning `true` for everything would satisfy every regex
+in G50 and put the old lie back on every tab at once.
 
 ## Presentation
 

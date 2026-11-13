@@ -88,6 +88,50 @@ type Rule = {
 };
 
 const FORBIDDEN_PATTERNS: Rule[] = [
+  // 31. RE-KEYING A DATE KEY — i.e. handing `bizDateKey` something that is
+  //     ALREADY "YYYY-MM-DD". It reads its argument as an INSTANT, and a
+  //     bare date key parses as UTC midnight, which is 7pm ET the evening
+  //     BEFORE. So the key comes back one day earlier than it went in.
+  //     There is no throw and no empty string; the value is just wrong, and
+  //     wrong in a direction that reads as plausible.
+  //
+  //     THIS SHIPPED (found 2026-11-13). `WorkerWorkday.workdayDate` is a
+  //     String column holding an ET date key, but a comment in the End
+  //     Workday dialog asserted it arrived "from Prisma as an ISO datetime",
+  //     so four call sites re-keyed it. A workday left open on WEDNESDAY
+  //     2026-11-11 was announced to its owner as "You didn't end your
+  //     workday on Tuesday, Nov 10", and the dialog's picker defaulted to
+  //     6pm on that Tuesday — BEFORE the workday had started — so its own
+  //     before-start guard refused every submission. The only way to close
+  //     the workday was to overrule the app and name a day it insisted was
+  //     wrong.
+  //
+  //     THE PRIMARY DEFENCE IS THE TYPE, NOT THIS RULE. `bizDateKey` takes
+  //     `(string & { __brand?: undefined }) | IsoInstant | Date`, so a
+  //     branded `EtDateKey` is a compile error — see the companion rules in
+  //     `web-date-helpers.test.ts`. This catches what the brand cannot
+  //     reach: a date-key field still typed as a plain `string`, or one
+  //     arriving through `as any`.
+  //
+  //     `bizDateKeyOf()` is the helper for a value that may be either.
+  {
+    //  THE ARGUMENT REGION, WITH ONE LEVEL OF NESTING ALLOWED. A flat
+    //  identifier class missed `bizDateKey((workday as any).workdayDate)`
+    //  — which is exactly how the original four call sites would still
+    //  compile today, since `as any` is also what escapes the brand.
+    //  Found by mutation, not by reading. The nested group can never
+    //  cross this call's own closing paren, so a later `dateKey` on the
+    //  same line (`const k = bizDateKey(a) + dateKey;`) is not a match.
+    pattern:
+      /\bbizDateKey\s*\(\s*(?:[^()\n]|\([^()\n]*\))*?(?:[Dd]ateKey|[Ww]orkdayDate|[Dd]ayKey|[Dd]ateOnly)\b/,
+    reason:
+      "Re-keying a value that is already an ET date key. `bizDateKey` reads its argument as an " +
+      "instant, so a bare YYYY-MM-DD parses as UTC midnight — the PREVIOUS day in ET. This " +
+      "shipped: a Wednesday workday was announced as Tuesday and could not be closed.",
+    fix:
+      "Pass the key straight through — it is already what you want. Where the value may be " +
+      "either a key or an instant, use `bizDateKeyOf()`.",
+  },
   // 29. `new Date(<request-supplied value>)` — THE HOLE TWO SHIPPED BUGS
   //     CAME THROUGH (2026-11-10). A bare "YYYY-MM-DD" parses as UTC
   //     midnight, which is the PREVIOUS DAY in ET: resuming a paused

@@ -183,7 +183,11 @@ type WorkdayMutationType =
 function applyOptimisticWorkdayUpdate(
   payload: WorkdayTodayPayload,
   type: WorkdayMutationType,
-  workdayDate: string,
+  // An ET DATE KEY, branded — not a date-ish string. Its one caller passes
+  // `bizToday()`. The brand is what stops this optimistic row being built
+  // with an instant and then re-keyed downstream, which is exactly how a
+  // Wednesday workday came to be announced as Tuesday.
+  workdayDate: EtDateKey,
   input?: { startedAt?: string | null; endedAt?: string | null; totalPausedMs?: number | null },
 ): WorkdayTodayPayload {
   const now = new Date().toISOString();
@@ -1975,7 +1979,7 @@ function ForgotPriorDialog({
   // canonical helper so the DST offset is computed correctly regardless
   // of the operator's device timezone.
   const defaultEndIso = useMemo(
-    () => bizInstantFromEtParts(workday.workdayDate as EtDateKey, "17:00"),
+    () => bizInstantFromEtParts(workday.workdayDate, "17:00"),
     [workday.workdayDate],
   );
 

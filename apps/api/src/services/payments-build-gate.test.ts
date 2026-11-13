@@ -1492,6 +1492,118 @@ describe("[build-gate] the invoice is never re-derived by hand", () => {
     }
   });
 
+  it("the accept dialog previews the payout it will actually write", () => {
+    /**
+     * IT RE-DERIVED THE MONEY, AND IT HAD DRIFTED (fixed 2026-11-13).
+     *
+     * The dialog carried a local `shareRate()` + `round2()` and multiplied
+     * out each worker's share by hand, under a comment claiming it mirrored
+     * `computeBreakdown`. Three ways that was wrong:
+     *
+     *   · THE WRONG FUNCTION. Approval runs `reconcileApproval`, which
+     *     wraps computeBreakdown and then makes W-2 workers whole out of
+     *     the business's side while contractors take the pro-rata loss. The
+     *     copy had no notion of a promise, so a $300 invoice paid $150
+     *     previewed an employee at $52.50 against the $105 actually paid —
+     *     and the gap widened as the payment shrank.
+     *   · NO PENNY RESIDUAL — disagreed with the server on 47% of
+     *     submittable amounts (measured over 4.2M combinations).
+     *   · NO NORMALISATION of the percentages.
+     *
+     * `@repo/money` exists to prevent precisely this; its own header says
+     * so. The dialog imported `classify` from it and then re-derived the
+     * breakdown anyway, which is the shape to keep out: a payment surface
+     * that half-uses the shared math looks more trustworthy than one that
+     * obviously does not use it at all.
+     */
+    /**
+     * ASSERTED AGAINST CODE, NOT PROSE.
+     *
+     * The first version of this rule tested the raw file, and the comment
+     * above — which names `reconcileApproval` while explaining the bug —
+     * satisfied it. Mutation-testing proved it: swapping the real call back
+     * to `computeBreakdown`, which is the precise bug, left the gate green.
+     * A check that matches a word matches the documentation of the word.
+     */
+    const code = web("ui/dialogs/AcceptPaymentDialog.tsx")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/[^\n]*$/gm, "")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    const DLG = code;
+
+    // The two canonical calls, in order. `reconcileApproval` is the one
+    // that matters: computeBreakdown ALONE is the promise, not the payout,
+    // and previewing the promise is the bug that shipped.
+    expect(
+      DLG,
+      "the dialog must build the promise with the shared computeBreakdown",
+    ).toMatch(/computeBreakdown\(/);
+    expect(
+      DLG,
+      "and must preview what approval will PAY, via reconcileApproval — " +
+        "computeBreakdown on its own is the promise, and showing the promise " +
+        "as the payout is exactly the bug this rule exists for",
+    ).toMatch(/reconcileApproval\(/);
+
+    // No local rate table, and no hand-rolled rounding helper. Both were
+    // the carriers.
+    expect(
+      DLG,
+      "no local rate lookup — the rate comes from the shared rateFor via " +
+        "computeBreakdown, never from a switch on worker type here",
+    ).not.toMatch(/function shareRate\(/);
+    expect(DLG, "no local round2 — @repo/money exports one")
+      .not.toMatch(/function round2\(/);
+
+    // The arithmetic shape itself: a rate percentage multiplied into a
+    // gross is a payout being computed, wherever it is written.
+    expect(
+      DLG,
+      "no fee arithmetic in the dialog — `gross * (rate / 100)` IS the " +
+        "payout math, and one copy of it is the whole point of @repo/money",
+    ).not.toMatch(/ratePercent\s*\/\s*100|rate\s*\/\s*100/);
+
+    // THE MAKE-WHOLE MUST BE VISIBLE. Using reconcileApproval and then not
+    // showing the top-up would be correct and still misleading: "Workers
+    // receive" exceeds what the lines above it leave, and a card that does
+    // not reconcile to itself is the thing operators stop trusting.
+    //
+    // ANCHORED ON THE RENDER SHAPE — the GUARD and the FORMATTED VALUE,
+    // both. Asserting the bare identifier `topUp` was the first attempt and
+    // it leaked twice under mutation: renaming the field while leaving
+    // `topUpAmount` behind, and switching the display condition to `false`
+    // while leaving the dead branch in place, each kept a match alive. A
+    // regex cannot prove a branch is reachable; requiring the condition AND
+    // the formatter is as close as a scan gets, and it is enough that the
+    // display cannot be dropped by accident.
+    expect(DLG, "the summary must branch on there being a top-up")
+      .toMatch(/breakdown\.totalTopUp > 0/);
+    expect(DLG, "and must print it — the business covers that money")
+      .toMatch(/breakdown\.totalTopUp\.toFixed/);
+    expect(DLG, "each topped-up row must say so; the question is asked of the row")
+      .toMatch(/r\.topUp > 0/);
+    expect(DLG, "and show the amount").toMatch(/r\.topUp\.toFixed/);
+
+    // And someone the payout cannot price must be named rather than shown
+    // a $0 share — `rateFor` throws for them, so the server refuses the
+    // payment and a clean-looking preview is a trap.
+    expect(
+      DLG,
+      "a worker with no pay class must be surfaced; the server refuses the " +
+        "payment for them rather than guessing a rate",
+    ).toMatch(/breakdown\.unpriceableNames\.length > 0/);
+    expect(DLG, "by name, so the operator knows who to fix")
+      .toMatch(/unpriceableNames\.join\(/);
+
+    // The predicate must be the POSITIVE one from @repo/money. `!isPaid(x)`
+    // is true for UNPAID and for an untyped worker both, which is the
+    // negation shape G30 forbids — it fired on exactly this line when the
+    // fix was first written.
+    expect(DLG, "no negated pay-class predicate")
+      .not.toMatch(/!\s*isPaid\(/);
+    expect(DLG, "ask cannotBePriced() instead").toMatch(/cannotBePriced\(/);
+  });
+
   it("the pay page renders one breakdown, not two", () => {
     // The client sees the itemization twice — in the invoice card and again
     // in the post-payment recap — and the two must be the same component.

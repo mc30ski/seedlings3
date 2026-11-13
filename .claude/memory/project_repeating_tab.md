@@ -342,3 +342,29 @@ Worth reading before trusting a green build on UI work:
 - `npm run routemap` now rewrites the gated "N distinct method+path pairs"
   sentence itself. It used to leave it to a human and the build failed one
   step later, in a file the author had not edited.
+
+## Two chrome bugs the tab shipped with (both fixed 2026-11-12)
+
+Neither was in the table. Both were invisible to the suite for the same
+reason: the rule that would have caught them only looked at tabs that
+already did the right thing.
+
+1. **`repeating` was missing from `FILTERED_TABS`** (`apps/web/src/lib/
+   portfolioFilteredTabs.ts`), so with a portfolio in force the purple strip
+   appended *"— this tab shows the whole business"* over a table the filter
+   had already shortened, and the tab row drew no portfolio marker. That file
+   called under-claiming "the safe direction of wrong" — **it is not**:
+   overclaiming makes a reader doubt a number they can check, this one tells
+   them there is nothing to check. G50 now asserts BOTH directions
+   (index.tsx `value:` → component → its `apiGet` literals → whether that
+   `GET` route calls `portfolioWhere*`). Finding it turned up **three more
+   tabs in the same shape**, which the flat list could not describe — so
+   **the list is now a table**, `TAB_NARROWING`: see
+   [[project_portfolios_design]] and `docs/features/portfolios.md`.
+2. **The tab had no `TabExplainer` at all**, so it also had no (i) in the
+   breadcrumb — that trigger is driven by whichever explainer is MOUNTED. A
+   missing icon on one tab out of thirty is not something anybody notices.
+   The whole explainer describe in `job-materials-build-gate.test.ts`
+   iterates `webFilesContaining("<TabExplainer")`, so a tab without one was
+   never in the loop; a new rule asserts every staff tab has one, exempting
+   only the five client-portal tabs and the two shell values.

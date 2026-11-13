@@ -59,6 +59,41 @@ When the source hasn't been validated (e.g. arbitrary user input, external API r
 
 Total: **~30 production files touched, ~65 casts added, 0 runtime behavior change.**
 
+## The gap Phase 2 left, closed 2026-11-13
+
+Phase 2 tightened every **consumer** that takes a date KEY (`bizAddDays`,
+`bizDaysBetween`, `etMidnight`, …) so a raw instant cannot reach them. It
+left the **producers** open in the other direction: `bizDateKey(d: string |
+Date)` happily accepted an `EtDateKey`, converted it as though it were an
+instant, and returned the PREVIOUS ET day. UTC midnight is 7pm ET the
+evening before, so the key comes back a day early with no throw and no
+empty string.
+
+That shipped. `WorkerWorkday.workdayDate` is a String column holding an ET
+key, and a comment in the End Workday dialog asserted it arrived "from
+Prisma as an ISO datetime", so four call sites re-keyed it. A workday left
+open on **Wednesday 2026-11-11** was announced as *"You didn't end your
+workday on Tuesday, Nov 10"*, and the picker defaulted to 6pm on that
+Tuesday — before the workday had started — so the dialog's own
+before-start guard refused every submission. The owner had to overrule the
+app and name a day it insisted was wrong.
+
+The fix is the symmetric one, and the ripple was **one line**:
+
+```ts
+bizDateKey(d: (string & { readonly __brand?: undefined }) | IsoInstant | Date)
+```
+
+plus branding `WorkdaySummary.workdayDate` as `EtDateKey`. Rule of thumb
+this establishes: **a function that CONVERTS to a key must refuse one**,
+just as a function that consumes a key refuses an instant. Both directions,
+or the brand only guards half the journey.
+
+Note what the brand depends on: a date-key field typed as a plain `string`
+opts out silently, and `as any` escapes it entirely. Gate rule 31 and the
+scan in `web-date-helpers.test.ts` cover those two; `as any` was found by
+mutation, not by reading.
+
 ## What's still not enforced (future work)
 
 No build-gate rule limits `as EtDateKey` casts to an allowlist. In this session there were too many legitimate boundary casts to allowlist practically. If future casts start to feel abusive (e.g. someone casting to bypass a real bug), consider a rule that forbids `as EtDateKey` in specific directories (like `apps/web/src/ui/`) — but leave route handlers + trusted lib code exempt.

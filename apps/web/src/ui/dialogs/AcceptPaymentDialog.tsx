@@ -1,5 +1,15 @@
 "use client";
-import { classify, type WorkerType } from "@repo/money";
+import {
+  classify,
+  computeBreakdown,
+  cannotBePriced,
+  isPaid,
+  reconcileApproval,
+  round2,
+  type Rates,
+  type WorkerInput,
+  type WorkerType,
+} from "@repo/money";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -116,36 +126,39 @@ type Props = {
 };
 
 /**
- * The rate this assignee's share carries, and whether it is a margin or a fee.
+ * THE HAND-ROLLED PAYOUT MATH THAT USED TO LIVE HERE IS GONE.
  *
- * Exhaustive. This dialog previously asked `isEmployeeClass(wt)` and took the
- * contractor commission for everyone else — so an UNPAID helper on the crew
- * was shown being charged a 20% commission, and their fee was added to the
- * platform-fee total. It runs on ASSIGNEES, before anything is stored, which
- * made it the one place a reader could see the wrong number today.
+ * A local `shareRate()` picked the rate off a worker type and a local
+ * `round2()` rounded it, and the breakdown below multiplied them out by
+ * hand. `@repo/money` already owns that math, and its own header says
+ * exactly why:
  *
- * `payClass` is `null` for someone who takes no cut at all.
+ *   "A forecasting tool that reimplements payout math drifts from
+ *    production the first time a rate rule changes — silently, while still
+ *    looking authoritative. So the simulator is not allowed its own copy."
+ *
+ * This dialog was that copy, and it had drifted three ways (measured
+ * 2026-11-13):
+ *
+ *   1. THE WRONG SERVER FUNCTION. The comment claimed it mirrored
+ *      `computeBreakdown`. The approval path is `reconcileApproval`, which
+ *      wraps it and THEN applies the make-whole rules: a W-2 worker is paid
+ *      their promised net with the business absorbing the shortfall, while
+ *      a contractor takes the pro-rata loss. The copy had no notion of a
+ *      promise, so on a $300 invoice paid $150 it showed an employee
+ *      $52.50 where the server pays $105.
+ *   2. NO PENNY RESIDUAL. `computeBreakdown` spreads the rounding residual
+ *      one cent per row — added because dumping it on row 0 systematically
+ *      shortchanged the claimer. Across 4.2M submittable combinations the
+ *      copy disagreed with the server on 47% of amounts, by a cent a
+ *      worker.
+ *   3. NO NORMALISATION. `computeBreakdown` normalises the percentages over
+ *      their own sum; the copy used them raw. Only visible mid-edit, since
+ *      submit is blocked unless they total 100.
+ *
+ * The server was right in every case — it was the preview, on the screen
+ * where money is approved, that was wrong.
  */
-function shareRate(
-  wt: WorkerType | null | undefined,
-  marginPercent: number,
-  commissionPercent: number,
-): { ratePercent: number; payClass: "w2" | "contractor" | null } {
-  switch (classify(wt)) {
-    case "w2":
-      return { ratePercent: marginPercent, payClass: "w2" };
-    case "contractor":
-      return { ratePercent: commissionPercent, payClass: "contractor" };
-    case "unpaid":
-    case "unclassified":
-      return { ratePercent: 0, payClass: null };
-  }
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
 export default function AcceptPaymentDialog({
   open,
   onOpenChange,
@@ -340,59 +353,138 @@ export default function AcceptPaymentDialog({
     return { gross: amt, fee, net: Math.round((amt - fee) * 100) / 100 };
   }, [confirmAmount, amountPaid, selectedMethodConfig]);
 
-  // Per-worker breakdown for the entered amount, using the canonical
-  // per-worker math (mirrors server's computeBreakdown).
-  //   N         = amount − invoice charges
-  //   gross_i   = N × percent_i / 100
-  //   rate_i    = contractorFee or employeeMargin (based on workerType)
-  //   fee_i     = gross_i × rate_i / 100
-  //   net_i     = gross_i − fee_i
-  // Total payout to workers = Σ net_i. Class fee totals split out for
-  // the summary card. Falls back to zero values when amount is empty.
+  /**
+   * WHAT EACH WORKER WILL ACTUALLY BE PAID, from the shared money package.
+   *
+   * Two canonical calls, in the same order and on the same inputs the
+   * server uses:
+   *
+   *   promised = computeBreakdown(invoiceTotal, charges, workers, rates)
+   *   outcome  = reconcileApproval(entered, charges, workers, promised, rates)
+   *
+   * The PROMISE is reproducible here rather than fetched: `payments.ts`
+   * snapshots it as `computeBreakdown(invoiceTotal(occ), materialCharges,
+   * splits, rates)` at payment-creation time, which is the moment this
+   * dialog submits. Every one of those inputs is already a prop. (It is not
+   * fetched because it does not exist yet — the snapshot is written BY the
+   * submission this dialog is previewing.)
+   *
+   * `outcome.splits[i].amount` is the figure that becomes `PaymentSplit.
+   * amount`, so that is what the row shows. `netAmount` is the pre-make-whole
+   * value and `topUpAmount` the difference — surfaced below, because an
+   * employee being topped up out of the business's side is the single most
+   * surprising thing on this screen and the old preview hid it.
+   */
   const breakdown = useMemo(() => {
     const amt = parseFloat(amountPaid);
     const validAmount = Number.isFinite(amt) && amt > 0;
-    const N = validAmount ? Math.max(0, amt - totalInvoiceCharges) : 0;
+    const rates: Rates = {
+      employeeMarginPercent: marginPercent,
+      contractorFeePercent: commissionPercent,
+    };
+
+    const pctOf = (userId: string) => {
+      const v = Number.parseFloat(splits[userId] || "0");
+      return Number.isFinite(v) ? v : 0;
+    };
+
+    // SOMEONE THE MONEY SYSTEM CANNOT PRICE IS SEPARATED OUT FIRST.
+    //
+    // `rateFor` THROWS for UNPAID and for an untyped worker rather than
+    // guessing — "a crash is recoverable; a wrong figure in a 1099 is not"
+    // — so handing one to `computeBreakdown` would take the dialog down.
+    // Both call sites filter observers and G33 says a non-observer assignee
+    // must be EMPLOYEE or CONTRACTOR, so this should be empty; a legacy row
+    // can still carry one, and the old code quietly showed them a $0 share.
+    //
+    // Quietly is the problem. The server refuses this payment outright for
+    // the same reason, so the honest preview is a warning, not a zero.
+    const priceable = assignees.filter((a) => isPaid(a.workerType ?? null));
+    const unpriceable = assignees.filter((a) => cannotBePriced(a.workerType ?? null));
+
+    const workers: WorkerInput[] = priceable.map((a) => ({
+      userId: a.userId,
+      workerType: (a.workerType ?? null) as WorkerType | null,
+      splitPercent: pctOf(a.userId),
+    }));
+
+    // The full invoice, materials included — `computeBreakdown` subtracts
+    // the charges itself to reach the crew pool, so feeding it labour-only
+    // would pay the crew out of a number the client was never billed.
+    const invoice = (basePrice ?? 0) + addonsTotal + materialChargesTotal;
+    const promised = workers.length
+      ? computeBreakdown(invoice, totalInvoiceCharges, workers, rates)
+      : [];
+    const outcome =
+      validAmount && workers.length
+        ? reconcileApproval(amt, totalInvoiceCharges, workers, promised, rates)
+        : null;
+
+    const finalById = new Map((outcome?.splits ?? []).map((r) => [r.userId, r]));
+    const promisedById = new Map(promised.map((r) => [r.userId, r]));
+
     const rows = assignees.map((a) => {
-      const pctStr = splits[a.userId] || "0";
-      const pct = Number.parseFloat(pctStr);
-      const percent = Number.isFinite(pct) ? pct : 0;
-      const { ratePercent, payClass } = shareRate(a.workerType, marginPercent, commissionPercent);
-      const isEmp = payClass === "w2";
-      // Someone who takes no cut takes no share either: a row at 0 is honest,
-      // where a 0% rate on a real gross would read as "paid in full, no fee".
-      const gross = payClass === null ? 0 : N * (percent / 100);
-      const fee = gross * (ratePercent / 100);
-      const net = gross - fee;
+      const payClass = isPaid(a.workerType ?? null) ? classify(a.workerType ?? null) : null;
+      const fin = finalById.get(a.userId);
+      const pro = promisedById.get(a.userId);
       return {
         userId: a.userId,
         displayName: a.displayName || a.userId,
         workerType: a.workerType ?? null,
-        percent,
-        ratePercent,
-        gross: round2(gross),
-        fee: round2(fee),
-        net: round2(net),
-        isEmployeeClass: isEmp,
+        percent: pctOf(a.userId),
+        ratePercent: fin?.ratePercent ?? 0,
+        gross: fin?.grossAmount ?? 0,
+        fee: fin?.feeAmount ?? 0,
+        /** What they are paid — the make-whole figure, not the raw share. */
+        net: fin?.amount ?? 0,
+        /** The raw share before a W-2 top-up, and the top-up itself. */
+        rawNet: fin?.netAmount ?? 0,
+        topUp: fin?.topUpAmount ?? 0,
+        promisedNet: pro?.net ?? 0,
+        isEmployeeClass: payClass === "w2",
         payClass,
+        /** True when this person has no pay class and cannot be priced. */
+        unpriceable: cannotBePriced(a.workerType ?? null),
       };
     });
-    // Both positive. `!isEmployeeClass` put an unpaid helper in the fee total.
-    const platformFeeTotal = round2(
-      rows.filter((r) => r.payClass === "contractor").reduce((s, r) => s + r.fee, 0),
-    );
-    const businessMarginTotal = round2(
-      rows.filter((r) => r.payClass === "w2").reduce((s, r) => s + r.fee, 0),
-    );
-    // What the crew's percentages left unassigned, because a member of it
-    // takes no pay. Surfaced rather than absorbed: this card has to
-    // reconcile to its own stated total.
-    const unallocated = round2(
-      rows.filter((r) => r.payClass === null).reduce((s, r) => s + N * (r.percent / 100), 0),
-    );
+
+    // CLASS TOTALS COME FROM THE RECONCILER, not from re-summing the rows.
+    // It reports the promised cuts rather than the actual-breakdown ones so
+    // the card reconciles to its own stated total on an overpay — see the
+    // note in reconcileApproval.
+    const platformFeeTotal = outcome?.platformFeeAmount ?? 0;
+    const businessMarginTotal = outcome?.businessMarginAmount ?? 0;
     const totalPayout = round2(rows.reduce((s, r) => s + r.net, 0));
-    return { rows, platformFeeTotal, businessMarginTotal, totalPayout, unallocated, validAmount, N: round2(N) };
-  }, [amountPaid, assignees, splits, totalInvoiceCharges, commissionPercent, marginPercent]);
+    const totalTopUp = round2(rows.reduce((s, r) => s + r.topUp, 0));
+    const N = validAmount ? round2(Math.max(0, amt - totalInvoiceCharges)) : 0;
+
+    return {
+      rows,
+      platformFeeTotal,
+      businessMarginTotal,
+      totalPayout,
+      totalTopUp,
+      shortfall: outcome?.shortfallAmount ?? 0,
+      overage: outcome?.overageAmount ?? 0,
+      // Kept for the summary card, which states what the crew pool was.
+      unallocated: round2(
+        rows.filter((r) => r.unpriceable).reduce((s, r) => s + N * (r.percent / 100), 0),
+      ),
+      unpriceableNames: unpriceable.map((a) => a.displayName || a.userId),
+      validAmount,
+      N,
+    };
+  }, [
+    amountPaid,
+    assignees,
+    splits,
+    totalInvoiceCharges,
+    commissionPercent,
+    marginPercent,
+    basePrice,
+    addonsTotal,
+    materialChargesTotal,
+  ]);
 
   const percentSum = useMemo(() => {
     return assignees.reduce((s, a) => {
@@ -918,10 +1010,44 @@ export default function AcceptPaymentDialog({
                           <Text>${breakdown.businessMarginTotal.toFixed(2)}</Text>
                         </HStack>
                         <Box borderTopWidth="1px" borderColor="gray.emphasized" my={1} />
+                        {/* THE MAKE-WHOLE LINE, which the old preview did not
+                            have at all. On an underpay a W-2 worker is still
+                            paid their promised net and the business covers
+                            the gap — so "Workers receive" can exceed what
+                            the arithmetic above it leaves, and without this
+                            line the card would not reconcile to itself. */}
+                        {breakdown.totalTopUp > 0 && (
+                          <HStack justify="space-between" color="blue.fg">
+                            <Text>+ Employee top-up (business covers)</Text>
+                            <Text>${breakdown.totalTopUp.toFixed(2)}</Text>
+                          </HStack>
+                        )}
                         <HStack justify="space-between" fontWeight="bold">
                           <Text>Workers receive</Text>
                           <Text color="green.fg">${breakdown.totalPayout.toFixed(2)}</Text>
                         </HStack>
+                        {breakdown.totalTopUp > 0 && (
+                          <Text fontSize="2xs" color="blue.fg">
+                            Paid short, so employees are made whole to what they
+                            were promised and the shortfall comes off the
+                            business&rsquo;s side. Contractors take their share of
+                            what actually came in.
+                          </Text>
+                        )}
+                        {/* SOMEBODY THE PAYOUT CANNOT PRICE. The server refuses
+                            this payment rather than guess a rate, so saying so
+                            here beats a successful-looking preview followed by
+                            a failure on submit. */}
+                        {breakdown.unpriceableNames.length > 0 && (
+                          <Text fontSize="2xs" color="red.fg">
+                            {breakdown.unpriceableNames.join(", ")}{" "}
+                            {breakdown.unpriceableNames.length === 1 ? "has" : "have"} no
+                            pay class, so this payment cannot be priced. Set a worker
+                            type on {breakdown.unpriceableNames.length === 1 ? "them" : "them"}{" "}
+                            or take {breakdown.unpriceableNames.length === 1 ? "them" : "them"} off
+                            the visit first.
+                          </Text>
+                        )}
                       </VStack>
                     </Box>
                   );
@@ -965,6 +1091,16 @@ export default function AcceptPaymentDialog({
                                 {r.fee > 0 && <> − ${r.fee.toFixed(2)} {r.payClass === "w2" ? "margin" : "fee"} ({r.ratePercent}%)</>}
                                 {" = "}
                                 <Text as="span" color="green.fg" fontWeight="semibold">${r.net.toFixed(2)}</Text>
+                                {/* The share they earned on what came in, and
+                                    the top-up that takes them to the promise.
+                                    Shown per row because "why is Ana getting
+                                    more than her percentage" is asked of the
+                                    row, not the summary. */}
+                                {r.topUp > 0 && (
+                                  <Text as="span" color="blue.fg">
+                                    {" "}(incl. ${r.topUp.toFixed(2)} top-up to the ${r.promisedNet.toFixed(2)} promised)
+                                  </Text>
+                                )}
                               </Text>
                             )}
                           </VStack>

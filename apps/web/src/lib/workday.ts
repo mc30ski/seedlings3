@@ -1,6 +1,6 @@
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
 import { bumpWorkday, promptMileageReminder } from "@/src/lib/bus";
-import { bizToLocalInputValue, bizParseLocalInputValue, fmtTimeOpts, fmtDateOpts } from "@/src/lib/dates";
+import { bizToLocalInputValue, bizParseLocalInputValue, fmtTimeOpts, fmtDateOpts, type EtDateKey } from "@/src/lib/dates";
 
 // Worker-workday client types — mirror services/workdays.ts exactly. Keep
 // in sync if the server shapes change.
@@ -8,7 +8,7 @@ import { bizToLocalInputValue, bizParseLocalInputValue, fmtTimeOpts, fmtDateOpts
 export type WorkdaySummary = {
   id: string;
   userId: string;
-  workdayDate: string;
+  workdayDate: EtDateKey;
   startedAt: string;
   endedAt: string | null;
   pausedAt: string | null;

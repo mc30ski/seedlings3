@@ -60,6 +60,11 @@ import {
   useStreamPauseControls,
 } from "@/src/ui/components/StreamPauseControls";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
+import TabExplainer, {
+  CapabilitySection,
+  Em,
+  ExplainerText,
+} from "@/src/ui/components/TabExplainer";
 import type { PauseReason } from "@/src/lib/pauseReasons";
 
 /** One row, exactly as `GET /repeating-streams` returns it. */
@@ -877,17 +882,91 @@ export default function RepeatingTab({
     [setLens],
   );
 
+  /**
+   * HOISTED ABOVE THE LOADING GATE, like every other tab's.
+   *
+   * The breadcrumb (i) is driven by whichever explainer is MOUNTED, so a
+   * panel rendered below the gate takes the icon with it for the whole
+   * fetch — it blinks out and back on every visit. The copy is static and
+   * depends on nothing this tab fetches, so it renders in the gate branch
+   * too. Closed it renders nothing, so the loading view is unchanged.
+   *
+   * THIS TAB HAD NO HELP AT ALL until 2026-11-12, which also meant no (i)
+   * in the breadcrumb — and a missing icon is not a thing anybody notices,
+   * because the only evidence is an absence on one tab out of thirty.
+   *
+   * CAPABILITY-GATED, ADDITIVELY. The tab opens on `schedule.view-all`, an
+   * oversight read that carries no write, so the base copy is what an
+   * oversight reader can actually do here — read the book and filter it.
+   * The pause actions and the customer's contact details are separate
+   * grants and say only what they ADD, each named for the capability its
+   * own control is gated on rather than for a role.
+   */
+  const tabHelp = (
+    <TabExplainer explainerId="seedlings:repeatingTab:guideOpen">
+      <ExplainerText>
+        Every repeating job occurrence in the book, and whether it is running
+        or paused. The unit is the <Em>job occurrence</Em>, not the service: a
+        job that mows and hedges on different cadences has a row for each, and
+        each is held separately. One-off visits are never listed — there is
+        nothing to pause on one.
+      </ExplainerText>
+      <ExplainerText>
+        A stream with <Em>no live visit</Em> is still listed. That is the
+        point of the tab: a customer whose repeating stopped used to vanish
+        from here entirely, so one of them went 73 days and five missed visits
+        before a bad review was how anyone found out. Those rows say how long
+        it has been and how many whole visits have been missed — whole
+        visits, rounded down, so the count never overstates what is owed.
+      </ExplainerText>
+      <ExplainerText>
+        The chips across the top count the <Em>whole book</Em>, never the
+        filtered list, and each one is also the way into its own slice —
+        click the lit one to go back to everything. &ldquo;Expired&rdquo;
+        means the next visit came due and was never created, usually because
+        the current one is still waiting on payment; &ldquo;cannot be paused
+        yet&rdquo; means something else has to be resolved first.
+      </ExplainerText>
+      <CapabilitySection capability="schedule.manage" scope={scope}>
+        <ExplainerText>
+          You can <Em>pause</Em> a repeating job occurrence with a reason and a
+          date to check back on, change that reason or date later, and{" "}
+          <Em>resume</Em> it from a start date you pick. Each one asks first,
+          and the service and its other repeating occurrences keep running —
+          pausing one visit is not archiving the customer, and nothing in
+          their history is lost.
+        </ExplainerText>
+        <ExplainerText>
+          The <Em>to review</Em> chip is the paused rows whose check-back date
+          has arrived. Those are the ones asking you for a decision; the rest
+          are waiting on a date you already set.
+        </ExplainerText>
+      </CapabilitySection>
+      <CapabilitySection capability="clients.view" scope={scope}>
+        <ExplainerText>
+          Each row carries the customer&rsquo;s contact, so you can{" "}
+          <Em>message them beside the decision</Em> rather than a tab away.
+          The draft is keyed to what that row is about to do.
+        </ExplainerText>
+      </CapabilitySection>
+    </TabExplainer>
+  );
+
   if (rows === null) {
     return (
-      <HStack justify="center" py="10">
-        <Spinner size="sm" />
-        <Text fontSize="sm" color="fg.muted">Loading repeating job occurrences…</Text>
-      </HStack>
+      <VStack align="stretch" gap={3} pb="2">
+        {tabHelp}
+        <HStack justify="center" py="10">
+          <Spinner size="sm" />
+          <Text fontSize="sm" color="fg.muted">Loading repeating job occurrences…</Text>
+        </HStack>
+      </VStack>
     );
   }
 
   return (
     <VStack align="stretch" gap={3} pb="2">
+      {tabHelp}
       {/* THE UNIT IS THE JOB OCCURRENCE, and the copy has to say so. This
           read "Every service that repeats", which names the wrong thing: one
           service can carry several repeating occurrences — mowing and hedging

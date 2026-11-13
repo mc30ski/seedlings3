@@ -4,8 +4,11 @@
 // file), and invalid-input behavior.
 
 import { describe, it, expect } from "vitest";
+import { readFileSync, readdirSync } from "fs";
+import { join } from "path";
 import {
   bizDateKey,
+  bizDateKeyOf,
   bizAddDays,
   bizAddMonths,
   bizAddYears,
@@ -430,5 +433,140 @@ describe("fmtDateKey — YYYY-MM-DD calendar-day display", () => {
     // Full ISO datetime strings continue to work unchanged
     const iso = "2026-08-12T12:00:00.000Z";
     expect(fmtDate(iso)).toBe("8/12/2026");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// bizDateKeyOf — and the two guards that make the bug it fixes unwritable.
+//
+// THE SHIPPED BUG (2026-11-13). `WorkerWorkday.workdayDate` is a String
+// column holding an ET date key. A comment in the End Workday dialog said
+// it arrived "from Prisma as an ISO datetime", so four call sites routed it
+// through `bizDateKey` — which reads its argument as an INSTANT. A bare
+// "2026-11-11" parses as UTC midnight, 7pm ET on the 10th, so the key came
+// back a day early.
+//
+// The owner of a workday left open on WEDNESDAY was told "You didn't end
+// your workday on Tuesday, Nov 10", and the dialog defaulted its picker to
+// 6pm on that Tuesday — before the workday had started — so the dialog's
+// own before-start guard refused every submission. Closing it meant
+// overruling the app and naming a day it insisted was wrong.
+// ─────────────────────────────────────────────────────────────────────────
+describe("bizDateKeyOf", () => {
+  it("passes a date key through untouched — the whole point", () => {
+    // Every one of these moves a day under plain bizDateKey.
+    expect(bizDateKeyOf("2026-11-11")).toBe("2026-11-11");
+    expect(bizDateKeyOf("2026-01-01")).toBe("2026-01-01");
+    expect(bizDateKeyOf("2026-12-31")).toBe("2026-12-31");
+  });
+
+  it("still converts an instant, so it is a safe drop-in", () => {
+    expect(bizDateKeyOf("2026-06-06T18:30:00.000Z")).toBe("2026-06-06");
+    // Late-evening ET: the instant is the NEXT UTC day and must still key
+    // to the ET day it belongs to.
+    expect(bizDateKeyOf("2026-06-06T03:00:00.000Z")).toBe("2026-06-05");
+    expect(bizDateKeyOf(new Date("2026-06-06T18:30:00.000Z"))).toBe("2026-06-06");
+  });
+
+  it("holds across both DST transitions, in both directions", () => {
+    // Spring forward 2026-03-08, fall back 2026-11-01. A key is a key on
+    // every one of these days; the hour that does or does not exist is
+    // irrelevant to a value with no time in it.
+    for (const key of ["2026-03-07", "2026-03-08", "2026-03-09",
+                       "2026-10-31", "2026-11-01", "2026-11-02"]) {
+      expect(bizDateKeyOf(key)).toBe(key);
+    }
+  });
+
+  it("does not mistake a datetime that merely STARTS with a date key", () => {
+    // The shape test is anchored, so "2026-11-11T00:00:00Z" is still read
+    // as the instant it is — which in ET is the 10th.
+    expect(bizDateKeyOf("2026-11-11T00:00:00.000Z")).toBe("2026-11-10");
+  });
+
+  it("propagates garbage as the canonical empty signal", () => {
+    expect(bizDateKeyOf("not-a-date")).toBe("");
+    expect(bizDateKeyOf("")).toBe("");
+    expect(bizDateKeyOf("26-11-11")).toBe("");
+    // A NEARLY-key falls through to `bizDateKey`, by design: the shape test
+    // is strict, so anything that is not exactly YYYY-MM-DD is treated as
+    // an instant. "2026-11-1" is not ISO, so the JS parser reads it in
+    // LOCAL time and it happens to land on the right day — inherited
+    // `bizDateKey` behaviour, asserted here so a change to it is visible
+    // rather than discovered.
+    expect(bizDateKeyOf("2026-11-1")).toBe("2026-11-01");
+  });
+
+  it("is exactly what the production row needed", () => {
+    // The real row: workdayDate "2026-11-11", a Wednesday.
+    const workdayDate = "2026-11-11";
+    expect(bizDateKey(workdayDate)).toBe("2026-11-10"); // the bug, preserved
+    expect(bizDateKeyOf(workdayDate)).toBe("2026-11-11"); // the fix
+  });
+});
+
+describe("the guards that make that bug a compile error", () => {
+  // THE REGEX IS THE FALLBACK, NOT THE DEFENCE. Gate rule 31 matches
+  // argument NAMES, so it only catches spellings somebody thought of. What
+  // actually makes the bug unwritable is the signature plus the brand —
+  // and both can be widened back in a one-line edit that fails nothing
+  // else, which is precisely why they are asserted here.
+  const read = (rel: string) =>
+    readFileSync(join(__dirname, "../../../web/src/", rel), "utf-8");
+
+  it("bizDateKey refuses a branded EtDateKey", () => {
+    const src = read("lib/dates.ts");
+    const sig = /export function bizDateKey\(\s*d:\s*([^)]*)\)/.exec(src);
+    expect(sig, "bizDateKey must exist").toBeTruthy();
+    expect(
+      sig![1],
+      "bizDateKey must not take a bare `string` — that is what let an " +
+        "EtDateKey be re-keyed into the previous day. It takes an instant: " +
+        "`(string & { readonly __brand?: undefined }) | IsoInstant | Date`.",
+    ).not.toMatch(/^\s*string\s*\|/);
+    expect(
+      sig![1],
+      "the brand exclusion is the guard — keep `__brand?: undefined` in the " +
+        "parameter type",
+    ).toMatch(/__brand\?\s*:\s*undefined/);
+  });
+
+  it("and the field that caused it stays branded", () => {
+    const src = read("lib/workday.ts");
+    expect(
+      src,
+      "WorkdaySummary.workdayDate must be an EtDateKey. Typed as a plain " +
+        "`string` it opts out of the signature guard above, and the bug is " +
+        "writable again with no test failing.",
+    ).toMatch(/workdayDate:\s*EtDateKey;/);
+  });
+
+  it("and nothing re-keys a workday date anywhere", () => {
+    // Belt and braces for a file the brand cannot reach — one that pulls
+    // the row through `as any`, which is how the four original call sites
+    // would still compile today.
+    const web = join(__dirname, "../../../web/src");
+    const bad: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        // Same nesting allowance as gate rule 31 — `[^)]*` could not reach
+        // past the parens in `bizDateKey((workday as any).workdayDate)`,
+        // and that is the one spelling the brand does not stop either.
+        else if (
+          /\.tsx?$/.test(e.name) &&
+          /bizDateKey\s*\(\s*(?:[^()\n]|\([^()\n]*\))*?[Ww]orkdayDate/.test(readFileSync(full, "utf-8"))
+        ) {
+          bad.push(full.slice(web.length + 1));
+        }
+      }
+    };
+    walk(web);
+    expect(
+      bad,
+      "a workday date re-keyed through bizDateKey \u2014 it will render, and " +
+        "every date on that screen will be one day early",
+    ).toEqual([]);
   });
 });
