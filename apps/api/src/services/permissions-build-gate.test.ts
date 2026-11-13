@@ -2633,10 +2633,16 @@ describe("[G49] portfolio tier vocabulary", () => {
 // company. That is the dangerous direction of wrong — the reader takes the
 // company's figure for the portfolio's.
 //
-// It now keys on `FILTERED_TABS`, a hand-written list, and a hand-written
-// list is exactly the thing that rots. This asserts the two ways it can:
-// naming a tab whose endpoints do not filter, and losing the wiring that
-// makes the list do anything at all.
+// It keys on `TAB_NARROWING`, a hand-written table, and a hand-written
+// table is exactly the thing that rots. This asserts every way it can:
+// naming a tab whose endpoints do not filter, MISSING a tab whose endpoints
+// do, and losing the wiring that makes the table do anything at all.
+//
+// The table was a flat `Set` of tab names until 2026-11-12. One name cannot
+// answer the question, because there are two ways to be narrowed — a lens
+// you picked and a grant that is simply your access — and
+// `/reports/portfolio-performance` obeys the second while deliberately
+// ignoring the first. With a Set there was no entry true for both readers.
 // ───────────────────────────────────────────────────────────────────────────
 
 describe("[G50] the portfolio strip tells the truth about the open tab", () => {
@@ -2646,6 +2652,58 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
   const TABS = path.join(WEB, "src/lib/portfolioFilteredTabs.ts");
   const NOTICE = path.join(WEB, "src/ui/components/PortfolioScopeNotice.tsx");
 
+  /**
+   * THE TABLE, PARSED ONCE. It was a flat `Set` of names until 2026-11-12
+   * and four tests sliced it with their own regex. It is now
+   * `TAB_NARROWING`, a tab to `{ grant, lens }` map whose values are
+   * `true`, `false`, or `{ part: "…" }` — so one parser, and the tests ask
+   * it questions rather than re-reading the file.
+   *
+   * Source-scanned rather than imported, because this file is an API test
+   * and the table is web code with web imports. The shapes it must
+   * recognise are all three, or the gate quietly reads a tab as absent.
+   */
+  const narrowingTable = (): Record<string, { grant: string; lens: string }> => {
+    const src = read(TABS);
+    const at = src.indexOf("export const TAB_NARROWING");
+    const raw = src.slice(src.indexOf("{", at), src.indexOf("\n};", at));
+    // COMMENTS FIRST. Half the entries carry a trailing `// GET /clients`
+    // note, and the first version of this parser expected `},\n` — so it
+    // silently returned three tabs out of fourteen and every test below
+    // passed on an almost-empty table.
+    const body = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    const out: Record<string, { grant: string; lens: string }> = {};
+    for (const m of body.matchAll(/\n\s*([a-z][a-z-]*):\s*\{/g)) {
+      // Brace-counted, because a value may itself be `{ part: "…" }`.
+      let i = m.index! + m[0].length;
+      let depth = 1;
+      while (i < body.length && depth > 0) {
+        if (body[i] === "{") depth++;
+        else if (body[i] === "}") depth--;
+        i++;
+      }
+      const inner = body.slice(m.index! + m[0].length, i - 1);
+      const grant = /grant:\s*(true|false|\{[^}]*\})/.exec(inner)?.[1];
+      const lens = /lens:\s*(true|false|\{[^}]*\})/.exec(inner)?.[1];
+      if (grant && lens) out[m[1]] = { grant, lens };
+    }
+    // A parser that returns {} makes every assertion below vacuous, which
+    // is exactly how this gate would stop working without failing.
+    expect(
+      Object.keys(out).length,
+      "could not parse TAB_NARROWING — every rule in this describe is " +
+        "reading an empty table and passing for that reason",
+    ).toBeGreaterThan(8);
+    return out;
+  };
+  /** Tabs the filter reaches at all, by either route in. */
+  const touched = () => Object.keys(narrowingTable());
+  /** Tabs where some kind of narrowing takes the WHOLE tab. */
+  const wholly = () =>
+    Object.entries(narrowingTable())
+      .filter(([, v]) => v.grant === "true" || v.lens === "true")
+      .map(([t]) => t);
+
   it("the strip is told which tab is open, and uses it", () => {
     const notice = read(NOTICE);
     expect(notice, "PortfolioScopeNotice.tsx not found").not.toBe("");
@@ -2654,7 +2712,29 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
       notice,
       "it must drop the word 'only' on a tab it does not filter — that word is " +
         "a claim about the whole screen",
-    ).toMatch(/!tabIsFiltered\(activeTab\)[\s\S]{0,80}" only"|tabIsFiltered\(activeTab\) \? "" : " only"|leadsOnly \|\| partial \|\| !tabIsFiltered\(activeTab\)/);
+    ).toMatch(/\{partial \|\| !loud \? "" : " only"\}/);
+    // `loud` must be the TABLE's answer, not a hand-rolled condition. It is
+    // what decides the word "only", the fill, and the closing clause, so a
+    // local boolean computed some other way would detach all three from the
+    // list this gate checks.
+    expect(
+      notice,
+      "the strip must ask the narrowing table, and must tell it WHICH kind " +
+        "of narrowing is in force \u2014 a lens and a grant are different events",
+    ).toMatch(/const loud = tabIsFiltered\(activeTab, inForce\);/);
+    expect(
+      notice,
+      "and the lens/grant pair must come from the reader's own state",
+    ).toMatch(/lens: lensSet,[\s\S]{0,200}grant: grantIsNarrowing\(/);
+    // THE CLAIM IT MUST NO LONGER MAKE FLATLY. A tab that is company-wide
+    // except for one panel is not "the whole business", and that sentence
+    // was wrong on Equipment and Portfolios in exactly the small way that
+    // gets believed.
+    expect(
+      notice,
+      "a company-wide tab with one narrowed panel must name the exception " +
+        "rather than claiming the whole business",
+    ).toMatch(/company-wide apart from \$\{onlyPart\}/);
 
     const page = read(path.join(WEB, "pages/index.tsx"));
     expect(
@@ -2676,10 +2756,7 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
      * point is to catch a tab added to the list with no filtering behind
      * it anywhere, not to prove the mapping exactly.
      */
-    const notice = read(TABS);
-    const block = notice.slice(notice.indexOf("FILTERED_TABS"), notice.indexOf("]);", notice.indexOf("FILTERED_TABS")));
-    const claimed = [...block.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
-    expect(claimed.length, "could not parse FILTERED_TABS").toBeGreaterThan(3);
+    const claimed = touched();
 
     // Every file with a real call site, plus the endpoint paths in it.
     const routeDir = path.join(API, "routes");
@@ -2687,7 +2764,7 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
     // THE HAYSTACK IS FILE NAMES AND ENDPOINT PATHS, NOT FILE BODIES.
     //
     // It was whole bodies, and the negative control for this test did not
-    // fail: adding "compliance" to FILTERED_TABS passed, because the word
+    // fail: adding "compliance" to the table passed, because the word
     // appears in a comment inside a file that happens to filter. A check
     // that matches prose matches anything.
     const filtering = readdirSync(routeDir)
@@ -2711,7 +2788,7 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
     // equipment-shaped path on it, while the Equipment TAB is not filtered
     // at all. Found by negative control, not by reading.
     //
-    // So the mapping is explicit. A tab added to FILTERED_TABS with no
+    // So the mapping is explicit. A tab added to TAB_NARROWING with no
     // entry here fails, which is the point — "which endpoint makes this
     // true" is precisely the question the list exists to answer.
     const TAB_ENDPOINTS: Record<string, string[]> = {
@@ -2725,14 +2802,22 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
       home: ["/dashboard-summary/aggregate", "/operations"],
       tasks: ["/payments/pending", "/payment-requests/outstanding"],
       displays: ["/photos"],
+      repeating: ["/repeating-streams"],
+      // Narrowed by a grant and deaf to a lens — see TAB_NARROWING.
+      performance: ["/reports/portfolio-performance"],
+      // Company-wide tabs with one narrowed panel each. They are in the
+      // table precisely so the strip can name the panel instead of calling
+      // the tab the whole business.
+      portfolios: ["/properties"],
+      equipment: ["/operations"],
     };
 
     const undeclared = claimed.filter((t) => !TAB_ENDPOINTS[t]);
     expect(
       undeclared,
-      "FILTERED_TABS claims these tabs are portfolio-filtered but this gate " +
-        "has no record of WHICH endpoint makes that true. Add the endpoint " +
-        "here, or take the tab out of the list.",
+      "TAB_NARROWING says the portfolio filter reaches these tabs but this " +
+        "gate has no record of WHICH endpoint makes that true. Add the " +
+        "endpoint here, or take the tab out of the table.",
     ).toEqual([]);
 
     const unbacked = claimed
@@ -2747,22 +2832,142 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
     ).toEqual([]);
   });
 
-  it("every money tab is also a filtered tab", () => {
+  it("and every tab the API filters is one it calls filtered", () => {
+    /**
+     * THE OTHER DIRECTION, WHICH WAS UNGUARDED AND IS NOT THE SAFE ONE.
+     *
+     * The test above catches a tab in the list that nothing filters. This
+     * catches a tab that IS filtered and is missing from the list — the
+     * shape that shipped on Work → Repeating, where the strip printed
+     * "— this tab shows the whole business" over a table the portfolio
+     * filter had just shortened. The file's own comment called that "the
+     * safe direction of wrong"; it is not. Overclaiming makes a reader
+     * doubt a figure they can go and check. Underclaiming tells them there
+     * is nothing to check.
+     *
+     * THE ORACLE IS THE PAIR OF FILES, not a hand-kept table:
+     *   · index.tsx maps each tab's `value:` to the component it renders,
+     *   · that component's `apiGet` literals name the endpoints it reads,
+     *   · and a route is narrowed when the handler under `app.get("…")`
+     *     calls `portfolioWhere` / `portfolioWhereVia` / the occurrence and
+     *     payment variants.
+     * GET ONLY, and `apiGet` only. An earlier pass counted every verb and
+     * every `/api/…` string, which read `apiPatch("/api/occurrences/${id}")`
+     * on the route planner as a narrowed LIST read and reported a tab that
+     * filters nothing — a write to one row by id narrows nothing.
+     *
+     * IT REACHES ONLY DIRECT READS. A tab whose fetches live in a
+     * `.parts.tsx` or a shared hook is invisible to it, which is why Home,
+     * Payments and Statistics do not appear here even though all three
+     * filter. That makes this a floor, not a census: it cannot prove the
+     * list complete, only catch the case where a tab reads a narrowed
+     * endpoint in its own file and says nothing about it.
+     */
+    const index = read(path.join(WEB, "pages/index.tsx"));
+    const ids = [...index.matchAll(/\n\s*value: "([a-z][a-z-]*)",/g)];
+    expect(ids.length, "could not parse the tab list out of index.tsx").toBeGreaterThan(20);
+    const component: Record<string, string> = {};
+    for (let i = 0; i < ids.length; i++) {
+      const from = ids[i].index!;
+      const to = i + 1 < ids.length ? ids[i + 1].index! : index.length;
+      const m = /<([A-Z]\w*Tab)\b/.exec(index.slice(from, to));
+      if (m) component[ids[i][1]] = m[1];
+    }
+
+    const routeDir = path.join(API, "routes");
+    const narrowed = new Set<string>();
+    for (const f of readdirSync(routeDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))) {
+      const body = read(path.join(routeDir, f));
+      const gets = [...body.matchAll(/\n {2}app\.get\(\s*\n?\s*"([^"]+)"/g)];
+      for (let i = 0; i < gets.length; i++) {
+        const from = gets[i].index!;
+        const to = i + 1 < gets.length ? gets[i + 1].index! : body.length;
+        // Case-insensitive: the money and visit surfaces reach a portfolio
+        // through `occurrencePortfolioWhere` / `occurrencePaymentPortfolioWhere`.
+        if (/portfolioWhere(Via)?\(/i.test(body.slice(from, to))) narrowed.add(gets[i][1]);
+      }
+    }
+    expect(narrowed.size, "no narrowed GET routes found — the scan is broken").toBeGreaterThan(8);
+    expect(
+      narrowed.has("/repeating-streams"),
+      "GET /repeating-streams must still narrow — it is what makes Work → Repeating a filtered tab",
+    ).toBe(true);
+
+    const claimed = new Set(touched());
+
+    /**
+     * EVERY TAB THAT READS SOMETHING NARROWED MUST HAVE AN ENTRY. Not "must
+     * be in the list" — an entry, which can say `true`, or `false` for the
+     * kind of narrowing that tab ignores, or `{ part }` for a company-wide
+     * tab with one narrowed panel.
+     *
+     * THERE IS NO EXEMPTION LIST ANY MORE, and that is the point of the
+     * table's shape. For one day there was: three tabs (`performance`,
+     * `portfolios`, `equipment`) sat in a `DECLARED_UNLISTED` map with a
+     * paragraph each explaining why one boolean could not describe them.
+     * An escape hatch with a prose justification is a hatch — it was
+     * mutation-tested and `repeating: "excuse"` got through it. The table
+     * can now state all three cases, so each of them is an ordinary entry
+     * and the hatch is gone rather than guarded.
+     */
+    const unlisted: string[] = [];
+    for (const [tab, comp] of Object.entries(component)) {
+      if (claimed.has(tab)) continue;
+      let src = "";
+      try {
+        src = read(path.join(WEB, "src/ui/tabs", `${comp}.tsx`));
+      } catch {
+        continue;
+      }
+      if (src === "") continue;
+      const hits = [...src.matchAll(/apiGet(?:<[^>]*>)?\(\s*["`]\/api(\/[a-zA-Z0-9\-/]*)/g)]
+        .map((m) => m[1].replace(/\/$/, ""))
+        .filter((ep) => narrowed.has(ep));
+      if (hits.length) unlisted.push(`${tab} (${comp}) reads ${[...new Set(hits)].join(", ")}`);
+    }
+    expect(
+      unlisted,
+      "These tabs read an endpoint the API narrows but have no entry in " +
+        "TAB_NARROWING, so the purple strip says '— this tab shows the " +
+        "whole business' over rows the filter has already removed. Give the " +
+        "tab an entry: `true` where its own lists narrow, `false` for a kind " +
+        "of narrowing it ignores, `{ part }` where only one panel narrows.",
+    ).toEqual([]);
+
+    // AN ENTRY THAT NARROWS UNDER NOTHING IS NOT AN ENTRY. `{ grant: false,
+    // lens: false }` would read as a considered decision and mean the same
+    // as deleting the tab — except that it also silences the rule above,
+    // which is the shape an exemption would come back in.
+    const inert = Object.entries(narrowingTable())
+      .filter(([, v]) => v.grant === "false" && v.lens === "false")
+      .map(([t]) => t);
+    expect(
+      inert,
+      "a TAB_NARROWING entry that is false for BOTH a grant and a lens — " +
+        "that is not a description, it is this rule being switched off for " +
+        "that tab. Delete the entry, or say what actually narrows.",
+    ).toEqual([]);
+  });
+
+  it("every money tab is also a WHOLLY filtered tab", () => {
     // MONEY_TABS says "this tab shows money, so tell the reader which
-    // basis is in force". A tab in there but not in FILTERED_TABS would
-    // report a basis for a figure the filter never touched — a label on a
-    // number that did not change, which is its own kind of lie.
-    const notice = read(TABS);
-    const setOf = (name: string) => {
-      const at = notice.indexOf(name);
-      return [...notice.slice(at, notice.indexOf("]);", at)).matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
-    };
-    const filtered = new Set(setOf("FILTERED_TABS"));
-    const stray = setOf("MONEY_TABS").filter((t) => !filtered.has(t));
+    // basis is in force". A tab in there that the filter does not touch
+    // would report a basis for a figure that never changed — a label on a
+    // number the filter never reached, which is its own kind of lie.
+    //
+    // WHOLLY, not merely present in the table. A `{ part }` tab's own
+    // totals are the company's, so a basis note on it would describe a
+    // panel rather than the figures the reader is looking at.
+    const src = read(TABS);
+    const at = src.indexOf("export const MONEY_TABS");
+    const money = [...src.slice(at, src.indexOf("]);", at)).matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+    expect(money.length, "could not parse MONEY_TABS").toBeGreaterThan(2);
+    const full = new Set(wholly());
+    const stray = money.filter((t) => !full.has(t));
     expect(
       stray,
-      "MONEY_TABS must be a subset of FILTERED_TABS — a tab the portfolio " +
-        "filter does not touch has no basis to report.",
+      "MONEY_TABS must be a subset of the tabs TAB_NARROWING narrows WHOLLY " +
+        "— a tab the portfolio filter does not touch has no basis to report.",
     ).toEqual([]);
   });
 
@@ -2770,13 +2975,14 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
     // Ledger, Reconcile and Forecast are gated on books.view / forecasts.view,
     // which are global-only by design. The popover copy named the Ledger as
     // narrowed for weeks; it is the one money surface that is not.
-    const notice = read(TABS);
-    const block = notice.slice(notice.indexOf("FILTERED_TABS"), notice.indexOf("]);", notice.indexOf("FILTERED_TABS")));
+    const table = narrowingTable();
     for (const tab of ["ledger", "reconcile", "forecast"]) {
       expect(
-        block.includes(`"${tab}"`),
+        Object.prototype.hasOwnProperty.call(table, tab),
         `"${tab}" is a whole-business report and is never portfolio-filtered. ` +
-          "Listing it makes the strip claim a narrowing that did not happen.",
+          "An entry for it makes the strip claim a narrowing that did not " +
+          "happen — including a `{ part }` entry, which still withdraws the " +
+          "words 'the whole business' from a tab where they are exactly true.",
       ).toBe(false);
     }
   });

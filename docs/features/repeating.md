@@ -718,6 +718,36 @@ which is the point of the tab being a lens. (`withinScope` was the security
 boundary of the removed selection path: it took a LIST of ids from a request
 body, which the per-row endpoints never do.)
 
+### The purple strip must list this tab (fixed 2026-11-12)
+
+`TAB_NARROWING` in `apps/web/src/lib/portfolioFilteredTabs.ts` is what the
+portfolio strip and the tab row both read. **`repeating` was missing from it**
+from the day the tab shipped, which had two visible effects for anybody with a
+portfolio in force:
+
+- the strip appended **"— this tab shows the whole business"** to a table the
+  filter had just shortened, and
+- the tab row drew no portfolio marker beside **Repeating**, so it looked like
+  one of the tabs the filter does not touch.
+
+Under-claiming was described in that file as "the safe direction of wrong". It
+is not. Overclaiming makes a reader distrust a figure they can go and check;
+this told them there was nothing to check.
+
+`G50` in `permissions-build-gate.test.ts` now asserts **both** directions. The
+new half maps each tab's `value:` in `index.tsx` to the component it renders,
+reads that component's `apiGet` literals, and fails if any of them names a
+`GET` route whose handler calls `portfolioWhere*` while the tab has no entry in
+the table.
+
+Finding this bug turned up three more tabs in the same shape, and the list
+could not describe any of them — which is why it is no longer a list. See
+**Which tabs the filter touches** in
+[`docs/features/portfolios.md`](portfolios.md): a tab now says which KIND of
+narrowing it obeys (a lens you picked, or a grant that is your access), and
+may name a single narrowed panel on an otherwise company-wide tab.
+`repeating` is the simple case — `{ grant: true, lens: true }`.
+
 ## Endpoints
 
 | | | |
@@ -803,6 +833,26 @@ one cadence on and getting 13. Gated.
 > dates and a human reaches for one shared date, piling the book into one
 > April week. That is the strongest argument for rebuilding it if the book
 > grows; see "Multi-select was REMOVED".
+
+## The help panel
+
+The tab had **no `TabExplainer` at all** until 2026-11-12, which also meant no
+(i) in the breadcrumb while it was open — the trigger is driven by whichever
+explainer is mounted. A missing icon on one tab out of thirty is not something
+anybody notices.
+
+It follows the house pattern: base copy for the `schedule.view-all` reader
+(what the unit is, that one-offs are never listed, that a stream with no live
+visit is still listed, that the chips count the whole book), then a
+`CapabilitySection` per capability saying only what it ADDS —
+`schedule.manage` for pause/edit/resume and the "to review" queue,
+`clients.view` for the contact and the keyed draft. It is hoisted to
+`const tabHelp` above the loading gate and rendered in both branches, or the
+(i) blinks out for the length of the fetch.
+
+A build-gate rule now asserts that **every staff tab has one**. The rest of
+that describe iterates the files that already contain `<TabExplainer>`, so a
+tab without one was never in the loop.
 
 ## Frontend
 

@@ -30,7 +30,11 @@ import { useEffect, useState } from "react";
 import { Box, HStack, Text } from "@chakra-ui/react";
 import { Info, Layers, X } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
-import { tabIsFiltered } from "@/src/lib/portfolioFilteredTabs";
+import {
+  grantIsNarrowing,
+  tabIsFiltered,
+  tabNarrowedPart,
+} from "@/src/lib/portfolioFilteredTabs";
 import {
   applyDefaultAreaLens,
   getAreaLens,
@@ -204,7 +208,23 @@ export default function PortfolioScopeNotice({
    * `leadsOnly` is not a case here any more: it returns above, because a
    * strip that says nothing is filtered is a strip saying nothing.
    */
-  const loud = tabIsFiltered(activeTab);
+  /**
+   * WHICH KIND OF NARROWING IS IN FORCE, which the table needs to answer
+   * at all. A lens and a grant are different events, and `performance`
+   * obeys one and ignores the other — see TAB_NARROWING. Both can be true
+   * at once: a lead with a grant may also pick one of their own portfolios
+   * from the chip.
+   */
+  const inForce = {
+    lens: lensSet,
+    grant: grantIsNarrowing({
+      grantCount: grantTrails.length,
+      narrows: portfolioScope?.narrows,
+    }),
+  };
+  const loud = tabIsFiltered(activeTab, inForce);
+  /** The one panel that narrows on a tab whose own figures do not. */
+  const onlyPart = tabNarrowedPart(activeTab, inForce);
 
   return (
     <Box
@@ -293,8 +313,8 @@ export default function PortfolioScopeNotice({
           {partial
             ? "Parts of your view are limited to "
               : roleNames.length > 0
-                ? tabIsFiltered(activeTab) ? "Your portfolio: showing " : "Your portfolio: "
-                : tabIsFiltered(activeTab) ? "Portfolio filter: showing " : "Portfolio filter: "}
+                ? loud ? "Your portfolio: showing " : "Your portfolio: "
+                : loud ? "Portfolio filter: showing " : "Portfolio filter: "}
           {trails.map((trail, ti) => (
             <Text as="span" key={trail.join("/")}>
               {ti > 0 && ", "}
@@ -323,7 +343,7 @@ export default function PortfolioScopeNotice({
               The qualification used to live only in the tooltip, which is
               to say nowhere: the visible line said "showing Durham only"
               over a list of the whole company. */}
-          {partial || !tabIsFiltered(activeTab) ? "" : " only"}
+          {partial || !loud ? "" : " only"}
           {/* AND THE ROLE, whenever one is scoped here. Somebody who holds
               everything company-wide has no role to name — they are using
               their own powers and merely looking at a slice, so saying
@@ -350,13 +370,24 @@ export default function PortfolioScopeNotice({
               portfolio's. Said inline rather than in the popover, because
               the popover is a thing you open and this is a thing you need
               before you read the number. */}
-          {!tabIsFiltered(activeTab) && (
+          {/* AND IT NO LONGER SAYS "whole business" WHEN ONE PANEL IS
+              NARROWED. Equipment and Portfolios are company-wide tabs with
+              exactly one narrowed thing inside them — the Insights
+              leaderboard, which comes from occurrences, and the property
+              picker in the filing dialog. "This tab shows the whole
+              business" was the dangerous half of that sentence: it is true
+              of the tab and false of the control the reader is about to
+              use. Naming the exception costs four words and makes the
+              claim survivable. */}
+          {!loud && (
             <Text as="span" fontWeight="medium">
               {/* SHORT ENOUGH TO SURVIVE THE TRUNCATE. The strip is one
                   line by design, and the long version clipped at
                   "...shows the whole busi…" behind a four-link trail —
                   losing the only words that mattered. */}
-              {" — this tab shows the whole business"}
+              {onlyPart
+                ? ` — this tab is company-wide apart from ${onlyPart}`
+                : " — this tab shows the whole business"}
             </Text>
           )}
           {/* THE "· money as organized now" CLAUSE WAS HERE, and is gone.
@@ -460,9 +491,10 @@ export default function PortfolioScopeNotice({
                   do. */}
               <Text fontSize="xs" fontWeight="semibold" mb={1}>Narrowed to this portfolio</Text>
               <Text fontSize="xs" color="fg.muted" mb={2}>
-                Jobs and visits · Services · Clients · Properties · Payments ·
-                Statistics · the Home dashboard — and every Insights total that
-                comes from them (revenue, completed, scheduled, unclaimed, team).
+                Jobs and visits · Services · Repeating · Clients · Properties ·
+                Payments · Statistics · the Home dashboard — and every Insights
+                total that comes from them (revenue, completed, scheduled,
+                unclaimed, team).
               </Text>
               {/* HOW THE MONEY IS GROUPED, said once and in the place
                   somebody comes to find out. There is only one grouping,

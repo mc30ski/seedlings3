@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import { fmtDateLong } from "@/src/lib/dates";
+import { fmtDateLong, type EtDateKey } from "@/src/lib/dates";
 
 // Client-facing "Statement" PDF generator.
 //
@@ -18,8 +18,16 @@ export type StatementRow = {
    *  of the occurrence id, uppercased. Lets the client match a line
    *  on the statement against a previously-downloaded receipt. */
   receiptId: string;
-  serviceDate: string; // YYYY-MM-DD (ET calendar day)
-  paymentDate: string; // YYYY-MM-DD
+  /** ET calendar day, NOT a formatted date — the server builds both of
+   *  these with `etFormatDate` (routes/client.ts), and "" when the
+   *  underlying timestamp is absent, which is this codebase's canonical
+   *  "no value" key. Branded so neither can be handed to `bizDateKey`,
+   *  which would convert them as instants and move them to the previous
+   *  day. Note the contrast with `receipt.ts`, whose similarly-named
+   *  `serviceDate` holds `fmtDate()` OUTPUT ("11/13/2026") and is
+   *  therefore correctly left unbranded. */
+  serviceDate: EtDateKey;
+  paymentDate: EtDateKey;
   description: string;
   method: string;
   amount: number;

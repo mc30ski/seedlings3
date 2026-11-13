@@ -95,3 +95,53 @@ Both now show both.
   badge is the only place those surface. 9 of 12 in dev.
 
 Detail + gates: [[project_repeating_tab]].
+
+## The Take Payment preview re-derived the money, and had drifted (fixed 2026-11-13)
+
+`AcceptPaymentDialog` carried a local `shareRate()` + `round2()` and
+multiplied out each worker's share by hand, under a comment claiming it
+mirrored `computeBreakdown`. **Three divergences, measured:**
+
+1. **THE WRONG SERVER FUNCTION.** Approval runs `reconcileApproval`, which
+   wraps `computeBreakdown` and then makes W-2 workers whole from the
+   business's side while contractors take the pro-rata loss. The copy had no
+   notion of a promise. On a $300 invoice paid $150 it previewed an employee
+   at **$52.50 against the $105 actually paid**, and the gap widened as the
+   payment shrank ($100 paid → $35 preview vs $105 paid).
+2. **No penny residual** — disagreed with the server on **47% of submittable
+   amounts** (brute-forced 4.2M combinations), by a cent a worker.
+   `computeBreakdown` spreads the residual one cent per row; dumping it on
+   row 0 used to shortchange the claimer.
+3. **No normalisation** of the percentages. Latent only — submit is blocked
+   unless they sum to 100.
+
+The server was right throughout; it was the preview, on the screen where
+money is approved, that was wrong.
+
+**The fix deletes the copy.** The dialog now calls `computeBreakdown` for the
+promise and `reconcileApproval` for the payout — and it can reproduce the
+promise locally because `payments.ts` snapshots it as
+`computeBreakdown(invoiceTotal(occ), materialCharges, splits, rates)` at
+payment-creation time, which is the moment this dialog submits. Every input
+was already a prop; no new endpoint. Verified against the server's own call
+sequence on 9 cases (full, shortfall ×2, overpay, materials, materials +
+shortfall, two penny cases, all-contractor shortfall): **all match**.
+
+Two things the old preview hid, now shown: the **employee top-up** (per row
+and in the summary, or the card does not reconcile to itself) and a worker
+with **no pay class** — `rateFor` throws for them, so the server refuses the
+payment, and a $0 row was a clean-looking preview before a failed submit.
+
+**`cannotBePriced()` added to `packages/money/workerClass.ts`** — true for
+UNPAID and untyped, the two classes `rateFor` throws on. G30 fired on the
+`!isPaid(...)` the fix was first written with; a positive predicate in the
+canonical file is the prescribed answer, not an allow-comment.
+
+Gated in `payments-build-gate.test.ts`. **Two leaks found by mutation:** the
+rule first matched `reconcileApproval` in its own prose (so reverting the
+real call passed), and a bare `topUp` identifier check survived both a
+rename and a dead branch. It now strips comments and anchors on the guard
+AND the formatted value. 6 mutations, all caught.
+
+See [[reference_mirror_types_gate]] — this was found by auditing the
+hand-maintained mirrors; 6 of the other 7 agree.

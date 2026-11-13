@@ -94,6 +94,25 @@ export const isPaid = (wt: WorkerType | null | undefined) => {
 /** Must never reach a split, a wage, a payroll row or a tax export (G33). */
 export const isUnpaid = (wt: WorkerType | null | undefined) => classify(wt) === "unpaid";
 
+/**
+ * The payout cannot put a number on this person: no rate exists for them.
+ *
+ * True for UNPAID and for an untyped worker — exactly the two classes
+ * `rateFor` throws on. The complement of `isPaid`, but spelled out as its
+ * own enumeration rather than written `!isPaid(x)` at the callsite, for the
+ * reason G30 exists: a negated pay-class predicate reads as a claim about
+ * ONE class and is true of two, and the next class added silently joins
+ * whichever branch it falls into.
+ *
+ * Use it where the right behaviour is to REFUSE or to warn — a payment
+ * preview, a split editor. Where a figure still has to render, reach for
+ * `rateForProjection` instead, which returns 0 rather than throwing.
+ */
+export const cannotBePriced = (wt: WorkerType | null | undefined) => {
+  const c = classify(wt);
+  return c === "unpaid" || c === "unclassified";
+};
+
 export type Rates = { employeeMarginPercent: number; contractorFeePercent: number };
 
 /**

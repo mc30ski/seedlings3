@@ -381,7 +381,7 @@ export function bizInstantFromEtParts(dateKey: EtDateKey, time: string): string 
  *
  *  ALWAYS use this instead of `.toISOString().slice(0, 10)` or
  *  `${y}-${m}-${d}` template literals built from `.getDate()` etc. */
-export function bizDateKey(d: string | Date): EtDateKey {
+export function bizDateKey(d: (string & { readonly __brand?: undefined }) | IsoInstant | Date): EtDateKey {
   const dt = typeof d === "string" ? new Date(d) : d;
   // Invalid input yields "" rather than the literal string "Invalid Date"
   // — silent failure here surfaces upstream as the canonical "no value"
@@ -389,6 +389,34 @@ export function bizDateKey(d: string | Date): EtDateKey {
   // missing.
   if (isNaN(dt.getTime())) return "" as EtDateKey;
   return dt.toLocaleDateString("en-CA", { timeZone: BIZ_TZ }) as EtDateKey; // en-CA gives YYYY-MM-DD
+}
+
+/**
+ * The ET date key for a value that MAY ALREADY BE ONE.
+ *
+ * `bizDateKey` reads its argument as an INSTANT. Hand it a date key and
+ * `new Date("2026-11-11")` resolves to UTC midnight, which in ET is 7pm the
+ * PREVIOUS day — so the key comes back one day earlier than it went in.
+ * There is no error and no empty string; the value is simply wrong, and
+ * wrong in a direction that reads as plausible.
+ *
+ * THIS SHIPPED. `WorkerWorkday.workdayDate` is a `String` column holding
+ * "YYYY-MM-DD" in ET, and a comment in the End Workday dialog asserted it
+ * arrived "from Prisma as an ISO datetime", so four call sites re-keyed it.
+ * An unended workday from Wednesday 2026-11-11 was announced to its owner
+ * as **Tuesday the 10th**, and the dialog's time picker defaulted to 6pm on
+ * that Tuesday — before the workday had started — so the only way to close
+ * it was to overrule the app and name a day it insisted was wrong.
+ *
+ * Use this wherever the input may be either. Where you KNOW it is already a
+ * key, pass it straight through: this helper exists for the boundary, not
+ * as a thing to wrap every key in.
+ */
+export function bizDateKeyOf(d: string | Date): EtDateKey {
+  // The shape test is the whole point: a 10-character YYYY-MM-DD is an ET
+  // day already, and converting it can only move it.
+  if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d as EtDateKey;
+  return bizDateKey(d);
 }
 
 /** Today's date as YYYY-MM-DD in Eastern Time. */

@@ -60,9 +60,9 @@ export type PayrollValues = Partial<{
 
 export type PayrollPeriodSummary = {
   id: string;
-  periodStart: string;
-  periodEnd: string;
-  payDay: string;
+  periodStart: EtDateKey;
+  periodEnd: EtDateKey;
+  payDay: EtDateKey;
   label: string | null;
   /** Operator views only. */
   teamTotals?: {
@@ -98,9 +98,9 @@ export type PayrollEntryView = {
 
 export type PayrollPeriodDetail = {
   id: string;
-  periodStart: string;
-  periodEnd: string;
-  payDay: string;
+  periodStart: EtDateKey;
+  periodEnd: EtDateKey;
+  payDay: EtDateKey;
   label: string | null;
   archivedAt?: string | null;
   /**
@@ -113,9 +113,9 @@ export type PayrollPeriodDetail = {
 };
 
 export type PayrollLatest = {
-  payDay: string;
-  periodStart: string;
-  periodEnd: string;
+  payDay: EtDateKey;
+  periodStart: EtDateKey;
+  periodEnd: EtDateKey;
   netPay: number | null;
   grossEarnings: number | null;
   periodsOnRecord: number;
@@ -129,9 +129,9 @@ export type UnmatchedName = {
 
 export type ImportedPeriod = {
   periodId: string;
-  periodStart: string;
-  periodEnd: string;
-  payDay: string;
+  periodStart: EtDateKey;
+  periodEnd: EtDateKey;
+  payDay: EtDateKey;
   label: string | null;
   entryCount: number;
   replaced: boolean;

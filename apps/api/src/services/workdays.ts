@@ -56,7 +56,13 @@ export type WorkdayState =
 export type WorkdaySummary = {
   id: string;
   userId: string;
-  workdayDate: string;
+  /** The ET calendar day, "YYYY-MM-DD" — branded, because converting one
+   *  as though it were an instant moves it to the PREVIOUS day. That
+   *  shipped: the web mirror of this type had it as a plain `string`, a
+   *  dialog re-keyed it through `bizDateKey`, and a Wednesday workday was
+   *  announced to its owner as Tuesday and could not be closed. See
+   *  docs/DATE_HANDLING.md rule 31. */
+  workdayDate: EtDateKey;
   startedAt: string;
   endedAt: string | null;
   pausedAt: string | null;
@@ -160,7 +166,10 @@ function summarize(row: WorkerWorkday): WorkdaySummary {
   return {
     id: row.id,
     userId: row.userId,
-    workdayDate: row.workdayDate,
+    // Trusted boundary: Prisma types the column `String` because it IS
+    // one. Every writer goes through `todayEt()` or an already-validated
+    // key, and `@@unique([userId, workdayDate])` is on that same value.
+    workdayDate: row.workdayDate as EtDateKey,
     startedAt: row.startedAt.toISOString(),
     endedAt: row.endedAt ? row.endedAt.toISOString() : null,
     pausedAt: row.pausedAt ? row.pausedAt.toISOString() : null,

@@ -190,6 +190,31 @@ gave 5am/4am ET and 9am/**8am** ET; the helper gives 9am ET in both.
 Found by an e2e asserting a 14-day service restarts one cadence on and
 getting 13 — not by the gate, and not by tsc.
 
+## Rule 31 — re-keying a date key (added 2026-11-13, after a third bug)
+
+`bizDateKey` reads its argument as an INSTANT. Hand it a key and
+`new Date("2026-11-11")` is UTC midnight = 7pm ET on the **10th**, so the
+key returns a day early. No throw, no `""` — just a plausible wrong day.
+
+Shipped on the workday screens: an unended **Wednesday** workday was
+announced as *"you didn't end your workday on Tuesday"*, and the End
+Workday picker defaulted to 6pm that Tuesday, before the workday started,
+so its own before-start guard blocked every save. The operator had to name
+a day the app was insisting was wrong. Cause: a comment claiming
+`WorkerWorkday.workdayDate` arrives "from Prisma as an ISO datetime". It is
+a `String` column holding "YYYY-MM-DD" — **read the schema, not the
+comment**.
+
+- **The real guard is the TYPE**: `bizDateKey` now refuses a branded
+  `EtDateKey`. See [[feedback-date-branded-types]] — Phase 2 tightened the
+  key CONSUMERS and left the producers open in the other direction.
+- `bizDateKeyOf()` is the new canonical helper for a value that may be
+  either; it shape-tests and passes a key through.
+- Rule 31's regex is the FALLBACK, for what the brand cannot reach: a
+  date-key field still typed `string`, or one arriving via `as any`. The
+  `as any` spelling defeated the first version of both the rule and its
+  companion scan — found by mutation, not by reading.
+
 Document is at `docs/DATE_HANDLING.md`. Update it whenever the helpers
 change or a new pattern needs to be added to the forbidden list.
 
