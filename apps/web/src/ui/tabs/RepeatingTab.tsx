@@ -44,8 +44,20 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { ArrowDown, ArrowUp, CalendarClock, ChevronDown, ExternalLink, PauseCircle, Repeat } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  CalendarClock,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  LayoutList,
+  List,
+  PauseCircle,
+  Repeat,
+} from "lucide-react";
 import { apiGet } from "@/src/lib/api";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import type { Scope } from "@/src/lib/scope";
 import { fmtDate } from "@/src/lib/dates";
 import { jobTypeLabel } from "@/src/lib/labels";
@@ -191,6 +203,40 @@ const STATE_ORDER = [
  *  on earth to select it. Found by the vocabulary scan, not by tsc, which
  *  is perfectly happy with an unreachable union member. */
 type SortKey = "customer" | "service" | "next" | "state" | "reason";
+
+/**
+ * HOW TALL A ROW IS, which is the difference between reading one customer
+ * and reading the book.
+ *
+ * Expanded is everything this table knows about a stream, and it is the
+ * right shape when the question is about a particular row — eight or nine
+ * of them fill a laptop screen. Compact is ONE LINE per stream, so fifty
+ * fit, and the question it answers is the other one: what is going on
+ * across the whole book right now.
+ *
+ * TWO RUNGS, NOT THE THREE Work → Jobs uses. A job card is free-form, so
+ * it can lose its middle detail and still be a card; a table row is a set
+ * of columns, and the only honest reductions are "every column's full
+ * content" and "every column's first line". A third rung would have to
+ * drop whole columns, which breaks the alignment `COLS` exists to protect.
+ */
+type RowDensity = "compact" | "expanded";
+
+/**
+ * What a cell shows at each rung, stated once rather than at each callsite.
+ *
+ * Every column reduces to exactly ONE line when compact, which is what
+ * makes the rows the same height as each other — the property name, the
+ * service description, the "last served" note, the resume reminder, the
+ * money clocks and the blocked reason are all second lines, and a rule that
+ * kept any one of them would give that row a different height and undo the
+ * scan the mode exists for.
+ *
+ * The two things that SURVIVE compaction are the expired badge and the
+ * status badge: they are the whole reason somebody opens this screen, and
+ * both sit inline on the line they belong to rather than under it.
+ */
+const isCompact = (d: RowDensity) => d === "compact";
 
 /**
  * The summary strip doubles as the filter, and each chip resolves to ONE
@@ -630,6 +676,61 @@ export default function RepeatingTab({
    */
   const [sortKey, setSortKey] = useState<SortKey>("next");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  /**
+   * THE DENSITY IS A STANDING PREFERENCE, so it persists — unlike the sort,
+   * which is how you are reading the list this minute.
+   *
+   * How somebody likes to read a table does not change between sessions,
+   * and an operator who works from the one-line view should not have to set
+   * it again every morning. This is the same split Work → Jobs already
+   * makes: its density is persisted and its day-map mode is not.
+   *
+   * DEFAULTS TO EXPANDED, which is what this table has always been. A
+   * persisted preference whose default changes rewrites the screen for
+   * everybody who never asked; the toggle is one click and then it sticks.
+   */
+  const [density, setDensity] = usePersistedState<RowDensity>("repeating_density", "expanded");
+  /**
+   * PER-ROW OVERRIDES, so one stream can be opened without leaving the scan.
+   *
+   * The whole point of the compact view is finding the row that needs
+   * attention; having found it, the next thing anybody wants is that row's
+   * detail — and if the only control were global, getting it would mean
+   * expanding all fifty and losing the place that made the row findable.
+   *
+   * NOT PERSISTED, and deliberately so. An override is a question about one
+   * customer asked once ("why is this one held?"), not a preference. Stored,
+   * yesterday's three opened rows would still be open this morning, sitting
+   * at different heights in an otherwise uniform list with nothing on screen
+   * explaining why — which reads as the table being broken rather than as a
+   * setting. The density itself IS the preference and is the thing kept.
+   *
+   * Cleared whenever the global rung changes, so that control always means
+   * what it says: after clicking it, every row is at the rung named.
+   */
+  const [rowOverrides, setRowOverrides] = useState<Map<string, RowDensity>>(new Map());
+
+  /** The rung this row is actually drawn at: its own override, else the
+   *  global preference. */
+  const densityOf = useCallback(
+    (id: string): RowDensity => rowOverrides.get(id) ?? density,
+    [rowOverrides, density],
+  );
+
+  /** Open or close ONE row, leaving every other row where it is. */
+  const toggleRow = useCallback(
+    (id: string) =>
+      setRowOverrides((prev) => {
+        const next = new Map(prev);
+        // Against the row's CURRENT rung, which may be the global one — so
+        // the first click on a row always does the visible thing rather
+        // than needing two to take effect.
+        next.set(id, (prev.get(id) ?? density) === "compact" ? "expanded" : "compact");
+        return next;
+      }),
+    [density],
+  );
 
   /** Click a header: same column flips direction, a new column starts at its
    *  own useful default rather than inheriting the last one's. */
@@ -1121,7 +1222,36 @@ export default function RepeatingTab({
             A "To review" button and a pause-reason icon button used to sit
             beside this box, each saying what a chip one row up already said.
             Both are folded into their chips, so every filter on this screen
-            has exactly one control and the strip is the whole story. */}
+            has exactly one control and the strip is the whole story.
+
+            THE DENSITY IS NOT A FILTER, which is why it may sit here
+            without breaking that rule: it changes how much of each row is
+            drawn, never which rows are drawn. The counts in the strip above
+            are identical at both rungs. */}
+        <Button
+          size="sm"
+          variant="outline"
+          flexShrink={0}
+          onClick={() => {
+            setDensity(isCompact(density) ? "expanded" : "compact");
+            // The global control must mean what it says — see the note on
+            // `rowOverrides`.
+            setRowOverrides(new Map());
+          }}
+          title={
+            isCompact(density)
+              ? "One line per stream — click to show every row in full"
+              : "Full rows — click to collapse every row to one line"
+          }
+          aria-label={isCompact(density) ? "Expand every row" : "Collapse every row to one line"}
+          data-testid="repeating-density"
+          data-density={density}
+        >
+          {isCompact(density) ? <LayoutList size={14} /> : <List size={14} />}
+          <Box as="span" hideBelow="sm">
+            {isCompact(density) ? "Expand all" : "Collapse all"}
+          </Box>
+        </Button>
       </HStack>
 
       {failed && (
@@ -1246,13 +1376,21 @@ export default function RepeatingTab({
         <VStack align="stretch" gap={2} data-testid="repeating-rows">
           {filtered.map((row) => {
             const meta = statusMeta(row);
+            const compact = isCompact(densityOf(row.id));
             return (
               <Box
                 key={row.id}
                 display="grid"
                 gridTemplateColumns={COLS}
                 gap={3}
-                alignItems="start"
+                /* CENTRED WHEN COMPACT, because every cell is then a single
+                   line and `start` would hang a badge a pixel or two above
+                   the text beside it — on a one-line row that misalignment
+                   is the most visible thing on the screen. Expanded rows
+                   have cells of different heights, where `start` is the
+                   only alignment that keeps the first line of each column
+                   on one baseline. */
+                alignItems={compact ? "center" : "start"}
                 borderWidth="1px"
                 borderColor="border"
                 /* A STRIPE, AND IT IS ALWAYS THERE. The expired rows are the
@@ -1281,16 +1419,91 @@ export default function RepeatingTab({
                 }
                 borderRadius="md"
                 px={2}
-                py={2}
+                py={compact ? 1 : 2}
                 data-testid={`repeating-row-${row.id}`}
                 data-status={row.status}
                 data-expired={row.expiredDays === null ? "0" : String(row.expiredDays)}
+                data-density={compact ? "compact" : "expanded"}
               >
                 {/* On a phone the cells stack; at desk width each takes its
                     own column. */}
                 <Cell label="Customer">
-                  <Text fontSize="sm" fontWeight="medium">{row.clientName}</Text>
-                  <Text fontSize="xs" color="fg.muted">{row.propertyName}</Text>
+                  {/* THE DISCLOSURE SITS IN THE FIRST COLUMN, which is where
+                      a reader looks for one and — just as load-bearing —
+                      the one place it costs no alignment. The actions
+                      column was the other candidate and is the wrong one:
+                      it is a fixed 176px stack of full-width buttons, and
+                      a chevron added to it would be either a fourth button
+                      or a differently-sized child of a column whose whole
+                      point is that everything in it is the same size.
+
+                      NOT the whole row as the click target. An expanded row
+                      carries buttons, a contact menu and a link, and making
+                      their container clickable means every click that
+                      misses one of them does something the reader did not
+                      ask for — on a screen where the buttons pause a real
+                      customer's service. */}
+                  <HStack gap={1} align={compact ? "center" : "start"} minW={0}>
+                    <Box
+                      as="button"
+                      onClick={() => toggleRow(row.id)}
+                      flex="0 0 auto"
+                      display="inline-flex"
+                      alignItems="center"
+                      justifyContent="center"
+                      /* Square and finger-sized. A 12px glyph alone is a
+                         target nobody lands on first time on a phone, which
+                         is the surface this operator reads the list on. */
+                      boxSize="20px"
+                      mt={compact ? "0" : "1px"}
+                      color="fg.muted"
+                      cursor="pointer"
+                      borderRadius="sm"
+                      _hover={{ color: "fg", bg: "bg.muted" }}
+                      transition="color 0.1s, background 0.1s"
+                      title={compact ? "Show this row in full" : "Collapse this row to one line"}
+                      aria-label={
+                        compact
+                          ? `Show ${row.clientName} in full`
+                          : `Collapse ${row.clientName} to one line`
+                      }
+                      aria-expanded={!compact}
+                      /* NOT `repeating-row-…`, AND THAT IS LOAD-BEARING.
+                         The specs count rows with the PREFIX selector
+                         `[data-testid^="repeating-row-"]`, so a second
+                         testid under that prefix inside each row makes
+                         every row count twice — three specs went from 7
+                         rows to 14 and from 66 to 132 the moment this was
+                         called `repeating-row-toggle`. A per-row control
+                         must not borrow the prefix the rows are counted
+                         by. */
+                      data-testid="repeating-disclosure"
+                    >
+                      {compact ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </Box>
+                    <Box minW={0}>
+                      {/* CLAMPED TO ONE LINE WHEN COMPACT. The name is the
+                          column's primary line and a long one would wrap,
+                          which is the single thing that would give one
+                          compact row a different height from its
+                          neighbours and undo the scan. */}
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        lineClamp={compact ? 1 : undefined}
+                        title={compact ? row.clientName : undefined}
+                      >
+                        {row.clientName}
+                      </Text>
+                      {/* THE PROPERTY IS THE SECOND LINE, so it goes. It is
+                          also the detail most often the SAME as the
+                          customer name on this book's residential rows,
+                          which is why it is the right one to lose first. */}
+                      {!compact && (
+                        <Text fontSize="xs" color="fg.muted">{row.propertyName}</Text>
+                      )}
+                    </Box>
+                  </HStack>
                 </Cell>
 
                 {/* ONE SHAPE ON EVERY ROW: CADENCE FIRST, NAME UNDER IT.
@@ -1312,7 +1525,10 @@ export default function RepeatingTab({
                   <Text fontSize="sm">
                     {row.frequencyDays ? `Every ${row.frequencyDays} days` : "—"}
                   </Text>
-                  {serviceLabel(row) && (
+                  {/* THE CLAMP IS WHY THIS ONE DROPS CLEANLY. It is already
+                      two lines of up-to-232-character job description;
+                      compact has no second line to give it. */}
+                  {!compact && serviceLabel(row) && (
                     <Text fontSize="xs" color="fg.muted" lineClamp={2} title={serviceLabel(row) ?? undefined}>
                       {serviceLabel(row)}
                     </Text>
@@ -1344,11 +1560,13 @@ export default function RepeatingTab({
                             ? "none missed yet"
                             : `${row.missedCycles} missed`}
                       </Text>
-                      <Text fontSize="2xs" color="fg.muted">
-                        {row.lastServedAt
-                          ? `last served ${fmtDate(row.lastServedAt)}`
-                          : "never served"}
-                      </Text>
+                      {!compact && (
+                        <Text fontSize="2xs" color="fg.muted">
+                          {row.lastServedAt
+                            ? `last served ${fmtDate(row.lastServedAt)}`
+                            : "never served"}
+                        </Text>
+                      )}
                     </>
                   ) : (
                     <Text fontSize="sm">{row.startAt ? fmtDate(row.startAt) : "—"}</Text>
@@ -1361,8 +1579,22 @@ export default function RepeatingTab({
                       already decided this stall is known about, and shouting
                       it in red here would undo that. The row still carries
                       the fact, because this screen is where the book gets
-                      reviewed — it just stops being an alarm. */}
-                  {row.expiredDays !== null && (
+                      reviewed — it just stops being an alarm.
+
+                      GONE WHEN COMPACT, AND NOTHING IS LOST. This column is
+                      116px — a date and this badge cannot sit side by side
+                      in it, and letting the badge wrap underneath would make
+                      the expired rows taller than every other row, which is
+                      precisely the uniformity the compact rung exists to
+                      produce.
+
+                      Dropping it costs nothing because the row's LEFT STRIPE
+                      already carries this exact condition, inked for expired
+                      and muted for silenced. The stripe was built to be
+                      readable without reading any cell; compact is the mode
+                      that cashes that in. The day count comes back the
+                      moment the row is opened. */}
+                  {!compact && row.expiredDays !== null && (
                     <Badge
                       mt="1"
                       size="xs"
@@ -1400,6 +1632,13 @@ export default function RepeatingTab({
                   )}
                 </Cell>
 
+                {/* THE BADGE IS THE ONE THING THAT NEVER COMPACTS AWAY.
+                    Everything else in this column — when the hold comes
+                    back, how long the money has been waiting, why the row
+                    cannot be ticked, the way to Payments — is a second line
+                    and goes. The badge is the column, and a State column
+                    that sometimes had no state would make the compact rung
+                    useless for the one question it is for. */}
                 <Cell label="State">
                   <Badge size="sm" variant="subtle" colorPalette={meta.palette}>
                     {meta.label}
@@ -1412,7 +1651,7 @@ export default function RepeatingTab({
                       The Next visit column cannot carry it either: for a
                       paused row that column shows the date the pause is
                       HOLDING, which is not a next visit at all. */}
-                  {row.canResume && (
+                  {!compact && row.canResume && (
                     <HStack gap={1} mt={1}>
                       <Box
                         flex="0 0 auto"
@@ -1460,7 +1699,7 @@ export default function RepeatingTab({
                       the money information on this row is one colour family.
                       Purple would have matched the Money card but collides
                       with "Held" in this very column. */}
-                  {row.awaitingPaymentDays !== null && (
+                  {!compact && row.awaitingPaymentDays !== null && (
                     <Box mt={1} data-testid="repeating-awaiting-age">
                       <PaymentWaitBadges
                         palette="orange"
@@ -1485,12 +1724,12 @@ export default function RepeatingTab({
                   {/* WHY A ROW CANNOT BE TICKED, said on the row. The rule is
                       the operator's: settle the money first, then hold the
                       visit that replaces it. */}
-                  {row.blockedReason && (
+                  {!compact && row.blockedReason && (
                     <Text fontSize="2xs" color="fg.muted" mt={1}>
                       {row.blockedReason}
                     </Text>
                   )}
-                  {row.status === "PENDING_PAYMENT" && (
+                  {!compact && row.status === "PENDING_PAYMENT" && (
                     <Button
                       size="2xs"
                       variant="ghost"
@@ -1513,11 +1752,20 @@ export default function RepeatingTab({
                 <Cell label="Reason" emptyOnMobile={!row.canResume}>
                   {row.canResume ? (
                     <>
-                      <HStack gap={1}>
-                        <Box color="purple.fg"><PauseCircle size={12} /></Box>
-                        <Text fontSize="sm">{row.streamPauseReasonLabel ?? "Reason not recorded"}</Text>
+                      <HStack gap={1} minW={0}>
+                        <Box color="purple.fg" flex="0 0 auto"><PauseCircle size={12} /></Box>
+                        <Text
+                          fontSize="sm"
+                          lineClamp={compact ? 1 : undefined}
+                          title={compact ? row.streamPauseReasonLabel ?? undefined : undefined}
+                        >
+                          {row.streamPauseReasonLabel ?? "Reason not recorded"}
+                        </Text>
                       </HStack>
-                      {row.streamPauseReason && (
+                      {/* The operator's free-text note under the coded
+                          reason — a second line, and the reason CODE is the
+                          part that reads at a glance. */}
+                      {!compact && row.streamPauseReason && (
                         <Text fontSize="2xs" color="fg.muted">{row.streamPauseReason}</Text>
                       )}
                     </>
@@ -1543,15 +1791,22 @@ export default function RepeatingTab({
                   gap={1}
                   gridColumn={{ base: "2", md: "auto" }}
                 >
-                  {/* THE SHARED CLUSTER, not buttons of this tab's own. */}
-                  <StreamPauseActions
+                  {/* THE SHARED CLUSTER, not buttons of this tab's own.
+                      Expanded only: these are the tallest thing on the row
+                      — three stacked full-width buttons — so leaving them
+                      in would mean a "compact" row no shorter than the one
+                      it replaced, and the mode would do nothing at all. The
+                      decision to pause somebody's service is also not one
+                      to offer from a scan view; find the row, open it, then
+                      act on what you can read in full. */}
+                  {!compact && <StreamPauseActions
                     occ={row}
                     canManage={canManage}
                     controls={streamControls}
                     busyId={busyId}
                     setBusyId={setBusyId}
                     size="xs"
-                  />
+                  />}
                   {/* MESSAGE THE CUSTOMER, beside the decision rather than a
                       tab away. Pausing somebody's service is a thing they
                       should hear about, and the draft behind this button is
@@ -1560,11 +1815,23 @@ export default function RepeatingTab({
                       the customer has neither phone nor email.
 
                       SECOND IN THE ORDER, deliberately: the decision, then
-                      telling them about it, then navigating away. */}
-                  <ClientContactMenu contact={row} draft={draftFor(row)} />
+                      telling them about it, then navigating away.
+
+                      Expanded only, for the same reason as the cluster
+                      above: it belongs beside a decision, and the compact
+                      rung does not offer one. */}
+                  {!compact && <ClientContactMenu contact={row} draft={draftFor(row)} />}
                   {/* Ghost, because it navigates rather than changing
                       anything — but the same size as the others, so the
-                      column reads as one block. */}
+                      column reads as one block.
+
+                      THE ONE ACTION THAT SURVIVES COMPACTION, because it is
+                      the one the compact rung leads to. Finding the row
+                      that needs attention is what the scan is for, and
+                      "open it" is the next thing anybody does — making that
+                      a two-click trip through expanding the row first would
+                      tax every use of the mode. It also costs no height: it
+                      is a single button, so the row stays one line. */}
                   <Button
                     size="xs"
                     variant="ghost"

@@ -40,8 +40,8 @@
     "landedOn": "staff",
     "controlsByTab": {
       "home": [
-        "1",
-        "64°",
+        "2",
+        "57°",
         "Home",
         "How was this approximate value calculated?",
         "My Roles",
@@ -57,8 +57,9 @@
       ],
       "jobs": [
         "+",
-        "1",
-        "64°",
+        "2",
+        "57°",
+        "Freeze▼",
         "Jobs",
         "My Roles",
         "Show me",
@@ -66,30 +67,24 @@
         "Work"
       ],
       "tasks": [
-        "1",
-        "64°",
+        "57°",
         "Actions",
         "My Roles",
         "Plan Next Work DayView your upcoming job summary",
-        "Show me",
-        "Skip",
         "Work"
       ],
       "routes": [
-        "1",
-        "64°",
+        "57°",
         "Advanced settings· Claimed only · 10% buffer",
         "My Roles",
         "My current location",
         "Plan route",
         "Routes",
-        "Show me",
-        "Skip",
         "Work"
       ],
       "equipment": [
-        "1",
-        "64°",
+        "2",
+        "57°",
         "Details▼",
         "Equipment",
         "Inventory",
@@ -98,8 +93,8 @@
         "Skip"
       ],
       "collections": [
-        "1",
-        "64°",
+        "2",
+        "57°",
         "Collections",
         "Equipment",
         "My Roles",
@@ -107,22 +102,28 @@
         "Skip"
       ],
       "vehicles": [
-        "64°",
+        "2",
+        "57°",
         "Equipment",
         "My Roles",
         "Show archived",
+        "Show me",
+        "Skip",
         "Vehicles"
       ],
       "supplies": [
-        "64°",
+        "2",
+        "57°",
         "Low stock",
         "Money",
         "My Roles",
+        "Show me",
+        "Skip",
         "Supplies"
       ],
       "clients": [
-        "1",
-        "64°",
+        "2",
+        "57°",
         "Clients",
         "Directory",
         "My Roles",
@@ -130,17 +131,14 @@
         "Skip"
       ],
       "properties": [
-        "1",
-        "64°",
+        "57°",
         "Directory",
         "My Roles",
-        "Properties",
-        "Show me",
-        "Skip"
+        "Properties"
       ],
       "users": [
-        "1",
-        "64°",
+        "2",
+        "57°",
         "Directory",
         "My Roles",
         "Show me",
@@ -148,17 +146,14 @@
         "Users"
       ],
       "groups": [
-        "1",
-        "64°",
+        "57°",
         "Directory",
         "Groups",
-        "My Roles",
-        "Show me",
-        "Skip"
+        "My Roles"
       ],
       "pricing": [
-        "1",
-        "64°",
+        "2",
+        "57°",
         "Money",
         "My Roles",
         "Pricing",
@@ -168,7 +163,7 @@
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:04:25.236Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   },
   "coordinator": {
     "capabilities": [
@@ -188,6 +183,7 @@
       "schedule.contribute",
       "schedule.manage",
       "schedule.view",
+      "schedule.view-all",
       "supplies.view",
       "time.approve"
     ],
@@ -196,6 +192,7 @@
       "jobs",
       "tasks",
       "services",
+      "repeating",
       "routes",
       "equipment",
       "collections",
@@ -216,8 +213,8 @@
     "landedOn": "staff",
     "controlsByTab": {
       "home": [
-        "35",
-        "64°",
+        "57°",
+        "98",
         "Home",
         "How was this approximate value calculated?",
         "My Roles",
@@ -235,14 +232,23 @@
       ],
       "jobs": [
         "+",
-        "64°",
+        "57°",
+        "98",
+        "Client requests",
+        "Dismiss",
+        "Email",
+        "Freeze▼",
         "Jobs",
         "My Roles",
+        "Reschedule",
+        "Show me",
+        "Skip",
+        "Text",
         "Work"
       ],
       "tasks": [
-        "35",
-        "64°",
+        "57°",
+        "98",
         "Actions",
         "My Roles",
         "Plan Next Work DayView your upcoming job summary",
@@ -251,56 +257,60 @@
         "Work"
       ],
       "services": [
-        "+ Estimate",
-        "+ Occurrence",
-        "35",
-        "64°",
-        "Accept",
-        "Approve",
-        "Archive",
-        "Client change requests",
-        "Default Guidance",
-        "Default Team",
-        "Delete",
-        "Deny",
-        "Edit Job",
+        "57°",
         "My Roles",
         "Services",
+        "Work"
+      ],
+      "repeating": [
+        "19 cannot be paused yet",
+        "2 to review",
+        "42 scheduled",
+        "5 not being served",
+        "5 paused",
+        "57°",
+        "66 repeating",
+        "8 expired",
+        "98",
+        "Customer",
+        "Edit pause",
+        "Go to Payments",
+        "Message",
+        "My Roles",
+        "Next visit",
+        "Open",
+        "Pause repeating",
+        "Reason",
+        "Repeating",
+        "Resume repeating",
+        "Service",
         "Show me",
-        "Show occurrences (1) ▼",
-        "Show occurrences (15) ▼",
-        "Show occurrences (2) ▼",
-        "Show occurrences (4) ▼",
-        "Show occurrences (5) ▼",
-        "Show occurrences (6) ▼",
-        "Show occurrences (7) ▼",
-        "Show occurrences (8) ▼",
         "Skip",
-        "View Client",
-        "View Property",
+        "State",
         "Work"
       ],
       "routes": [
-        "35",
-        "64°",
+        "57°",
         "Advanced settings· Claimed only · 10% buffer",
         "My Roles",
         "My current location",
         "Plan route",
         "Routes",
-        "Show me",
-        "Skip",
         "Work"
       ],
       "equipment": [
-        "64°",
+        "57°",
+        "98",
+        "Details▼",
         "Equipment",
         "Inventory",
-        "My Roles"
+        "My Roles",
+        "Show me",
+        "Skip"
       ],
       "collections": [
-        "35",
-        "64°",
+        "57°",
+        "98",
         "Collections",
         "Equipment",
         "My Roles",
@@ -308,8 +318,8 @@
         "Skip"
       ],
       "vehicles": [
-        "35",
-        "64°",
+        "57°",
+        "98",
         "Equipment",
         "My Roles",
         "Show archived",
@@ -318,8 +328,8 @@
         "Vehicles"
       ],
       "supplies": [
-        "35",
-        "64°",
+        "57°",
+        "98",
         "Low stock",
         "Money",
         "My Roles",
@@ -328,8 +338,8 @@
         "Supplies"
       ],
       "clients": [
-        "35",
-        "64°",
+        "57°",
+        "98",
         "Archive",
         "Clients",
         "Contacts (0)",
@@ -349,8 +359,8 @@
         "Unlinked client accounts"
       ],
       "properties": [
-        "35",
-        "64°",
+        "57°",
+        "98",
         "Angela Torres",
         "Archive",
         "Chen Residence JOB",
@@ -388,8 +398,8 @@
         "Willowbrook HOA JOB"
       ],
       "users": [
-        "35",
-        "64°",
+        "57°",
+        "98",
         "Directory",
         "My Roles",
         "Show me",
@@ -397,8 +407,8 @@
         "Users"
       ],
       "groups": [
-        "35",
-        "64°",
+        "57°",
+        "98",
         "Archive",
         "Directory",
         "Edit",
@@ -410,18 +420,15 @@
         "Skip"
       ],
       "pricing": [
-        "35",
-        "64°",
+        "57°",
         "Money",
         "My Roles",
-        "Pricing",
-        "Show me",
-        "Skip"
+        "Pricing"
       ]
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:04:25.236Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   },
   "bookkeeper": {
     "capabilities": [
@@ -496,7 +503,6 @@
         "Pricing"
       ],
       "statistics": [
-        "150",
         "Insights",
         "My Roles",
         "Statistics"
@@ -511,7 +517,7 @@
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:04:25.236Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   },
   "payroll": {
     "capabilities": [
@@ -565,7 +571,7 @@
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:04:25.236Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   },
   "trainee": {
     "capabilities": [
@@ -608,8 +614,8 @@
     "landedOn": "staff",
     "controlsByTab": {
       "home": [
-        "6",
-        "65°",
+        "57°",
+        "7",
         "Home",
         "How was this approximate value calculated?",
         "Latest pay period",
@@ -628,8 +634,9 @@
       ],
       "jobs": [
         "+",
-        "6",
-        "65°",
+        "57°",
+        "7",
+        "Freeze▼",
         "Jobs",
         "My Roles",
         "Show me",
@@ -637,8 +644,8 @@
         "Work"
       ],
       "tasks": [
-        "6",
-        "65°",
+        "57°",
+        "7",
         "Actions",
         "My Roles",
         "Plan Next Work DayView your upcoming job summary",
@@ -647,20 +654,17 @@
         "Work"
       ],
       "routes": [
-        "6",
-        "65°",
+        "57°",
         "Advanced settings· Claimed only · 10% buffer",
         "My Roles",
         "My current location",
         "Plan route",
         "Routes",
-        "Show me",
-        "Skip",
         "Work"
       ],
       "equipment": [
-        "6",
-        "65°",
+        "57°",
+        "7",
         "Details▼",
         "Equipment",
         "Inventory",
@@ -670,8 +674,8 @@
         "Skip"
       ],
       "collections": [
-        "6",
-        "65°",
+        "57°",
+        "7",
         "Collections",
         "Equipment",
         "My Roles",
@@ -679,18 +683,15 @@
         "Skip"
       ],
       "vehicles": [
-        "6",
-        "65°",
+        "57°",
         "Equipment",
         "My Roles",
         "Show archived",
-        "Show me",
-        "Skip",
         "Vehicles"
       ],
       "supplies": [
-        "6",
-        "65°",
+        "57°",
+        "7",
         "Low stock",
         "Money",
         "My Roles",
@@ -699,14 +700,21 @@
         "Supplies"
       ],
       "clients": [
-        "65°",
+        "57°",
+        "7",
         "Clients",
+        "Contacts (1)",
+        "Contacts (2)",
         "Directory",
-        "My Roles"
+        "My Roles",
+        "Properties (1)",
+        "Properties (2)",
+        "Show me",
+        "Skip"
       ],
       "properties": [
-        "6",
-        "65°",
+        "57°",
+        "7",
         "Angela Torres",
         "Chen Residence JOB",
         "Directory",
@@ -722,8 +730,8 @@
         "Thompson Manor JOB"
       ],
       "users": [
-        "6",
-        "65°",
+        "57°",
+        "7",
         "Directory",
         "My Roles",
         "Show me",
@@ -731,8 +739,8 @@
         "Users"
       ],
       "groups": [
-        "6",
-        "65°",
+        "57°",
+        "7",
         "Directory",
         "Groups",
         "My Roles",
@@ -740,8 +748,8 @@
         "Skip"
       ],
       "pricing": [
-        "6",
-        "65°",
+        "57°",
+        "7",
         "Money",
         "My Roles",
         "Pricing",
@@ -751,7 +759,7 @@
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:04:25.236Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   },
   "contractor": {
     "capabilities": [
@@ -797,8 +805,8 @@
     "landedOn": "staff",
     "controlsByTab": {
       "home": [
-        "6",
-        "65°",
+        "4",
+        "57°",
         "Home",
         "How was this approximate value calculated?",
         "My Roles",
@@ -816,8 +824,9 @@
       ],
       "jobs": [
         "+",
-        "6",
-        "65°",
+        "4",
+        "57°",
+        "Freeze▼",
         "Jobs",
         "My Roles",
         "Show me",
@@ -825,29 +834,23 @@
         "Work"
       ],
       "tasks": [
-        "6",
-        "65°",
+        "57°",
         "Actions",
         "My Roles",
-        "Show me",
-        "Skip",
         "Work"
       ],
       "routes": [
-        "6",
-        "65°",
+        "57°",
         "Advanced settings· Claimed only · 10% buffer",
         "My Roles",
         "My current location",
         "Plan route",
         "Routes",
-        "Show me",
-        "Skip",
         "Work"
       ],
       "equipment": [
-        "6",
-        "65°",
+        "4",
+        "57°",
         "Details▼",
         "Equipment",
         "Inventory",
@@ -859,8 +862,8 @@
         "Spring Cleanup (solo) (1)"
       ],
       "collections": [
-        "6",
-        "65°",
+        "4",
+        "57°",
         "Collections",
         "Equipment",
         "My Roles",
@@ -868,8 +871,8 @@
         "Skip"
       ],
       "vehicles": [
-        "6",
-        "65°",
+        "4",
+        "57°",
         "Equipment",
         "My Roles",
         "Show archived",
@@ -878,18 +881,15 @@
         "Vehicles"
       ],
       "supplies": [
-        "6",
-        "65°",
+        "57°",
         "Low stock",
         "Money",
         "My Roles",
-        "Show me",
-        "Skip",
         "Supplies"
       ],
       "clients": [
-        "6",
-        "65°",
+        "4",
+        "57°",
         "Clients",
         "Contacts (0)",
         "Contacts (1)",
@@ -904,8 +904,8 @@
         "Skip"
       ],
       "properties": [
-        "6",
-        "65°",
+        "4",
+        "57°",
         "Angela Torres",
         "Chen Residence JOB",
         "Dave Reeves",
@@ -941,8 +941,8 @@
         "Willowbrook HOA JOB"
       ],
       "users": [
-        "6",
-        "65°",
+        "4",
+        "57°",
         "Directory",
         "My Roles",
         "Show me",
@@ -950,24 +950,24 @@
         "Users"
       ],
       "groups": [
-        "65°",
+        "4",
+        "57°",
         "Directory",
         "Groups",
-        "My Roles"
-      ],
-      "pricing": [
-        "6",
-        "65°",
-        "Money",
         "My Roles",
-        "Pricing",
         "Show me",
         "Skip"
+      ],
+      "pricing": [
+        "57°",
+        "Money",
+        "My Roles",
+        "Pricing"
       ]
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:04:25.236Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   },
   "employee": {
     "capabilities": [
@@ -1014,9 +1014,8 @@
     "landedOn": "staff",
     "controlsByTab": {
       "home": [
-        "6",
-        "65°",
-        "Cancel",
+        "57°",
+        "8",
         "Home",
         "How was this approximate value calculated?",
         "Latest pay period",
@@ -1029,7 +1028,6 @@
         "Sign now",
         "Skip",
         "Start",
-        "Stop",
         "View all",
         "View profile",
         "Work",
@@ -1037,8 +1035,9 @@
       ],
       "jobs": [
         "+",
-        "6",
-        "65°",
+        "57°",
+        "8",
+        "Freeze▼",
         "Jobs",
         "My Roles",
         "Show me",
@@ -1046,8 +1045,8 @@
         "Work"
       ],
       "tasks": [
-        "6",
-        "65°",
+        "57°",
+        "8",
         "Actions",
         "My Roles",
         "Show me",
@@ -1055,8 +1054,8 @@
         "Work"
       ],
       "routes": [
-        "6",
-        "65°",
+        "57°",
+        "8",
         "Advanced settings· Claimed only · 10% buffer",
         "My Roles",
         "My current location",
@@ -1067,14 +1066,20 @@
         "Work"
       ],
       "equipment": [
-        "65°",
+        "57°",
+        "8",
+        "Details▼",
         "Equipment",
         "Inventory",
-        "My Roles"
+        "Just me",
+        "My Roles",
+        "Quiet Hours Crew (2)",
+        "Show me",
+        "Skip"
       ],
       "collections": [
-        "6",
-        "65°",
+        "57°",
+        "8",
         "Collections",
         "Equipment",
         "My Roles",
@@ -1082,8 +1087,8 @@
         "Skip"
       ],
       "vehicles": [
-        "6",
-        "65°",
+        "57°",
+        "8",
         "Equipment",
         "My Roles",
         "Show archived",
@@ -1092,8 +1097,8 @@
         "Vehicles"
       ],
       "supplies": [
-        "6",
-        "65°",
+        "57°",
+        "8",
         "Low stock",
         "Money",
         "My Roles",
@@ -1102,8 +1107,8 @@
         "Supplies"
       ],
       "clients": [
-        "6",
-        "65°",
+        "57°",
+        "8",
         "Clients",
         "Contacts (0)",
         "Contacts (1)",
@@ -1118,8 +1123,8 @@
         "Skip"
       ],
       "properties": [
-        "6",
-        "65°",
+        "57°",
+        "8",
         "Angela Torres",
         "Chen Residence JOB",
         "Dave Reeves",
@@ -1155,8 +1160,8 @@
         "Willowbrook HOA JOB"
       ],
       "users": [
-        "6",
-        "65°",
+        "57°",
+        "8",
         "Directory",
         "My Roles",
         "Show me",
@@ -1164,8 +1169,8 @@
         "Users"
       ],
       "groups": [
-        "6",
-        "65°",
+        "57°",
+        "8",
         "Directory",
         "Groups",
         "My Roles",
@@ -1173,18 +1178,15 @@
         "Skip"
       ],
       "pricing": [
-        "6",
-        "65°",
+        "57°",
         "Money",
         "My Roles",
-        "Pricing",
-        "Show me",
-        "Skip"
+        "Pricing"
       ]
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:04:25.236Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   },
   "admin": {
     "capabilities": [
@@ -1923,8 +1925,8 @@
     "landedOn": "staff",
     "controlsByTab": {
       "home": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Home",
         "How was this approximate value calculated?",
         "Latest pay period",
@@ -1946,23 +1948,14 @@
       ],
       "jobs": [
         "+",
-        "66°",
-        "98",
-        "Client requests",
-        "Dismiss",
-        "Email",
+        "57°",
         "Jobs",
         "My Roles",
-        "Reschedule",
-        "Show me",
-        "Skip",
-        "Text",
-        "View Original",
         "Work"
       ],
       "tasks": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Actions",
         "My Roles",
         "Show me",
@@ -1972,8 +1965,8 @@
       "services": [
         "+ Estimate",
         "+ Occurrence",
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Accept",
         "Approve",
         "Archive",
@@ -1987,49 +1980,59 @@
         "Services",
         "Show me",
         "Show occurrences (1) ▼",
-        "Show occurrences (15) ▼",
+        "Show occurrences (17) ▼",
         "Show occurrences (2) ▼",
+        "Show occurrences (3) ▼",
         "Show occurrences (4) ▼",
         "Show occurrences (5) ▼",
         "Show occurrences (6) ▼",
         "Show occurrences (7) ▼",
         "Show occurrences (8) ▼",
+        "Show occurrences (9) ▼",
         "Skip",
         "View Client",
         "View Property",
         "Work"
       ],
       "repeating": [
-        "66°",
-        "98",
-        "Due",
+        "110",
+        "19 cannot be paused yet",
+        "2 to review",
+        "42 scheduled",
+        "5 not being served",
+        "5 paused",
+        "57°",
+        "66 repeating",
+        "8 expired",
+        "Customer",
         "Edit pause",
         "Go to Payments",
+        "Message",
         "My Roles",
+        "Next visit",
         "Open",
         "Pause repeating",
+        "Reason",
         "Repeating",
         "Resume repeating",
-        "Select these 39",
+        "Service",
         "Show me",
         "Skip",
+        "State",
         "Work"
       ],
       "routes": [
-        "66°",
-        "98",
+        "57°",
         "Advanced settings· Claimed only · 10% buffer",
         "My Roles",
         "My current location",
         "Plan route",
         "Routes",
-        "Show me",
-        "Skip",
         "Work"
       ],
       "equipment": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Alpha Crew (4)",
         "Details▼",
         "Edit",
@@ -2048,7 +2051,6 @@
         "Return",
         "Return for Admin Worker",
         "Return for Contractor Worker",
-        "Return for Employee Worker",
         "Return for Trainee Worker",
         "Show me",
         "Skip",
@@ -2056,8 +2058,8 @@
         "Unretire"
       ],
       "collections": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Collections",
         "Delete",
         "Edit",
@@ -2068,15 +2070,18 @@
         "Skip"
       ],
       "vehicles": [
-        "66°",
+        "110",
+        "57°",
         "Equipment",
         "My Roles",
         "Show archived",
+        "Show me",
+        "Skip",
         "Vehicles"
       ],
       "supplies": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Low stock",
         "Money",
         "My Roles",
@@ -2085,8 +2090,8 @@
         "Supplies"
       ],
       "clients": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Archive",
         "Clients",
         "Contacts (0)",
@@ -2107,8 +2112,8 @@
         "Unlinked client accounts"
       ],
       "properties": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Angela Torres",
         "Archive",
         "Chen Residence JOB",
@@ -2146,8 +2151,8 @@
         "Willowbrook HOA JOB"
       ],
       "users": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Directory",
         "My Roles",
         "Set Contractor",
@@ -2160,21 +2165,16 @@
         "What can they do? ↓"
       ],
       "groups": [
-        "66°",
-        "98",
-        "Archive",
+        "57°",
         "Directory",
-        "Edit",
         "Groups",
         "My Roles",
         "New Group",
-        "Show archived",
-        "Show me",
-        "Skip"
+        "Show archived"
       ],
       "pricing": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Money",
         "My Roles",
         "Pricing",
@@ -2182,8 +2182,8 @@
         "Skip"
       ],
       "statistics": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Insights",
         "My Roles",
         "Show me",
@@ -2191,14 +2191,18 @@
         "Statistics"
       ],
       "performance": [
-        "66°",
+        "110",
+        "57°",
         "Insights",
         "My Roles",
-        "Performance"
+        "North Carolina",
+        "Performance",
+        "Show me",
+        "Skip"
       ],
       "timeline": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "My Roles",
         "Records",
         "Show me",
@@ -2206,21 +2210,29 @@
         "Timeline"
       ],
       "documents": [
-        "66°",
+        "110",
+        "57°",
         "Documents",
         "My Roles",
-        "Records"
+        "Records",
+        "Show me",
+        "Skip"
       ],
       "activity": [
-        "66°",
+        "110",
+        "57°",
+        "Collapse all",
         "Engagement",
+        "Expand all",
         "My Roles",
-        "Records"
+        "Records",
+        "Show me",
+        "Skip"
       ],
       "history": [
+        "110",
         "50/page",
-        "66°",
-        "98",
+        "57°",
         "Apply",
         "Clear",
         "History",
@@ -2231,8 +2243,8 @@
         "Skip"
       ],
       "notify": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "Everyone (11)",
         "Manage templates",
         "My Roles",
@@ -2245,8 +2257,8 @@
         "System"
       ],
       "settings": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "My Roles",
         "Settings",
         "Show me",
@@ -2254,12 +2266,13 @@
         "System"
       ],
       "roles": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "AdminPerspective43 permissions · inherits Worker1",
         "Bookkeeper7 permissions1",
         "Capabilities",
         "CoordinatorPerspective19 permissions · inherits Trainee1",
+        "E2E_MUT_378331 Role0 permissions",
         "Field Clearance3 permissions",
         "May charge business expenses1 permission1",
         "May pull inventory1 permission",
@@ -2278,8 +2291,8 @@
         "WorkerPerspective17 permissions · inherits Trainee2"
       ],
       "portfolios": [
-        "66°",
-        "98",
+        "110",
+        "57°",
         "All properties22",
         "CarrboroZone1",
         "Chapel Hill RouteRoute5",
@@ -2288,6 +2301,7 @@
         "ChathamDistrict5 · 0 own",
         "Directory",
         "DurhamDistrict9",
+        "E2E_MUT_420075 Portfolio0",
         "HillsboroughZone1",
         "Mike's BookBook5",
         "My Roles",
@@ -2303,7 +2317,7 @@
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:29:51.035Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   },
   "owner": {
     "capabilities": [
@@ -2421,8 +2435,8 @@
     "landedOn": "staff",
     "controlsByTab": {
       "home": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Cancel",
         "Home",
         "How was this approximate value calculated?",
@@ -2434,23 +2448,22 @@
         "My vehicles",
         "Overview · team",
         "Pay per hour · team",
-        "Sign now",
         "Start",
         "Stop",
         "This year",
         "View all",
-        "View profile",
         "Work",
         "last month",
         "today"
       ],
       "jobs": [
         "+",
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Client requests",
         "Dismiss",
         "Email",
+        "Freeze▼",
         "Insights",
         "Jobs",
         "My Roles",
@@ -2460,57 +2473,26 @@
         "today"
       ],
       "tasks": [
-        "306",
-        "65°",
+        "57°",
         "Actions",
         "My Roles",
         "Work"
       ],
       "services": [
-        "+ Estimate",
-        "+ Occurrence",
-        "306",
-        "65°",
-        "Accept",
-        "Approve",
-        "Archive",
-        "Client change requests",
-        "Default Guidance",
-        "Default Team",
-        "Delete",
-        "Deny",
-        "Edit Job",
+        "57°",
         "My Roles",
         "Services",
-        "Show occurrences (1) ▼",
-        "Show occurrences (15) ▼",
-        "Show occurrences (2) ▼",
-        "Show occurrences (4) ▼",
-        "Show occurrences (5) ▼",
-        "Show occurrences (6) ▼",
-        "Show occurrences (7) ▼",
-        "Show occurrences (8) ▼",
-        "View Client",
-        "View Property",
         "Work"
       ],
       "repeating": [
-        "306",
-        "65°",
-        "Due",
-        "Edit pause",
-        "Go to Payments",
+        "57°",
         "My Roles",
-        "Open",
-        "Pause repeating",
         "Repeating",
-        "Resume repeating",
-        "Select these 39",
         "Work"
       ],
       "routes": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Advanced settings· Claimed only · 10% buffer",
         "Insights",
         "My Roles",
@@ -2521,8 +2503,8 @@
         "today"
       ],
       "equipment": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Choose a range…",
         "Delete",
         "Details▼",
@@ -2541,14 +2523,13 @@
         "Retire",
         "Return for Admin Worker",
         "Return for Contractor Worker",
-        "Return for Employee Worker",
         "Return for Trainee Worker",
         "Start maintenance",
         "Unretire"
       ],
       "collections": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Collections",
         "Delete",
         "Edit",
@@ -2558,12 +2539,8 @@
         "New collection"
       ],
       "vehicles": [
-        "306",
-        "65°",
+        "57°",
         "Add vehicle",
-        "Archive",
-        "Assign",
-        "Edit",
         "Equipment",
         "Insights",
         "My Roles",
@@ -2572,9 +2549,11 @@
         "last month"
       ],
       "supplies": [
-        "65°",
+        "315",
+        "57°",
         "Add Supply",
         "Archived",
+        "Buy",
         "Low stock",
         "Money",
         "My Roles",
@@ -2582,29 +2561,14 @@
         "Supplies"
       ],
       "clients": [
-        "306",
-        "65°",
-        "Archive",
+        "57°",
         "Clients",
-        "Contacts (0)",
-        "Contacts (1)",
-        "Contacts (2)",
         "Directory",
-        "Edit",
-        "Job services",
-        "Job services · 1",
-        "Link to contact",
-        "My Roles",
-        "Properties (0)",
-        "Properties (1)",
-        "Properties (2)",
-        "Properties (3)",
-        "Unlinked client accounts",
-        "View as"
+        "My Roles"
       ],
       "properties": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Angela Torres",
         "Archive",
         "Chen Residence JOB",
@@ -2640,14 +2604,30 @@
         "Willowbrook HOA JOB"
       ],
       "users": [
-        "65°",
+        "315",
+        "57°",
+        "Also manages…",
+        "Approve as Client",
+        "Approve as Worker",
+        "Decline",
+        "Delete",
         "Directory",
+        "Grant a role…",
         "My Roles",
-        "Users"
+        "Nudge",
+        "Owner ✓",
+        "Pending sign-ups (1)",
+        "Set Contractor",
+        "Set Employee",
+        "Set Unpaid",
+        "Unclassify",
+        "Users",
+        "What can they do? ↓",
+        "as…"
       ],
       "groups": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Archive",
         "Directory",
         "Edit",
@@ -2658,8 +2638,8 @@
       ],
       "ledger": [
         "10",
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Add Entry",
         "All categories",
         "All types",
@@ -2678,23 +2658,22 @@
         "Skip"
       ],
       "reconcile": [
-        "65°",
+        "315",
+        "57°",
         "My Roles",
         "Reconcile",
         "Records",
         "Upload payroll"
       ],
       "pricing": [
-        "306",
-        "65°",
-        "Add Pricing Entry",
+        "57°",
         "Money",
         "My Roles",
         "Pricing"
       ],
       "forecast": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Adjustments",
         "Claude's read",
         "Costs",
@@ -2709,21 +2688,23 @@
         "Which lever matters"
       ],
       "statistics": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Insights",
         "My Roles",
         "Statistics"
       ],
       "performance": [
-        "65°",
+        "315",
+        "57°",
         "Insights",
         "My Roles",
+        "North Carolina",
         "Performance"
       ],
       "workdays": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Add workday",
         "My Roles",
         "Nov 1 (1)",
@@ -2747,8 +2728,8 @@
         "Workdays"
       ],
       "compliance": [
-        "306",
-        "65°",
+        "315",
+        "57°",
         "Compliance",
         "My Roles",
         "New policy",
@@ -2758,24 +2739,24 @@
         "Sign matrix"
       ],
       "timeline": [
-        "306",
-        "66°",
+        "315",
+        "57°",
         "My Roles",
         "Records",
         "Timeline"
       ],
       "documents": [
-        "306",
-        "66°",
+        "315",
+        "57°",
         "Documents",
         "Enable",
         "My Roles",
         "Records",
-        "Show 186 pending tasks"
+        "Show 204 pending tasks"
       ],
       "activity": [
-        "306",
-        "66°",
+        "315",
+        "57°",
         "Collapse all",
         "Engagement",
         "Expand all",
@@ -2783,9 +2764,9 @@
         "Records"
       ],
       "history": [
-        "306",
+        "315",
         "50/page",
-        "66°",
+        "57°",
         "Apply",
         "Clear",
         "History",
@@ -2794,8 +2775,8 @@
         "Records"
       ],
       "audit": [
-        "306",
-        "66°",
+        "315",
+        "57°",
         "All",
         "Audit",
         "My Roles",
@@ -2805,21 +2786,17 @@
       ],
       "promotions": [
         "+ New promotion",
-        "306",
-        "66°",
+        "57°",
         "Campaigns",
         "Contacts",
         "Money",
         "My Roles",
-        "Opted in",
-        "Promotions",
-        "View",
-        "▶ Closed (1)"
+        "Promotions"
       ],
       "vanity": [
         "+ Add vanity URL",
-        "306",
-        "66°",
+        "315",
+        "57°",
         "Edit",
         "My Roles",
         "Open",
@@ -2828,43 +2805,37 @@
         "Vanity"
       ],
       "notify": [
-        "306",
-        "66°",
-        "Everyone (11)",
+        "57°",
+        "Everyone (0)",
         "Manage templates",
         "My Roles",
+        "No templates yet",
         "Notify",
         "Pick specific",
         "Refresh",
-        "Select to fill from a template",
         "System"
       ],
       "settings": [
-        "306",
-        "66°",
+        "315",
+        "57°",
         "My Roles",
         "Settings",
         "System"
       ],
       "displays": [
-        "306",
-        "66°",
-        "Disconnect",
+        "57°",
         "Displays",
         "My Roles",
-        "Public — waiting room",
-        "Re-pair this screen",
-        "Refresh",
-        "Switch to private",
         "System"
       ],
       "roles": [
-        "306",
-        "66°",
+        "315",
+        "57°",
         "AdminPerspective43 permissions · inherits Worker1",
         "Bookkeeper7 permissions1",
         "Capabilities",
         "CoordinatorPerspective19 permissions · inherits Trainee1",
+        "E2E_MUT_378331 Role0 permissions",
         "Field Clearance3 permissions",
         "Inherits nothing",
         "May charge business expenses1 permission1",
@@ -2885,8 +2856,8 @@
         "WorkerPerspective17 permissions · inherits Trainee2"
       ],
       "portfolios": [
-        "306",
-        "66°",
+        "315",
+        "57°",
         "All properties22",
         "CarrboroZone1",
         "Chapel Hill RouteRoute5",
@@ -2895,6 +2866,7 @@
         "ChathamDistrict5 · 0 own",
         "Directory",
         "DurhamDistrict9",
+        "E2E_MUT_420075 Portfolio0",
         "HillsboroughZone1",
         "Mike's BookBook5",
         "My Roles",
@@ -2911,7 +2883,7 @@
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:15:13.229Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   },
   "districtLead": {
     "capabilities": [
@@ -2996,8 +2968,8 @@
     "landedOn": "staff",
     "controlsByTab": {
       "home": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Home",
         "How was this approximate value calculated?",
         "Insights",
@@ -3020,20 +2992,17 @@
       ],
       "jobs": [
         "+",
-        "44",
-        "66°",
+        "57°",
         "Insights",
         "Jobs",
         "My Roles",
-        "Show me",
-        "Skip",
         "What’s filtered?",
         "Work",
         "today"
       ],
       "tasks": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Actions",
         "My Roles",
         "Show me",
@@ -3044,8 +3013,8 @@
       "services": [
         "+ Estimate",
         "+ Occurrence",
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Accept",
         "Archive",
         "Client change requests",
@@ -3058,9 +3027,9 @@
         "Show me",
         "Show occurrences (1) ▼",
         "Show occurrences (2) ▼",
-        "Show occurrences (6) ▼",
         "Show occurrences (7) ▼",
         "Show occurrences (8) ▼",
+        "Show occurrences (9) ▼",
         "Skip",
         "View Client",
         "View Property",
@@ -3068,25 +3037,36 @@
         "Work"
       ],
       "repeating": [
-        "44",
-        "66°",
-        "Due",
+        "1 to review",
+        "14 scheduled",
+        "2 expired",
+        "2 paused",
+        "24 repeating",
+        "3 not being served",
+        "48",
+        "57°",
+        "8 cannot be paused yet",
+        "Customer",
         "Edit pause",
         "Go to Payments",
+        "Message",
         "My Roles",
+        "Next visit",
         "Open",
         "Pause repeating",
+        "Reason",
         "Repeating",
         "Resume repeating",
-        "Select these 13",
+        "Service",
         "Show me",
         "Skip",
+        "State",
         "What’s filtered?",
         "Work"
       ],
       "routes": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Advanced settings· Claimed only · 10% buffer",
         "Insights",
         "My Roles",
@@ -3100,15 +3080,35 @@
         "today"
       ],
       "equipment": [
-        "66°",
+        "48",
+        "57°",
+        "Choose a range…",
+        "Details▼",
+        "Edit",
+        "End maintenance",
         "Equipment",
+        "Filter",
+        "Force release",
+        "Insights",
         "Inventory",
         "My Roles",
+        "Reserve",
+        "Reserve (1)",
+        "Reserve (2)",
+        "Reserve for worker…",
+        "Retire",
+        "Return for Admin Worker",
+        "Return for Contractor Worker",
+        "Return for Trainee Worker",
+        "Show me",
+        "Skip",
+        "Start maintenance",
+        "Unretire",
         "What’s filtered?"
       ],
       "collections": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Collections",
         "Delete",
         "Edit",
@@ -3121,18 +3121,21 @@
         "What’s filtered?"
       ],
       "vehicles": [
-        "66°",
+        "48",
+        "57°",
         "Equipment",
         "Insights",
         "My Roles",
         "Show archived",
+        "Show me",
+        "Skip",
         "Vehicles",
         "What’s filtered?",
         "last month"
       ],
       "supplies": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Low stock",
         "Money",
         "My Roles",
@@ -3142,8 +3145,8 @@
         "What’s filtered?"
       ],
       "clients": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Archive",
         "Clients",
         "Contacts (1)",
@@ -3163,31 +3166,15 @@
         "What’s filtered?"
       ],
       "properties": [
-        "44",
-        "66°",
-        "Archive",
-        "Chen Residence JOB",
-        "Dave Reeves",
+        "57°",
         "Directory",
-        "Edit",
-        "Lisa Chen",
-        "Martinez Family JOB",
         "My Roles",
-        "O'Brien Family JOB",
         "Properties",
-        "River Bend Office Park JOB",
-        "Sean O'Brien",
-        "Show me",
-        "Skip",
-        "Sofia Martinez",
-        "Susan Park",
-        "Tom Walters",
-        "What’s filtered?",
-        "Willowbrook HOA JOB"
+        "What’s filtered?"
       ],
       "users": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Directory",
         "My Roles",
         "Set Contractor",
@@ -3201,8 +3188,8 @@
         "What’s filtered?"
       ],
       "groups": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Archive",
         "Directory",
         "Edit",
@@ -3215,25 +3202,25 @@
         "What’s filtered?"
       ],
       "pricing": [
-        "66°",
+        "48",
+        "57°",
         "Money",
         "My Roles",
         "Pricing",
+        "Show me",
+        "Skip",
         "What’s filtered?"
       ],
       "statistics": [
-        "44",
-        "66°",
+        "57°",
         "Insights",
         "My Roles",
-        "Show me",
-        "Skip",
         "Statistics",
         "What’s filtered?"
       ],
       "performance": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Insights",
         "My Roles",
         "North Carolina",
@@ -3243,8 +3230,8 @@
         "What’s filtered?"
       ],
       "timeline": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "My Roles",
         "Records",
         "Show me",
@@ -3253,15 +3240,18 @@
         "What’s filtered?"
       ],
       "documents": [
-        "66°",
+        "48",
+        "57°",
         "Documents",
         "My Roles",
         "Records",
+        "Show me",
+        "Skip",
         "What’s filtered?"
       ],
       "activity": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "Collapse all",
         "Engagement",
         "Expand all",
@@ -3272,9 +3262,9 @@
         "What’s filtered?"
       ],
       "history": [
-        "44",
+        "48",
         "50/page",
-        "66°",
+        "57°",
         "Apply",
         "Clear",
         "History",
@@ -3286,23 +3276,20 @@
         "What’s filtered?"
       ],
       "notify": [
-        "44",
-        "66°",
-        "Everyone (11)",
+        "57°",
+        "Everyone (0)",
         "Manage templates",
         "My Roles",
+        "No templates yet",
         "Notify",
         "Pick specific",
         "Refresh",
-        "Select to fill from a template",
-        "Show me",
-        "Skip",
         "System",
         "What’s filtered?"
       ],
       "settings": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "My Roles",
         "Settings",
         "Show me",
@@ -3311,12 +3298,13 @@
         "What’s filtered?"
       ],
       "roles": [
-        "44",
-        "66°",
+        "48",
+        "57°",
         "AdminPerspective43 permissions · inherits Worker1",
         "Bookkeeper7 permissions1",
         "Capabilities",
         "CoordinatorPerspective19 permissions · inherits Trainee1",
+        "E2E_MUT_378331 Role0 permissions",
         "Field Clearance3 permissions",
         "May charge business expenses1 permission1",
         "May pull inventory1 permission",
@@ -3336,32 +3324,15 @@
         "WorkerPerspective17 permissions · inherits Trainee2"
       ],
       "portfolios": [
-        "44",
-        "66°",
-        "All properties9",
-        "CarrboroZone0",
-        "Chapel Hill RouteRoute0",
-        "Chapel Hill WestZone0",
-        "Chapel HillDistrict0",
-        "ChathamDistrict0",
+        "57°",
         "Directory",
-        "DurhamDistrict9",
-        "HillsboroughZone0",
-        "Mike's BookBook3",
         "My Roles",
-        "North CarolinaState9 · 0 own",
-        "PittsboroZone0",
         "Portfolios",
-        "Show me",
-        "Show retired",
-        "Skip",
-        "TriangleMarket9 · 0 own",
-        "What’s filtered?",
-        "Who leads what · 1"
+        "What’s filtered?"
       ]
     },
     "tabsWithNoControls": [],
     "tabsUnreachable": [],
-    "takenAt": "2026-11-09T16:29:51.035Z"
+    "takenAt": "2026-11-13T17:47:44.395Z"
   }
 }
