@@ -368,3 +368,49 @@ already did the right thing.
    iterates `webFilesContaining("<TabExplainer")`, so a tab without one was
    never in the loop; a new rule asserts every staff tab has one, exempting
    only the five client-portal tabs and the two shell values.
+
+## Row density — compact / expanded (2026-11-16)
+
+The table collapses to **one line per stream**, the way Work → Jobs cards
+do. Measured on the dev book: an expanded row is **122px**, a compact one
+**42px** — 12 rows on a 1280×900 screen instead of 5. Row COUNT is
+identical at both rungs; density is not a filter.
+
+**Two rungs, not Jobs' three.** A job card is free-form and can lose its
+middle; a table row is a set of columns, and the only honest reductions are
+"every column's full content" and "every column's first line". A third rung
+would have to drop whole columns, which breaks the alignment `COLS` exists
+to protect.
+
+Every column keeps its first line and loses its second. Two things survive:
+the **status badge** (a State column with no state defeats the mode) and
+**Open** (the scan exists to find a row; opening it is the next act, and
+one button costs no height). The **expired badge goes** — the column is
+116px and the badge cannot share it with a date, and wrapping it would make
+expired rows taller than the rest. Nothing is lost: the row's LEFT STRIPE
+already carries expired-vs-silenced, and was built to read without reading
+any cell.
+
+`density` is persisted (`seedlings_repeating_density`, default `expanded`);
+per-row overrides are NOT, and are cleared whenever the global rung changes.
+Same split Jobs makes between its density and its day-map.
+
+### A testid must not borrow the prefix its rows are counted by
+
+`data-testid="repeating-row-toggle"` on the per-row chevron broke three
+specs instantly: they count rows with `[data-testid^="repeating-row-"]`, so
+every row matched twice — **7 rows read as 14, 66 as 132**. Renamed to
+`repeating-disclosure`.
+
+`tsc` cannot see this (a testid is a string) and the build gate cannot
+either (it scans row STRUCTURE, not test hooks). **Only the e2e run caught
+it**, in ~2 minutes — the case for running the specs on a markup change
+that looks purely cosmetic. The suite has just 3 prefix selectors in all
+(`repeating-row-`, `theme-option-`, `theme-chip-option-`), so this is a
+narrow trap rather than a repo-wide rule — but those three are live.
+
+**Not gated, deliberately.** "Every cell reduces to one line" is held by
+the `!compact` guards alone: add a detail line without one and compact rows
+go ragged with nothing failing. The mechanical versions of that check are a
+hardcoded list of today's elements, which rots the first time a sixth is
+added.

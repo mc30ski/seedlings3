@@ -565,6 +565,93 @@ A chip now names **both halves of the pair** (`{palette}.solid` /
 back the height, border and font size the recipe imposes. Measured, not
 eyeballed: all six chips are 20px tall, 12px text, no border. Gated.
 
+## Row density: compact and expanded (2026-11-16)
+
+Rows collapse to ONE LINE each, the way Work → Jobs cards do. Measured on
+the dev book: an expanded row is **122px**, a compact one **42px** — twelve
+streams on a 1280×900 screen instead of five.
+
+**The row COUNT is identical at both rungs.** Density changes how much of
+each row is drawn, never which rows are drawn, and the summary-strip counts
+do not move. That is why the control may sit in the filter row without
+breaking the rule that every filter on this screen has exactly one control.
+
+### Two rungs, not the three Jobs uses
+
+A job card is free-form, so it can lose its middle detail and still be a
+card. A table row is a set of columns, and the only honest reductions are
+"every column's full content" and "every column's first line". A third rung
+would have to drop whole columns, which is exactly the alignment `COLS`
+exists to protect.
+
+Every column keeps its first line and loses its second — the property name,
+the service description, "last served", the resume reminder, the money
+clocks, the blocked reason, the Go-to-Payments link, the free-text pause
+note. A rule that kept any ONE of them would give that row a different
+height from its neighbours and undo the scan the mode exists for.
+
+### What survives compaction, and why
+
+- **The status badge.** It is the State column; a State column that
+  sometimes shows no state makes the compact rung useless for the single
+  question it is for.
+- **Open.** The scan exists to find the row that needs attention, and
+  opening it is what anybody does next. Routing that through "expand the
+  row first" would tax every use of the mode, and one button costs no
+  height.
+
+### What does NOT survive: the expired badge
+
+The Next visit column is 116px. A date and an `Expired 13d` chip cannot sit
+side by side in it, and letting the chip wrap underneath would make every
+expired row taller than every other row — precisely the uniformity the
+compact rung produces.
+
+Nothing is lost. The row's **left stripe** already carries this exact
+condition, inked for expired and muted for silenced, and was built to be
+readable without reading any cell. Compact is the mode that cashes that in;
+the day count returns the moment the row is opened.
+
+### Where the state lives
+
+- **`density`** is persisted (`seedlings_repeating_density`, default
+  `expanded`). How somebody likes to read a table is a standing preference,
+  and the default is unchanged so nobody's screen is rewritten for them.
+- **Per-row overrides are NOT persisted**, and are cleared whenever the
+  global rung changes. An override is a question about one customer asked
+  once, not a preference; stored, yesterday's opened rows would sit at
+  odd heights this morning with nothing on screen explaining why. This is
+  the same split Jobs makes between its density and its day-map mode.
+
+The disclosure chevron sits in the **Customer** column, not the actions
+column — that column is a fixed 176px stack whose whole point is that every
+child is the same width and size. The row itself is **not** a click target:
+an expanded row carries pause buttons, a contact menu and a link, and a
+clickable container means every click that misses one of them does
+something the reader did not ask for, on a screen where those buttons pause
+a real customer's service.
+
+### A per-row testid must not borrow the prefix the rows are counted by
+
+The chevron shipped briefly as `data-testid="repeating-row-toggle"`. The
+specs count rows with `[data-testid^="repeating-row-"]`, so every row
+matched twice and three specs failed at once — **7 rows read as 14, 66 as
+132**. It is now `repeating-disclosure`.
+
+Neither `tsc` nor the build gate can see this: a testid is a string, and
+the gate scans the row's structure rather than its test hooks. The e2e run
+caught it in about two minutes, which is the argument for running the specs
+on a markup change that looks purely cosmetic.
+
+### Not gated, deliberately
+
+"Every cell reduces to one line" is held by the `!compact` guards and
+nothing else. Add a detail line without one and the compact rows go ragged
+with no test failing. The mechanical checks available are a hardcoded list
+of the elements that exist today, which rots the first time a sixth is
+added — so the invariant is written down here instead of being half-
+enforced in a way that would read as protection.
+
 ## Multi-select was REMOVED (2026-11-10)
 
 Work → Repeating could tick many rows and pause or resume them together. It
