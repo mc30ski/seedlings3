@@ -99,11 +99,13 @@ import RolesTab from "@/src/ui/tabs/RolesTab";
 import PortfoliosTab from "@/src/ui/tabs/PortfoliosTab";
 
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import NowTab from "@/src/ui/tabs/NowTab";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 import { Me, ClientTabs, StaffTabs, EventTypes } from "@/src/lib/types";
 import { FiActivity, FiAlertCircle, FiArchive, FiBarChart2, FiBell, FiBook, FiBookOpen, FiBox, FiBriefcase, FiCalendar, FiClipboard, FiClock, FiFileText, FiFolder, FiGift, FiGlobe, FiHome, FiLayers, FiLink, FiList, FiMap, FiMapPin, FiMonitor, FiNavigation, FiPackage, FiRefreshCw, FiRepeat, FiRotateCcw, FiScissors, FiSearch, FiSettings, FiShield, FiSmile, FiSpeaker, FiSun, FiTag, FiTool, FiTruck, FiUser, FiUserCheck, FiUsers } from "react-icons/fi";
+import { FiRadio } from "react-icons/fi";
 import { GrUserSettings } from "react-icons/gr";
 import { AiOutlineIdcard, AiOutlineTeam } from "react-icons/ai";
 import { TfiMoney } from "react-icons/tfi";
@@ -162,7 +164,7 @@ const WORKFLOW_ORIGIN_KEY = "seedlings_workflow_origin";
  * Values must match the `category:` on each tab entry below.
  */
 const TAB_CATEGORY: Record<string, string> = {
-  home: "Work", jobs: "Work", routes: "Work", services: "Work", repeating: "Work", tasks: "Work",
+  now: "Work", home: "Work", jobs: "Work", routes: "Work", services: "Work", repeating: "Work", tasks: "Work",
   equipment: "Equipment", collections: "Equipment", vehicles: "Equipment",
   clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
   payments: "Money", payroll: "Money", pricing: "Money", supplies: "Money",
@@ -482,8 +484,27 @@ export default function HomePage() {
   const [equipmentRemountKey, setEquipmentRemountKey] = useState(0);
   const [paymentsRemountKey, setPaymentsRemountKey] = useState(0);
 
-  // Auto-show worker Home tab on first open of the day (after 5am ET) or after ≥6h idle.
+  // Auto-show the morning tab on first open of the day (after 5am ET).
   // Updates `seedlings_lastAppOpenedAt` on every app load. Respects "snooze until next 5am ET".
+  //
+  // WHERE IT LANDS IS A CAPABILITY QUESTION, NOT A ROLE ONE.
+  //
+  // This is the only thing that overrides the remembered tab — `staffTab`
+  // is persisted, so every other load already returns somebody where they
+  // left off. So the whole of "different people should start somewhere
+  // different" is this one destination, and the honest way to decide it is
+  // to ask whether the person can open the tab: `canSeeTab` runs the same
+  // `TAB_REQUIREMENTS` row the strip does, so the landing tab is always one
+  // they actually have.
+  //
+  // A TABLE KEYED ON CUSTOM ROLE WAS THE OTHER OPTION AND IT IS THE DELETED
+  // MODEL REBUILT. A role → tab map has to answer for a role nobody
+  // anticipated — a bookkeeper, an auditor, an observer — and it answers by
+  // falling to whichever bucket it sits nearest, which is exactly how ~500
+  // role-named booleans decided questions they had no business deciding.
+  // There is no role here and there does not need to be: Now for somebody
+  // who watches the operation, Home for somebody who works in it, and the
+  // same question asked both times.
   useEffect(() => {
     // Only triggers for workers, on initial mount, and not on QR-deep-link
     if (typeof window === "undefined") return;
@@ -504,7 +525,7 @@ export default function HomePage() {
       const shouldShow = !snoozed && !isLateEvening && isPastFiveEt && newDay;
       if (shouldShow) {
         setTopTab("staff");
-        setStaffInnerTab("home");
+        setStaffInnerTab(canSeeTab("now", scopeCan) ? "now" : "home");
         setStaffCategory("Work");
       }
       localStorage.setItem("seedlings_lastAppOpenedAt", now.toISOString());
@@ -1209,6 +1230,24 @@ export default function HomePage() {
   const staffTabs = withCapabilityVisibility([
         {
           // ── Work ──
+          // Now — the operation this minute. FIRST because it is the
+          // morning screen: what is happening, and one button to join in.
+          // Home is next, and the two are different subjects — this is the
+          // business's day, Home is yours.
+          value: "now",
+          label: "Now",
+          icon: FiRadio,
+          content: wrapWithInlineMessage(
+            <NowTab
+              scope={scopeBase}
+              onOpenMyDay={() => gotoOperatorSurface({ tab: "home", category: "Work" })}
+              onOpenJobs={() => gotoOperatorSurface({ tab: "jobs", category: "Work" })}
+            />
+          ),
+          category: "Work",
+          categoryIcon: FiHome,
+        },
+        {
           // Operations-pulse dashboard — money / jobs / equipment /
           // team / clients rollup for a rolling period ending today.
           // One period button drives every section. This is the staff
@@ -1219,7 +1258,12 @@ export default function HomePage() {
           content: wrapWithInlineMessage(
             <HomeTab
               me={me}
-              onLaunchWorkflow={() => {}}
+              // WAS `() => {}`. Home's begin/finish hero card calls this,
+              // so the whole card — cursor, hover and action row — was
+              // armed and did nothing when clicked. The workflow itself was
+              // fine the whole time: the Tasks shortcut "Prepare for Work
+              // Day" launches the same id through the same function.
+              onLaunchWorkflow={(name, opts) => launchWorkflow(name, opts)}
               scope={scopeBase}
             />
           ),

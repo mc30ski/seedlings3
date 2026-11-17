@@ -44,6 +44,31 @@ export type TabRequirement = typeof ALWAYS | readonly Entitlement[];
 
 export const TAB_REQUIREMENTS = {
   // ── Daily work ──────────────────────────────────────────────────────
+  // Work → Now — the operation as it stands this minute: who is on the
+  // clock, what they are on, what is left, what is out.
+  //
+  // `schedule.view-all` AND NOTHING ELSE, for the same three reasons the
+  // `repeating` row below carries:
+  //
+  //  · NOT `schedule.view`. That is the baseline every field worker holds,
+  //    and a screen showing where every person in the business is standing
+  //    is an oversight screen, not a field one. A worker's own day is Home.
+  //  · NOT `schedule.manage` as an alternative. The tab's one endpoint
+  //    (`GET /board/now`) is guarded on the read, so an any-of row would
+  //    open this tab for a write-only custom role onto a 403.
+  //  · THE READ IS WIDER THAN THE WRITE on purpose. The production Auditor
+  //    holds this and no schedule write at all; the board renders for them
+  //    in full, and the one action on it (Start working) is gated on having
+  //    a pay class rather than on a capability, because an observer has no
+  //    workday to begin.
+  //
+  // The timeclock panels inside are a SEPARATE grant (`time.view`) and the
+  // server withholds them — see the route. Listing `time.view` here as an
+  // alternative would be the mistake the `workdays` row records: an
+  // entitlement in an any-of row must be able to drive the page, and a
+  // payroll clerk holding only `time.view` would land on a board whose
+  // single fetch refuses.
+  now: ["schedule.view-all"],
   home: ["schedule.view"],
   jobs: ["schedule.view"],
   // ANY-OF, and the row is the UNION of what lights at least one card in

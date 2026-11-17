@@ -95,6 +95,20 @@ export const TAB_NARROWING: Record<string, { grant: Narrowed; lens: Narrowed }> 
   statistics: { grant: true, lens: true },   // GET /statistics
   // GET /dashboard-summary/aggregate, /operations
   home: { grant: true, lens: true },
+  // GET /board/now. The VISITS narrow, and so does everything counted from
+  // them — including who is on the clock, because a worker's rows on this
+  // board are the visits they are on.
+  //
+  // `true` rather than `{ part }`, and the asymmetry is deliberate. Two
+  // panels do not narrow at all: a vehicle out and a piece of equipment
+  // checked out belong to the business, not to a territory, and there is no
+  // honest filter for them. The `{ part }` shape says the opposite of what
+  // is true here — "company-wide APART FROM one panel" — so it would have
+  // the strip calling this a whole-business screen over a job list the
+  // filter had already shortened, which is the exact sentence the
+  // `repeating` entry above was added to stop. The tab labels those two
+  // panels business-wide on their own face instead.
+  now: { grant: true, lens: true },
   // the pending-approval and outstanding-request panels
   tasks: { grant: true, lens: true },
   displays: { grant: true, lens: true },     // GET /photos for the board

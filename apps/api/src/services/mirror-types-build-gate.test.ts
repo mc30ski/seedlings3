@@ -211,4 +211,51 @@ describe("[build-gate] a mirror type matches what it says it mirrors", () => {
         "entry is silencing something it was never written for. Delete it.",
     ).toEqual([]);
   });
+
+  /**
+   * A MIRROR FILE MAY ALSO COPY A CONSTANT, and a constant drifts as quietly
+   * as a type does — more quietly, because nothing about a string array
+   * suggests it has a counterpart.
+   *
+   * `nowBoard.ts` copies `DONE_STATUSES` and `ACTIVE_STATUSES` from
+   * `displays.ts`. The server partitions the day's counts with them; Work →
+   * Now groups the same visits into "Underway" and "Still to do" with its
+   * copy. Add a fourth finished status on the server alone and the tile says
+   * "Left: 3" over a list of four — the numbers stay right and the list
+   * under them quietly stops agreeing.
+   *
+   * Two reads of the same name, compared as sets rather than as text so a
+   * reordering is not reported as drift.
+   */
+  it("a status list copied into a mirror file still matches its source", () => {
+    const WEB_FILE = join(WEB_LIB, "nowBoard.ts");
+    const API_FILE = join(API_SRC, "services/displays.ts");
+    const web = readFileSync(WEB_FILE, "utf-8");
+    const api = readFileSync(API_FILE, "utf-8");
+
+    /** The string literals of `const NAME = [ … ]`, wherever it is declared. */
+    const list = (src: string, name: string): string[] | null => {
+      const m = new RegExp(`\\b${name}\\s*=\\s*\\[([^\\]]*)\\]`).exec(src);
+      if (!m) return null;
+      return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]).sort();
+    };
+
+    for (const name of ["DONE_STATUSES", "ACTIVE_STATUSES"]) {
+      const w = list(web, name);
+      const a = list(api, name);
+      // VACUITY IS THE FAILURE MODE. A rename on either side would make both
+      // reads null, and `null === null` would pass while the gate checked
+      // nothing at all.
+      expect(w, `${name} not found in nowBoard.ts — renamed, or this gate is now vacuous`).not.toBeNull();
+      expect(a, `${name} not found in displays.ts — renamed, or this gate is now vacuous`).not.toBeNull();
+      expect(w!.length, `${name} parsed to an empty list`).toBeGreaterThan(0);
+      expect(
+        w,
+        `${name} differs between nowBoard.ts and displays.ts. The server ` +
+          "partitions the day's counts with its copy and Work → Now groups " +
+          "the same visits with this one, so a difference shows up as a tile " +
+          "that disagrees with the list printed under it.",
+      ).toEqual(a);
+    }
+  });
 });
