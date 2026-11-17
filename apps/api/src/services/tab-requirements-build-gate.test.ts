@@ -265,3 +265,74 @@ describe("G51 — every tab has its own icon", () => {
     ).toEqual([]);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// AN ACTION IS OFFERED ON A CAPABILITY, NOT ON A PAY CLASS.
+//
+// Work → Now carries one action — Start working — on an otherwise read-only
+// board. It shipped gated on `me?.workerType` being set, which asks "is this
+// person on the payroll". That is a different question from "may this person
+// pick up work", and the gap is a real account: an UNPAID observer HAS a
+// worker type, so the live book's read-only Auditor was offered a button to
+// start her working day.
+//
+// `work.claim` is the question — clearance to do field work, the same
+// capability `POST /occurrences/:id/claim` is guarded on and the same one
+// `isFieldCleared` asks. It also subsumes the pay-class check it replaced,
+// because `can()` refuses a null `workerType` before it walks any roles
+// (G31), so the capability cannot be held without one.
+//
+// WHY THIS IS SCOPED TO ONE FILE rather than written as a general rule. A
+// pay class legitimately decides a great deal of what the app DRAWS — which
+// cost fields a contractor sees, how a split is explained — and a gate that
+// flagged every `workerType` in a render condition would be wrong far more
+// often than it was right, which is how a rule teaches people to ignore it.
+// What is never legitimate is a pay class deciding whether an ACTION is
+// offered. This asserts that for the one control where it has already been
+// got wrong; widen it the next time a second control earns the same note.
+describe("Work → Now offers its action on a capability", () => {
+  const NOW_TAB = path.join(WEB, "src/ui/tabs/NowTab.tsx");
+
+  it("gates Start working on `work.claim`, and on no pay class", () => {
+    const src = fs.readFileSync(NOW_TAB, "utf8");
+
+    // VACUITY FIRST. If the card is renamed or removed, every assertion
+    // below passes by finding nothing.
+    expect(
+      src.includes('data-testid="now-start-working"'),
+      "the Start working card is gone from NowTab — if that is deliberate, " +
+        "delete this gate; it is now checking nothing.",
+    ).toBe(true);
+
+    expect(
+      src,
+      "Start working must ask for `work.claim`. Anything else offers the " +
+        "action to somebody the claim endpoint would refuse.",
+    ).toMatch(/scope\.can\("work\.claim"\)/);
+
+    // The destination is Home, so the reader has to be able to open Home —
+    // read from the same TAB_REQUIREMENTS row the tab strip uses, not from
+    // this file's own idea of what Home costs.
+    expect(
+      src,
+      "the card navigates to Home, so it must check that Home is reachable",
+    ).toMatch(/canSeeTab\("home",\s*scope\.can\)/);
+
+    const payClass = src
+      .split("\n")
+      .map((line, i) => [line, i + 1] as const)
+      .filter(([line]) => /\bworkerType\b/.test(line))
+      .filter(([line]) => {
+        const t = line.trim();
+        return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+      })
+      .map(([line, n]) => `NowTab.tsx:${n}  ${line.trim().slice(0, 78)}`);
+    expect(
+      payClass,
+      "NowTab reads `workerType` in live code. The action on this tab is " +
+        "gated on `work.claim`; a pay class standing in for it lets an " +
+        "UNPAID observer be offered a working day, which is how this " +
+        "shipped the first time.",
+    ).toEqual([]);
+  });
+});

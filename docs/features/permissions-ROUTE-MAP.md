@@ -13,7 +13,7 @@
 > same commit that added one (`d3c277a4`, 2026-10-27) and was wrong from the
 > day it landed.
 
-656 distinct method+path pairs, 0 unmapped, 65 entitlements.
+657 distinct method+path pairs, 0 unmapped, 65 entitlements.
 
 Nine duplicated read routes were DELETED outright rather than renamed: an `admin`-prefixed and a `super`-prefixed path for `/documents` (and the same for `/timeline`) ran the same handler twice, differing only in `restrictedVisible` — and gated on the SAME entitlement, so the URL prefix was the only thing separating them. That let the CLIENT pick its own privilege level by choosing a URL. A path is not a check. Each pair is now one route on a neutral path (`/documents`, `/timeline`) that decides how much to return from a capability.
 
@@ -726,9 +726,10 @@ reschedule visits". Gated as **G18**.
 | `GET` | `/weather/location` |
 | `GET` | `/weather` |
 
-## schedule.view-all  (1)
+## schedule.view-all  (2)
 | | |
 |---|---|
+| `GET` | `/board/now` |
 | `GET` | `/repeating-streams` |
 
 ## settings.manage  (3)

@@ -44,6 +44,7 @@ export type StaffTabs =
   | "jobs"
   | "ledger"
   | "notify"
+  | "now"
   | "payments"
   | "payroll"
   | "pricing"

@@ -1748,6 +1748,61 @@ Respond ONLY with valid JSON in this exact format:
     }
     return services.board.getBoard(portfolioWhere(req.principal, "schedule.view"));
   });
+
+  /**
+   * WHAT IS HAPPENING RIGHT NOW — the back-office board, in the app.
+   *
+   * THIS IS THE WALL DISPLAY'S PRIVATE BOARD, not a second derivation of
+   * it. `buildPrivateBoard` already answers "who is on the clock, what are
+   * they on, who was assigned work and never clocked in, what is out, how
+   * much of today is done" — it was simply unreachable without a paired
+   * device token. A parallel query here would be a third copy of "today",
+   * and this repo has paid for that shape before: the Take Payment preview
+   * re-derived a payout that `reconcileApproval` owned and drifted into
+   * quoting an employee $52.50 against $105 actually paid.
+   *
+   * `schedule.view-all` — the whole-book read, the same rung Work →
+   * Repeating opens on, and NOT `schedule.view`, which is the baseline
+   * every field worker holds. A list of where everyone in the business is
+   * standing is an oversight screen. The actions the Now tab offers gate
+   * themselves inside it, so an oversight reader (the Auditor role holds
+   * this read and no schedule write) gets the board with no buttons.
+   *
+   * NARROWED BY PORTFOLIO, through the same helper every other
+   * occurrence-rooted surface uses, so a lens or a territory grant reaches
+   * the job list here exactly as it reaches Jobs and Statistics. What it
+   * deliberately does NOT narrow is on `BoardScope`.
+   *
+   * No view-as parameter, and none is missing: this endpoint is not a
+   * `GET /me/*` and has no notion of a subject. It reports the operation,
+   * not a person's day — the person's day is Home.
+   */
+  app.get("/board/now", req_scheduleViewAll, async (req: any) => {
+    const board = await displays.buildPrivateBoard({
+      occurrenceWhere: occurrencePortfolioWhere(req.principal, "schedule.view-all"),
+    });
+    // `mode` has nothing to discriminate here and the photo URLs need a
+    // display token — see `NowBoard`. Dropped rather than sent and ignored.
+    const { mode, photos, onTheClock, assignedNotClockedIn, ...rest } = board;
+
+    // ATTENDANCE IS `time.view`, WHICH THIS GUARD DOES NOT IMPLY.
+    //
+    // `callerCan` reads `req.principal`, so it honours an active
+    // perspective — resolving the caller with a fresh database read would
+    // restore powers their perspective had set aside, and that bug has
+    // shipped here three times.
+    //
+    // The `not_clocked_in` attention row names the same people in its
+    // `detail`, so withholding the panels and leaving that row would hand
+    // the names over through the back door.
+    if (!callerCan(req, "time.view")) {
+      return {
+        ...rest,
+        attention: rest.attention.filter((a) => a.kind !== "not_clocked_in"),
+      } satisfies displays.NowBoard;
+    }
+    return { ...rest, onTheClock, assignedNotClockedIn } satisfies displays.NowBoard;
+  });
   app.get("/occurrences", req_scheduleView, async (req: any) => {
     const { from, to, includeOccId, viewAsUserId, selfScoped } = (req.query || {}) as { from?: string; to?: string; includeOccId?: string; viewAsUserId?: string; selfScoped?: string };
     // `?selfScoped=1` asks for the list as the caller's OWN work, so peek

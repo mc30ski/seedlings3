@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: d1686705-f7d7-47c4-8f20-2cd1389e185a
-  modified: 2026-10-18T00:00:00.000Z
+  modified: 2026-11-16T00:00:00.000Z
 ---
 
 # Canonical tab ordering
@@ -31,7 +31,7 @@ Read both rather than trusting a number here.
 
 | Category | Tabs, in order |
 |---|---|
-| Work | home, jobs, routes, services, **repeating**, tasks |
+| Work | **now**, home, jobs, routes, services, **repeating**, tasks |
 | Equipment | equipment, collections, vehicles |
 | Directory | clients, properties, users, groups |
 | Money | payments, payroll, ledger, pricing, supplies, promotions, forecast |
@@ -88,3 +88,27 @@ Not yet fixed, and nothing asserts the two lists agree — G44 checks
 
 **Adding a tab means three edits:** the `staffTabs` entry, a `TAB_CATEGORY`
 row, and a `TAB_REQUIREMENTS` row. Only the third is gated.
+
+## It is FIVE edits, not three (measured 2026-11-16 building Work → Now)
+
+The three above are the ones that make the tab exist. Two more are needed
+before it compiles or tells the truth:
+
+4. **`StaffTabs` in `apps/web/src/lib/types.ts`** — the union every
+   `setStaffInnerTab` call is typed against. Without it the build fails, so
+   this one announces itself.
+5. **`TAB_NARROWING` in `src/lib/portfolioFilteredTabs.ts`**, *if* the tab's
+   endpoints narrow by portfolio — and then also a `TAB_ENDPOINTS` row in
+   G50 (`permissions-build-gate.test.ts`), which fails the build until you
+   name the endpoint that makes the claim true. Omitting #5 is the silent
+   one: the purple strip says "this tab shows the whole business" over a
+   filtered list. See [[project_repeating_tab]].
+
+Plus a `TabExplainer` inside the tab, or there is no (i) in the breadcrumb —
+an absence nobody notices, because the evidence is one missing icon on one
+tab out of thirty. Repeating shipped without one for months.
+
+The explainer brings layout rules with it, enforced by
+`job-materials-build-gate`: it must be the FIRST thing in the tab's root
+return (no Text/Button/Heading above it), and the root element may carry no
+horizontal or top padding.

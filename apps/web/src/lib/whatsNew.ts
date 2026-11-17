@@ -74,6 +74,21 @@ export type WhatsNewEntry = {
 
 export const WHATS_NEW: WhatsNewEntry[] = [
   {
+    id: "now-tab",
+    headline: "See what is happening right now",
+    body:
+      "Work → Now is the shop display's board, in the app: who is on the " +
+      "clock, what they are on, what is left, and which trucks and tools " +
+      "are out. It does not refresh itself — press Refresh, and check the " +
+      "“as of” time beside it.",
+    // `schedule.view-all` — what GET /board/now is guarded on, so this
+    // reaches exactly the people the tab opens for, including the read-only
+    // oversight tier who can watch the board but act on none of it.
+    requires: "schedule.view-all",
+    showMe: { tab: "now", category: "Work" },
+    shippedOn: "2026-11-16",
+  },
+  {
     id: "repeating-tab",
     headline: "Every repeating job occurrence in one place",
     // ONE ANNOUNCEMENT, NOT TWO. The expired marker and the waiting

@@ -8,12 +8,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createHash, randomBytes, randomInt } from "crypto";
-import type { OccurrenceWorkflow } from "@prisma/client";
+import { Prisma, type OccurrenceWorkflow } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { etToday, etMidnight, etEndOfDay, etAddDays, etAddMonths, etFormatDate } from "../lib/dates";
 import { businessLatLng } from "../lib/businessLocation";
 import { cached } from "../lib/cache";
 import { fetchWeatherAlerts } from "./weatherAlerts";
+import { withPortfolio } from "../lib/portfolioScope";
 import { buildLandingPageUrl, loadPromotionSettings } from "./promotions";
 
 /** How long a pairing code is good for. Short on purpose: a code lying around
@@ -312,6 +313,61 @@ export type BoardJob = {
   crew: string[];
 };
 
+/**
+ * A PORTFOLIO NARROWING TO APPLY TO THIS BOARD, and the one knob the board
+ * builder takes.
+ *
+ * The wall display passes nothing and is byte-identical to before. The
+ * in-app Now tab passes the caller's narrowing, so a district lead — or
+ * anyone who picked a portfolio from the header chip — sees their own
+ * territory's day rather than the whole business's.
+ *
+ * IT REACHES THE OCCURRENCE QUERIES AND NOTHING ELSE, deliberately. A
+ * visit belongs to a portfolio through its property; a vehicle, a piece of
+ * equipment and a timeclock punch do not belong to one at all, and there is
+ * no honest way to narrow them. So the job list and everything derived from
+ * it narrow, and those three panels stay business-wide — which is why
+ * `NowTab` labels them as such rather than letting the reader assume the
+ * whole screen moved. Inventing a narrowing for them would be worse than
+ * not having one: a lensed board would under-report who is out.
+ *
+ * Built by the ROUTE with `occurrencePortfolioWhere`, not here — this module
+ * knows nothing about a principal, and the shape it wants is already a
+ * solved problem one layer up.
+ */
+export type BoardScope = {
+  /** A `where` fragment rooted on JobOccurrence. Empty/absent = unfiltered. */
+  occurrenceWhere?: Record<string, unknown>;
+};
+
+/**
+ * THE BACK-OFFICE BOARD AS THE APP SERVES IT.
+ *
+ * TWO FIELDS ARE DROPPED. `mode` has nothing to discriminate — this
+ * endpoint has one payload. `photos` is unusable here: every URL points at
+ * `/api/public/display/photo/:id`, which requires a DISPLAY token and 401s
+ * for a signed-in user, so shipping them would render as a row of broken
+ * tiles.
+ *
+ * TWO MORE ARE OPTIONAL, AND THAT IS A CAPABILITY, NOT A LOADING STATE.
+ * Who is on the clock is attendance, which is `time.view` — a rung the
+ * board's own guard (`schedule.view-all`) does not imply. The route omits
+ * both clock fields for a caller without it, and filters the matching
+ * `not_clocked_in` row out of `attention`, which carries the same names in
+ * its `detail`.
+ *
+ * WITHHELD ON THE SERVER, not hidden in the UI. A panel the browser
+ * declines to draw over data the server already sent is not a gate: the
+ * payload is one `curl` away. The web type keeps these optional so the tab
+ * can say "you cannot see this" rather than drawing an empty panel that
+ * reads as "nobody is working" — those two must never look alike.
+ */
+export type NowBoard = Omit<
+  PrivateBoard,
+  "mode" | "photos" | "onTheClock" | "assignedNotClockedIn"
+> &
+  Partial<Pick<PrivateBoard, "onTheClock" | "assignedNotClockedIn">>;
+
 export type PrivateBoard = {
   mode: "PRIVATE";
   generatedAt: string;
@@ -393,7 +449,7 @@ const doneWorkBetween = (from: Date, to: Date) => ({
  *  which are sales workflow rather than field work. */
 const OFF_BOARD_STATUSES = ["CANCELED", "ARCHIVED", "REJECTED", "PROPOSAL_SUBMITTED"] as const;
 
-export async function buildPrivateBoard(): Promise<PrivateBoard> {
+export async function buildPrivateBoard(scope: BoardScope = {}): Promise<PrivateBoard> {
   const dateKey = etToday();
   const dayStart = etMidnight(dateKey);
   const dayEnd = etEndOfDay(dateKey);
@@ -407,10 +463,16 @@ export async function buildPrivateBoard(): Promise<PrivateBoard> {
       orderBy: { startedAt: "asc" },
     }),
     prisma.jobOccurrence.findMany({
-      where: {
-        startAt: { gte: dayStart, lte: dayEnd },
-        status: { notIn: [...OFF_BOARD_STATUSES] },
-      },
+      // NARROWED, when the caller asked for a narrowing. `withPortfolio`
+      // composes via AND rather than spreading, so it cannot collide with
+      // the two keys already here — see its own note on why that matters.
+      where: withPortfolio<Prisma.JobOccurrenceWhereInput>(
+        {
+          startAt: { gte: dayStart, lte: dayEnd },
+          status: { notIn: [...OFF_BOARD_STATUSES] },
+        },
+        scope.occurrenceWhere ?? {},
+      ),
       include: {
         job: {
           select: {
@@ -428,10 +490,13 @@ export async function buildPrivateBoard(): Promise<PrivateBoard> {
     // Anything scheduled before today that never finished. This is the queue
     // that actually costs money to ignore.
     prisma.jobOccurrence.findMany({
-      where: {
-        startAt: { gte: etMidnight(etAddDays(dateKey, -30)), lt: dayStart },
-        status: { in: ["SCHEDULED", ...ACTIVE_STATUSES] },
-      },
+      where: withPortfolio<Prisma.JobOccurrenceWhereInput>(
+        {
+          startAt: { gte: etMidnight(etAddDays(dateKey, -30)), lt: dayStart },
+          status: { in: ["SCHEDULED", ...ACTIVE_STATUSES] },
+        },
+        scope.occurrenceWhere ?? {},
+      ),
       select: { id: true },
     }),
     // A vehicle is "in use" while its mileage entry is still open — the driver
@@ -471,11 +536,14 @@ export async function buildPrivateBoard(): Promise<PrivateBoard> {
     prisma.jobOccurrencePhoto.findMany({
       where: {
         hiddenFromPublicAt: null,
-        occurrence: {
-          status: { in: [...DONE_STATUSES] },
-          startAt: { gte: dayStart, lte: dayEnd },
-          ...NON_JOB_WORKFLOW_EXCLUSION,
-        },
+        occurrence: withPortfolio<Prisma.JobOccurrenceWhereInput>(
+          {
+            status: { in: [...DONE_STATUSES] },
+            startAt: { gte: dayStart, lte: dayEnd },
+            ...NON_JOB_WORKFLOW_EXCLUSION,
+          },
+          scope.occurrenceWhere ?? {},
+        ),
       },
       orderBy: { createdAt: "desc" },
       // A strip, not a wall. It shows what today looked like at a glance and

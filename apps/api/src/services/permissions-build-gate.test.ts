@@ -2803,6 +2803,13 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
       tasks: ["/payments/pending", "/payment-requests/outstanding"],
       displays: ["/photos"],
       repeating: ["/repeating-streams"],
+      // `/board/now` — the occurrence queries inside `buildPrivateBoard`
+      // narrow through the fragment the route hands it. Two panels on that
+      // tab (vehicles out, equipment out) deliberately do not narrow, and
+      // the tab labels them business-wide rather than the strip doing it —
+      // see the TAB_NARROWING entry for why `{ part }` would say the
+      // opposite of what is true there.
+      now: ["/board/now"],
       // Narrowed by a grant and deaf to a lens — see TAB_NARROWING.
       performance: ["/reports/portfolio-performance"],
       // Company-wide tabs with one narrowed panel each. They are in the
@@ -2985,6 +2992,106 @@ describe("[G50] the portfolio strip tells the truth about the open tab", () => {
           "words 'the whole business' from a tab where they are exactly true.",
       ).toBe(false);
     }
+  });
+
+  /**
+   * WORK → NOW: THE NARROWING IS CLAIMED IN TWO PLACES AND APPLIED IN A
+   * THIRD, SO SOMETHING HAS TO JOIN THEM UP.
+   *
+   * `TAB_NARROWING` tells the operator this tab obeys their portfolio, and
+   * `TAB_ENDPOINTS` above records `/board/now` as the reason. Neither looks
+   * at the route. The endpoint check one level up is FILE-level — it asks
+   * whether the route file calls `portfolioWhere` anywhere, and
+   * `occurrences.ts` calls it dozens of times for other routes — so
+   * deleting the fragment from THIS handler leaves every other assertion
+   * green while the strip goes on promising a narrowing that stopped
+   * happening. That is the shape the `repeating` entry was added to stop,
+   * discovered the same way: a table said "whole business" over a list the
+   * filter had already shortened.
+   *
+   * The second half is the one worth more. `buildPrivateBoard` is SHARED
+   * with the wall display, which passes no scope at all — so every
+   * occurrence query in it has to route through the fragment, and a fourth
+   * query added later without one would narrow nothing and look fine.
+   */
+  it("Work → Now actually narrows, in the route and in the builder", () => {
+    const routes = read(path.join(API, "routes/occurrences.ts"));
+    const at = routes.indexOf('app.get("/board/now"');
+    expect(at, "the route backing the `now` entry must exist").toBeGreaterThan(-1);
+    const handler = routes.slice(at, routes.indexOf("app.", at + 10));
+
+    expect(
+      handler,
+      "GET /board/now must pass the caller's portfolio fragment to the " +
+        "board builder, or TAB_NARROWING is lying to the operator about " +
+        "this tab",
+    ).toMatch(/occurrenceWhere:\s*occurrencePortfolioWhere\(\s*req\.principal,\s*"schedule\.view-all"/);
+
+    // Attendance is `time.view`, which the route's guard does not imply.
+    // Withheld on the SERVER — a panel the browser declines to draw over
+    // data already sent is one `curl` from being read.
+    expect(
+      handler,
+      "the clock panels must be withheld from a caller without `time.view`",
+    ).toMatch(/callerCan\(req, "time\.view"\)/);
+    expect(
+      handler,
+      "and the `not_clocked_in` attention row names the same people in its " +
+        "detail, so it has to go with them",
+    ).toMatch(/kind !== "not_clocked_in"/);
+
+    const disp = read(path.join(API, "services/displays.ts"));
+    const from = disp.indexOf("export async function buildPrivateBoard");
+    const body = disp.slice(from, disp.indexOf("export async function buildPublicBoard"));
+    expect(from, "buildPrivateBoard must exist").toBeGreaterThan(-1);
+
+    // PER QUERY, NOT BY COUNT. The first draft of this compared the number
+    // of `withPortfolio` calls against the number of
+    // `prisma.jobOccurrence.findMany` calls and asserted the first was not
+    // smaller. It passed, and it was measuring nothing: the photo query
+    // also wraps, but it is `jobOccurrencePhoto`, so the two tallies count
+    // different things and the inequality held at 3 ≥ 2 with slack to
+    // spare. Mutation-testing found it — unscoping a query gave 2 ≥ 2 and
+    // adding a fourth unscoped one gave 3 ≥ 3. Both green, both broken.
+    //
+    // Split on `prisma.` so each query is examined inside its own bounds
+    // and one query's wrapper cannot vouch for the next one's.
+    const chunks = body.split(/(?=prisma\.)/);
+    const unscoped: string[] = [];
+    let occQueries = 0;
+    for (const c of chunks) {
+      const head = c.replace(/\s+/g, " ").slice(0, 90);
+      if (/^prisma\.jobOccurrence\.findMany\(/.test(c)) {
+        occQueries++;
+        if (!/where:\s*withPortfolio<[^>]*>\(/.test(c)) unscoped.push(head);
+      }
+      // Rooted on a photo, FILTERED on its occurrence — so the fragment
+      // belongs one level in rather than on the `where` itself.
+      if (/^prisma\.jobOccurrencePhoto\.findMany\(/.test(c)) {
+        occQueries++;
+        if (!/occurrence:\s*withPortfolio<[^>]*>\(/.test(c)) unscoped.push(head);
+      }
+    }
+    expect(occQueries, "the board must read occurrences at all").toBeGreaterThan(1);
+    expect(
+      unscoped,
+      "an occurrence query in buildPrivateBoard does not route its `where` " +
+        "through the caller's fragment, so it returns the whole business to " +
+        "a portfolio-limited reader while the Now tab's strip says the " +
+        "opposite. Wrap it in `withPortfolio(..., scope.occurrenceWhere ?? " +
+        "{})` like the others.",
+    ).toEqual([]);
+
+    // And every wrapper must pass the CALLER's scope. `withPortfolio(x, {})`
+    // satisfies the shape above and filters nothing.
+    const wrappers = [...body.matchAll(/withPortfolio<[^>]*>\(/g)].length;
+    const applied = [...body.matchAll(/scope\.occurrenceWhere \?\? \{\}/g)].length;
+    expect(
+      applied,
+      `${wrappers} withPortfolio call(s) in buildPrivateBoard but ${applied} ` +
+        "of them pass `scope.occurrenceWhere` — one is wrapping an empty " +
+        "fragment, which is a filter that filters nothing.",
+    ).toBe(wrappers);
   });
 });
 
