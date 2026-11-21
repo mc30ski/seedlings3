@@ -7,10 +7,12 @@ metadata:
 
 **`Role` (WORKER/ADMIN/SUPER/STAFF) and `UserRole` are DELETED** as of
 2026-10-12. A role is a `CustomRole` row — name, entitlement set, parent to
-inherit from. **61 entitlements** (`roles.view` added 2026-10-15 to split
-SEEING the role catalogue from EDITING it), each carrying a human sentence in
-`packages/permissions/entitlements.ts` that the UI can render. See
-`docs/features/permissions-ROUTE-MAP.md` (**656 rows as of 2026-11-10, GENERATED** —
+inherit from. **68 entitlements** — re-counted 2026-11-21 from
+`ENTITLEMENTS.length`, having said 61 since 2026-10-15; count it, don't
+trust this number — each carrying a human sentence in
+`packages/permissions/entitlements.ts` that the UI can render. (`roles.view`
+was added 2026-10-15 to split SEEING the role catalogue from EDITING it.) See
+`docs/features/permissions-ROUTE-MAP.md` (**657 rows as of 2026-11-21, GENERATED** —
 `npm run routemap` / `routemap:check`, from
 `apps/api/scripts/build-route-map.ts`; **G5 fails the build whenever it and
 the guards disagree**). **Never hand-reconcile this file.** Three separate

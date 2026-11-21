@@ -74,6 +74,26 @@ export type WhatsNewEntry = {
 
 export const WHATS_NEW: WhatsNewEntry[] = [
   {
+    id: "now-visit-photos",
+    headline: "Photos of today's finished work",
+    body:
+      "Work → Now shows the crew's photos on every finished visit — tap one " +
+      "to page through the rest — and any row opens that visit in Jobs. " +
+      "Tasks and reminders now sit at the foot of the list, no longer " +
+      "counted as visits.",
+    // A SECOND ENTRY RATHER THAN A CHANGE TO `now-tab`, deliberately.
+    // The rule applied to `repeating-tab` below — fold a change into the
+    // entry above it when that entry has never actually reached anybody,
+    // because two announcements firing in the same breath read as two new
+    // things. It does not apply here: production already holds a
+    // FeatureAnnouncementSeen row for `now-tab` (checked, not assumed), so
+    // the tab has been announced and this is a change to something people
+    // have already been shown.
+    requires: "schedule.view-all",
+    showMe: { tab: "now", category: "Work" },
+    shippedOn: "2026-11-21",
+  },
+  {
     id: "now-tab",
     headline: "See what is happening right now",
     body:

@@ -131,6 +131,62 @@ describe("[build-gate] job photo visibility", () => {
       .toMatch(/photo\.hiddenFromPublicAt\)?\s*\)?\s*return reply\.code\(404\)/);
   });
 
+  it("a presigned photo URL never reaches a wall display", () => {
+    // The signed-in Now board gets direct R2 thumbnails, because its caller
+    // can fetch R2 and the display photo route 401s for them. A paired
+    // screen must keep going through that route instead, and the difference
+    // is not stylistic.
+    //
+    // /public/display/photo/:photoId re-checks five things on EVERY image:
+    // the token, the screen's mode, whether it has been revoked, the photo's
+    // opt-out, and whether the visit is finished. A presigned URL answers to
+    // none of them. It is a bearer credential, good for an hour to anyone
+    // who reads it, and unpairing the screen does not invalidate it — so
+    // sending one to a TV in a shop trades five live checks for a link that
+    // outlives the device's authorisation.
+    const disp = read("services/displays.ts");
+
+    // OFF unless asked for. A default-on flag would put the display on the
+    // signing path the moment someone constructed a scope without thinking.
+    const scopeAt = disp.indexOf("export type BoardScope");
+    expect(scopeAt, "BoardScope must exist").toBeGreaterThan(-1);
+    const scope = disp.slice(scopeAt, disp.indexOf("};", scopeAt));
+    expect(scope, "the opt-in flag must exist and be optional")
+      .toMatch(/signedPhotoUrls\?:\s*boolean/);
+
+    // Signing must be REACHED only through the flag, not merely selected by
+    // it afterwards — a presign that always runs and is then discarded still
+    // puts the URL in the payload the moment someone widens the mapping.
+    const privAt = disp.indexOf("export async function buildPrivateBoard");
+    const pubAt = disp.indexOf("export async function buildPublicBoard");
+    const priv = disp.slice(privAt, pubAt);
+    const signAt = priv.indexOf("getDownloadUrl(");
+    expect(signAt, "the private board must presign somewhere").toBeGreaterThan(-1);
+    expect(
+      priv.slice(0, signAt),
+      "presigning must sit behind `if (scope.signedPhotoUrls)` — otherwise " +
+        "every caller signs, including the wall display",
+    ).toMatch(/if \(scope\.signedPhotoUrls\)/);
+
+    // And the two callers must stay on the right side of it.
+    const routes = read("routes/occurrences.ts");
+    const nowAt = routes.indexOf('app.get("/board/now"');
+    expect(nowAt, "the Now route must exist").toBeGreaterThan(-1);
+    expect(
+      routes.slice(nowAt, nowAt + 900),
+      "the signed-in board is the one caller that may ask for presigned URLs",
+    ).toMatch(/signedPhotoUrls:\s*true/);
+
+    const pubRoutes = read("routes/public.ts");
+    const boardAt = pubRoutes.indexOf("buildPrivateBoard");
+    expect(boardAt, "the display route must still build a private board").toBeGreaterThan(-1);
+    expect(
+      pubRoutes.slice(Math.max(0, boardAt - 200), boardAt + 200),
+      "the DISPLAY's board must not ask for presigned URLs — it has a photo " +
+        "route that re-checks the token, the mode, revocation and the opt-out",
+    ).not.toMatch(/signedPhotoUrls/);
+  });
+
   it("the CLIENT'S OWN views never filter on it", () => {
     // The whole point of the opt-out is that it is about other people's eyes.
     // A client missing a photo of their own lawn on their own invoice reads as

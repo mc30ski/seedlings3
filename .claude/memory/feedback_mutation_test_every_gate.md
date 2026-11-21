@@ -1,11 +1,11 @@
 ---
 name: feedback_mutation_test_every_gate
-description: "A build gate that passes the moment you write it proves nothing - plant violations and watch them fail, because the usual defect is a gate scoped too narrowly to see its own subject"
+description: "A build gate OR e2e assertion that passes the moment you write it proves nothing - plant violations and watch them fail. Two failure shapes: a gate scoped too narrowly to see its own subject, and an assertion computed entirely from the set that contains the bug (an identity between wrong numbers still balances)"
 metadata:
   node_type: memory
   type: feedback
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-11-10T19:00:00.000Z
+  modified: 2026-11-21T00:00:00.000Z
 ---
 
 # A gate that passes on first write has proved nothing
@@ -74,3 +74,22 @@ line component it almost never does.
 
 Related: [[reference_build_gates_roster]],
 [[feedback_run_build_gate_after_changes]], [[feedback_never_ship_a_red_spec]].
+
+## A PASSING ASSERTION IS NOT A COVERING ONE (2026-11-21)
+
+Work → Now's counts spec asserted `working + done + left === total` and had
+passed since the tab shipped. It could not see the bug that was actually
+there: tasks and reminders were being counted as visits. They landed in
+`left`, so the partition still added up **perfectly** — 15 = 1 + 7 + 7 —
+while "Visits today" claimed 15 properties had been driven to and the list
+below it showed 13.
+
+An identity between numbers that all come from the same wrong set is
+satisfied by the wrong set. The assertion that caught it compares the number
+to something OUTSIDE that set — the rows actually rendered:
+`total === count('[data-testid="now-visit"]')`. Proven by mutation, which is
+the only reason I know the old one was blind rather than merely redundant.
+
+**Ask of any green assertion: what would have to be true for this to pass
+while the feature is broken?** If the answer is "the bug is inside the set
+the assertion is computed from", it is checking arithmetic, not behaviour.

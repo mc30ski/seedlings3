@@ -15,6 +15,7 @@ import { businessLatLng } from "../lib/businessLocation";
 import { cached } from "../lib/cache";
 import { fetchWeatherAlerts } from "./weatherAlerts";
 import { withPortfolio } from "../lib/portfolioScope";
+import { getDownloadUrl } from "../lib/r2";
 import { buildLandingPageUrl, loadPromotionSettings } from "./promotions";
 
 /** How long a pairing code is good for. Short on purpose: a code lying around
@@ -311,7 +312,38 @@ export type BoardJob = {
   status: string;
   startAt: string | null;
   crew: string[];
+  /** STANDARD/ONE_OFF/ESTIMATE are field work; TASK, REMINDER, FOLLOWUP and
+   *  EVENT are the office's own day. Both belong on a dispatch board — an
+   *  overseer who is not shown today's reminders is being told the day is
+   *  emptier than it is — but only the first kind is a VISIT, and the board
+   *  called every row one. A reminder with no title rendered as the word
+   *  "Visit", under a heading reading "Today's visits", inside a count
+   *  labelled the same. Carrying the workflow lets the reader see which is
+   *  which; `isFieldWork` below is what the counts are built from. */
+  workflow: OccurrenceWorkflow;
+  /** Thumbnails of what the crew actually photographed, newest first, on
+   *  FINISHED field work only — populated when the caller asked for signed
+   *  URLs (see `BoardScope.signedPhotoUrls`) and absent otherwise. */
+  photos?: { id: string; url: string; takenAt: string }[];
 };
+
+/** FIELD WORK versus THE OFFICE'S OWN DAY — a partition of the whole
+ *  `OccurrenceWorkflow` enum, declared here once and asserted exhaustive by
+ *  `display-recovery-build-gate`.
+ *
+ *  Both halves belong on a dispatch board: an overseer who is not shown
+ *  today's reminders is being told the day is emptier than it is. Only the
+ *  first half is a VISIT, and only the first half is counted.
+ *
+ *  WHY A GATED PARTITION RATHER THAN ONE LIST. There was one list —
+ *  `NON_JOB_WORKFLOWS`, four entries — and the enum had grown an eighth
+ *  value, `ANNOUNCEMENT`, that was in neither it nor anyone's mind. So an
+ *  announcement counted as completed field work on the PUBLIC wall, under a
+ *  comment promising that "a client reading '9 scheduled' should be able to
+ *  believe nine properties get visited". A single list cannot notice a value
+ *  nobody added to it; two lists checked against the enum cannot miss one. */
+const FIELD_WORK_WORKFLOWS: OccurrenceWorkflow[] = ["STANDARD", "ONE_OFF", "ESTIMATE"];
+export const isFieldWork = (w: OccurrenceWorkflow) => FIELD_WORK_WORKFLOWS.includes(w);
 
 /**
  * A PORTFOLIO NARROWING TO APPLY TO THIS BOARD, and the one knob the board
@@ -338,6 +370,20 @@ export type BoardJob = {
 export type BoardScope = {
   /** A `where` fragment rooted on JobOccurrence. Empty/absent = unfiltered. */
   occurrenceWhere?: Record<string, unknown>;
+  /**
+   * Attach presigned R2 thumbnails to each finished visit (`BoardJob.photos`).
+   * OFF by default, and the wall display must leave it off.
+   *
+   * A paired screen already has a photo path: `/public/display/photo/:id`,
+   * which re-checks the token, the screen's mode, revocation, the photo's
+   * opt-out and whether the visit is finished — on every single image. A
+   * presigned URL answers to none of that. It is a bearer credential good for
+   * an hour to anyone who reads it, and it cannot be revoked by unpairing the
+   * screen it was sent to. Handing those to a TV in a shop would trade five
+   * live checks for a URL that outlives the device's authorisation, so the
+   * display keeps the route and only the signed-in board gets these.
+   */
+  signedPhotoUrls?: boolean;
 };
 
 /**
@@ -426,8 +472,13 @@ const ACTIVE_STATUSES = ["IN_PROGRESS", "PAUSED"] as const;
 
 /** The public counts are about WORK, so internal workflow rows — a reminder, a
  *  task, a follow-up — must not inflate them. A client reading "9 scheduled"
- *  should be able to believe nine properties get visited. */
-const NON_JOB_WORKFLOWS: OccurrenceWorkflow[] = ["TASK", "REMINDER", "FOLLOWUP", "EVENT"];
+ *  should be able to believe nine properties get visited.
+ *
+ *  The other half of the partition declared above. `ANNOUNCEMENT` was missing
+ *  from this list while the enum had it, so announcements counted as work on
+ *  the public wall; the gate now fails the build if the two lists do not
+ *  cover the enum exactly once each. */
+const NON_JOB_WORKFLOWS: OccurrenceWorkflow[] = ["TASK", "REMINDER", "FOLLOWUP", "EVENT", "ANNOUNCEMENT"];
 const NON_JOB_WORKFLOW_EXCLUSION = { workflow: { notIn: NON_JOB_WORKFLOWS } };
 
 /** FINISHED FIELD WORK IN A WINDOW — the one filter every "work completed"
@@ -445,9 +496,32 @@ const doneWorkBetween = (from: Date, to: Date) => ({
   ...NON_JOB_WORKFLOW_EXCLUSION,
 });
 
-/** Never on a board: cancelled, archived, and the estimate-proposal states,
- *  which are sales workflow rather than field work. */
-const OFF_BOARD_STATUSES = ["CANCELED", "ARCHIVED", "REJECTED", "PROPOSAL_SUBMITTED"] as const;
+/** Never on a board: cancelled, archived, the estimate-proposal states —
+ *  which are sales workflow rather than field work — and STREAM_PAUSED.
+ *
+ *  STREAM_PAUSED is the one that is easy to miss, because a held stream KEEPS
+ *  its occurrence sitting on its original date rather than moving or deleting
+ *  it (see the field comment on `JobOccurrence.streamPausedAt`: "that keeps
+ *  the visit in place"). So a visit held in, say, October is still dated
+ *  today-ish and still carries its assignees, and an exclusion list that
+ *  forgets it lets the whole board treat deliberately-held work as work due
+ *  now. On the private board that read as: the visit listed under "Still to
+ *  do", counted in "Left" and "Visits today", its assignees listed as "has
+ *  work today, not clocked in", and an amber "2 not clocked in" alert naming
+ *  two people who had nothing to turn up for. The schema states the contract
+ *  this list is implementing — "When status = STREAM_PAUSED: worker feeds
+ *  hide the row (no dispatch)" — and the private board IS the dispatch board.
+ *
+ *  Note the sibling overdue query is written as an INCLUSION list and was
+ *  therefore right all along; that asymmetry is why this went unnoticed. Both
+ *  shapes are now gated per-query in display-recovery-build-gate. */
+const OFF_BOARD_STATUSES = [
+  "CANCELED",
+  "ARCHIVED",
+  "REJECTED",
+  "PROPOSAL_SUBMITTED",
+  "STREAM_PAUSED",
+] as const;
 
 export async function buildPrivateBoard(scope: BoardScope = {}): Promise<PrivateBoard> {
   const dateKey = etToday();
@@ -548,24 +622,70 @@ export async function buildPrivateBoard(scope: BoardScope = {}): Promise<Private
       orderBy: { createdAt: "desc" },
       // A strip, not a wall. It shows what today looked like at a glance and
       // is deliberately shallower than the public pool's 300.
-      take: 40,
-      select: { id: true, createdAt: true },
+      // DEEP ENOUGH TO BE "ALL OF THEM", for the signed-in board's viewer.
+      //
+      // 40 was right when this fed one flat strip. It is not enough now that
+      // the rows group by visit and the viewer opens on a whole visit: a
+      // busy day would silently truncate the last visits' photos, and a
+      // viewer that says 3 when there were 9 is worse than no viewer.
+      // Production's heaviest visit carries 14 photos (median 3), so
+      // `PHOTOS_PER_VISIT` of 16 is every real one with headroom, and 240 is
+      // a day of those. Both are caps against pathology, not budgets.
+      take: 240,
+      // `occurrenceId` so the strip can be regrouped onto the visit each
+      // photo came from, and `r2Key` so a signed-in caller can be given a
+      // URL it can actually fetch. Neither leaves the server unless
+      // `signedPhotoUrls` is set.
+      select: { id: true, createdAt: true, occurrenceId: true, r2Key: true },
     }),
   ]);
+
+  // PER-VISIT PHOTOS, for the signed-in board only.
+  //
+  // THE WHOLE VISIT, not a preview of it. The row shows the first few, but
+  // the viewer behind them opens on the lot, and it must not have to go back
+  // to the server to do that: the one endpoint that would serve the rest
+  // (`GET /occurrences/:id/photos`) is guarded on `schedule.contribute`,
+  // which the read-only oversight tier does not hold — so a board built on a
+  // second fetch would quietly show that tier three photos and no way to the
+  // others. This board's own guard already covers the whole book, so the
+  // honest thing is to send them with the row.
+  //
+  // Presigning is local HMAC, not a round trip, so the count costs no I/O —
+  // only payload, which is why the caps above exist at all.
+  const PHOTOS_PER_VISIT = 16;
+  const photosByOccurrence = new Map<string, { id: string; url: string; takenAt: string }[]>();
+  if (scope.signedPhotoUrls) {
+    for (const p of todayPhotos) {
+      const list = photosByOccurrence.get(p.occurrenceId) ?? [];
+      if (list.length >= PHOTOS_PER_VISIT) continue;
+      list.push({
+        id: p.id,
+        url: await getDownloadUrl(p.r2Key),
+        takenAt: p.createdAt.toISOString(),
+      });
+      photosByOccurrence.set(p.occurrenceId, list);
+    }
+  }
 
   const titleOf = (o: (typeof occurrences)[number]) =>
     (o.title ?? "").trim() || (o.jobType ?? "").trim() || "Visit";
   const placeOf = (o: (typeof occurrences)[number]) => shortPlace(o.job?.property);
 
-  const jobs: BoardJob[] = occurrences.map((o) => ({
-    id: o.id,
-    title: titleOf(o),
-    client: o.job?.property?.client?.displayName ?? null,
-    place: placeOf(o),
-    status: o.status,
-    startAt: o.startAt ? o.startAt.toISOString() : null,
-    crew: o.assignees.map((a) => shortPersonName(a.user)),
-  }));
+  const jobs: BoardJob[] = occurrences.map((o) => {
+    const photos = photosByOccurrence.get(o.id);
+    return {
+      id: o.id,
+      title: titleOf(o),
+      client: o.job?.property?.client?.displayName ?? null,
+      place: placeOf(o),
+      status: o.status,
+      startAt: o.startAt ? o.startAt.toISOString() : null,
+      crew: o.assignees.map((a) => shortPersonName(a.user)),
+      workflow: o.workflow,
+      ...(photos ? { photos } : {}),
+    };
+  });
 
   // Jobs per worker, so the clock rows can say what each person is actually on.
   const jobsByUser = new Map<string, BoardJob[]>();
@@ -580,6 +700,7 @@ export async function buildPrivateBoard(scope: BoardScope = {}): Promise<Private
         status: o.status,
         startAt: o.startAt ? o.startAt.toISOString() : null,
         crew: [],
+        workflow: o.workflow,
       });
       jobsByUser.set(a.userId, list);
     }
@@ -611,11 +732,21 @@ export async function buildPrivateBoard(scope: BoardScope = {}): Promise<Private
     })
     .filter((r) => r.jobs > 0);
 
-  const done = jobs.filter((j) => DONE_STATUSES.includes(j.status as any)).length;
-  const inProgress = jobs.filter((j) => ACTIVE_STATUSES.includes(j.status as any)).length;
+  // COUNTED OVER FIELD WORK ONLY, while `jobs` above still carries every row.
+  //
+  // The tiles say "Visits today", and a reminder is not a visit. Keeping both
+  // in `jobs` and counting one of them is deliberate: the reader sees the
+  // whole day, and the number means what it says. The three tiles and the
+  // total are drawn from this one array so they cannot disagree with each
+  // other, or with the panel below them that partitions the same set.
+  const visits = jobs.filter((j) => isFieldWork(j.workflow));
+  const done = visits.filter((j) => DONE_STATUSES.includes(j.status as any)).length;
+  const inProgress = visits.filter((j) => ACTIVE_STATUSES.includes(j.status as any)).length;
 
+  // Nobody assigned, and it is real work. An unclaimed REMINDER is not a
+  // staffing problem, and alerting on one trains people to ignore the strip.
   const unclaimed = occurrences.filter(
-    (o) => o.status === "SCHEDULED" && o.assignees.length === 0,
+    (o) => o.status === "SCHEDULED" && o.assignees.length === 0 && isFieldWork(o.workflow),
   ).length;
 
   // Usually empty, and that is the point — an alert strip that is blank most
@@ -666,8 +797,13 @@ export async function buildPrivateBoard(scope: BoardScope = {}): Promise<Private
           .find(Boolean) ?? "Equipment",
       holder: c.user ? shortPersonName(c.user) : "Unknown",
     })),
-    counts: { done, inProgress, remaining: jobs.length - done - inProgress, total: jobs.length },
-    photos: todayPhotos.map((p) => ({
+    counts: { done, inProgress, remaining: visits.length - done - inProgress, total: visits.length },
+    // STILL 40, deliberately. The query behind it got deeper so the
+    // signed-in board can hand a whole visit to its viewer; this flat strip
+    // is the WALL's, and the wall wants a glance, not a day's archive.
+    // Ordering is `createdAt desc`, so these are the same 40 newest photos
+    // the wall was getting before the take changed.
+    photos: todayPhotos.slice(0, 40).map((p) => ({
       id: p.id,
       url: `/api/public/display/photo/${p.id}`,
       takenAt: p.createdAt.toISOString(),

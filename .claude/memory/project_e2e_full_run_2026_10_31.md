@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-11-01T00:00:29.991Z
+  modified: 2026-11-21T00:00:00.000Z
 ---
 
 First full-suite run since the Area → Portfolio rename. Supersedes the
@@ -23,7 +23,7 @@ representative of each cause re-run against HEAD. All reproduced.
 |---|---|---|
 | Theme chip sits behind an unopened header drawer | 18 | **FIXED** |
 | `/operations`: UI gated `reports.view`, route guards `reports.business` | 2 | **FIXED** |
-| Display photo 404 | 2 | **open, cause UNKNOWN** |
+| Display photo 404 | 2 | **SOLVED 2026-11-21 — empty dev R2 bucket; see below** |
 | Unpaid persona gets a shell | 1 | **FIXED — was test drift, not a bug** |
 | Role → perspective does not persist | 1 | **FIXED — was test drift, not a bug** |
 
@@ -96,12 +96,27 @@ get a shell so the two personas cannot collapse back into one.
 
 `persona-mutations` is now 14/14.
 
-## Still unexplained: display-stale-links (2 specs)
+## ~~Still unexplained~~: display-stale-links — SOLVED 2026-11-21, and the
+## answer was the one this section told you to stop considering
 
-`/api/public/display/photo/:photoId` returns 404 for a photo the board
-just listed. **The cause is not known.** An early guess that dev was
-missing R2 objects was wrong — the board returns relative
-`/api/public/display/photo/<id>` paths, not signed R2 URLs, and no photo
-has `hiddenFromPublicAt` set. Reproduces on HEAD, so it predates the
-portfolio work. Deferred by the operator as dev-only; do not repeat the
-R2 explanation without checking it.
+`/api/public/display/photo/:photoId` returned 404 for a photo the board
+just listed. **The cause was the empty dev R2 bucket** —
+`seedlings-photos-dev` held zero objects against 22 `JobOccurrencePhoto`
+rows. Fixed by running `apps/api/scripts/seed-photo-objects.ts <dir>`; all
+five specs pass.
+
+**READ THIS BEFORE DISMISSING A DIAGNOSIS.** What this section said was:
+"An early guess that dev was missing R2 objects was wrong — the board
+returns relative `/api/public/display/photo/<id>` paths, not signed R2
+URLs." Both halves of that sentence are true and the conclusion does not
+follow. The board serving a relative path says nothing about where the
+ROUTE behind it gets its bytes — it reads R2, so a missing object 404s
+exactly as if the URL had been signed. A true premise was used to retire a
+correct hypothesis, the note then instructed later sessions not to revisit
+it, and [[project_e2e_full_run_2026_11_13]] duly spent its effort on a
+credentials theory instead.
+
+The correct answer was already written down in
+[[project_e2e_preexisting_failures]] section B, nine days before this note
+overruled it. The cost of "do not repeat X without checking" is that nobody
+checks X.

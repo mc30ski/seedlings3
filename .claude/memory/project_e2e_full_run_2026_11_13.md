@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-11-13T00:00:00.000Z
+  modified: 2026-11-21T00:00:00.000Z
 ---
 
 Run after the portfolio-narrowing table, the Repeating `TabExplainer`, the
@@ -20,7 +20,7 @@ commit `1c76b116`). Supersedes [[project_e2e_full_run_2026_10_31]].
 | Failure | Cause |
 |---|---|
 | `auth.setup` → authenticate newhire | Clerk `too_many_requests`. Environmental. |
-| `display-stale-links` × 2 — photo 200→404 while paired | The **already-open** "Display photo 404, cause UNKNOWN" from 10-31. R2 object access in dev. |
+| `display-stale-links` × 2 — photo 200→404 while paired | **SOLVED 2026-11-21: the dev photos bucket was empty.** All 5 specs now pass. |
 | `route-planner` × 2 — `suggestions` null | **No jobs exist on the planned day.** |
 | `tips-owner` — "Total Gross" never visible | **No payroll data in the default window.** |
 
@@ -61,7 +61,25 @@ Neither spec was touched, because the product is right in both cases and
 the next reseed makes them green. If they fail again on fresh seed data,
 *then* there is something to fix.
 
-## The photo 404, now less unknown than it was
+## THE PHOTO 404 IS SOLVED (2026-11-21) — read this before the section below
+
+The dev photos bucket `seedlings-photos-dev` held **zero objects**. The 22
+rows pointed at `seed/landscaping/*.jpg` that were never uploaded, so the
+route's `getObjectBufferIfPresent` correctly found nothing and 404'd.
+
+**The credentials theory below is wrong** and is kept only to show how the
+wrong turn was taken. Presigning a GET for one of those keys succeeds and
+the fetch returns a signed **404**, not a 403 — which is the tell: a
+credential failure cannot produce a signed 404. The earlier
+"`Resolved credential object is not valid`" came from calling the helper
+outside the app's env loading, not from the values themselves.
+
+Fixed by running `apps/api/scripts/seed-photo-objects.ts <dir>`, which
+exists for this and had evidently never been run on this machine. See
+[[project_now_tab]] — the objects now in the bucket are synthetic
+placeholders.
+
+## The photo 404, as it was mis-diagnosed
 
 22 `JobOccurrencePhoto` rows reuse 7 distinct keys
 (`seed/landscaping/00…05,07.jpg`); statuses are publishable and nothing is

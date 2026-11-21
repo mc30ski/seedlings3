@@ -32,6 +32,120 @@ this endpoint has one payload. `photos` is unusable: every URL points at
 `/api/public/display/photo/:id`, which requires a *display* token and 401s
 for a signed-in user, so shipping them would render as broken tiles.
 
+### A held stream is not today's work
+
+`OFF_BOARD_STATUSES` is what today's query excludes: `CANCELED`, `ARCHIVED`,
+`REJECTED`, `PROPOSAL_SUBMITTED` — and `STREAM_PAUSED`.
+
+The last one is the one that is easy to miss, and it shipped missing.
+Pausing a repeating stream **keeps the occurrence where it is** rather than
+moving or deleting it — that is the stated design, so that resume can pick a
+fresh date deliberately. The consequence is that a held visit stays dated,
+keeps its assignees, and looks to any careless query exactly like work
+somebody owes you this morning. On the board that read as: the visit listed
+under *Still to do*, counted in *Left* and *Visits today*, both its assignees
+listed under *Has work today, not clocked in*, and an amber **2 not clocked
+in** alert naming two people who had nothing to turn up for.
+
+The schema already states the contract — *"When status = STREAM_PAUSED:
+worker feeds hide the row (no dispatch)"* — and the private board **is** the
+dispatch board, so hiding it is the contract, not a new policy.
+
+Worth knowing why it went unnoticed: the sibling overdue query is written as
+an **inclusion** list (`SCHEDULED` + the active statuses), so it never
+admitted a held row and was right all along. One query excluding a list and
+its neighbour including one means the two cannot be read against each other
+by eye. `display-recovery-build-gate` now checks **every** status filter in
+the builder, in either shape, so a third query cannot be added with the hole
+re-opened.
+
+### Visits, and the office's own day
+
+The board carries two kinds of row and shows both. `STANDARD`, `ONE_OFF`
+and `ESTIMATE` are field work — **visits**. `TASK`, `REMINDER`, `FOLLOWUP`,
+`EVENT` and `ANNOUNCEMENT` are the office's own day.
+
+Both belong here: an overseer who is not shown today's reminders is being
+told the day is emptier than it is. What they must not be told is that a
+reminder is a visit, and that is what the screen used to say — one list
+served both, under a heading reading *Today's visits*, beneath a tile
+labelled the same, and a titleless reminder rendered as the literal word
+"Visit". The counts now cover field work only; the office rows sit under
+**Also today — not visits**. Same information, fewer lies.
+
+`unclaimed` counts field work only too. An unclaimed reminder is not a
+staffing problem, and alerting on one teaches people to ignore the strip.
+
+**The partition is gated against the enum, not hand-kept.** There used to be
+one list — `NON_JOB_WORKFLOWS`, four entries — and `OccurrenceWorkflow` had
+grown an eighth value, `ANNOUNCEMENT`, that was in nobody's list. So an
+announcement counted as completed field work on the **public** waiting-room
+wall, directly under a comment promising a client could believe the number.
+A single list cannot notice a value nobody added to it, so there are now two
+and `mirror-types-build-gate` fails the build unless they cover the enum
+exactly once each.
+
+## Photos of today's finished work
+
+Each finished visit carries up to four thumbnails of what the crew actually
+photographed. This is the one thing on the board that is *evidence* rather
+than status: a row says "completed" because somebody tapped a button; a
+picture of the lawn cannot be tapped into existence.
+
+They hang on the visit rather than in a strip of their own, so there is
+never a question of which visit a photo came from.
+
+**The URLs are presigned R2 links, and only the signed-in board gets them.**
+A paired wall display keeps using `/public/display/photo/:id`, which
+re-checks five things on every single image — the token, the screen's mode,
+revocation, the photo's opt-out, and whether the visit is finished. A
+presigned URL answers to none of that: it is a bearer credential good for an
+hour to anyone who reads it, and unpairing the screen does not invalidate
+it. Sending those to a TV in a shop would trade five live checks for a link
+that outlives the device's authorisation. So `BoardScope.signedPhotoUrls` is
+off by default, the Now route is the only caller that sets it, and
+`photo-visibility-build-gate` fails the build if the display ever asks.
+
+**The row shows three; the viewer holds the visit.** Three thumbnails and a
+`+N` chip, and clicking either opens the shared `PhotoLightbox` — arrow keys,
+Escape, swipe, and an `n / total` counter, which is the part that makes the
+viewer honest about how many there are.
+
+The whole visit's photos ride in the board payload rather than being fetched
+on click, which is the opposite of what the jobs card does. The jobs card
+calls `GET /occurrences/:id/photos` for the full set, and that route is
+guarded on `schedule.contribute` — which the **read-only oversight tier does
+not hold**. A board built on that second fetch would quietly show an Auditor
+three photos and no way to the rest. This board's own guard already covers
+the whole book, so the photos travel with the row. The cap is 16 per visit
+against production's heaviest visit of 14 (median 3), and 240 for the day.
+
+The viewer is read-only on purpose: the jobs card's own viewer carries Delete
+and a public-visibility toggle, and neither belongs on a tab that opens for
+people who hold neither capability.
+
+## Rows open the visit
+
+Every row — visits and office rows alike — opens that occurrence on Jobs,
+narrowed to it. "Open in Jobs" at the top of the panel already goes to the
+tab; a row that did the same would be the worse version of itself, dropping
+the reader into their own default filters to hunt for the thing they had just
+pointed at.
+
+It uses JobsTab's documented handoff, copied from HomeTab's row click rather
+than reinvented: write `<occId>|<startAt>` to
+`seedlings_jobs_pendingHighlight`, then navigate with `remount: true`. Both
+halves matter — the effect that consumes the key runs once per mount, so
+without the remount a reader already on Jobs gets nothing; and the anchor
+date pins the date filter to that day instead of leaving the row filtered out
+of the reader's own window. JobsTab then filters to the single occurrence and
+shows a **Filtered to 1 occurrence** badge, which is what the e2e asserts on.
+
+The *selection* is unchanged and still deliberately narrow — `hiddenFromPublicAt: null`
+and finished visits only — because the display photo route refuses anything
+else, and a board that selected more broadly would emit URLs that 404 and
+render as dead tiles.
+
 ## Now is not Home
 
 | | Home | Now |
