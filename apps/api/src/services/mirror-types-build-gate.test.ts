@@ -69,6 +69,19 @@ const EQUIVALENT: Record<string, { web: string; api: string; why: string }> = {
       "through an alias, and expanding one would mean type-checking the " +
       "comparison rather than reading it.",
   },
+  "BoardJob.workflow": {
+    web: "string",
+    api: "OccurrenceWorkflow",
+    why:
+      "The web cannot import a Prisma enum, and `string` is genuinely WIDER " +
+      "rather than equal — so this entry is not claiming the two spellings " +
+      "match. What makes the widening safe is checked elsewhere and on the " +
+      "real source of truth: the rule below asserts that the two halves of " +
+      "the workflow partition, copied into nowBoard.ts, cover " +
+      "schema.prisma's OccurrenceWorkflow exactly once each. A new enum " +
+      "value therefore fails the build here, which is the thing a narrower " +
+      "type on this line would have been bought for.",
+  },
 };
 
 /** Top-level fields of every `export type X = { … }` in a source file. */
@@ -235,12 +248,16 @@ describe("[build-gate] a mirror type matches what it says it mirrors", () => {
 
     /** The string literals of `const NAME = [ … ]`, wherever it is declared. */
     const list = (src: string, name: string): string[] | null => {
-      const m = new RegExp(`\\b${name}\\s*=\\s*\\[([^\\]]*)\\]`).exec(src);
+      // `const NAME` anchored, and no newline allowed before the `=`: the
+      // name also appears in PROSE in the comments above these
+      // declarations, and a looser pattern walked from a mention in a
+      // comment to the NEXT declaration's `=` and read the wrong list.
+      const m = new RegExp(`const\\s+${name}\\s*(?::[^=\\n]*)?=\\s*\\[([^\\]]*)\\]`).exec(src);
       if (!m) return null;
       return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]).sort();
     };
 
-    for (const name of ["DONE_STATUSES", "ACTIVE_STATUSES"]) {
+    for (const name of ["DONE_STATUSES", "ACTIVE_STATUSES", "FIELD_WORK_WORKFLOWS"]) {
       const w = list(web, name);
       const a = list(api, name);
       // VACUITY IS THE FAILURE MODE. A rename on either side would make both
@@ -257,5 +274,57 @@ describe("[build-gate] a mirror type matches what it says it mirrors", () => {
           "that disagrees with the list printed under it.",
       ).toEqual(a);
     }
+  });
+
+  it("the field-work partition covers every OccurrenceWorkflow exactly once", () => {
+    // `BoardJob.workflow` is typed `string` on the web and the enum on the
+    // API — a real widening, waived in EQUIVALENT above on the strength of
+    // THIS rule. So this is the check that waiver is leaning on; if it ever
+    // goes vacuous, the waiver is covering nothing.
+    //
+    // The bug it exists for already shipped. `NON_JOB_WORKFLOWS` was a
+    // single hand-kept list of four, the enum had grown an eighth value
+    // (ANNOUNCEMENT) that was in nobody's list, and so an announcement
+    // counted as completed FIELD WORK on the public waiting-room wall —
+    // under a comment promising a client could believe the number. One list
+    // cannot notice a value nobody added to it.
+    const schema = readFileSync(join(API_SRC, "../prisma/schema.prisma"), "utf-8");
+    const block = /enum OccurrenceWorkflow \{([^}]*)\}/.exec(schema);
+    expect(block, "the OccurrenceWorkflow enum must be findable in schema.prisma").not.toBeNull();
+    const enumValues = block![1]
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, "").trim())
+      .filter((l) => /^[A-Z_]+$/.test(l))
+      .sort();
+    expect(enumValues.length, "the enum parsed empty — this rule would be vacuous").toBeGreaterThan(3);
+
+    const api = readFileSync(join(API_SRC, "services/displays.ts"), "utf-8");
+    const list = (name: string): string[] | null => {
+      const m = new RegExp(`const\\s+${name}\\s*(?::[^=\\n]*)?=\\s*\\[([^\\]]*)\\]`).exec(api);
+      if (!m) return null;
+      return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+    };
+    const field = list("FIELD_WORK_WORKFLOWS");
+    const nonJob = list("NON_JOB_WORKFLOWS");
+    expect(field, "FIELD_WORK_WORKFLOWS not found in displays.ts").not.toBeNull();
+    expect(nonJob, "NON_JOB_WORKFLOWS not found in displays.ts").not.toBeNull();
+    expect(field!.length, "FIELD_WORK_WORKFLOWS parsed empty").toBeGreaterThan(0);
+    expect(nonJob!.length, "NON_JOB_WORKFLOWS parsed empty").toBeGreaterThan(0);
+
+    const overlap = field!.filter((w) => nonJob!.includes(w));
+    expect(
+      overlap,
+      "a workflow is in BOTH halves of the partition — it would be counted " +
+        "as a visit and excluded from the public counts at the same time",
+    ).toEqual([]);
+
+    expect(
+      [...field!, ...nonJob!].sort(),
+      "the two workflow lists in displays.ts do not cover OccurrenceWorkflow " +
+        "exactly. A value in NEITHER is the ANNOUNCEMENT bug again: it is " +
+        "shown as a row, and silently treated as real work by whichever " +
+        "count happens to use the negative list. Decide which half a new " +
+        "workflow belongs in.",
+    ).toEqual(enumValues);
   });
 });

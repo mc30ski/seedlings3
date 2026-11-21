@@ -183,6 +183,74 @@ describe("[build-gate] the wall display recovers unattended", () => {
     expect(priv, "the back-office board must still say who is working").toContain("shortPersonName(");
   });
 
+
+  it("a HELD stream is never dispatched as today's work", () => {
+    // A stream-paused visit KEEPS its date and its assignees — pausing holds
+    // the occurrence in place rather than moving or deleting it. So a held
+    // visit is still dated today and still looks, to any query that forgets
+    // to say otherwise, exactly like work somebody owes you this morning.
+    //
+    // It shipped that way on the private board: the visit sat under "Still to
+    // do", counted in "Left" and "Visits today", put both its assignees in
+    // "has work today, not clocked in", and raised an amber "2 not clocked
+    // in" alert naming two people with nothing to turn up for. The schema
+    // states the contract ("worker feeds hide the row (no dispatch)") and the
+    // private board is the dispatch board.
+    //
+    // Checked PER QUERY rather than on the constant, because the two
+    // occurrence queries are written in opposite shapes — the today one
+    // excludes a list, the overdue one includes a list — and only the
+    // exclusion had the hole. A rule that read the constant alone would pass
+    // while a newly added third query spelled its own filter inline.
+    const src = readFileSync(join(API, "src/services/displays.ts"), "utf8");
+    const from = src.indexOf("export async function buildPrivateBoard");
+    expect(from, "buildPrivateBoard must exist").toBeGreaterThan(-1);
+    const body = src.slice(from, src.indexOf("export async function buildPublicBoard"));
+
+    // Resolve the named status lists from source, so renaming or re-spelling
+    // one cannot quietly empty this rule out.
+    const listOf = (name: string) => {
+      const m = src.match(new RegExp(`const ${name}\\s*=\\s*\\[([\\s\\S]*?)\\]\\s*as const`));
+      expect(m, `the ${name} list must be findable`).toBeTruthy();
+      const vals = [...m![1].matchAll(/"([A-Z_]+)"/g)].map((x) => x[1]);
+      expect(vals.length, `${name} must not be empty`).toBeGreaterThan(0);
+      return vals;
+    };
+    const lists: Record<string, string[]> = {
+      OFF_BOARD_STATUSES: listOf("OFF_BOARD_STATUSES"),
+      ACTIVE_STATUSES: listOf("ACTIVE_STATUSES"),
+      DONE_STATUSES: listOf("DONE_STATUSES"),
+    };
+
+    // Every `status:` filter on an occurrence query in the builder, resolved
+    // to the set of statuses it lets through.
+    const filters = [...body.matchAll(/status:\s*\{\s*(notIn|in):\s*\[([^\]]*)\]/g)];
+    expect(
+      filters.length,
+      "the builder's occurrence queries must still filter on status",
+    ).toBeGreaterThanOrEqual(2);
+
+    for (const f of filters) {
+      const [, op, raw] = f;
+      const named = [...raw.matchAll(/\.\.\.([A-Z_]+)/g)].map((m) => m[1]);
+      const literal = [...raw.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]);
+      const resolved = [...literal, ...named.flatMap((n) => lists[n] ?? [])];
+      expect(
+        named.every((n) => n in lists),
+        `unknown status list spread into a board query (${named.join(", ")}) — ` +
+          "teach this rule about it rather than letting it vouch for nothing",
+      ).toBe(true);
+
+      const admitsHeld =
+        op === "notIn" ? !resolved.includes("STREAM_PAUSED") : resolved.includes("STREAM_PAUSED");
+      expect(
+        admitsHeld,
+        `an occurrence query in buildPrivateBoard admits STREAM_PAUSED — a held ` +
+          `stream would be dispatched as today's work: status { ${op}: [${resolved.join(", ")}] }`,
+      ).toBe(false);
+    }
+  });
+
   it("the board pages through a campaign's SERVICES, not its cover art", () => {
     // A campaign is one headline over a LIST of services, and those live in
     // the landing page's items. The board walked `invoicePhotos` instead, so

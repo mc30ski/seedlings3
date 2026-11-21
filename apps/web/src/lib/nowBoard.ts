@@ -38,6 +38,15 @@ export type BoardJob = {
   status: string;
   startAt: string | null;
   crew: string[];
+  /** Which KIND of row this is. The board carries the office's own day —
+   *  tasks, reminders, follow-ups — alongside field work, because an
+   *  overseer not shown today's reminders is being told the day is emptier
+   *  than it is. Only field work is a visit, and only field work is
+   *  counted; this is what tells the two apart on screen. */
+  workflow: string;
+  /** Thumbnails of what the crew photographed, on finished field work only.
+   *  Absent, not empty, when the visit has none. */
+  photos?: { id: string; url: string; takenAt: string }[];
 };
 
 /** `GET /api/board/now` — see the route's own note for what narrows and
@@ -68,3 +77,22 @@ export type NowBoard = {
  *  that showed it as outstanding would have somebody drive back out. */
 export const DONE_STATUSES = ["COMPLETED", "PENDING_PAYMENT", "CLOSED"];
 export const ACTIVE_STATUSES = ["IN_PROGRESS", "PAUSED"];
+
+/** The workflows that are actual field work, mirroring the server's
+ *  partition of `OccurrenceWorkflow`. Everything else — TASK, REMINDER,
+ *  FOLLOWUP, EVENT, ANNOUNCEMENT — is the office's own day: shown, but not
+ *  counted as a visit and not called one. POSITIVE on both sides, so a
+ *  workflow added later is not silently adopted as a visit here. */
+export const FIELD_WORK_WORKFLOWS = ["STANDARD", "ONE_OFF", "ESTIMATE"];
+export const isFieldWork = (w: string) => FIELD_WORK_WORKFLOWS.includes(w);
+
+/** What to call a non-visit row in the one place it is shown. Falls back to
+ *  the raw value so an unmapped workflow reads as itself rather than
+ *  vanishing or, worse, being labelled a visit. */
+export const WORKFLOW_LABEL: Record<string, string> = {
+  TASK: "Task",
+  REMINDER: "Reminder",
+  FOLLOWUP: "Follow-up",
+  EVENT: "Event",
+  ANNOUNCEMENT: "Announcement",
+};

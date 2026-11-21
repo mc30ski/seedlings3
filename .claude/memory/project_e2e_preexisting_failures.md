@@ -4,7 +4,7 @@ description: "RESOLVED — full e2e run green 2026-10-22. Historical triage of t
 metadata:
   node_type: memory
   type: project
-  modified: 2026-10-22T00:00:00.000Z
+  modified: 2026-11-21T00:00:00.000Z
 ---
 
 ## STATUS 2026-10-22 — ALL OF THIS IS RESOLVED. Full run is GREEN.
@@ -70,7 +70,20 @@ Gotcha when reproducing: only **1 of 18** seeded ClientContacts has a
 `400 IMPERSONATION_TARGET_INVALID`, which looks like a bug and is not — I
 fooled myself with exactly that before using a linked contact.
 
-## B — Display photos 500. ENVIRONMENT, not code. MEDIUM
+## B — Display photos 500. ENVIRONMENT, not code. **RESOLVED 2026-11-21 —
+## AND THIS SECTION WAS RIGHT ALL ALONG**
+
+Fixed by uploading the objects (`apps/api/scripts/seed-photo-objects.ts
+<dir-of-jpegs>`); all five `display-stale-links` specs pass. Worth keeping
+because of what happened in between: this diagnosis was correct on
+2026-10-22, [[project_e2e_full_run_2026_10_31]] declared it wrong nine days
+later on a non-sequitur, and [[project_e2e_full_run_2026_11_13]] then chased
+R2 credentials. Three sessions, one already-written answer. See
+[[project_now_tab]] for the fix and the placeholder images now in the bucket.
+
+The original note, unchanged:
+
+### B — Display photos 500. ENVIRONMENT, not code. MEDIUM
 `display-stale-links-admin:28` and `:59`, both `expected 200, received 500`.
 
 The **`photos` R2 bucket holds 0 objects** while `property-photos` holds 55.

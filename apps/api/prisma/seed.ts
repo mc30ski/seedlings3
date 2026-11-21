@@ -8741,18 +8741,36 @@ async function assertPrimaryContactInvariant() {
     select: { id: true },
   });
   let photoCount = 0;
+  // SEVERAL PER VISIT ON TODAY'S FINISHED WORK, one on the rest.
+  //
+  // A crew photographs a job more than once, and one photo per visit hid
+  // everything that depends on there being several: Work → Now shows the
+  // first three and a "+N" chip, and its viewer pages through the set. With
+  // exactly one row each, the chip never appeared, the viewer opened on a
+  // single frame, and the whole feature looked finished while being
+  // untested by eye. Production's median is 3 and its heaviest visit is 14,
+  // so 2-4 here is the ordinary case and one visit gets enough to show the
+  // overflow chip. Older visits keep one — they feed the wall's flat strip,
+  // which wants breadth across jobs rather than depth within one.
+  const photosForTodaysVisit = (n: number) => (n === 0 ? 5 : 2 + (n % 3));
+  const todaysIds = new Set(todaysFinished.map((o) => o.id));
+  let todaysSeen = 0;
   for (const [i, occ] of photoTargets.entries()) {
-    const key = photoKeys[i % photoKeys.length];
-    await prisma.jobOccurrencePhoto.create({
-      data: {
-        occurrenceId: occ.id,
-        r2Key: key,
-        fileName: key.split("/").pop() ?? "photo.jpg",
-        contentType: "image/jpeg",
-        uploadedById: EMPLOYEE_ID,
-      },
-    });
-    photoCount++;
+    const isToday = todaysIds.has(occ.id);
+    const howMany = isToday ? photosForTodaysVisit(todaysSeen++) : 1;
+    for (let n = 0; n < howMany; n++) {
+      const key = photoKeys[(i + n) % photoKeys.length];
+      await prisma.jobOccurrencePhoto.create({
+        data: {
+          occurrenceId: occ.id,
+          r2Key: key,
+          fileName: key.split("/").pop() ?? "photo.jpg",
+          contentType: "image/jpeg",
+          uploadedById: EMPLOYEE_ID,
+        },
+      });
+      photoCount++;
+    }
   }
   if (inProgressTarget) {
     await prisma.jobOccurrencePhoto.create({

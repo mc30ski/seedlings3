@@ -1780,9 +1780,15 @@ Respond ONLY with valid JSON in this exact format:
   app.get("/board/now", req_scheduleViewAll, async (req: any) => {
     const board = await displays.buildPrivateBoard({
       occurrenceWhere: occurrencePortfolioWhere(req.principal, "schedule.view-all"),
+      // This caller is signed in, so it can fetch R2 directly and gets
+      // per-visit thumbnails on `jobs[].photos`. A paired wall display must
+      // NOT ask for these — see the note on the flag.
+      signedPhotoUrls: true,
     });
-    // `mode` has nothing to discriminate here and the photo URLs need a
-    // display token — see `NowBoard`. Dropped rather than sent and ignored.
+    // `mode` has nothing to discriminate here, and the top-level `photos`
+    // strip is the DISPLAY-TOKEN shape — same photos, URLs this caller
+    // cannot fetch. The usable copies ride on the visits they belong to,
+    // which is also where an overseer wants them. See `NowBoard`.
     const { mode, photos, onTheClock, assignedNotClockedIn, ...rest } = board;
 
     // ATTENDANCE IS `time.view`, WHICH THIS GUARD DOES NOT IMPLY.

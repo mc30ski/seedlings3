@@ -38,7 +38,14 @@ import { fmtClockTime, fmtDuration, fetchWorkdayToday } from "@/src/lib/workday"
 import { occurrenceStatusColor } from "@/src/lib/statusColors";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import TabExplainer, { Em, ExplainerText, CapabilitySection } from "@/src/ui/components/TabExplainer";
-import { ACTIVE_STATUSES, DONE_STATUSES, type NowBoard } from "@/src/lib/nowBoard";
+import PhotoLightbox from "@/src/ui/components/PhotoLightbox";
+import {
+  ACTIVE_STATUSES,
+  DONE_STATUSES,
+  WORKFLOW_LABEL,
+  isFieldWork,
+  type NowBoard,
+} from "@/src/lib/nowBoard";
 import { canSeeTab } from "@/src/lib/tabRequirements";
 import type { Scope } from "@/src/lib/scope";
 
@@ -67,6 +74,8 @@ const CLOCK_TICK_MS = 30_000;
 
 export default function NowTab({ scope, onOpenMyDay, onOpenJobs }: Props) {
   const [board, setBoard] = useState<NowBoard | null>(null);
+  /** The visit whose photos the viewer is open on, and where in them. */
+  const [viewer, setViewer] = useState<{ photos: { url: string }[]; index: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [now, setNow] = useState<number>(() => Date.now());
@@ -99,6 +108,27 @@ export default function NowTab({ scope, onOpenMyDay, onOpenJobs }: Props) {
    * not have. `canSeeTab` reads the same TAB_REQUIREMENTS row the strip
    * does, rather than this file keeping its own idea of what Home costs.
    */
+  /**
+   * Open one visit on the Jobs tab, scrolled to and expanded.
+   *
+   * JobsTab owns this handoff and documents it: write `<occId>|<startAt>`
+   * to `seedlings_jobs_pendingHighlight`, then navigate with `remount: true`
+   * — the effect that consumes the key runs once per mount, so without the
+   * remount a reader already on Jobs would get nothing at all. The anchor
+   * date matters too: it pins the date filter to that one day instead of
+   * leaving the reader in their own default window with the row filtered
+   * out of it. Copied from HomeTab's row click rather than reinvented, so
+   * the two behave the same.
+   */
+  const openVisit = useCallback((id: string, startAt: string | null) => {
+    try {
+      localStorage.setItem("seedlings_jobs_pendingHighlight", `${id}|${startAt ?? ""}`);
+    } catch {}
+    window.dispatchEvent(
+      new CustomEvent("navigate:staffTab", { detail: { tab: "jobs", remount: true } }),
+    );
+  }, []);
+
   const canStartWork = scope.can("work.claim") && canSeeTab("home", scope.can);
 
   // Local clock only. See CLOCK_TICK_MS.
@@ -210,9 +240,20 @@ export default function NowTab({ scope, onOpenMyDay, onOpenJobs }: Props) {
   // which made the heading a small lie and — worse — left the "Done: 4" tile
   // above pointing at rows that were nowhere on the page. The same partition
   // the counts use, so the tiles and the list cannot disagree.
-  const activeJobs = (board?.jobs ?? []).filter((j) => ACTIVE_STATUSES.includes(j.status));
-  const doneJobs = (board?.jobs ?? []).filter((j) => DONE_STATUSES.includes(j.status));
-  const restOfDay = (board?.jobs ?? []).filter(
+  //
+  // PARTITIONED ON FIELD WORK, because the heading says "visits" and the
+  // tiles above count visits. The board also carries the office's own day —
+  // tasks, reminders, follow-ups — and those are listed below under their
+  // own heading rather than dropped: an overseer who is not shown today's
+  // reminders is being told the day is emptier than it is. What they must
+  // not be told is that a reminder is a visit, which is what this screen
+  // did when one list served both and a titleless reminder rendered as the
+  // literal word "Visit".
+  const visits = (board?.jobs ?? []).filter((j) => isFieldWork(j.workflow));
+  const officeRows = (board?.jobs ?? []).filter((j) => !isFieldWork(j.workflow));
+  const activeJobs = visits.filter((j) => ACTIVE_STATUSES.includes(j.status));
+  const doneJobs = visits.filter((j) => DONE_STATUSES.includes(j.status));
+  const restOfDay = visits.filter(
     (j) => !ACTIVE_STATUSES.includes(j.status) && !DONE_STATUSES.includes(j.status),
   );
 
@@ -458,7 +499,10 @@ export default function NowTab({ scope, onOpenMyDay, onOpenJobs }: Props) {
       )}
 
       {/* ── The day's visits ────────────────────────────────────────────── */}
-      <Card.Root variant="outline" data-testid="now-visits">
+      {/* The panel "Show me" rings for `now-visit-photos`: both halves of
+          that announcement live in here — the thumbnails on the finished
+          rows, and the office rows at its foot. */}
+      <Card.Root variant="outline" data-testid="now-visits" data-whats-new="now-visit-photos">
         <Card.Body px={3} py={2}>
           <VStack align="stretch" gap={2}>
             <HStack gap={2} wrap="wrap">
@@ -468,8 +512,8 @@ export default function NowTab({ scope, onOpenMyDay, onOpenJobs }: Props) {
                 Open in Jobs <FiArrowRight size={13} />
               </Button>
             </HStack>
-            {board.jobs.length === 0 && (
-              <Text fontSize="sm" color="fg.muted">Nothing is scheduled today.</Text>
+            {visits.length === 0 && (
+              <Text fontSize="sm" color="fg.muted">No visits are scheduled today.</Text>
             )}
             {[
               { heading: "Underway", rows: activeJobs },
@@ -491,6 +535,25 @@ export default function NowTab({ scope, onOpenMyDay, onOpenJobs }: Props) {
                         borderTopWidth="1px"
                         borderColor="border.muted"
                         pt={1}
+                        px={1}
+                        mx={-1}
+                        borderRadius="sm"
+                        cursor="pointer"
+                        role="button"
+                        tabIndex={0}
+                        _hover={{ bg: "bg.subtle" }}
+                        // A list of today's work whose rows go nowhere makes
+                        // the reader hunt for the same visit by hand on
+                        // another tab. Keyboard too: this is a button, so it
+                        // answers to Enter and Space like one.
+                        onClick={() => openVisit(j.id, j.startAt)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openVisit(j.id, j.startAt);
+                          }
+                        }}
+                        aria-label={`Open ${j.title}${j.client ? ` for ${j.client}` : ""} in Jobs`}
                         data-testid="now-visit"
                       >
                         <Badge size="sm" colorPalette={occurrenceStatusColor(j.status)}>
@@ -503,11 +566,144 @@ export default function NowTab({ scope, onOpenMyDay, onOpenJobs }: Props) {
                         <Text fontSize="xs" color="fg.subtle">
                           {j.crew.length > 0 ? j.crew.join(", ") : "nobody on it"}
                         </Text>
+                        {/* WHAT THE CREW ACTUALLY PHOTOGRAPHED, on finished
+                            work. This is the one thing on the board that is
+                            evidence rather than status: a row can say
+                            "completed" because somebody tapped a button, and
+                            a picture of the lawn cannot. Sits on the row it
+                            belongs to rather than in a strip of its own, so
+                            there is never a question of which visit it is
+                            from. On a phone it takes its own line under the
+                            row; from `md` up it sits inline at the end of
+                            the row instead, because a single 54px tile
+                            alone on a 1280px line reads as a layout
+                            mistake rather than as a thumbnail. */}
+                        {(j.photos?.length ?? 0) > 0 && (
+                          <HStack
+                            gap={1}
+                            flexBasis={{ base: "100%", md: "auto" }}
+                            pt={{ base: 1, md: 0 }}
+                            data-testid="now-visit-photos"
+                          >
+                            {j.photos!.slice(0, 3).map((ph, idx) => (
+                              <Box
+                                key={ph.id}
+                                as="img"
+                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                {...({ src: ph.url, alt: `${j.title} — ${j.place}`, loading: "lazy" } as any)}
+                                boxSize="54px"
+                                objectFit="cover"
+                                borderRadius="sm"
+                                borderWidth="1px"
+                                borderColor="border.muted"
+                                bg="bg.muted"
+                                cursor="zoom-in"
+                                // STOP THE ROW. The row navigates to Jobs;
+                                // the photo opens the viewer. Without this
+                                // the click bubbles and does both, and the
+                                // viewer is unmounted mid-open.
+                                onClick={(e: React.MouseEvent) => {
+                                  e.stopPropagation();
+                                  setViewer({ photos: j.photos!, index: idx });
+                                }}
+                                data-testid="now-visit-photo"
+                              />
+                            ))}
+                            {/* The row shows three; the viewer holds the
+                                lot. Saying how many more is the difference
+                                between "three photos" and "three of nine". */}
+                            {j.photos!.length > 3 && (
+                              <Box
+                                // A Box, NOT a `<button>`. The row around it
+                                // is already `role="button"`, and a real
+                                // button nested inside one is invalid to
+                                // assistive tech — it announces two controls
+                                // where a reader can only mean one. Mouse
+                                // affordance only, like the jobs card's own
+                                // photo tiles; a keyboard reader activates
+                                // the row and gets the visit itself, which
+                                // has every photo on it anyway.
+                                display="flex"
+                                alignItems="center"
+                                justifyContent="center"
+                                boxSize="54px"
+                                borderRadius="sm"
+                                borderWidth="1px"
+                                borderColor="border.muted"
+                                bg="bg.muted"
+                                fontSize="xs"
+                                color="fg.muted"
+                                cursor="zoom-in"
+                                onClick={(e: React.MouseEvent) => {
+                                  e.stopPropagation();
+                                  setViewer({ photos: j.photos!, index: 3 });
+                                }}
+                                title={`View all ${j.photos!.length} photos`}
+                                data-testid="now-visit-photo-more"
+                              >
+                                +{j.photos!.length - 3}
+                              </Box>
+                            )}
+                          </HStack>
+                        )}
                       </HStack>
                     ))}
                   </VStack>
                 </Box>
               ),
+            )}
+
+            {/* ── THE OFFICE'S OWN DAY ──────────────────────────────────
+                Tasks, reminders, follow-ups, events and announcements dated
+                today. They were already on this board; they were just
+                mixed in with the visits, under a heading that called them
+                visits and a count that counted them as such. Shown, named,
+                and left out of the numbers. */}
+            {officeRows.length > 0 && (
+              <Box pt={1} data-testid="now-office-rows">
+                <Text fontSize="xs" color="fg.subtle" textTransform="uppercase" letterSpacing="wide" mb={1}>
+                  Also today ({officeRows.length}) &mdash; not visits
+                </Text>
+                <VStack align="stretch" gap={1}>
+                  {officeRows.map((j) => (
+                    <HStack
+                      key={j.id}
+                      gap={2}
+                      align="center"
+                      wrap="wrap"
+                      borderTopWidth="1px"
+                      borderColor="border.muted"
+                      pt={1}
+                      px={1}
+                      mx={-1}
+                      borderRadius="sm"
+                      cursor="pointer"
+                      role="button"
+                      tabIndex={0}
+                      _hover={{ bg: "bg.subtle" }}
+                      onClick={() => openVisit(j.id, j.startAt)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openVisit(j.id, j.startAt);
+                        }
+                      }}
+                      aria-label={`Open ${j.title} in Jobs`}
+                      data-testid="now-office-row"
+                    >
+                      <Badge size="sm" variant="outline" colorPalette="purple">
+                        {WORKFLOW_LABEL[j.workflow] ?? j.workflow.replace(/_/g, " ").toLowerCase()}
+                      </Badge>
+                      <Text fontSize="sm" fontWeight="medium">{j.title}</Text>
+                      {j.client && <Text fontSize="sm" color="fg.muted">{j.client}</Text>}
+                      <Box flex={1} />
+                      <Text fontSize="xs" color="fg.subtle">
+                        {j.status.replace(/_/g, " ").toLowerCase()}
+                      </Text>
+                    </HStack>
+                  ))}
+                </VStack>
+              </Box>
             )}
           </VStack>
         </Card.Body>
@@ -548,6 +744,26 @@ export default function NowTab({ scope, onOpenMyDay, onOpenJobs }: Props) {
             </VStack>
           </Card.Body>
         </Card.Root>
+      )}
+
+      {/* THE SHARED VIEWER, not a fourth copy of one. `PhotoLightbox`
+          already backs the payment page, the promotion landing page and
+          Supplies, and it brings the things a hand-rolled one forgets:
+          arrow keys, Escape, swipe on a phone, and an "n / total" counter
+          — which is the part that makes a viewer honest about how many
+          photos there are. Read-only on purpose: the jobs card's own
+          viewer carries Delete and a public-visibility toggle, and this
+          tab opens for a read-only oversight tier that holds neither. */}
+      {viewer && (
+        <PhotoLightbox
+          photos={viewer.photos}
+          index={viewer.index}
+          onClose={() => setViewer(null)}
+          onPrev={() => setViewer((v) => (v && v.index > 0 ? { ...v, index: v.index - 1 } : v))}
+          onNext={() =>
+            setViewer((v) => (v && v.index < v.photos.length - 1 ? { ...v, index: v.index + 1 } : v))
+          }
+        />
       )}
     </VStack>
   );

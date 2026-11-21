@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: e3608af7-8965-4649-8bef-c7a4069a7325
-  modified: 2026-11-10T19:00:00.000Z
+  modified: 2026-11-21T00:00:00.000Z
 ---
 
 **Started 2026-10-11. Backend complete as of 2026-10-13. Nothing committed,
@@ -32,7 +32,9 @@ what keeps it correct. Read those, not this.
 
 ## Verified numbers (RE-COUNTED 2026-11-10 — they move, count again)
 - **65 entitlements** carry at least one route in the map.
-- **656 routes** total; **508** behind an entitlement. The rest:
+- **657 routes** total (`npm run routemap:check`, 2026-11-21; was 656). **508** were behind an
+  entitlement at the last full audit — that split has NOT been re-derived, so
+  treat it as of 2026-11-10, not of the route count beside it. The rest:
   **108** `approvedUser` ownership, **24** public, **10** client-portal,
   **6** system/cron.
 - **45 build-gate files**; build gate **67 files / 2198 tests green**.

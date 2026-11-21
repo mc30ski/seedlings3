@@ -238,6 +238,35 @@ R2_GUIDE_MEDIA_BUCKET_NAME=seedlings-guides-dev
 - **Client-side compression** — reduces 5MB phone photos to ~150KB before upload
 - **Auto-expiration** — Cloudflare lifecycle rules handle cleanup, no cron needed
 
+### Seeding the dev photo objects (run this on a fresh machine)
+
+`prisma/seed.ts` creates `JobOccurrencePhoto` **rows** pointing at fixed keys
+(`seed/landscaping/00…05,07.jpg`) and deliberately does not upload the bytes
+— the keys are meant to outlive a reseed. On a bucket that has never been
+populated the rows therefore point at nothing:
+
+```bash
+cd apps/api
+npx tsx scripts/seed-photo-objects.ts <dir-of-jpegs>   # files named 00.jpg … 07.jpg
+```
+
+The script refuses any bucket whose name does not end in `-dev`. Run it once
+per machine; reseeding afterwards is not necessary, because only the rows are
+recreated.
+
+**Symptoms of skipping it**, none of which name the real cause:
+
+- the waiting-room wall renders a row of broken frames
+- Work → Now shows finished visits with no photos
+- `display-stale-links-*.spec.ts` fails on its first `expect(200)`, taking
+  four security assertions about revoked screens and hidden photos down with
+  it — they never run
+
+This cost three separate debugging sessions across a month, twice being
+misdiagnosed as an R2 *credentials* problem. The tell that it is not:
+presigning succeeds and the fetch returns a **signed 404**. Bad credentials
+cannot produce that — they fail at signing, or return 403.
+
 ---
 
 ## Equipment QR Codes

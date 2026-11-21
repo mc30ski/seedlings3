@@ -101,6 +101,35 @@ test("the board loads and its counts reconcile", async ({ page }) => {
       "reads on screen as work that simply is not there.",
   ).toBe(total);
 
+  // AND THE TOTAL IS VISITS, NOT ROWS.
+  //
+  // The identity above cannot see this on its own, which is the whole
+  // reason for the next two assertions. The board carries the office's own
+  // day — tasks, reminders, follow-ups — alongside field work. If those
+  // leaked back into the counts they would land in `left`, the partition
+  // would still add up perfectly, and "Visits today" would quietly be
+  // counting a reminder as a property somebody drove to. That is exactly
+  // how it shipped: one list, one count, a heading reading "Today's
+  // visits", and a titleless reminder rendering as the word "Visit".
+  const visitRows = await page.locator('[data-testid="now-visit"]').count();
+  expect(
+    visitRows,
+    `"Visits today" says ${total} but the panel lists ${visitRows} visits. ` +
+      "The tile and the list must be the same set — if they differ, " +
+      "something that is not field work is being counted as a visit.",
+  ).toBe(total);
+
+  // The office rows must still be ON the board — shown, just not counted.
+  // Dropping them would make this pass for the wrong reason, and would
+  // hide today's reminders from the one screen meant to show the whole day.
+  const officeRows = await page.locator('[data-testid="now-office-row"]').count();
+  if (officeRows > 0) {
+    await expect(
+      page.locator('[data-testid="now-office-rows"]'),
+      "non-visit rows must be listed under their own heading, not hidden",
+    ).toBeVisible();
+  }
+
   // The age line is load-bearing: once a board updates quietly, one that
   // stopped looks exactly like one that is working.
   await expect(page.locator('[data-testid="now-as-of"]')).toContainText(/As of \d/);
@@ -193,4 +222,99 @@ test("Start working goes to Home rather than nothing", async ({ page }) => {
       },
     )
     .toBe(JSON.stringify("home"));
+});
+
+test("a photo opens on the WHOLE visit, not just the thumbnails shown", async ({ page }) => {
+  // The row shows three tiles and a "+N" chip. The viewer behind them must
+  // open on every photo of that visit, and the counter is the only thing
+  // that says so out loud — "1 / 5" against three tiles is the assertion
+  // that the preview is a preview and not the whole set.
+  //
+  // WHY THIS IS NOT A BUILD GATE: the number comes from the payload the
+  // server chose to send, through a cap, through a `slice(0, 3)`, into a
+  // component that counts what it was handed. Every one of those is fine in
+  // isolation. Only driving it says whether the count a reader sees matches
+  // the photos the visit actually has.
+  await gotoNowTab(page);
+
+  const more = page.locator('[data-testid="now-visit-photo-more"]').first();
+  const hasOverflow = await more.count();
+  test.skip(
+    hasOverflow === 0,
+    "no seeded visit today has more than 3 photos — reseed; this test is " +
+      "about the overflow case specifically",
+  );
+
+  // The row this chip belongs to, and how many it claims are hidden.
+  const chipText = (await more.innerText()).trim(); // "+2"
+  const hidden = Number(chipText.replace("+", ""));
+  expect(hidden, `the overflow chip should read "+<number>", got "${chipText}"`).toBeGreaterThan(0);
+
+  await more.click();
+
+  // PhotoLightbox renders "n / total".
+  const counter = page.getByText(/^\d+\s*\/\s*\d+$/).first();
+  await expect(counter).toBeVisible({ timeout: 10_000 });
+  const [startStr, totalStr] = (await counter.innerText()).split("/");
+  const total = Number(totalStr.trim());
+  const start = Number(startStr.trim());
+  expect(
+    total,
+    "the viewer must hold the three shown plus the number the chip promised",
+  ).toBe(3 + hidden);
+  // The chip opens on the FIRST HIDDEN photo, not on the first photo — that
+  // is the whole point of pressing it rather than a thumbnail.
+  expect(start, "the overflow chip must open past the three on the row").toBe(4);
+
+  // It is a carousel, not a single frame. Asserted RELATIVE to where it
+  // opened: hard-coding "2 / n" here assumed a click on the first thumbnail
+  // and failed against the chip, which is a bug in the test and not in the
+  // viewer — the sort of thing that gets "fixed" by weakening the assertion.
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    page.getByText(new RegExp(`^${start + 1}\\s*/\\s*${total}$`)).first(),
+    "ArrowRight must advance the viewer by one",
+  ).toBeVisible({ timeout: 5_000 });
+
+  // And Escape returns to the board rather than leaving it stranded.
+  await page.keyboard.press("Escape");
+  await expect(counter).toBeHidden({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="now-visits"]')).toBeVisible();
+});
+
+test("a visit row opens that visit, not just the Jobs tab", async ({ page }) => {
+  // "Open in Jobs" at the top of the panel already goes to the tab. A row
+  // that did the same would be the worse version of itself: it would drop
+  // the reader into their own default filters to hunt for the visit they
+  // had just pointed at.
+  //
+  // Asserted on JobsTab's own "Filtered to 1 occurrence" badge, which only
+  // appears when `highlightOccId` is set AND the occurrence came back from
+  // the server — so this covers the whole handoff (localStorage key, the
+  // remount, the date anchor, the includeOccId fetch) rather than just the
+  // navigation. A click that merely landed on Jobs leaves no badge.
+  await gotoNowTab(page);
+
+  const row = page.locator('[data-testid="now-visit"]').first();
+  await expect(row).toBeVisible();
+  await row.click();
+
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("seedlings_staffTab")), {
+      timeout: 20_000,
+      message: "clicking a visit must navigate to Jobs",
+    })
+    .toBe(JSON.stringify("jobs"));
+
+  await expect(
+    page.getByText("Filtered to 1 occurrence").first(),
+    "Jobs must open narrowed to the visit that was clicked, not to the whole day",
+  ).toBeVisible({ timeout: 30_000 });
+
+  // The handoff key is single-use; leaving it behind would re-highlight the
+  // same visit on the reader's next unrelated visit to Jobs.
+  expect(
+    await page.evaluate(() => localStorage.getItem("seedlings_jobs_pendingHighlight")),
+    "the pending-highlight key must be consumed by JobsTab",
+  ).toBeNull();
 });
